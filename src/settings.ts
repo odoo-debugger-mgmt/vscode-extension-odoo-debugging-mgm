@@ -27,7 +27,7 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<vscode.Tree
         let settings = workspaceSettings['settings'];
         if (!settings) {
             settings = new SettingsModel();
-            workspaceSettings['settings'] = settings
+            workspaceSettings['settings'] = settings;
             await saveToFile(workspaceSettings);
         }
         if (typeof settings === 'string') {

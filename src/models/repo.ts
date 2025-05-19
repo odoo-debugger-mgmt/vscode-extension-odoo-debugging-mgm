@@ -1,15 +1,14 @@
 export class RepoModel {
-    name: string; // project sh name
-    repoLink: string;
-    repoPath: string;
-    createdAt: Date;
-    currentBranch: string;
-    repoId: string;
-    constructor(name: string, repoLink: string, repoPath: string, createdAt: Date, currentBranch: string) {
-        this.currentBranch = currentBranch;
+    name: string;
+    path: string;
+    isSelected: boolean = false;
+    constructor(
+        name: string,
+        path: string,
+        isSelected: boolean = false
+    ) {
         this.name = name;
-        this.repoLink = repoLink;
-        this.repoPath = repoPath;
-        this.createdAt = createdAt;
+        this.path = path;
+        this.isSelected = isSelected;
     }
 }
