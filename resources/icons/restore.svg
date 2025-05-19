@@ -1,0 +1,20 @@
+<svg id='restore_16' width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink'><rect width='16' height='16' stroke='none' fill='#000000' opacity='0'/>
+
+
+<g transform="matrix(0.66 0 0 0.66 8 8)" >
+<g style="" >
+<g transform="matrix(1 0 0 1 0 0)" >
+<path style="stroke: none; stroke-width: 2; stroke-dasharray: none; stroke-linecap: round; stroke-dashoffset: 0; stroke-linejoin: round; stroke-miterlimit: 4; fill: none; fill-rule: nonzero; opacity: 1;" transform=" translate(-12, -12)" d="M 0 0 L 24 0 L 24 24 L 0 24 z" stroke-linecap="round" />
+</g>
+<g transform="matrix(1 0 0 1 0.03 0)" >
+<path style="stroke: rgb(250, 250, 250); stroke-width: 2; stroke-dasharray: none; stroke-linecap: round; stroke-dashoffset: 0; stroke-linejoin: round; stroke-miterlimit: 4; fill: none; fill-rule: nonzero; opacity: 1;" transform=" translate(-12.03, -12)" d="M 3.06 13 C 3.5680225179491263 17.541449670758265 7.39882170898813 20.98129658219223 11.968561780021764 20.99939834904661 C 16.538301851055397 21.017500115900994 20.396232408441914 17.60810999000601 20.940217823467364 13.070827558967215 C 21.484203238492814 8.533545127928422 18.54154505507082 4.308816493837654 14.097036827234737 3.2461789246396346 C 9.652528599398652 2.1835413554416157 5.117163504189003 4.62034924063094 3.5499999999999967 8.913" stroke-linecap="round" />
+</g>
+<g transform="matrix(1 0 0 1 -6.5 -5.5)" >
+<path style="stroke: rgb(250, 250, 250); stroke-width: 2; stroke-dasharray: none; stroke-linecap: round; stroke-dashoffset: 0; stroke-linejoin: round; stroke-miterlimit: 4; fill: none; fill-rule: nonzero; opacity: 1;" transform=" translate(-5.5, -6.5)" d="M 3 4.001 L 3 9.001000000000001 L 8 9.001000000000001" stroke-linecap="round" />
+</g>
+<g transform="matrix(1 0 0 1 0 0)" >
+<path style="stroke: rgb(250, 250, 250); stroke-width: 2; stroke-dasharray: none; stroke-linecap: round; stroke-dashoffset: 0; stroke-linejoin: round; stroke-miterlimit: 4; fill: none; fill-rule: nonzero; opacity: 1;" transform=" translate(-12, -12)" d="M 12 12 M 11 12 C 11 12.552284749830793 11.447715250169207 13 12 13 C 12.552284749830793 13 13 12.552284749830793 13 12 C 13 11.447715250169207 12.552284749830793 11 12 11 C 11.447715250169207 11 11 11.447715250169207 11 12" stroke-linecap="round" />
+</g>
+</g>
+</g>
+</svg>
