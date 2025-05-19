@@ -1,0 +1,207 @@
+{
+  "name": "ps-odoo-tools",
+  "displayName": "oodo tools",
+  "description": "Tools to help with odoo developments.",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ps-odoo-tools-OdooTools",
+          "icon": "resources/odoo.svg",
+          "title": "Odoo Tools"
+        }
+      ]
+    },
+    "views": {
+      "ps-odoo-tools-OdooTools": [
+        {
+          "id": "projectSelector",
+          "name": "Projects"
+        },
+        {
+          "id": "dbSelector",
+          "name": "Databases"
+        },
+        {
+          "id": "moduleSelector",
+          "name": "Modules"
+        },
+        {
+          "id": "workspaceSettings",
+          "name": "Settings"
+        }
+      ]
+    },
+    "commands":[
+      {
+        "command": "projectSelector.create",
+        "title": "Create Project",
+        "icon": "resources/icons/create.svg"
+      },
+      {
+        "command": "projectSelector.delete",
+        "title": "Delete Project",
+        "icon": "resources/icons/delete.svg"
+      },
+      {
+        "command": "projectSelector.selectProject",
+        "title": "Select Project"
+      },
+      {
+        "command": "projectSelector.refresh",
+        "title": "Refresh Projects",
+        "icon": "resources/icons/refresh.svg"
+      },
+      {
+        "command": "dbSelector.selectDb",
+        "title": "Select Database"
+      },
+      {
+        "command": "dbSelector.create",
+        "title": "Create Database",
+        "icon": "resources/icons/create_database.svg"
+      },
+      {
+        "command": "dbSelector.restore",
+        "title": "Restore Database",
+        "icon": "resources/icons/restore.svg"
+      },
+      {
+        "command": "dbSelector.delete",
+        "title": "Delete Database",
+        "icon": "resources/icons/delete.svg"
+      },
+      {
+        "command": "dbSelector.getDb",
+        "title": "Get Database",
+        "icon": "resources/icons/download.svg"
+      },
+      {
+        "command": "dbSelector.refresh",
+        "title": "Refresh Databases",
+        "icon": "resources/icons/refresh.svg"
+      },
+      {
+        "command": "moduleSelector.refresh",
+        "title": "Refresh Modules",
+        "icon": "resources/icons/refresh.svg"
+      },
+      {
+        "command": "moduleSelector.create",
+        "title": "Create Module",
+        "icon": "resources/icons/create.svg"
+      },
+      {
+        "command": "moduleSelector.select",
+        "title": "Toggle Module"
+      },
+      {
+        "command": "workspaceSettings.startServer",
+        "title": "Start Server",
+        "icon": "resources/icons/debug.svg"
+      },
+      {
+        "command": "workspaceSettings.startShell",
+        "title": "Start Shell",
+        "icon": "resources/icons/shell.svg"
+      },
+      {
+        "command": "workspaceSettings.refresh",
+        "title": "Refresh Settings",
+        "icon": "resources/icons/refresh.svg"
+      },
+      {
+        "command": "workspaceSettings.editSetting",
+        "title": "Edit Setting"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "projectSelector.create",
+          "when": "view == projectSelector",
+          "group": "navigation"
+        },
+        {
+          "command": "projectSelector.refresh",
+          "when": "view == projectSelector",
+          "group": "navigation"
+        },
+        {
+          "command": "dbSelector.create",
+          "when": "view == dbSelector",
+          "group": "navigation"
+        },
+
+        {
+          "command": "workspaceSettings.startServer",
+          "when": "view == debugSettings",
+          "group": "navigation"
+        },
+        {
+          "command": "workspaceSettings.startShell",
+          "when": "view == debugSettings",
+          "group": "navigation"
+        }
+      ]
+    },
+    "view/item/context": [
+      {
+        "when": "view == projectSelector",
+        "command": "projectSelector.delete",
+        "group": "inline"
+      },
+      {
+        "when": "view == dbSelector",
+        "command": "dbSelector.delete",
+        "group": "inline"
+      },
+      {
+        "when": "view == dbSelector",
+        "command": "dbSelector.getDb",
+        "group": "inline"
+      }
+    ],
+    "viewsWelcome": [
+      {
+        "view": "projectSelector",
+        "when": "odoo-debugger.is_active === 'false'",
+        "contents": "Open a folder or a workspace for the extension to work.\n[Open Folder](command:workbench.action.files.openFolder)\n[Open Workspace](command:workbench.action.openWorkspace)"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.100.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@typescript-eslint/eslint-plugin": "^8.31.1",
+    "@typescript-eslint/parser": "^8.31.1",
+    "eslint": "^9.25.1",
+    "typescript": "^5.8.3",
+    "ts-loader": "^9.5.2",
+    "webpack": "^5.99.7",
+    "webpack-cli": "^6.0.1",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}
