@@ -2,7 +2,7 @@ import { ModuleModel, ModuleState } from "./models/module";
 import { ProjectModel } from "./models/project";
 import { DatabaseModel } from "./models/db";
 import * as vscode from "vscode";
-import { saveToFile, readFromFile } from './common';
+import { saveToFile, readFromFile, getFolderPathsAndNames } from './common';
 
 export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
@@ -103,6 +103,7 @@ export async function selectModule(event: any) {
         vscode.window.showErrorMessage('No database selected');
         return;
     }
+    const allModules = getFolderPathsAndNames(project.repoPath);
     db.modules.forEach((mod: ModuleModel) => {
         if (mod.name === module.name) {
             switch (mod.state) {
@@ -120,4 +121,32 @@ export async function selectModule(event: any) {
     });
     settings['projects'] = projects;
     await saveToFile(settings);
+}
+
+export async function createModule(context: vscode.ExtensionContext, repo:string) {
+    const allModules = getFolderPathsAndNames(repo);
+    const createADb = await vscode.window.showQuickPick(["Yes", "No"], {
+            placeHolder: 'Do you want to create a database?',
+    });
+    let selectedModules: string[] | undefined;
+    let db: DatabaseModel | undefined;
+    let modules: ModuleModel[] = [];
+
+    if (createADb === "Yes") {
+        selectedModules = await vscode.window.showQuickPick(allModules.map(entry => entry[1]), {
+            placeHolder: 'Select modules',
+            canPickMany: true,
+        }) || [];
+        const sqlDumpPath: string | undefined = await vscode.window.showInputBox({ title: "SQL Dump Path", placeHolder: "Path to the SQL dump file, leave empty if new db" });
+        for (const module of allModules) {
+            let isSelected: ModuleState = 'none';
+            if (module[1] in selectedModules){
+                isSelected = 'install';
+            }
+            modules.push(new ModuleModel(module[1], isSelected));
+        }
+        db = new DatabaseModel(`db-hello`, new Date(), modules, false, true, sqlDumpPath); // to be updated
+    }else{
+        selectedModules = [];
+    }
 }

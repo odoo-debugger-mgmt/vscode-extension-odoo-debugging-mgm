@@ -1,6 +1,5 @@
 export type ModuleState = 'install' | 'upgrade' | 'none';
 export class ModuleModel {
-    dbId: string;
     name: string;
     state: ModuleState;
     constructor(name: string, state: ModuleState = 'none') {
@@ -8,4 +7,3 @@ export class ModuleModel {
         this.state = state;
     }
 }
-// 🇺 🇮

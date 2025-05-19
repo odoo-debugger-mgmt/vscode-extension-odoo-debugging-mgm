@@ -58,7 +58,7 @@
       },
       {
         "command": "projectSelector.refresh",
-        "title": "Refresh Projects",
+        "title": "Refresh",
         "icon": "resources/icons/refresh.svg"
       },
       {
@@ -144,33 +144,33 @@
 
         {
           "command": "workspaceSettings.startServer",
-          "when": "view == debugSettings",
+          "when": "view == workspaceSettings",
           "group": "navigation"
         },
         {
           "command": "workspaceSettings.startShell",
-          "when": "view == debugSettings",
+          "when": "view == workspaceSettings",
           "group": "navigation"
         }
-      ]
+      ],
+      "view/item/context": [
+        {
+          "command": "projectSelector.delete",
+          "when": "view == projectSelector",
+          "group": "inline"
+        },
+        {
+          "when": "view == dbSelector",
+          "command": "dbSelector.restore",
+          "group": "inline"
+        },
+        {
+          "when": "view == dbSelector",
+          "command": "dbSelector.delete",
+          "group": "inline"
+        }
+    ]
     },
-    "view/item/context": [
-      {
-        "when": "view == projectSelector",
-        "command": "projectSelector.delete",
-        "group": "inline"
-      },
-      {
-        "when": "view == dbSelector",
-        "command": "dbSelector.delete",
-        "group": "inline"
-      },
-      {
-        "when": "view == dbSelector",
-        "command": "dbSelector.getDb",
-        "group": "inline"
-      }
-    ],
     "viewsWelcome": [
       {
         "view": "projectSelector",
