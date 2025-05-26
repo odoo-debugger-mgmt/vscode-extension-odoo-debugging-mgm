@@ -1,4 +1,6 @@
 export class SettingsModel {
+    debuggerName: string = "odoo:version";
+    debuggerVersion: string = "1.0.0";
     portNumber: number;
     shellPortNumber: number;
     limitTimeReal: number;
@@ -13,8 +15,9 @@ export class SettingsModel {
     odooPath: string = "./odoo";
     enterprisePath: string = "./enterprise";
     customAddonsPath: string = "./custom-addons";
-    venvPath: string = "./venv";
+    pythonPath: string = "./venv/bin/python";
     constructor(
+        debuggerName: string = "odoo:version",
         portNumber: number = 8018,
         shellPortNumber: number = 5018,
         limitTimeReal: number = 0,
@@ -29,8 +32,9 @@ export class SettingsModel {
         odooPath: string = "./odoo",
         enterprisePath: string = "./enterprise",
         customAddonsPath: string = "./custom-addons",
-        venvPath: string = "./venv"
+        pythonPath: string = "./venv/bin/python"
     ) {
+        this.debuggerName = debuggerName;
         this.portNumber = portNumber;
         this.shellPortNumber = shellPortNumber;
         this.limitTimeReal = limitTimeReal;
@@ -45,6 +49,6 @@ export class SettingsModel {
         this.odooPath = odooPath;
         this.enterprisePath = enterprisePath;
         this.customAddonsPath = customAddonsPath;
-        this.venvPath = venvPath;
+        this.pythonPath = pythonPath;
     }
 }
