@@ -1,12 +1,13 @@
 import * as vscode from 'vscode';
 import { ProjectModel } from './models/project';
 import { DatabaseModel } from './models/db';
-import { ModuleModel, ModuleState } from './models/module';
+import { ModuleModel } from './models/module';
 import { getFolderPathsAndNames } from './common';
 import { readFromFile, saveToFile } from './common';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { RepoModel } from './models/repo';
 
 export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
@@ -20,7 +21,7 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
         return item;
     }
     async getChildren(element?: any): Promise<vscode.TreeItem[]> {
-        let settings = await readFromFile();
+        let settings = await readFromFile('odoo-debugger-data.json');
         let projects: ProjectModel[] = settings['projects'];
         if (!projects) {
             vscode.window.showErrorMessage('Error reading projects, please create a project first');
@@ -58,8 +59,11 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     }
 }
 
-export async function createDb(projectName:string, repo:string, dumpFolderPath:string): Promise<DatabaseModel | undefined> {
-    const allModules = getFolderPathsAndNames(repo);
+export async function createDb(projectName:string, repos:RepoModel[], dumpFolderPath:string): Promise<DatabaseModel | undefined> {
+    let allModules: {"path": string, "name": string}[] = [];
+    for (const repo of repos) {
+        allModules = allModules.concat(getFolderPathsAndNames(repo.path));
+    }
     let selectedModules: string[] | [] = [];
     let db: DatabaseModel | undefined;
     let modules: ModuleModel[] = [];
@@ -70,7 +74,7 @@ export async function createDb(projectName:string, repo:string, dumpFolderPath:s
     let dumpFolder : string | undefined;
 
     if (createFromBackup === "no") {
-        selectedModules = await vscode.window.showQuickPick(allModules.map(entry => entry[1]), {
+        selectedModules = await vscode.window.showQuickPick(allModules.map(entry => entry.name), {
                 placeHolder: 'Select modules',
                 canPickMany: true,
                 ignoreFocusOut: true
@@ -81,16 +85,10 @@ export async function createDb(projectName:string, repo:string, dumpFolderPath:s
     }
 
     const sqlDumpPath: string | undefined = dumpFolderPath && dumpFolder ? path.join(dumpFolder!, 'dump.sql') : undefined;
-    for (const module of allModules) {
-        let isSelected: ModuleState = 'none';
-        if (module[1] in selectedModules){
-            isSelected = 'install';
-        }
-        modules.push(new ModuleModel(module[1], isSelected));
+    for (const module of selectedModules) {
+        modules.push(new ModuleModel(module, 'install'));
     }
     db = new DatabaseModel(`db-${projectName}`, new Date(), modules, false, true, sqlDumpPath); // to be updated
-    const editedDate = new Date(db.createdAt);
-    const formattedDate = `${editedDate.toISOString().split('T')[0]}-${editedDate.toTimeString().split(' ')[0]}`;
     if (sqlDumpPath) {
         db.isItABackup = true;
         setupDatabase(db.id, sqlDumpPath);
@@ -184,7 +182,7 @@ export async function getDbDumpFolder(dumpsFolder: string): Promise<string | und
 
 export async function selectDatabase(event: any) {
     const database: DatabaseModel = event;
-    let settings = await readFromFile();
+    let settings = await readFromFile('odoo-debugger-data.json');
     if (!settings) {
         vscode.window.showErrorMessage('Error reading settings');
         return;
@@ -207,13 +205,13 @@ export async function selectDatabase(event: any) {
             db.isSelected = false;
         }
     });
-    await saveToFile(settings);
+    await saveToFile(settings, 'odoo-debugger-data.json');
     vscode.window.showInformationMessage(`Database ${database.id} selected successfully!`);
 }
 
 export async function deleteDb(event: any) {
     const db: DatabaseModel = event;
-    let settings = await readFromFile();
+    let settings = await readFromFile('odoo-debugger-data.json');
     if (!settings) {
         vscode.window.showErrorMessage('Error reading settings');
         return;
@@ -231,5 +229,5 @@ export async function deleteDb(event: any) {
     setupDatabase(db.id, undefined, true);
 
     project.dbs = project.dbs.filter((database: DatabaseModel) => database.id !== db.id);
-    await saveToFile(settings);
+    await saveToFile(settings, 'odoo-debugger-data.json');
 }

@@ -1,4 +1,4 @@
-import { ModuleModel, ModuleState } from "./models/module";
+import { ModuleModel } from "./models/module";
 import { ProjectModel } from "./models/project";
 import { DatabaseModel } from "./models/db";
 import * as vscode from "vscode";
@@ -19,7 +19,7 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
         return element;
     }
     async getChildren(element?: any): Promise<vscode.TreeItem[] | undefined> {
-        let settings = await readFromFile();
+        let settings = await readFromFile('odoo-debugger-data.json');
         if (!settings) {
             vscode.window.showErrorMessage('Error reading settings');
             return;
@@ -50,34 +50,55 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
             vscode.window.showErrorMessage('No modules found');
             return [];
         }
-        return modules.map((module: ModuleModel) => {
-            let moduleIcon: string;
-            switch (module.state) {
-                case 'install':
-                    moduleIcon = '🟢';
-                    break;
-                case 'upgrade':
-                    moduleIcon = '🟡';
-                    break;
-                default:
-                    moduleIcon = '⚪';
-                    break;
+        let allModules: {"path": string, "name": string}[] = [];
+        for (const repo of project.repos) {
+            allModules = allModules.concat(getFolderPathsAndNames(repo.path));
+        }
+        let treeItems: vscode.TreeItem[] = [];
+        for (const module of allModules) {
+            const existingModule = modules.find(mod => mod.name === module.name);
+            if (existingModule) {
+                let moduleIcon: string;
+                switch (existingModule.state) {
+                    case 'install':
+                        moduleIcon = '🟢';
+                        break;
+                    case 'upgrade':
+                        moduleIcon = '🟡';
+                        break;
+                    default:
+                        moduleIcon = '⚪';
+                        break;
+                }
+                treeItems.push({
+                    label: `${moduleIcon} ${existingModule.name}`,
+                    tooltip: `Module: ${existingModule.name}\nState: ${existingModule.state}`,
+                    command: {
+                        command: 'moduleSelector.select',
+                        title: 'Select Module',
+                        arguments: [existingModule]
+                    }
+                });
+            } else {
+                // If the module does not exist, treat it as a new module
+                treeItems.push({
+                    label: `⚪ ${module.name}`,
+                    tooltip: `Module: ${module.name}\nState: none`,
+                    command: {
+                        command: 'moduleSelector.select',
+                        title: 'Select Module',
+                        arguments: [{ name: module.name, path: module.path, state: 'none' }]
+                    }
+                });
             }
-            const treeItem = new vscode.TreeItem(`${moduleIcon} ${module.name}`);
-            treeItem.tooltip = `Module: ${module.name}\nState: ${module.state}`;
-            treeItem.command = {
-                command: 'moduleSelector.select',
-                title: 'Select Module',
-                arguments: [module]
-            };
-            return treeItem;
-        });
+        }
+        return treeItems;
     }
 }
 
 export async function selectModule(event: any) {
     const module = event;
-    let settings = await readFromFile();
+    let settings = await readFromFile('odoo-debugger-data.json');
     if (!settings) {
         vscode.window.showErrorMessage('Error reading settings');
         return;
@@ -103,50 +124,16 @@ export async function selectModule(event: any) {
         vscode.window.showErrorMessage('No database selected');
         return;
     }
-    const allModules = getFolderPathsAndNames(project.repoPath);
-    db.modules.forEach((mod: ModuleModel) => {
-        if (mod.name === module.name) {
-            switch (mod.state) {
-                case 'upgrade':
-                    mod.state = 'none';
-                    break;
-                case 'install':
-                    mod.state = 'upgrade';
-                    break;
-                default:
-                    mod.state = 'install';
-                    break;
-            }
-        }
-    });
-    settings['projects'] = projects;
-    await saveToFile(settings);
-}
-
-export async function createModule(context: vscode.ExtensionContext, repo:string) {
-    const allModules = getFolderPathsAndNames(repo);
-    const createADb = await vscode.window.showQuickPick(["Yes", "No"], {
-            placeHolder: 'Do you want to create a database?',
-    });
-    let selectedModules: string[] | undefined;
-    let db: DatabaseModel | undefined;
-    let modules: ModuleModel[] = [];
-
-    if (createADb === "Yes") {
-        selectedModules = await vscode.window.showQuickPick(allModules.map(entry => entry[1]), {
-            placeHolder: 'Select modules',
-            canPickMany: true,
-        }) || [];
-        const sqlDumpPath: string | undefined = await vscode.window.showInputBox({ title: "SQL Dump Path", placeHolder: "Path to the SQL dump file, leave empty if new db" });
-        for (const module of allModules) {
-            let isSelected: ModuleState = 'none';
-            if (module[1] in selectedModules){
-                isSelected = 'install';
-            }
-            modules.push(new ModuleModel(module[1], isSelected));
-        }
-        db = new DatabaseModel(`db-hello`, new Date(), modules, false, true, sqlDumpPath); // to be updated
+    const moduleExistsInDb = db.modules.find(mod => mod.name === module.name);
+    if (!moduleExistsInDb) {
+        db.modules.push(new ModuleModel(module.name, 'install'));
     }else{
-        selectedModules = [];
+        if (moduleExistsInDb.state === 'install') {
+            moduleExistsInDb.state = 'upgrade';
+        }else{
+            db.modules = db.modules.filter(mod => mod.name !== module.name);
+        }
     }
+    settings['projects'] = projects;
+    await saveToFile(settings, 'odoo-debugger-data.json');
 }

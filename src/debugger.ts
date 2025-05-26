@@ -1,7 +1,6 @@
 import * as vscode from "vscode";
 import { ProjectModel } from "./models/project";
 import { SettingsModel } from "./models/settings";
-import { ModuleState } from "./models/module";
 import { saveToFile, readFromFile} from './common';
 
 export async function setupDebugger(): Promise<void> {
@@ -13,9 +12,14 @@ export async function setupDebugger(): Promise<void> {
         vscode.window.showErrorMessage("No workspace open.");
         return;
     }
-    let settings = await readFromFile();
+    let settings = await readFromFile('odoo-debugger-data.json');
+    let launchJsonFile = await readFromFile('launch.json');
     if (!settings) {
         vscode.window.showErrorMessage('Error reading settings');
+        return;
+    }
+    if (!launchJsonFile) {
+        vscode.window.showErrorMessage('Error reading launch.json');
         return;
     }
     let projects = settings['projects'];
@@ -26,13 +30,47 @@ export async function setupDebugger(): Promise<void> {
         vscode.window.showErrorMessage('No project selected');
         return;
     }
-    let args = prepareAddonsInstallsUpgrades(project, workspacePath, settings);
+    let configurations: Object[] = launchJsonFile?.configurations;
+    let odooConfig = configurations.find((config: any) => config.name === workspaceSettings.debuggerName);
+    let newOdooConfig: {};
+    if (!odooConfig) {
+        newOdooConfig = {
+            "name": workspaceSettings.debuggerName,
+            "type": "debugpy",
+            "request": "launch",
+            "cwd": workspacePath,
+            "program": `${workspaceSettings.odooPath}/odoo-bin`,
+            "python": `${workspaceSettings.python}`,
+            "console": "integratedTerminal",
+            "args": [
+                ...prepareArgs(project, workspacePath, settings),
+            ]
+        };
+        configurations.unshift(newOdooConfig);
+    }else {
+        newOdooConfig = {
+            ...odooConfig,
+            "cwd": workspacePath,
+            "program": `${workspaceSettings.odooPath}/odoo-bin`,
+            "python": `${workspaceSettings.python}`,
+            "args": [
+                ...prepareArgs(project, workspacePath, settings),
+            ]
+        };
+        configurations[configurations.indexOf(odooConfig)] = newOdooConfig;
+    }
+    saveToFile(launchJsonFile, "launch.json");
 
 }
 
-function prepareAddonsInstallsUpgrades(project: ProjectModel, workspacePath: string, settings: SettingsModel ): any{
-    let addonsPath = `--addons-path=../enterprise,../odoo/odoo/addons,../odoo/addons,${project.repoPath}\n`;
-    let db = project.dbs.find((db: any) => {db.isSelected === true;});
+function prepareArgs(project: ProjectModel, workspacePath: string, settings: SettingsModel, isShell=false ): any{
+    let addonsPath = `--addons-path=` + [
+        '../enterprise',
+        '../odoo/odoo/addons',
+        '../odoo/addons',
+        ...project.repos.map(repo => repo.path)
+    ].join(',');
+    let db = project.dbs.find((db) => db.isSelected);
     if (!db) {
         vscode.window.showErrorMessage('No database selected');
         return;
@@ -43,30 +81,33 @@ function prepareAddonsInstallsUpgrades(project: ProjectModel, workspacePath: str
     ).map((module: any) => {
         return module.name;
     }) || [];
-    let to_install = `-i ${installs.join(',')}`;
-    let upgrades = db?.modules.filter((module: any) => {
+    let to_install = installs? `-i ${installs.join(',')}` : '';
+    let upgrades: any[] = db?.modules.filter((module: any) => {
         return module.state === "upgrade";
     }
     ).map((module: any) => {
         return module.name;
     }
     ) || [];
-    let to_upgrade = `-u ${upgrades.join(',')}`;
-    let dbName = `-d ${db.name}-${db.createdAt.toISOString().split('T')[0]}`;
-    let portNumber = `-p=${settings.portNumber}`;
-    Object.entries(settings).forEach(([key, value]) => {
-    return [
-        dbName,
+    let to_upgrade = upgrades.length > 0 ?`-u ${upgrades.join(',')}` : '';
+    let args: any[] = [
+        addonsPath,
+        `-d ${db.id}`,
         to_install,
         to_upgrade,
-        // `--limit-time-real ${settings.limitTimeReal}`,
-        // settings.limitTimeCpu,
-        // settings.devMode,
-        // settings.maxCronThreads,
-        // settings.isTestingEnabled ? `--test-enable` : ``,
-        // settings.isTestingEnabled && settings.testFile ? `--test-file ${settings.testFile}` : ``,
-        // settings.isTestingEnabled && settings.testModule ? `--test-module ${settings.testModule}` : ``,
+        `--limit-time-real ${settings.limitTimeReal}`,
+        `--limit-time-cpu ${settings.limitTimeCpu}`,
+        `--max-cron-threads ${settings.maxCronThreads}`
+    ];
+    if (isShell) { args.push(`shell`); args.push(`-p ${settings.shellPortNumber}`);}
+    else{args.push(`-p ${settings.portNumber}`);}
+    if (settings.isTestingEnabled) {
+        args.push(`--test-enable`);
+        if (settings.testFile) {args.push(`--test-file=${settings.testFile}`);}
+        if (settings.testTags) {args.push(`--test-tags=${settings.testTags}`);}
+    }
+    if(settings.extraParams){args.push(settings.extraParams)}
+    if(settings.devMode){args.push(settings.devMode)}
+    return args;
 
-    ]
-
-})}
+}

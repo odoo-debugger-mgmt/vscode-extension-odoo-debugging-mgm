@@ -19,7 +19,7 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<vscode.Tree
         return element;
     }
     async getChildren(element?: any): Promise<vscode.TreeItem[] | undefined> {
-        let workspaceSettings = await readFromFile();
+        let workspaceSettings = await readFromFile('odoo-debugger-data.json');
         if (!workspaceSettings) {
             vscode.window.showErrorMessage('Error reading settings');
             return;
@@ -28,7 +28,7 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<vscode.Tree
         if (!settings) {
             settings = new SettingsModel();
             workspaceSettings['settings'] = settings;
-            await saveToFile(workspaceSettings);
+            await saveToFile(workspaceSettings, 'odoo-debugger-data.json');
         }
         if (typeof settings === 'string') {
             vscode.window.showErrorMessage('Error reading settings');
@@ -52,7 +52,7 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<vscode.Tree
 
 export async function editSetting(event: any) {
     const key = event;
-    let workspaceSettings = await readFromFile();
+    let workspaceSettings = await readFromFile('odoo-debugger-data.json');
     if (!workspaceSettings) {
         vscode.window.showErrorMessage('Error reading settings');
         return;
@@ -67,7 +67,7 @@ export async function editSetting(event: any) {
     if (newValue !== undefined) {
         settings[key] = newValue;
         workspaceSettings['settings'] = settings;
-        await saveToFile(workspaceSettings);
+        await saveToFile(workspaceSettings, 'odoo-debugger-data.json');
         vscode.window.showInformationMessage(`Setting ${key} updated to ${newValue}`);
     }
 }
