@@ -3,6 +3,10 @@
   "displayName": "oodo tools",
   "description": "Tools to help with odoo developments.",
   "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mds-odoo/vscode-extension-odoo-debugger.git"
+  },
   "engines": {
     "vscode": "^1.100.0"
   },

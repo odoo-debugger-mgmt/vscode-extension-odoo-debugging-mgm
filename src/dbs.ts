@@ -73,13 +73,29 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
         ignoreFocusOut: true});
     let dumpFolder : string | undefined;
 
+    let existingDbName: string | undefined;
+    let isExistingDb: string | undefined;
     if (createFromBackup === "no") {
-        selectedModules = await vscode.window.showQuickPick(allModules.map(entry => entry.name), {
+        isExistingDb = await vscode.window.showQuickPick(["yes","no"], {
+            placeHolder: 'Is it an existing DB?',
+            ignoreFocusOut: true
+        });
+        if( isExistingDb === "yes") {
+            existingDbName = await vscode.window.showInputBox({
+                placeHolder: 'Enter the name of the existing database',
+                ignoreFocusOut: true
+            });
+            if (!existingDbName) {
+                vscode.window.showErrorMessage('Database name is required');
+                return undefined;
+            }
+        }else{
+            selectedModules = await vscode.window.showQuickPick(allModules.map(entry => entry.name), {
                 placeHolder: 'Select modules',
                 canPickMany: true,
                 ignoreFocusOut: true
             }) || [];
-
+        }
     }else{
         dumpFolder = await getDbDumpFolder(dumpFolderPath);
     }
@@ -88,7 +104,8 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
     for (const module of selectedModules) {
         modules.push(new ModuleModel(module, 'install'));
     }
-    db = new DatabaseModel(`db-${projectName}`, new Date(), modules, false, true, sqlDumpPath); // to be updated
+    const dbName = existingDbName ? existingDbName : `db-${projectName}`;
+    db = new DatabaseModel(dbName, new Date(), modules, false, true, sqlDumpPath, isExistingDb === 'yes' ? true : false); // to be updated
     if (sqlDumpPath) {
         db.isItABackup = true;
         setupDatabase(db.id, sqlDumpPath);
@@ -98,10 +115,10 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
 
 export async function restoreDb(db: any): Promise<void> {
     const database: DatabaseModel = db;
-    if (!database.sqlFilePath) {
+    if (!db.command.arguments[0].sqlFilePath) {
         throw new Error('SQL dump path is not defined');
     }
-    setupDatabase(database.id, database.sqlFilePath);
+    setupDatabase(database.id, db.command.arguments[0].sqlFilePath);
 }
 
 export async function setupDatabase(dbName: string, dumpPath: string | undefined, remove: boolean=false): Promise<void> {
@@ -132,6 +149,11 @@ export async function setupDatabase(dbName: string, dumpPath: string | undefined
             if (dumpPath) {
                 console.log(`📥 Importing SQL dump into ${dbName}`);
                 execSync(`psql ${dbName} < "${dumpPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
+                console.log(`🔐 Resetting admin credentials for ${dbName}`);
+                execSync(`psql ${dbName} -c "UPDATE res_users SET password='admin'"`, { stdio: 'inherit', shell: '/bin/sh' });
+                execSync(`psql ${dbName} -c "UPDATE res_users SET login='admin' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
+                console.log(` Extending db expiry`);
+                execSync(`psql ${dbName} -c "UPDATE ir_config_parameter SET value = '2042-01-01 00:00:00' WHERE key = 'database.expiration_date'"`, { stdio: 'inherit', shell: '/bin/sh' });
             }
 
             console.log(`✅ Database "${dbName}" is ready.`);

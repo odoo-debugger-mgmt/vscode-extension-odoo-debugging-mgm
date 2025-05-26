@@ -64,6 +64,7 @@ export async function createProject(name: string, repos: RepoModel[], db?: Datab
         settings['projects'] = projects;
         saveToFile(settings, 'odoo-debugger-data.json');
     }
+    selectProject(project);
     vscode.window.showInformationMessage(`Project ${name} created successfully!`);
 }
 

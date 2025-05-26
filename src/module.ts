@@ -92,6 +92,17 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
                 });
             }
         }
+        // Sort: 🟢 (install) and 🟡 (upgrade) first, then the rest
+        treeItems.sort((a, b) => {
+            const getPriority = (label: string | vscode.TreeItemLabel | undefined) => {
+            if (typeof label === 'string') {
+                if (label.startsWith('🟢')) {return 0;}
+                if (label.startsWith('🟡')) {return 1;}
+            }
+            return 2;
+            };
+            return getPriority(a.label) - getPriority(b.label);
+        });
         return treeItems;
     }
 }

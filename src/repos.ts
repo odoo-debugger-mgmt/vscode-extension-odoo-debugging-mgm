@@ -49,7 +49,7 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
         }
         // const allRepos
         const devsRepos = getFolderPathsAndNames(path.join(workspaceFolder.uri.fsPath, settings.settings.customAddonsPath) );
-            if (devsRepos.length === 0) {
+        if (devsRepos.length === 0) {
             vscode.window.showInformationMessage('No folders found in custom-addons.');
             throw new Error('No folders found in custom-addons.');
         }
@@ -71,6 +71,12 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
             };
             treeItems.push(treeItem);
         }
+        // Sort so that selected repos show up first
+        treeItems.sort((a, b) => {
+            const aSelected = a.label?.toString().startsWith("☑️") ? 1 : 0;
+            const bSelected = b.label?.toString().startsWith("☑️") ? 1 : 0;
+            return bSelected - aSelected;
+        });
         return treeItems;
     }
 }

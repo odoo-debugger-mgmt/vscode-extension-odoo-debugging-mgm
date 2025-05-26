@@ -1,71 +1,110 @@
-# ps-odoo-tools README
+# 🐘 Odoo Debugger for VSCode
 
-This is the README for your extension "ps-odoo-tools". After writing up a brief description, we recommend including the following sections.
-
-## Features
-
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
-
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
-
-## Requirements
-
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
-
-## Extension Settings
-
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
-
-## Known Issues
-
-Calling out known issues can help limit users opening duplicate issues against your extension.
-
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
+A powerful VS Code extension designed to help you **manage and debug Odoo projects** efficiently. This tool gives you an interactive and intuitive way to organize Odoo workspaces, projects, custom modules, databases, and debug configurations—all within VSCode.
 
 ---
 
-## Following extension guidelines
+## ✨ Features
 
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
+### 🚀 Project Management
+- **Create and Manage Projects** with custom addons and associated databases.
+- Auto-detect and list **repositories** under your custom addons folder.
+- One-click **select, delete, and switch projects**.
+### 🎥 Demo
 
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
+![Odoo Debugger Demo](./resources/assets/projects.gif)
 
-## Working with Markdown
+### 🗃️ Database Management
+- Create, restore, and delete **Odoo PostgreSQL databases** tied to a project.
+- Automatically attach database dumps and associate with repositories.
+- Switch between project databases directly from the sidebar.
+![Odoo Debugger Demo](./resources/assets/dbs.gif)
 
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
 
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
+### 🧩 Module Selector
+- Easily select and highlight custom Odoo modules.
+- Quick integration with debugger setup.
+![Odoo Debugger Demo](./resources/assets/modules.gif)
 
-## For more information
 
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
+### 📂 Repository Explorer
+- List repositories per project.
+- Select the primary repo to debug from.
 
-**Enjoy!**
+![Odoo Debugger Demo](./resources/assets/repos.gif)
+
+
+### ⚙️ Workspace Settings
+- Configure:
+  - Odoo binary path
+  - Python interpreter path
+  - Addons path
+  - Dumps folder
+- Quickly edit settings from the UI.
+![Odoo Debugger Demo](./resources/assets/settings.gif)
+
+### 🐞 Integrated Debugging
+- One-click **Start Odoo Shell** inside the VS Code terminal.
+- One-click **Start Odoo Server** using current project settings.
+- Auto-refresh debugger when selecting a project, repo, database, or module.
+![Odoo Debugger Demo](./resources/assets/shellandserver.gif)
+
+---
+
+## 🖼️ Extension Views
+
+This extension adds the following views to the **Activity Bar**:
+
+- 🔹 `Project Selector`  
+- 🔹 `Repository Selector`  
+- 🔹 `Database Selector`  
+- 🔹 `Module Selector`  
+- 🔹 `Workspace Settings`
+
+Each view comes with context menu actions and buttons for creation, selection, and management.
+
+---
+
+## 🛠️ Requirements
+
+- Node.js
+- Python (typically ≥ 3.8)
+- PostgreSQL with access rights
+- Odoo compatible projects
+- `odoo-bin` available in your workspace
+- `pg_dump` and `createdb` available in PATH for database management
+
+---
+
+## 🧪 Commands
+
+The extension registers the following VSCode commands:
+
+| Command | Description |
+|--------|-------------|
+| `projectSelector.create` | Create a new project with optional database |
+| `projectSelector.selectProject` | Switch active project |
+| `projectSelector.delete` | Delete a project |
+| `repoSelector.selectRepo` | Select repository for debugging |
+| `dbSelector.create` | Create a new database |
+| `dbSelector.selectDb` | Switch database |
+| `dbSelector.delete` | Delete a database |
+| `dbSelector.restore` | Restore database from dump |
+| `moduleSelector.select` | Select a custom module |
+| `workspaceSettings.editSetting` | Edit workspace settings |
+| `workspaceSettings.startShell` | Launch Odoo shell in terminal |
+| `workspaceSettings.startServer` | Start Odoo server in terminal |
+
+---
+
+## 📁 Configuration
+
+All settings and metadata are stored in:
+
+New Features to be added
+- Get dumps from sh
+- Scaffolder
+- have short cuts to select modules and repositories
+- odoo ubuntu installer
+- extend the db
+- when changing conf restart the server
