@@ -16,7 +16,7 @@ import { RepoTreeProvider, selectRepo } from './repos';
 import { ModuleTreeProvider, selectModule } from './module';
 
 import { SettingsTreeProvider, editSetting } from './settings';
-import { setupDebugger } from './debugger';
+import { setupDebugger, startDebugShell, startDebugServer } from './debugger';
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -36,6 +36,7 @@ export function activate(context: vscode.ExtensionContext) {
 	vscode.window.registerTreeDataProvider('workspaceSettings', settingsTreeProvider);
 	// Refresh commands
 	vscode.commands.registerCommand('projectSelector.refresh', () =>{
+		setupDebugger();
 		projectTreeProvider.refresh();
 		dbsTreeProvider.refresh();
 		moduleTreeProvider.refresh();
@@ -72,13 +73,16 @@ export function activate(context: vscode.ExtensionContext) {
 			db = undefined;
 		}
 		await createProject(name, repos, db);
+		setupDebugger();
 		projectTreeProvider.refresh();
 		dbsTreeProvider.refresh();
 		moduleTreeProvider.refresh();
 	});
 	vscode.commands.registerCommand('projectSelector.selectProject', async (event) => {
 		await selectProject(event);
+		setupDebugger();
 		projectTreeProvider.refresh();
+		repoTreeProvider.refresh();
 		dbsTreeProvider.refresh();
 		moduleTreeProvider.refresh();
 	});
@@ -113,18 +117,22 @@ export function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 		project.dbs.push(db);
+		setupDebugger();
 		await saveToFile(debuggerInfo, 'odoo-debugger-data.json');
 		await selectDatabase(db);
+		setupDebugger();
 		dbsTreeProvider.refresh();
 		moduleTreeProvider.refresh();
 	});
 	vscode.commands.registerCommand('dbSelector.selectDb', async (event) => {
 		await selectDatabase(event);
+		setupDebugger();
 		dbsTreeProvider.refresh();
 		moduleTreeProvider.refresh();
 	});
 	vscode.commands.registerCommand('dbSelector.delete', async (event) => {
 		await deleteDb(event);
+		setupDebugger();
 		dbsTreeProvider.refresh();
 		moduleTreeProvider.refresh();
 		vscode.window.showInformationMessage(`Database ${event.name} deleted successfully!`);
@@ -152,7 +160,14 @@ export function activate(context: vscode.ExtensionContext) {
 	// SETTINGS
 	vscode.commands.registerCommand('workspaceSettings.editSetting', async (event) => {
 		await editSetting(event);
+		setupDebugger();
 		settingsTreeProvider.refresh();
+	});
+	vscode.commands.registerCommand('workspaceSettings.startServer', async () => {
+		startDebugServer();
+	});
+	vscode.commands.registerCommand('workspaceSettings.startShell', async () => {
+		startDebugShell();
 	});
 }
 

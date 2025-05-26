@@ -16,6 +16,7 @@ export class SettingsModel {
     enterprisePath: string = "./enterprise";
     customAddonsPath: string = "./custom-addons";
     pythonPath: string = "./venv/bin/python";
+    subModulesPaths: string = "";
     constructor(
         debuggerName: string = "odoo:version",
         portNumber: number = 8018,
@@ -26,13 +27,14 @@ export class SettingsModel {
         isTestingEnabled: boolean = false,
         testFile: string = "",
         testTags: string = "",
-        extraParams: string = "--log-handler odoo.addons.base.models.ir_attachment:WARNING",
-        devMode: string = "--dev all",
+        extraParams: string = "--log-handler,odoo.addons.base.models.ir_attachment:WARNING",
+        devMode: string = "--dev=all",
         dumpsFolder: string = "/dumps",
         odooPath: string = "./odoo",
         enterprisePath: string = "./enterprise",
         customAddonsPath: string = "./custom-addons",
-        pythonPath: string = "./venv/bin/python"
+        pythonPath: string = "./venv/bin/python",
+        subModulesPaths: string = ""
     ) {
         this.debuggerName = debuggerName;
         this.portNumber = portNumber;
@@ -50,5 +52,6 @@ export class SettingsModel {
         this.enterprisePath = enterprisePath;
         this.customAddonsPath = customAddonsPath;
         this.pythonPath = pythonPath;
+        this.subModulesPaths = subModulesPaths;
     }
 }
