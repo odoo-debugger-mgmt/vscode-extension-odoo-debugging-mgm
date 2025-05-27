@@ -10,7 +10,7 @@ import { RepoModel } from './models/repo';
 
 import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb } from './dbs';
 
-import { ProjectTreeProvider, createProject, selectProject, getRepo, getProjectName, deleteProject} from './project';
+import { ProjectTreeProvider, createProject, selectProject, getRepos, getProjectName, deleteProject} from './project';
 import { RepoTreeProvider, selectRepo } from './repos';
 
 import { ModuleTreeProvider, selectModule } from './module';
@@ -47,7 +47,7 @@ export function activate(context: vscode.ExtensionContext) {
     };
 
 	// Refresh commands
-	vscode.commands.registerCommand('projectSelector.refresh', refreshAll),
+	vscode.commands.registerCommand('projectSelector.refresh', refreshAll);
 
 	// Projects
 	vscode.commands.registerCommand('projectSelector.create', async () => {
@@ -56,13 +56,17 @@ export function activate(context: vscode.ExtensionContext) {
 			const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
 			if (!workspaceFolder) {throw new Error("No workspace open.");}
 			const name = await getProjectName(workspaceFolder);
-			const repos = await getRepo(path.join(workspaceFolder.uri.fsPath, settings.customAddonsPath));
+			const repos = await getRepos([path.join(workspaceFolder.uri.fsPath, settings.customAddonsPath)]);
 			const createADb = await vscode.window.showQuickPick(["Yes", "No"], { placeHolder: 'Create a database?' });
 			const db = createADb === "Yes" ? await createDb(name, repos, settings.dumpsFolder) : undefined;
 			await createProject(name, repos, db);
 			refreshAll();
 		} catch (err) {
-			vscode.window.showErrorMessage(err.message);
+			if (err instanceof Error) {
+				vscode.window.showErrorMessage(err.message);
+			} else {
+				vscode.window.showErrorMessage(String(err));
+			}
 		}
 	});
 	vscode.commands.registerCommand('projectSelector.selectProject', async (event) => {
@@ -86,7 +90,11 @@ export function activate(context: vscode.ExtensionContext) {
 			await selectDatabase(db);
 			refreshAll();
 		} catch (err) {
-			vscode.window.showErrorMessage(err.message);
+			if (err instanceof Error) {
+				vscode.window.showErrorMessage(err.message);
+			} else {
+				vscode.window.showErrorMessage(String(err));
+			}
 		}
 	});
 	vscode.commands.registerCommand('dbSelector.selectDb', async (event) => {

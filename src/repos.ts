@@ -3,7 +3,6 @@ import { RepoModel } from "./models/repo";
 import * as vscode from "vscode";
 import { saveToFile, readFromFile, getFolderPathsAndNames } from './common';
 import * as path from 'path';
-import { getRepo } from './project';
 
 
 export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
@@ -48,10 +47,14 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
             return;
         }
         // const allRepos
-        const devsRepos = getFolderPathsAndNames(path.join(workspaceFolder.uri.fsPath, settings.settings.customAddonsPath) );
+        const customPaths = settings.settings.customAddonsPath.split(',').map((p: string) => p.trim());
+        let devsRepos = [];
+        for (const repoPath of customPaths) {
+            devsRepos.push(...getFolderPathsAndNames(path.join(workspaceFolder.uri.fsPath, repoPath)));
+        }
         if (devsRepos.length === 0) {
-            vscode.window.showInformationMessage('No folders found in custom-addons.');
-            throw new Error('No folders found in custom-addons.');
+            vscode.window.showInformationMessage('No folders found in specified custom directories.');
+            throw new Error('No folders found in specified custom directories.');
         }
         if (!repos) {
             vscode.window.showErrorMessage('No modules found');
