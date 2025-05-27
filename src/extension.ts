@@ -10,7 +10,7 @@ import { RepoModel } from './models/repo';
 
 import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb } from './dbs';
 
-import { ProjectTreeProvider, createProject, selectProject, getRepo, getProjectName, deleteProject} from './project';
+import { ProjectTreeProvider, createProject, selectProject, getRepos, getProjectName, deleteProject} from './project';
 import { RepoTreeProvider, selectRepo } from './repos';
 
 import { ModuleTreeProvider, selectModule } from './module';
@@ -61,22 +61,29 @@ export function activate(context: vscode.ExtensionContext) {
 			vscode.window.showErrorMessage("No workspace open.");
 			return;
 		}
-		const name = await getProjectName(workspaceFolder);
-		const repos: RepoModel[] = await getRepo(path.join(workspaceFolder.uri.fsPath, settings.customAddonsPath));
-		const createADb = await vscode.window.showQuickPick(["Yes", "No"], {
-				placeHolder: 'Do you want to create a database?',
-		});
-		let db: DatabaseModel | undefined;
-		if (createADb === "Yes"){
-			db = await createDb(name, repos, settings.dumpsFolder);
-		}else{
-			db = undefined;
+		try {
+			const name = await getProjectName(workspaceFolder);
+			const customPaths = settings.customAddonsPath.split(',').map((p: string) => p.trim());
+			let fullPaths = [];
+			for (const repoPath of customPaths) fullPaths.push(path.join(workspaceFolder.uri.fsPath, repoPath));
+			const repos = await getRepos(fullPaths);
+			const createADb = await vscode.window.showQuickPick(["Yes", "No"], {
+					placeHolder: 'Do you want to create a database?',
+			});
+			let db: DatabaseModel | undefined;
+			if (createADb === "Yes"){
+				db = await createDb(name, repos, settings.dumpsFolder);
+			}else{
+				db = undefined;
+			}
+			await createProject(name, repos, db);
+			setupDebugger();
+			projectTreeProvider.refresh();
+			dbsTreeProvider.refresh();
+			moduleTreeProvider.refresh();
+		} catch (err: any) {
+			vscode.window.showErrorMessage(err.message);
 		}
-		await createProject(name, repos, db);
-		setupDebugger();
-		projectTreeProvider.refresh();
-		dbsTreeProvider.refresh();
-		moduleTreeProvider.refresh();
 	});
 	vscode.commands.registerCommand('projectSelector.selectProject', async (event) => {
 		await selectProject(event);

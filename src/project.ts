@@ -92,26 +92,32 @@ export async function selectProject(event: any) {
     vscode.window.showInformationMessage(`Project ${project.name} selected successfully!`);
 }
 
-export async function getRepo(targetPath:string): Promise<RepoModel[] > {
-    const devsRepos = getFolderPathsAndNames(targetPath);
-        if (devsRepos.length === 0) {
-        vscode.window.showInformationMessage('No folders found in custom-addons.');
-        throw new Error('No folders found in custom-addons.');
+export async function getRepos(targetPaths: string[]): Promise<RepoModel[]> {
+    let devsRepos: { path: string; name: string }[] = [];
+
+    for (const targetPath of targetPaths) {
+        const folders = getFolderPathsAndNames(targetPath);
+        devsRepos.push(...folders);
     }
-    // Show QuickPick with both name and path as label and description
+
+    if (devsRepos.length === 0) {
+        vscode.window.showInformationMessage('No folders found in specified custom directories.');
+        throw new Error('No folders found in specified custom directories.');
+    }
+
     const quickPickItems = devsRepos.map(entry => ({
         label: entry.name,
         description: entry.path
     }));
+
     const selectedItems = await vscode.window.showQuickPick(quickPickItems, {
-        placeHolder: 'Select a folder from custom-addons',
+        placeHolder: 'Select a folder from specified custom directories.',
         canPickMany: true
     });
-    if (selectedItems) {
-        return selectedItems.map(item => {
-            return new RepoModel(item.label, item.description, true);
-        });
-    }else{
+
+    if (selectedItems?.length) {
+        return selectedItems.map(item => new RepoModel(item.label, item.description, true));
+    } else {
         vscode.window.showErrorMessage("No Folder selected");
         throw new Error("No Folder selected");
     }
@@ -120,7 +126,6 @@ export async function getRepo(targetPath:string): Promise<RepoModel[] > {
 export async function getProjectName(workspaceFolder: vscode.WorkspaceFolder): Promise<string> {
     const name = await vscode.window.showInputBox({ prompt: "Please make sure you have a folder called custom-addons in the current directory", title: "Project Name" });
     if (!name) {
-        vscode.window.showErrorMessage('Project name is required.');
         throw new Error('Project name is required.');
     }
     return name;
