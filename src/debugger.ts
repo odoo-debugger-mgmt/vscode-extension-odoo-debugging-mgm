@@ -161,7 +161,12 @@ export async function startDebugServer(): Promise<void> {
         return;
     }
     let workspaceSettings = settings['settings'];
+    const existingSession = vscode.debug.activeDebugSession;
+    if (existingSession) {
+        await vscode.debug.stopDebugging(existingSession);
+    }
     vscode.debug.startDebugging(
         workspaceFolders[0],
-        workspaceSettings.debuggerName);
+        workspaceSettings.debuggerName
+    );
 }
