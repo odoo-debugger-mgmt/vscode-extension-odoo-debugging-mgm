@@ -102,7 +102,6 @@ export async function getRepos(targetPaths: string[]): Promise<RepoModel[]> {
     }
 
     if (devsRepos.length === 0) {
-        vscode.window.showInformationMessage('No folders found in specified custom directories.');
         throw new Error('No folders found in specified custom directories.');
     }
 
