@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { SettingsModel } from './models/settings';
 import { modify, applyEdits, parse } from 'jsonc-parser';
+import { execSync } from 'child_process';
 
 export function checkWorkSpaceOrFolder(): boolean | vscode.TreeItem[] {
     if (!vscode.workspace.workspaceFolders) {
@@ -102,5 +103,22 @@ export function getFolderPathsAndNames(targetPath: string): { "path": string, "n
                 return false;
             }
         })
-        .map(entry => ({ path: entry.fullPath, name: entry.file }) );
+        .map(entry => {
+            let branch: string | null = null;
+            const gitPath = path.join(entry.fullPath, '.git');
+            if (fs.existsSync(gitPath)) {
+                try {
+                    branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: entry.fullPath })
+                        .toString()
+                        .trim();
+                } catch (err) {
+                    branch = null;
+                }
+            }
+            return {
+                path: entry.fullPath,
+                name: entry.file,
+                branch: branch
+            };
+        });
 }

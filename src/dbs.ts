@@ -46,7 +46,7 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
         return dbs.map(db => {
             const editedDate = new Date(db.createdAt);
             const formattedDate = `${editedDate.toISOString().split('T')[0]}-${editedDate.toTimeString().split(' ')[0]}`;
-            const treeItem = new vscode.TreeItem(`${db.isSelected ? '👉': ''} ${db.name}-${formattedDate}${db.isItABackup ? '-☁️': ''}` );
+            const treeItem = new vscode.TreeItem(`${db.isSelected ? '👉': ''} ${db.name} - ${formattedDate}${db.isItABackup ? '☁️' : ''} ${db.isExisting ? '📂' : ''}` );
             treeItem.id = `${db.name}-${formattedDate}`;
             treeItem.command = {
                 command: 'dbSelector.selectDb',
