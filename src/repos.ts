@@ -63,6 +63,7 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
             let repoIcon: string = existingRepo ? "☑️" : "⬜️";
             const treeItem = new vscode.TreeItem(`${repoIcon} ${repo.name}`);
             treeItem.tooltip = `Repo: ${repo.name}\nPath: ${repo.path}`;
+            treeItem.description = `${repo.branch}`;
             treeItem.id = repo.path;
             treeItem.command = {
                 command: 'repoSelector.selectRepo',
