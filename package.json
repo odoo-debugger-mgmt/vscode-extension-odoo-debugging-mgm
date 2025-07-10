@@ -1,7 +1,7 @@
 {
-  "name": "ps-odoo-tools",
-  "displayName": "oodo tools",
-  "description": "Tools to help with odoo developments.",
+  "name": "odoo-debugging-mgm-tool",
+  "displayName": "Odoo Debugging Management Tool",
+  "description": "A Visual Studio Code extension for managing Odoo debugging.",
   "version": "0.0.1",
   "repository": {
     "type": "git",
@@ -19,14 +19,14 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "ps-odoo-tools-OdooTools",
+          "id": "odoo-debugging-mgm-tool-OdooTools",
           "icon": "resources/odoo.svg",
           "title": "Odoo Tools"
         }
       ]
     },
     "views": {
-      "ps-odoo-tools-OdooTools": [
+      "odoo-debugging-mgm-tool-OdooTools": [
         {
           "id": "projectSelector",
           "name": "Projects"
@@ -56,6 +56,11 @@
         "icon": "resources/icons/create.svg"
       },
       {
+        "command": "projectSelector.setup",
+        "title": "Setup Odoo",
+        "icon": "resources/icons/setup.svg"
+      },
+      {
         "command": "projectSelector.delete",
         "title": "Delete Project",
         "icon": "resources/icons/delete.svg"
@@ -81,6 +86,11 @@
         "command": "dbSelector.create",
         "title": "Create Database",
         "icon": "resources/icons/create_database.svg"
+      },
+      {
+        "command": "dbSelector.get",
+        "title": "Get Database",
+        "icon": "resources/icons/download.svg"
       },
       {
         "command": "dbSelector.restore",
@@ -149,7 +159,17 @@
           "group": "navigation"
         },
         {
+          "command": "projectSelector.setup",
+          "when": "view == projectSelector",
+          "group": "navigation"
+        },
+        {
           "command": "dbSelector.create",
+          "when": "view == dbSelector",
+          "group": "navigation"
+        },
+        {
+          "command": "dbSelector.get",
           "when": "view == dbSelector",
           "group": "navigation"
         },
@@ -216,6 +236,8 @@
     "webpack-cli": "^6.0.1"
   },
   "dependencies": {
+    "axios": "^1.10.0",
+    "cheerio": "^1.1.0",
     "jsonc-parser": "^3.3.1"
   }
 }

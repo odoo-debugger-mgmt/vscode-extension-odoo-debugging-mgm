@@ -1,0 +1,23 @@
+{
+  "settings": {
+    "debuggerName": "odoo:version",
+    "debuggerVersion": "1.0.0",
+    "portNumber": 8018,
+    "shellPortNumber": 5018,
+    "limitTimeReal": 0,
+    "limitTimeCpu": 0,
+    "maxCronThreads": 0,
+    "isTestingEnabled": false,
+    "testFile": "",
+    "testTags": "",
+    "extraParams": "--log-handler,odoo.addons.base.models.ir_attachment:WARNING",
+    "devMode": "--dev=all",
+    "dumpsFolder": "/dumps",
+    "odooPath": "./odoo",
+    "enterprisePath": "./enterprise",
+    "customAddonsPath": "./custom-addons",
+    "pythonPath": "./venv/bin/python",
+    "subModulesPaths": ""
+  },
+  "projects": []
+}

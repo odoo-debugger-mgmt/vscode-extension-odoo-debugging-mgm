@@ -85,7 +85,7 @@ export function camelCaseToTitleCase(str: string): string {
     return str.replace(/([A-Z])/g, ' $1').replace(/^./, (str) => str.toUpperCase());
 }
 
-export function getFolderPathsAndNames(targetPath: string): { "path": string, "name": string }[] {
+export function getFolderPathsAndNames(targetPath: string): { "path": string, "name": string}[] {
     if (!fs.existsSync(targetPath)) {
         vscode.window.showErrorMessage(`Path does not exist: ${targetPath}`);
         return [];
@@ -104,21 +104,9 @@ export function getFolderPathsAndNames(targetPath: string): { "path": string, "n
             }
         })
         .map(entry => {
-            let branch: string | null = null;
-            const gitPath = path.join(entry.fullPath, '.git');
-            if (fs.existsSync(gitPath)) {
-                try {
-                    branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: entry.fullPath })
-                        .toString()
-                        .trim();
-                } catch (err) {
-                    branch = null;
-                }
-            }
             return {
                 path: entry.fullPath,
                 name: entry.file,
-                branch: branch
             };
         });
 }

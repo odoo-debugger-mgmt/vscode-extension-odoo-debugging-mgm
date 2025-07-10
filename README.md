@@ -108,3 +108,7 @@ New Features to be added
 - odoo ubuntu installer
 - extend the db
 - when changing conf restart the server
+- odoo tips and tricks readme
+
+Known Issues
+- Duplicate project names cause issues

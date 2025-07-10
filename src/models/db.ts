@@ -9,6 +9,8 @@ export class DatabaseModel {
     sqlFilePath: string = '';
     id: string = '';
     isExisting: boolean = false;
+    branchName: string = '';
+    odooVersion: string = '';
     constructor(
         name: string,
         createdAt: Date,
@@ -16,7 +18,9 @@ export class DatabaseModel {
         isItABackup: boolean = false,
         isSelected: boolean = false,
         sqlFilePath: string = '',
-        isExisting: boolean = false
+        isExisting: boolean = false,
+        branchName: string = '',
+        odooVersion: string = ''
     ) {
         this.name = name;
         this.createdAt = createdAt;
@@ -25,6 +29,8 @@ export class DatabaseModel {
         this.isSelected = isSelected;
         this.sqlFilePath = sqlFilePath;
         this.isExisting = isExisting;
+        this.branchName = branchName;
+        this.odooVersion = odooVersion;
         if(isExisting) {
             this.id = name;
         } else {

@@ -65,7 +65,6 @@ export async function createProject(name: string, repos: RepoModel[], db?: Datab
         saveToFile(settings, 'odoo-debugger-data.json');
     }
     selectProject(project);
-    vscode.window.showInformationMessage(`Project ${name} created successfully!`);
 }
 
 export async function selectProject(event: any) {
@@ -90,7 +89,6 @@ export async function selectProject(event: any) {
     project.isSelected = true;
     settings['projects'] = projects;
     await saveToFile(settings, 'odoo-debugger-data.json');
-    vscode.window.showInformationMessage(`Project ${project.name} selected successfully!`);
 }
 
 export async function getRepo(targetPath:string): Promise<RepoModel[] > {
@@ -143,7 +141,6 @@ export async function deleteProject(event: any) {
     if (index !== -1) {
         projects.splice(index, 1);
         await saveToFile(settings, 'odoo-debugger-data.json');
-        vscode.window.showInformationMessage(`Project ${project.name} deleted successfully!`);
     } else {
         vscode.window.showErrorMessage('Project not found.');
     }
