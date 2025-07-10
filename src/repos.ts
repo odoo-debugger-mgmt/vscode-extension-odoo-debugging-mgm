@@ -4,6 +4,9 @@ import * as vscode from "vscode";
 import { saveToFile, readFromFile, getFolderPathsAndNames } from './common';
 import * as path from 'path';
 import { getRepo } from './project';
+import * as fs from 'fs';
+import { execSync } from 'child_process';
+
 
 
 export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
@@ -63,8 +66,23 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
             let repoIcon: string = existingRepo ? "☑️" : "⬜️";
             const treeItem = new vscode.TreeItem(`${repoIcon} ${repo.name}`);
             treeItem.tooltip = `Repo: ${repo.name}\nPath: ${repo.path}`;
-            treeItem.description = `${repo.branch}`;
             treeItem.id = repo.path;
+            if (existingRepo) {
+                let branch: string | null = null;
+                const gitPath = path.join(repo.path, '.git');
+                if (fs.existsSync(gitPath)) {
+                    try {
+                        branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: repo.path })
+                            .toString()
+                            .trim();
+                    } catch (err) {
+                        branch = null;
+                    }
+                }
+                treeItem.description = `${branch}`;
+            }else{
+                treeItem.description = ``;
+            }
             treeItem.command = {
                 command: 'repoSelector.selectRepo',
                 title: 'Select Module',

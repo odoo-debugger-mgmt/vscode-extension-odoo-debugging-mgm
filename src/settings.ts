@@ -68,6 +68,5 @@ export async function editSetting(event: any) {
         settings[key] = newValue;
         workspaceSettings['settings'] = settings;
         await saveToFile(workspaceSettings, 'odoo-debugger-data.json');
-        vscode.window.showInformationMessage(`Setting ${key} updated to ${newValue}`);
     }
 }

@@ -3,12 +3,9 @@ import * as path from 'path';
 
 import { checkWorkSpaceOrFolder, readFromFile, saveToFile } from './common';
 
-import { SettingsModel } from './models/settings';
 import { ProjectModel } from './models/project';
-import { DatabaseModel } from './models/db';
-import { RepoModel } from './models/repo';
 
-import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb } from './dbs';
+import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb, getDB } from './dbs';
 
 import { ProjectTreeProvider, createProject, selectProject, getRepo, getProjectName, deleteProject} from './project';
 import { RepoTreeProvider, selectRepo } from './repos';
@@ -17,6 +14,7 @@ import { ModuleTreeProvider, selectModule } from './module';
 
 import { SettingsTreeProvider, editSetting } from './settings';
 import { setupDebugger, startDebugShell, startDebugServer } from './debugger';
+import { setupOdooBranch } from './odooInstaller';
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -61,7 +59,7 @@ export function activate(context: vscode.ExtensionContext) {
 			const db = createADb === "Yes" ? await createDb(name, repos, settings.dumpsFolder) : undefined;
 			await createProject(name, repos, db);
 			refreshAll();
-		} catch (err) {
+		} catch (err: any) {
 			vscode.window.showErrorMessage(err.message);
 		}
 	});
@@ -72,7 +70,10 @@ export function activate(context: vscode.ExtensionContext) {
 	vscode.commands.registerCommand('projectSelector.delete', async (event) => {
 		await deleteProject(event);
 		refreshAll();
-		vscode.window.showInformationMessage(`Project ${event.name} deleted successfully!`);
+	});
+	vscode.commands.registerCommand('projectSelector.setup', async (event) => {
+		await setupOdooBranch();
+		refreshAll();
 	});
 	// DBS
 	vscode.commands.registerCommand('dbSelector.create', async () => {
@@ -85,7 +86,7 @@ export function activate(context: vscode.ExtensionContext) {
 			await saveToFile({ settings, projects }, 'odoo-debugger-data.json');
 			await selectDatabase(db);
 			refreshAll();
-		} catch (err) {
+		} catch (err: any) {
 			vscode.window.showErrorMessage(err.message);
 		}
 	});
@@ -96,12 +97,16 @@ export function activate(context: vscode.ExtensionContext) {
 	vscode.commands.registerCommand('dbSelector.delete', async (event) => {
 		await deleteDb(event);
 		refreshAll();
-		vscode.window.showInformationMessage(`Database ${event.name} deleted successfully!`);
 	});
 	vscode.commands.registerCommand('dbSelector.restore', async (event) => {
 		await restoreDb(event);
 		refreshAll();
 		vscode.window.showInformationMessage(`Database ${event.id} restored successfully!`);
+	});
+	vscode.commands.registerCommand('dbSelector.get', async () => {
+		const { settings } = await loadDebuggerInfo();
+		await getDB(settings.sessionId);
+		refreshAll();
 	});
 	// Repos
 	vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {

@@ -17,6 +17,9 @@ export class SettingsModel {
     customAddonsPath: string = "./custom-addons";
     pythonPath: string = "./venv/bin/python";
     subModulesPaths: string = "";
+    installApps: string = "";
+    upgradeApps: string = "";
+    private _sessionId: string = "";
     constructor(
         debuggerName: string = "odoo:version",
         portNumber: number = 8018,
@@ -34,7 +37,10 @@ export class SettingsModel {
         enterprisePath: string = "./enterprise",
         customAddonsPath: string = "./custom-addons",
         pythonPath: string = "./venv/bin/python",
-        subModulesPaths: string = ""
+        subModulesPaths: string = "",
+        installApps: string = "",
+        upgradeApps: string = "",
+        sessionId: string = ""
     ) {
         this.debuggerName = debuggerName;
         this.portNumber = portNumber;
@@ -53,5 +59,19 @@ export class SettingsModel {
         this.customAddonsPath = customAddonsPath;
         this.pythonPath = pythonPath;
         this.subModulesPaths = subModulesPaths;
+        this.installApps = installApps;
+        this.upgradeApps = upgradeApps;
+        this._sessionId = sessionId;
+    }
+    // not working yet
+    get sessionId(): string {
+        return this._sessionId ? '*****' : '';
+    }
+
+    set sessionId(value: string) {
+        this._sessionId = value;
+    }
+    getRawSessionId(): string {
+        return this._sessionId;
     }
 }

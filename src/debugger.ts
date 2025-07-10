@@ -97,8 +97,12 @@ function prepareArgs(project: ProjectModel, settings: SettingsModel, isShell=fal
     else{args.push('-p', settings.portNumber.toString());}
     args.push(addonsPath);
     args.push("-d", db.id);
-    if (installs.length > 0) { args.push("-i", `${installs.join(',')}`); }
-    if (upgrades.length > 0) { args.push("-u", `${upgrades.join(',')}`); }
+    if (installs.length > 0 || settings.installApps !== "") {
+        args.push("-i", `${installs.join(',')}${settings.installApps ? "," : ""}${settings.installApps ? settings.installApps : ""}`);
+    }
+    if (upgrades.length > 0) {
+        args.push("-u", `${upgrades.join(',')}${settings.upgradeApps ? "," : ""}${settings.upgradeApps ? settings.upgradeApps : ""}`);
+    }
     args.push('--limit-time-real', settings.limitTimeReal.toString());
     args.push('--limit-time-cpu', settings.limitTimeCpu.toString());
     args.push('--max-cron-threads', settings.maxCronThreads.toString());
