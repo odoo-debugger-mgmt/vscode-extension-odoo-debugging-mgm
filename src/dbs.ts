@@ -1,15 +1,15 @@
 import * as vscode from 'vscode';
-import { ProjectModel } from './models/project';
 import { DatabaseModel } from './models/db';
 import { ModuleModel } from './models/module';
-import { getFolderPathsAndNames } from './common';
-import { readFromFile, saveToFile } from './common';
+import { listSubdirectories, normalizePath, getGitBranch } from './utils';
+import { SettingsStore } from './settingsStore';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { RepoModel } from './models/repo';
-import axios from 'axios';
-import * as cheerio from 'cheerio';
+import { exec } from 'child_process';
+import { SettingsModel } from './models/settings';
+
 
 export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
@@ -23,23 +23,13 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
         return item;
     }
     async getChildren(element?: any): Promise<vscode.TreeItem[]> {
-        let settings = await readFromFile('odoo-debugger-data.json');
-        let projects: ProjectModel[] = settings['projects'];
-        if (!projects) {
-            vscode.window.showErrorMessage('Error reading projects, please create a project first');
+        const result = await SettingsStore.getSelectedProject();
+        if (!result) {
             return [];
         }
-        if (typeof projects !== 'object') {
-            vscode.window.showErrorMessage('Error reading projects');
-            return [];
-        }
-        let project: ProjectModel | undefined;
-        project = projects.find((project: ProjectModel) => project.isSelected === true);
-        if (!project) {
-            vscode.window.showErrorMessage('No project selected');
-            return [];
-        }
-        let dbs: DatabaseModel[] = project.dbs;
+
+        const { project } = result;
+        const dbs: DatabaseModel[] = project.dbs;
         if (!dbs) {
             vscode.window.showErrorMessage('No databases found');
             return [];
@@ -49,7 +39,9 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
             const editedDate = new Date(db.createdAt);
             const formattedDate = `${editedDate.toISOString().split('T')[0]}-${editedDate.toTimeString().split(' ')[0]}`;
             const branchName = db.branchName ? `🌿 ${db.branchName} ` : '';
-            const treeItem = new vscode.TreeItem(`${db.isSelected ? '👉': ''} ${db.name} ${branchName} 🕒 ${formattedDate} ${db.isItABackup ? ' ☁️' : ''} ${db.isExisting ? ' 📂' : ''}` );
+            const version = db.odooVersion ? `🛠️ ${db.odooVersion} ` : '';
+            let itemName = `${db.isSelected ? '👉' : ''} ${db.name} ${branchName}${version}🕒 ${formattedDate} ${db.isItABackup ? ' ☁️' : ''} ${db.isExisting ? ' 📂' : ''}`;
+            const treeItem = new vscode.TreeItem(itemName);
             treeItem.id = `${db.name}-${formattedDate}`;
             treeItem.command = {
                 command: 'dbSelector.selectDb',
@@ -57,25 +49,123 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
                 arguments: [db]
             };
             return treeItem;
-        }
-        );
+        });
     }
 }
 
-export async function createDb(projectName:string, repos:RepoModel[], dumpFolderPath:string): Promise<DatabaseModel | undefined> {
+export async function showBranchSelector(repoPath: string): Promise<string | undefined> {
+    repoPath = normalizePath(repoPath);
+    if (!repoPath || !fs.existsSync(repoPath)) {
+        vscode.window.showErrorMessage(`Repository path does not exist: ${repoPath}`);
+        return undefined;
+    }
+    try {
+        const { stdout } = await new Promise<{ stdout: string }>((resolve, reject) => {
+            exec('git branch --all --format="%(refname:short)"', { cwd: repoPath }, (err, stdout, stderr) => {
+                if (err || stderr) {
+                    reject(new Error(`Failed to fetch branches in ${repoPath}: ${stderr || (err?.message || 'Unknown error')}`));
+                } else {
+                    resolve({ stdout });
+                }
+            });
+        });
+
+        const branches = stdout
+            .split('\n')
+            .map((b: string) => b.trim())
+            .filter((b: string) => b.length && !b.includes('->'));
+
+        const result = await vscode.window.showQuickPick(branches, {
+            placeHolder: 'Select a branch to switch to',
+            canPickMany: false,
+            ignoreFocusOut: true
+        });
+        return result;
+    } catch (error: any) {
+        vscode.window.showErrorMessage(error.message);
+        return undefined;
+    }
+}
+
+export function checkoutBranch(settings: SettingsModel, branch: string) {
+    let odooPath = normalizePath(settings.odooPath);
+    settings.odooPath = odooPath;
+    exec(`git checkout ${branch}`, { cwd: settings.odooPath }, (err, stdout, stderr) => {
+        if (err || stderr) {
+            vscode.window.showErrorMessage(`Failed to switch to branch "${branch}": ${stderr || (err?.message || 'Unknown error')}`);
+            return;
+        }
+
+        vscode.window.showInformationMessage(`Odoo Switched to branch: ${branch}`);
+    });
+    let enterprisePath = normalizePath(settings.enterprisePath);
+    settings.enterprisePath = enterprisePath;
+    exec(`git checkout ${branch}`, { cwd: settings.enterprisePath }, (err, stdout, stderr) => {
+        if (err || stderr) {
+            vscode.window.showErrorMessage(`Failed to switch to branch "${branch}": ${stderr || (err?.message || 'Unknown error')}`);
+            return;
+        }
+
+        vscode.window.showInformationMessage(`Enterprise Switched to branch: ${branch}`);
+    });
+}
+
+export async function getDbDumpFolder(dumpsFolder: string): Promise<string | undefined> {
+    dumpsFolder = normalizePath(dumpsFolder);
+
+    if (!fs.existsSync(dumpsFolder)) {
+        vscode.window.showErrorMessage('Downloads folder not found.');
+        return undefined;
+    }
+
+    const foldersInDumpsFolder = fs.readdirSync(dumpsFolder);
+    const matchingFolders: string[] = [];
+
+    for (const folder of foldersInDumpsFolder) {
+        const fullPath = path.join(dumpsFolder, folder);
+        if (fs.statSync(fullPath).isDirectory()) {
+            const dumpSqlPath = path.join(fullPath, 'dump.sql');
+            if (fs.existsSync(dumpSqlPath)) {
+                matchingFolders.push(fullPath);
+            }
+        }
+    }
+
+    if (matchingFolders.length === 0) {
+        vscode.window.showInformationMessage('No folders with dump.sql found in Downloads.');
+        return undefined;
+    }
+
+    const selected = await vscode.window.showQuickPick(
+        matchingFolders.map(folder => ({
+            label: path.basename(folder),
+            description: folder,
+        })),
+        {
+            placeHolder: 'Select a folder containing dump.sql',
+            ignoreFocusOut: true
+        }
+    );
+
+    return selected ? selected.description : undefined;
+}
+
+export async function createDb(projectName:string, repos:RepoModel[], dumpFolderPath:string, settings: SettingsModel): Promise<DatabaseModel | undefined> {
     let allModules: {"path": string, "name": string}[] = [];
     for (const repo of repos) {
-        allModules = allModules.concat(getFolderPathsAndNames(repo.path));
+        allModules = allModules.concat(listSubdirectories(repo.path));
     }
     let selectedModules: string[] | [] = [];
     let db: DatabaseModel | undefined;
     let modules: ModuleModel[] = [];
-
+    const version = await showBranchSelector(settings.odooPath) || '';
     const createFromBackup = await vscode.window.showQuickPick(["yes","no"], {
         placeHolder: 'Do you want to create a db from a backup?',
         ignoreFocusOut: true});
     let dumpFolder : string | undefined;
-
+    if (version !== '' || version !== undefined) {
+        checkoutBranch(settings, version);
+    }
     let existingDbName: string | undefined;
     let isExistingDb: string | undefined;
     if (createFromBackup === "no") {
@@ -111,7 +201,7 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
         modules.push(new ModuleModel(module, 'install'));
     }
     const dbName = existingDbName ? existingDbName : `db-${projectName}`;
-    db = new DatabaseModel(dbName, new Date(), modules, false, true, sqlDumpPath, isExistingDb === 'yes' ? true : false, branchName); // to be updated
+    db = new DatabaseModel(dbName, new Date(), modules, false, true, sqlDumpPath, isExistingDb === 'yes' ? true : false, branchName, version); // to be updated
     if (sqlDumpPath) {
         db.isItABackup = true;
         setupDatabase(db.id, sqlDumpPath);
@@ -169,197 +259,39 @@ export async function setupDatabase(dbName: string, dumpPath: string | undefined
     });
 }
 
-export async function getDbDumpFolder(dumpsFolder: string): Promise<string | undefined> {
-
-    if (!fs.existsSync(dumpsFolder)) {
-        vscode.window.showErrorMessage('Downloads folder not found.');
-        return undefined;
-    }
-
-    const foldersInDumpsFolder = fs.readdirSync(dumpsFolder);
-    const matchingFolders: string[] = [];
-
-    for (const folder of foldersInDumpsFolder) {
-        const fullPath = path.join(dumpsFolder, folder);
-        if (fs.statSync(fullPath).isDirectory()) {
-            const dumpSqlPath = path.join(fullPath, 'dump.sql');
-            if (fs.existsSync(dumpSqlPath)) {
-                matchingFolders.push(fullPath);
-            }
-        }
-    }
-
-    if (matchingFolders.length === 0) {
-        vscode.window.showInformationMessage('No folders with dump.sql found in Downloads.');
-        return undefined;
-    }
-
-    const selected = await vscode.window.showQuickPick(
-        matchingFolders.map(folder => ({
-            label: path.basename(folder),
-            description: folder,
-        })),
-        {
-            placeHolder: 'Select a folder containing dump.sql',
-            ignoreFocusOut: true
-        }
-    );
-
-    return selected ? selected.description : undefined;
-}
-
 export async function selectDatabase(event: any) {
     const database: DatabaseModel = event;
-    let settings = await readFromFile('odoo-debugger-data.json');
-    if (!settings) {
-        vscode.window.showErrorMessage('Error reading settings');
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
         return;
     }
-    let projects: ProjectModel[] = settings['projects'];
-    if (!projects) {
-        vscode.window.showErrorMessage('Error reading projects');
-        return;
+    const { data, project } = result;
+    const oldSelectedDbIndex = project.dbs.findIndex((db: DatabaseModel) => db.isSelected);
+    if (oldSelectedDbIndex !== -1) {
+        SettingsStore.save(false, ["projects", project.uid, "dbs", oldSelectedDbIndex, "isSelected"], "odoo-debugger-data.json");
     }
-
-    const project = projects.find((project => project.isSelected === true));
-    if (!project) {
-        vscode.window.showErrorMessage('No project selected');
-        return;
+    const newSelectedDbIndex = project.dbs.findIndex((db: DatabaseModel) => db.id === database.id);
+    if (newSelectedDbIndex !== -1) {
+        SettingsStore.save(true, ["projects", project.uid, "dbs", newSelectedDbIndex, "isSelected"], "odoo-debugger-data.json");
     }
-    project?.dbs.forEach((db: DatabaseModel) => {
-        if (db.id === database.id) {
-            db.isSelected = true;
-        } else {
-            db.isSelected = false;
-        }
-    });
-    await saveToFile(settings, 'odoo-debugger-data.json');
+    if (
+        database.odooVersion !== '' ||
+        database.odooVersion !== undefined ||
+        getGitBranch(data.settings.odooPath) !== database.odooVersion ||
+        getGitBranch(data.settings.enterprisePath) !== database.odooVersion
+    ) {
+        checkoutBranch(data.settings, database.odooVersion);
+    }
 }
 
 export async function deleteDb(event: any) {
     const db: DatabaseModel = event;
-    let settings = await readFromFile('odoo-debugger-data.json');
-    if (!settings) {
-        vscode.window.showErrorMessage('Error reading settings');
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
         return;
     }
-    let projects: ProjectModel[] = settings['projects'];
-    if (!projects) {
-        vscode.window.showErrorMessage('Error reading projects');
-        return;
-    }
-    const project = projects.find((project => project.isSelected === true));
-    if (!project) {
-        vscode.window.showErrorMessage('No project selected');
-        return;
-    }
+    const { data, project } = result;
     setupDatabase(db.id, undefined, true);
-
     project.dbs = project.dbs.filter((database: DatabaseModel) => database.id !== db.id);
-    await saveToFile(settings, 'odoo-debugger-data.json');
-}
-
-interface JsonRpcPayload {
-    jsonrpc: '2.0';
-    method: 'call';
-    params: {
-        model: string;
-        method: string;
-        args: any[];
-        kwargs: object;
-    };
-    }
-
-export async function getDB(sessionId: string): Promise<Record<string, string> | null> {
-    const ODOO_SH_URL = 'https://www.odoo.sh/project';
-    const headers = {
-        Cookie: `session_id=${sessionId}`,
-        'User-Agent': 'VSCode-Odoo-Extension',
-    };
-
-    try {
-        const response = await axios.get(ODOO_SH_URL, { headers });
-        const $ = cheerio.load(response.data);
-
-        const projects: { label: string; slug: string }[] = [];
-
-    // Collect all unique project slugs
-    $('a[href^="/project/"]').not('a[href$="/settings"]').each((_, el) => {
-        const href = $(el).attr('href');
-        const slug = href?.replace('/project/', '');
-        if (slug && !projects.find(p => p.slug === slug)) {
-            projects.push({ label: slug, slug });
-        }
-    });
-
-    if (!projects.length) {
-        vscode.window.showWarningMessage('No projects found.');
-        return null;
-    }
-
-    // Show dropdown to select project
-    const selected = await vscode.window.showQuickPick(projects, {
-        placeHolder: 'Select a project',
-    });
-
-    if (!selected) return null;
-
-    const projectUrl = `https://www.odoo.sh/project/${selected.slug}`;
-    const projectPage = await axios.get(projectUrl, { headers });
-    const $$ = cheerio.load(projectPage.data);
-
-    const wrap = $$('#wrapwrap');
-    const dataState = wrap.attr('data-state');
-
-    if (!dataState) {
-        return null;
-    }
-    const json = JSON.parse(dataState.replace(/&quot;/g, '"'));
-    const repositoryId = json.repository_id;
-
-    if (!repositoryId) {
-        return null;
-    }
-    const branchesPayload: JsonRpcPayload = {
-        jsonrpc: '2.0',
-        method: 'call',
-        params: {
-            model: 'paas.repository',
-            method: 'get_branches_info_public',
-            args: [repositoryId],
-            kwargs: {},
-        },
-    };
-
-    const branchResponse = await axios.post(
-      `https://www.odoo.sh/web/dataset/call_kw/paas.repository/get_branches_info_public`,
-      branchesPayload,
-      { headers }
-    );
-
-    const branches = branchResponse.data.result;
-
-    const backupsPayload: JsonRpcPayload = {
-        jsonrpc: '2.0',
-        method: 'call',
-        params: {
-            model: 'paas.repository',
-            method: 'get_backups_info_public',
-            args: [repositoryId],
-            kwargs: {},
-        },
-    };
-
-    const backupResponse = await axios.post(
-      `https://www.odoo.sh/web/dataset/call_kw/paas.repository/get_backups_info_public`,
-      backupsPayload,
-      { headers }
-    );
-
-    vscode.window.showErrorMessage('❌ Failed to extract repository_id from selected project.');
-    return null;
-    } catch (error: any) {
-        vscode.window.showErrorMessage(`❌ Failed to fetch project data: ${error.message}`);
-        return null;
-    }
+    await SettingsStore.save(project.dbs, ["projects", project.uid, "dbs"], 'odoo-debugger-data.json');
 }

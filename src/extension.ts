@@ -1,24 +1,19 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 
-import { checkWorkSpaceOrFolder, readFromFile, saveToFile } from './common';
-
+import { checkWorkSpaceOrFolderOpened, normalizePath } from './utils';
 import { ProjectModel } from './models/project';
-
-import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb, getDB } from './dbs';
-
+import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb } from './dbs';
 import { ProjectTreeProvider, createProject, selectProject, getRepo, getProjectName, deleteProject} from './project';
 import { RepoTreeProvider, selectRepo } from './repos';
-
 import { ModuleTreeProvider, selectModule } from './module';
-
 import { SettingsTreeProvider, editSetting } from './settings';
 import { setupDebugger, startDebugShell, startDebugServer } from './debugger';
 import { setupOdooBranch } from './odooInstaller';
+import { SettingsStore } from './settingsStore';
 
 
 export function activate(context: vscode.ExtensionContext) {
-	vscode.commands.executeCommand("setContext", "odoo-debugger.is_active", checkWorkSpaceOrFolder() ? "true" : "false");
+	vscode.commands.executeCommand("setContext", "odoo-debugger.is_active", checkWorkSpaceOrFolderOpened() ? "true" : "false");
 
 	const providers = {
         project: new ProjectTreeProvider(context),
@@ -38,11 +33,6 @@ export function activate(context: vscode.ExtensionContext) {
         setupDebugger();
         Object.values(providers).forEach(provider => provider.refresh());
     };
-    const loadDebuggerInfo = async () => {
-        const debuggerInfo = await readFromFile('odoo-debugger-data.json');
-        if (!debuggerInfo) {throw new Error('Error reading settings');}
-        return debuggerInfo;
-    };
 
 	// Refresh commands
 	vscode.commands.registerCommand('projectSelector.refresh', refreshAll),
@@ -50,13 +40,14 @@ export function activate(context: vscode.ExtensionContext) {
 	// Projects
 	vscode.commands.registerCommand('projectSelector.create', async () => {
 		try {
-			const { settings } = await loadDebuggerInfo();
+			const settings = await SettingsStore.getSettings();
 			const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
 			if (!workspaceFolder) {throw new Error("No workspace open.");}
 			const name = await getProjectName(workspaceFolder);
-			const repos = await getRepo(path.join(workspaceFolder.uri.fsPath, settings.customAddonsPath));
+			const customAddonsPath = normalizePath(settings.customAddonsPath);
+			const repos = await getRepo(customAddonsPath);
 			const createADb = await vscode.window.showQuickPick(["Yes", "No"], { placeHolder: 'Create a database?' });
-			const db = createADb === "Yes" ? await createDb(name, repos, settings.dumpsFolder) : undefined;
+			const db = createADb === "Yes" ? await createDb(name, repos, settings.dumpsFolder, settings) : undefined;
 			await createProject(name, repos, db);
 			refreshAll();
 		} catch (err: any) {
@@ -78,13 +69,18 @@ export function activate(context: vscode.ExtensionContext) {
 	// DBS
 	vscode.commands.registerCommand('dbSelector.create', async () => {
 		try {
-			const { settings, projects } = await loadDebuggerInfo();
+			const settings = await SettingsStore.getSettings();
+			const projects = await SettingsStore.getProjects();
 			const project = projects?.find((p: ProjectModel) => p.isSelected);
-			if (!project) {throw new Error('No project selected')}
-			const db = await createDb(project.name, project.repos, settings.dumpsFolder);
-			project.dbs.push(db);
-			await saveToFile({ settings, projects }, 'odoo-debugger-data.json');
-			await selectDatabase(db);
+			if (!project) {
+				throw new Error('No project selected');
+			}
+			const db = await createDb(project.name, project.repos, settings.dumpsFolder, settings);
+			if (db) {
+				project.dbs.push(db);
+				await SettingsStore.save({ settings, projects });
+				await selectDatabase(db);
+			}
 			refreshAll();
 		} catch (err: any) {
 			vscode.window.showErrorMessage(err.message);
@@ -102,11 +98,6 @@ export function activate(context: vscode.ExtensionContext) {
 		await restoreDb(event);
 		refreshAll();
 		vscode.window.showInformationMessage(`Database ${event.id} restored successfully!`);
-	});
-	vscode.commands.registerCommand('dbSelector.get', async () => {
-		const { settings } = await loadDebuggerInfo();
-		await getDB(settings.sessionId);
-		refreshAll();
 	});
 	// Repos
 	vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {

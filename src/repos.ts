@@ -1,9 +1,8 @@
-import { ProjectModel } from "./models/project";
 import { RepoModel } from "./models/repo";
 import * as vscode from "vscode";
-import { saveToFile, readFromFile, getFolderPathsAndNames } from './common';
+import { listSubdirectories, getWorkspacePath, normalizePath } from './utils';
+import { SettingsStore } from './settingsStore';
 import * as path from 'path';
-import { getRepo } from './project';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
 
@@ -24,42 +23,30 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
         return element;
     }
     async getChildren(element?: any): Promise<vscode.TreeItem[] | undefined> {
-        let settings = await readFromFile('odoo-debugger-data.json');
-        if (!settings) {
-            vscode.window.showErrorMessage('Error reading settings');
-            return;
-        }
-        let projects: ProjectModel[] = settings['projects'];
-        if (!projects) {
-            vscode.window.showErrorMessage('Error reading projects, please create a project first');
+        const result = await SettingsStore.getSelectedProject();
+        if (!result) {
             return [];
         }
-        if (typeof projects !== 'object') {
-            vscode.window.showErrorMessage('Error reading projects');
+
+        const { data, project } = result;
+        const workspacePath = getWorkspacePath();
+        if (!workspacePath) {
             return [];
         }
-        let project: ProjectModel | undefined;
-        project = projects.find((project: ProjectModel) => project.isSelected === true);
-        if (!project) {
-            vscode.window.showErrorMessage('No project selected');
-            return [];
-        }
-        let repos: RepoModel[] = project.repos;
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        if (!workspaceFolder) {
-            vscode.window.showErrorMessage("No workspace open.");
-            return;
-        }
-        // const allRepos
-        const devsRepos = getFolderPathsAndNames(path.join(workspaceFolder.uri.fsPath, settings.settings.customAddonsPath) );
+
+        const repos: RepoModel[] = project.repos;
+        const customAddonsPath = normalizePath(data.settings.customAddonsPath);
+        const devsRepos = listSubdirectories(customAddonsPath);
         if (devsRepos.length === 0) {
             vscode.window.showInformationMessage('No folders found in custom-addons.');
             throw new Error('No folders found in custom-addons.');
         }
+
         if (!repos) {
             vscode.window.showErrorMessage('No modules found');
             return [];
         }
+
         let treeItems: vscode.TreeItem[] = [];
         for (const repo of devsRepos) {
             const existingRepo = repos.find(r => r.name === repo.name);
@@ -80,7 +67,7 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
                     }
                 }
                 treeItem.description = `${branch}`;
-            }else{
+            } else {
                 treeItem.description = ``;
             }
             treeItem.command = {
@@ -102,32 +89,19 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
 
 export async function selectRepo(event: any) {
     const selectedRepo = event;
-    let settings = await readFromFile('odoo-debugger-data.json');
-    if (!settings) {
-        vscode.window.showErrorMessage('Error reading settings');
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
         return;
     }
-    let projects: ProjectModel[] = settings['projects'];
-    if (!projects) {
-        vscode.window.showErrorMessage('Error reading projects, please create a project first');
-        return;
-    }
-    if (typeof projects !== 'object') {
-        vscode.window.showErrorMessage('Error reading projects');
-        return;
-    }
-    let project: ProjectModel | undefined;
-    project = projects.find((project: ProjectModel) => project.isSelected === true);
-    if (!project) {
-        vscode.window.showErrorMessage('No project selected');
-        return;
-    }
+
+    const { data, project } = result;
     const repoInProject = project.repos.find((repo: RepoModel) => repo.name === selectedRepo.name);
+
     if (!repoInProject) {
         project.repos.push(new RepoModel(selectedRepo.name, selectedRepo.path, selectedRepo.isSelected));
     } else {
         project.repos = project.repos.filter((repo: RepoModel) => repo.name !== selectedRepo.name);
     }
-    settings['projects'] = projects;
-    await saveToFile(settings, 'odoo-debugger-data.json');
+
+    await SettingsStore.save(data);
 }

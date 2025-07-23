@@ -1,34 +1,7 @@
 // VSCode Extension Utility: Clone Odoo & Enterprise for a selected branch and setup venv with progress
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
-
-async function execShellCommand(cmd: string, cwd?: string): Promise<string> {
-    try {
-        const { stdout, stderr } = await execAsync(cmd, {
-            cwd,
-            env: process.env,
-            maxBuffer: 1024 * 1024 * 10
-        });
-        if (stderr) {
-            console.warn('stderr:', stderr); // Optional
-        }
-        return stdout;
-    } catch (error: any) {
-        throw error.stderr || error.stdout || error.message || error;
-    }
-}
-
-async function getOdooBranches(): Promise<string[]> {
-    const output = await execShellCommand('git ls-remote --heads https://github.com/odoo/odoo.git');
-    return output
-        .split('\n')
-        .map(line => line.split('refs/heads/')[1])
-        .filter(branch => branch);
-}
+import { getWorkspacePath } from './utils';
 
 export async function setupOdooBranch() {
     await vscode.window.withProgress({
@@ -41,11 +14,12 @@ export async function setupOdooBranch() {
             { modal: true },
             'Continue'
         );
-        if (!confirm) return;
+        if (!confirm) {
+            return;
+        }
 
-        const baseDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const baseDir = getWorkspacePath();
         if (!baseDir) {
-            vscode.window.showErrorMessage('Open a workspace folder first.');
             return;
         }
 

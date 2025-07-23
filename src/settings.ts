@@ -1,6 +1,7 @@
 import { SettingsModel } from "./models/settings";
-import { saveToFile, readFromFile, camelCaseToTitleCase } from './common';
+import { camelCaseToTitleCase } from './utils';
 import * as vscode from "vscode";
+import { SettingsStore } from './settingsStore';
 
 export class SettingsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>{
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
@@ -19,21 +20,23 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<vscode.Tree
         return element;
     }
     async getChildren(element?: any): Promise<vscode.TreeItem[] | undefined> {
-        let workspaceSettings = await readFromFile('odoo-debugger-data.json');
-        if (!workspaceSettings) {
-            vscode.window.showErrorMessage('Error reading settings');
+        const data = await SettingsStore.load();
+        if (!data) {
             return;
         }
-        let settings = workspaceSettings['settings'];
+
+        let settings = data.settings;
         if (!settings) {
             settings = new SettingsModel();
-            workspaceSettings['settings'] = settings;
-            await saveToFile(workspaceSettings, 'odoo-debugger-data.json');
+            data.settings = settings;
+            await SettingsStore.save(data);
         }
+
         if (typeof settings === 'string') {
             vscode.window.showErrorMessage('Error reading settings');
             return [];
         }
+
         const settingsTreeItems: vscode.TreeItem[] = [];
         for (const key in settings) {
             const setting = settings[key];
@@ -52,21 +55,21 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<vscode.Tree
 
 export async function editSetting(event: any) {
     const key = event;
-    let workspaceSettings = await readFromFile('odoo-debugger-data.json');
-    if (!workspaceSettings) {
-        vscode.window.showErrorMessage('Error reading settings');
+    const data = await SettingsStore.load();
+    if (!data) {
         return;
     }
-    let settings = workspaceSettings['settings'];
+
+    const settings = data.settings;
     if (!settings) {
         vscode.window.showErrorMessage('Error reading settings');
         return;
     }
+
     const currentValue = settings[key];
     const newValue = await vscode.window.showInputBox({ prompt: `Edit ${camelCaseToTitleCase(key)}`, value: currentValue });
     if (newValue !== undefined) {
         settings[key] = newValue;
-        workspaceSettings['settings'] = settings;
-        await saveToFile(workspaceSettings, 'odoo-debugger-data.json');
+        await SettingsStore.save(data);
     }
 }
