@@ -1,8 +1,8 @@
 import { ModuleModel } from "./models/module";
-import { ProjectModel } from "./models/project";
 import { DatabaseModel } from "./models/db";
 import * as vscode from "vscode";
-import { saveToFile, readFromFile, getFolderPathsAndNames } from './common';
+import { listSubdirectories } from './utils';
+import { SettingsStore } from './settingsStore';
 
 export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
@@ -19,40 +19,24 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
         return element;
     }
     async getChildren(element?: any): Promise<vscode.TreeItem[] | undefined> {
-        let settings = await readFromFile('odoo-debugger-data.json');
-        if (!settings) {
-            vscode.window.showErrorMessage('Error reading settings');
-            return;
-        }
-        let projects: ProjectModel[] = settings['projects'];
-        if (!projects) {
-            vscode.window.showErrorMessage('Error reading projects, please create a project first');
+        const result = await SettingsStore.getSelectedProject();
+        if (!result) {
             return [];
         }
-        if (typeof projects !== 'object') {
-            vscode.window.showErrorMessage('Error reading projects');
-            return [];
-        }
-        let project: ProjectModel | undefined;
-        project = projects.find((project: ProjectModel) => project.isSelected === true);
-        if (!project) {
-            vscode.window.showErrorMessage('No project selected');
-            return [];
-        }
-        let db: DatabaseModel | undefined;
-        db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+        const { project } = result;
+        const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
         if (!db) {
             vscode.window.showErrorMessage('No database selected');
             return [];
         }
-        let modules: ModuleModel[] = db.modules;
+        const modules: ModuleModel[] = db.modules;
         if (!modules) {
             vscode.window.showErrorMessage('No modules found');
             return [];
         }
         let allModules: {"path": string, "name": string}[] = [];
         for (const repo of project.repos) {
-            allModules = allModules.concat(getFolderPathsAndNames(repo.path));
+            allModules = allModules.concat(listSubdirectories(repo.path));
         }
         let treeItems: vscode.TreeItem[] = [];
         for (const module of allModules) {
@@ -109,28 +93,12 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
 
 export async function selectModule(event: any) {
     const module = event;
-    let settings = await readFromFile('odoo-debugger-data.json');
-    if (!settings) {
-        vscode.window.showErrorMessage('Error reading settings');
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
         return;
     }
-    let projects: ProjectModel[] = settings['projects'];
-    if (!projects) {
-        vscode.window.showErrorMessage('Error reading projects, please create a project first');
-        return;
-    }
-    if (typeof projects !== 'object') {
-        vscode.window.showErrorMessage('Error reading projects');
-        return;
-    }
-    let project: ProjectModel | undefined;
-    project = projects.find((project: ProjectModel) => project.isSelected === true);
-    if (!project) {
-        vscode.window.showErrorMessage('No project selected');
-        return;
-    }
-    let db: DatabaseModel | undefined;
-    db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    const { data, project } = result;
+    const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
         vscode.window.showErrorMessage('No database selected');
         return;
@@ -138,13 +106,12 @@ export async function selectModule(event: any) {
     const moduleExistsInDb = db.modules.find(mod => mod.name === module.name);
     if (!moduleExistsInDb) {
         db.modules.push(new ModuleModel(module.name, 'install'));
-    }else{
+    } else {
         if (moduleExistsInDb.state === 'install') {
             moduleExistsInDb.state = 'upgrade';
-        }else{
+        } else {
             db.modules = db.modules.filter(mod => mod.name !== module.name);
         }
     }
-    settings['projects'] = projects;
-    await saveToFile(settings, 'odoo-debugger-data.json');
+    await SettingsStore.save(data);
 }

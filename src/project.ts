@@ -2,8 +2,8 @@ import * as vscode from 'vscode';
 import { ProjectModel } from './models/project';
 import { DatabaseModel } from './models/db';
 import { RepoModel } from './models/repo';
-import { saveToFile } from './common';
-import { readFromFile, getFolderPathsAndNames} from './common';
+import { listSubdirectories } from './utils';
+import { SettingsStore } from './settingsStore';
 
 export class ProjectTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
@@ -19,16 +19,17 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
         return element;
     }
     async getChildren(element?: any): Promise<vscode.TreeItem[]> {
-        let settings = await readFromFile('odoo-debugger-data.json');
-        if (!settings) {
-            vscode.window.showErrorMessage('Error reading settings');
+        const data = await SettingsStore.get('odoo-debugger-data.json');
+        if (!data) {
             return [];
         }
-        let projects: ProjectModel[] = settings['projects'];
+
+        const projects: ProjectModel[] = data.projects;
         if (!projects) {
             vscode.window.showErrorMessage('Error reading projects, please create a project first');
             return [];
         }
+
         return projects.map(project => {
             const treeItem = new vscode.TreeItem(`${project.isSelected ? '👉' : ''} ${project.name}`);
             treeItem.id = project.name;
@@ -46,53 +47,31 @@ export async function createProject(name: string, repos: RepoModel[], db?: Datab
     let project: ProjectModel;
     if (!db) {
         project = new ProjectModel(name, new Date(), [], repos, true);
-    }else{
+    } else {
         project = new ProjectModel(name, new Date(), [db], repos, true);
     }
-    let settings = await readFromFile('odoo-debugger-data.json');
-    if (!settings) {
-        vscode.window.showErrorMessage('Error reading settings');
-        return;
-    }
-    const projects = settings['projects'];
-    if (projects === undefined) {
-        settings['projects'] = [project];
-        saveToFile(settings, 'odoo-debugger-data.json');
-    }
-    else {
-        projects.push(project);
-        settings['projects'] = projects;
-        saveToFile(settings, 'odoo-debugger-data.json');
-    }
+    await SettingsStore.save(project, ["projects", project.uid], 'odoo-debugger-data.json');
     selectProject(project);
 }
 
 export async function selectProject(event: any) {
     const project = event;
-    let settings = await readFromFile('odoo-debugger-data.json');
-    if (!settings) {
-        vscode.window.showErrorMessage('Error reading settings');
-        return;
-    }
-    let projects: ProjectModel[] = settings['projects'];
+    const DebuggerData = await SettingsStore.get( 'odoo-debugger-data.json');
+    const projects: ProjectModel[] = DebuggerData.projects;
     if (!projects) {
         vscode.window.showErrorMessage('Error reading projects');
         return;
     }
-    projects.forEach((settingProject: ProjectModel) => {
-        if (settingProject.name === project.name) {
-            settingProject.isSelected = true;
-        } else {
-            settingProject.isSelected = false;
-        }
-    });
-    project.isSelected = true;
-    settings['projects'] = projects;
-    await saveToFile(settings, 'odoo-debugger-data.json');
+    let oldSelectedProject = projects.find((p: ProjectModel) => p.isSelected);
+    if (oldSelectedProject) {
+        oldSelectedProject.isSelected = false;
+        await SettingsStore.save(false, ["projects", oldSelectedProject.uid, "isSelected"], 'odoo-debugger-data.json');
+    }
+    await SettingsStore.save(true, ["projects", project.uid, "isSelected"], 'odoo-debugger-data.json');
 }
 
 export async function getRepo(targetPath:string): Promise<RepoModel[] > {
-    const devsRepos = getFolderPathsAndNames(targetPath);
+    const devsRepos = listSubdirectories(targetPath);
         if (devsRepos.length === 0) {
         vscode.window.showInformationMessage('No folders found in custom-addons.');
         throw new Error('No folders found in custom-addons.');
@@ -127,20 +106,14 @@ export async function getProjectName(workspaceFolder: vscode.WorkspaceFolder): P
 
 export async function deleteProject(event: any) {
     const project = event;
-    let settings = await readFromFile('odoo-debugger-data.json');
-    if (!settings) {
-        vscode.window.showErrorMessage('Error reading settings');
-        return;
-    }
-    let projects: ProjectModel[] = settings['projects'];
+    const debuggerData = await SettingsStore.get('odoo-debugger-data.json');
+    const projects: ProjectModel[] = debuggerData.projects;
     if (!projects) {
         vscode.window.showErrorMessage('Error reading projects');
         return;
     }
-    const index = projects.findIndex((settingProject: ProjectModel) => settingProject.name === project.id);
-    if (index !== -1) {
-        projects.splice(index, 1);
-        await saveToFile(settings, 'odoo-debugger-data.json');
+    if (project.uid in projects) {
+        SettingsStore.save(undefined, ["projects", project.uid], 'odoo-debugger-data.json');
     } else {
         vscode.window.showErrorMessage('Project not found.');
     }

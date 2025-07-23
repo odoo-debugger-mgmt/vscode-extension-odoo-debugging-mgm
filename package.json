@@ -3,15 +3,34 @@
   "displayName": "Odoo Debugging Management Tool",
   "description": "A Visual Studio Code extension for managing Odoo debugging.",
   "version": "0.0.1",
+  "publisher": "odoo-ps",
+  "author": {
+    "name": "odoo-ps"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/odoo-ps/vscode-extension-odoo-debugging-mgm#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mds-odoo/vscode-extension-odoo-debugger.git"
+    "url": "https://github.com/odoo-ps/vscode-extension-odoo-debugging-mgm.git"
   },
+  "bugs": {
+    "url": "https://github.com/odoo-ps/vscode-extension-odoo-debugging-mgm/issues"
+  },
+  "keywords": [
+    "odoo",
+    "debugging",
+    "python",
+    "postgresql",
+    "development",
+    "project-management"
+  ],
   "engines": {
     "vscode": "^1.100.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Debuggers",
+    "Extension Packs"
   ],
   "activationEvents": [],
   "main": "./dist/extension.js",
@@ -86,11 +105,6 @@
         "command": "dbSelector.create",
         "title": "Create Database",
         "icon": "resources/icons/create_database.svg"
-      },
-      {
-        "command": "dbSelector.get",
-        "title": "Get Database",
-        "icon": "resources/icons/download.svg"
       },
       {
         "command": "dbSelector.restore",
@@ -169,18 +183,13 @@
           "group": "navigation"
         },
         {
-          "command": "dbSelector.get",
-          "when": "view == dbSelector",
-          "group": "navigation"
-        },
-        {
           "command": "workspaceSettings.startServer",
-          "when": "view == workspaceSettings",
+          "when": "view == projectSelector",
           "group": "navigation"
         },
         {
           "command": "workspaceSettings.startShell",
-          "when": "view == workspaceSettings",
+          "when": "view == projectSelector",
           "group": "navigation"
         }
       ],
@@ -219,7 +228,11 @@
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test": "vscode-test",
+    "build:vsix": "vsce package",
+    "version:patch": "npm version patch",
+    "version:minor": "npm version minor",
+    "version:major": "npm version major"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -236,8 +249,6 @@
     "webpack-cli": "^6.0.1"
   },
   "dependencies": {
-    "axios": "^1.10.0",
-    "cheerio": "^1.1.0",
     "jsonc-parser": "^3.3.1"
   }
 }

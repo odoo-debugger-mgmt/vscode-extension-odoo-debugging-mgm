@@ -1,78 +1,80 @@
 import * as vscode from "vscode";
 import { ProjectModel } from "./models/project";
 import { SettingsModel } from "./models/settings";
-import { saveToFile, readFromFile} from './common';
-import * as path from 'path';
+import { saveToFileWithComments, , getWorkspacePath, normalizePath} from './utils';
+import { SettingsStore } from './settingsStore';
 
 
 export async function setupDebugger(): Promise<void> {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    let workspacePath: string;
-    if (workspaceFolders && workspaceFolders.length > 0) {
-        workspacePath = workspaceFolders[0].uri.fsPath;
-    } else {
-        vscode.window.showErrorMessage("No workspace open.");
+    const workspacePath = getWorkspacePath();
+    if (!workspacePath) {
         return;
     }
-    let settings = await readFromFile('odoo-debugger-data.json');
-    let launchJsonFile = await readFromFile('launch.json');
-    if (!settings) {
-        vscode.window.showErrorMessage('Error reading settings');
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
         return;
     }
+    const { data, project } = result;
+    const settings = data.settings;
+    // Normalize paths to handle absolute vs relative
+    const normalizedOdooPath = normalizePath(settings.odooPath);
+    const normalizedPythonPath = normalizePath(settings.pythonPath);
+    let launchJsonFile: any = SettingsStore.get('launch.json');
     if (!launchJsonFile) {
         vscode.window.showErrorMessage('Error reading launch.json');
         return;
     }
-    let projects = settings['projects'];
-    let workspaceSettings = settings['settings'];
-
-    let project = projects.find((project: ProjectModel) => project.isSelected === true);
-    if (!project) {
-        vscode.window.showErrorMessage('No project selected');
-        return;
-    }
     let configurations: Object[] = launchJsonFile?.configurations;
-    let odooConfig = configurations.find((config: any) => config.name === workspaceSettings.debuggerName);
+    let odooConfig = configurations.find((config: any) => config.name === settings.debuggerName);
+
     let newOdooConfig: {};
     if (!odooConfig) {
         newOdooConfig = {
-            "name": workspaceSettings.debuggerName,
+            "name": settings.debuggerName,
             "type": "debugpy",
             "request": "launch",
             "cwd": workspacePath,
-            "program": `${workspaceSettings.odooPath}/odoo-bin`,
-            "python": `${workspaceSettings.pythonPath}`,
+            "program": `${normalizedOdooPath}/odoo-bin`,
+            "python": normalizedPythonPath,
             "console": "integratedTerminal",
             "args": [
-                ...prepareArgs(project, workspaceSettings),
+                ...prepareArgs(project, settings),
             ]
         };
-        configurations.unshift(newOdooConfig);
-    }else {
+        await SettingsStore.save(
+            newOdooConfig, ["configurations", 0], "launch.json", { isArrayInsertion: true, formattingOptions: { insertSpaces: true, tabSize: 2 } }
+        );
+    } else {
         newOdooConfig = {
             ...odooConfig,
             "cwd": workspacePath,
-            "program": `${workspaceSettings.odooPath}/odoo-bin`,
-            "python": `${workspaceSettings.pythonPath}`,
+            "program": `${normalizedOdooPath}/odoo-bin`,
+            "python": normalizedPythonPath,
             "args": [
-                ...prepareArgs(project, workspaceSettings),
+                ...prepareArgs(project, settings),
             ]
         };
-        configurations[configurations.indexOf(odooConfig)] = newOdooConfig;
+        await SettingsStore.save(
+            newOdooConfig, ["configurations", configurations.indexOf(odooConfig)], "launch.json", {formattingOptions: { insertSpaces: true, tabSize: 2 } }
+        );
     }
-    saveToFile(launchJsonFile, "launch.json");
 }
 
 function prepareArgs(project: ProjectModel, settings: SettingsModel, isShell=false ): any{
+    // Normalize the paths for addons
+    const normalizedRepoPaths = project.repos.map(repo => normalizePath(repo.path));
     let addonsPath = `--addons-path=` + [
         './enterprise',
         './odoo/odoo/addons',
         './odoo/addons',
-        ...project.repos.map(repo => repo.path)
+        ...normalizedRepoPaths
     ].join(',');
     if (settings.subModulesPaths !== '') {
-        addonsPath += `,${settings.subModulesPaths}`;
+        const normalizedSubModulePaths = settings.subModulesPaths
+            .split(',')
+            .map(p => normalizePath(p.trim()))
+            .join(',');
+        addonsPath += `,${normalizedSubModulePaths}`;
     }
     let db = project.dbs.find((db) => db.isSelected);
     if (!db) {
@@ -119,34 +121,27 @@ function prepareArgs(project: ProjectModel, settings: SettingsModel, isShell=fal
 }
 
 export async function startDebugShell(): Promise<void> {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders || workspaceFolders.length === 0) {
-        vscode.window.showErrorMessage("No workspace open.");
+    const workspacePath = getWorkspacePath();
+    if (!workspacePath) {
         return;
     }
-    let settings = await readFromFile('odoo-debugger-data.json');
-    if (!settings) {
-        vscode.window.showErrorMessage('Error reading settings');
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
         return;
     }
-    let workspaceSettings = settings['settings'];
+    const { data, project } = result;
+    const workspaceSettings = data.settings;
+    // Normalize paths for terminal commands
+    const normalizedOdooPath = normalizePath(workspaceSettings.odooPath);
+    const normalizedPythonPath = normalizePath(workspaceSettings.pythonPath);
 
-    let projects = settings['projects'];
-
-    let project = projects.find((project: ProjectModel) => project.isSelected === true);
-    if (!project) {
-        vscode.window.showErrorMessage('No project selected');
-        return;
-    }
     const args = prepareArgs(project, workspaceSettings, true);
-    const odooBinPath = `${workspaceSettings.odooPath}/odoo-bin`;
-    const pythonPath = workspaceSettings.pythonPath;
-    const cwd = workspaceFolders[0].uri.fsPath;
+    const odooBinPath = `${normalizedOdooPath}/odoo-bin`;
 
-    const fullCommand = `${pythonPath} ${odooBinPath} ${args.join(' ')}`;
+    const fullCommand = `${normalizedPythonPath} ${odooBinPath} ${args.join(' ')}`;
     const terminal = vscode.window.createTerminal({
         name: 'Odoo Shell',
-        cwd: cwd,
+        cwd: workspacePath,
         isTransient: true
     });
     terminal.show();
@@ -159,12 +154,12 @@ export async function startDebugServer(): Promise<void> {
         vscode.window.showErrorMessage("No workspace open.");
         return;
     }
-    let settings = await readFromFile('odoo-debugger-data.json');
-    if (!settings) {
-        vscode.window.showErrorMessage('Error reading settings');
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
         return;
     }
-    let workspaceSettings = settings['settings'];
+    const { data } = result;
+    const workspaceSettings = data.settings;
     const existingSession = vscode.debug.activeDebugSession;
     if (existingSession) {
         await vscode.debug.stopDebugging(existingSession);
