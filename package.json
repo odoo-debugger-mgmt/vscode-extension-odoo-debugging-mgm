@@ -2,6 +2,13 @@
   "name": "odoo-debugging-mgm-tool",
   "displayName": "Odoo Debugging Management Tool",
   "description": "A Visual Studio Code extension for managing Odoo debugging.",
+  "files": [
+    "odoo-debugging-mgm-tool-0.0.1.vsix"
+  ],
+  "private": true,
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "version": "0.0.1",
   "repository": {
     "type": "git",
