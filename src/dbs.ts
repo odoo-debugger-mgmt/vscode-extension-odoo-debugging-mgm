@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { DatabaseModel } from './models/db';
 import { ModuleModel } from './models/module';
-import { listSubdirectories, normalizePath, getGitBranch } from './utils';
+import { listSubdirectories, normalizePath, getGitBranch, showError, showInfo } from './utils';
 import { SettingsStore } from './settingsStore';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
@@ -31,7 +31,7 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
         const { project } = result;
         const dbs: DatabaseModel[] = project.dbs;
         if (!dbs) {
-            vscode.window.showErrorMessage('No databases found');
+            showError('No databases found');
             return [];
         }
 
@@ -56,7 +56,7 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
 export async function showBranchSelector(repoPath: string): Promise<string | undefined> {
     repoPath = normalizePath(repoPath);
     if (!repoPath || !fs.existsSync(repoPath)) {
-        vscode.window.showErrorMessage(`Repository path does not exist: ${repoPath}`);
+        showError(`Repository path does not exist: ${repoPath}`);
         return undefined;
     }
     try {
@@ -82,7 +82,7 @@ export async function showBranchSelector(repoPath: string): Promise<string | und
         });
         return result;
     } catch (error: any) {
-        vscode.window.showErrorMessage(error.message);
+        showError(error.message);
         return undefined;
     }
 }
@@ -92,21 +92,21 @@ export function checkoutBranch(settings: SettingsModel, branch: string) {
     settings.odooPath = odooPath;
     exec(`git checkout ${branch}`, { cwd: settings.odooPath }, (err, stdout, stderr) => {
         if (err || stderr) {
-            vscode.window.showErrorMessage(`Failed to switch to branch "${branch}": ${stderr || (err?.message || 'Unknown error')}`);
+            showError(`Failed to switch to branch "${branch}": ${stderr || (err?.message || 'Unknown error')}`);
             return;
         }
 
-        vscode.window.showInformationMessage(`Odoo Switched to branch: ${branch}`);
+        showInfo(`Odoo Switched to branch: ${branch}`);
     });
     let enterprisePath = normalizePath(settings.enterprisePath);
     settings.enterprisePath = enterprisePath;
     exec(`git checkout ${branch}`, { cwd: settings.enterprisePath }, (err, stdout, stderr) => {
         if (err || stderr) {
-            vscode.window.showErrorMessage(`Failed to switch to branch "${branch}": ${stderr || (err?.message || 'Unknown error')}`);
+            showError(`Failed to switch to branch "${branch}": ${stderr || (err?.message || 'Unknown error')}`);
             return;
         }
 
-        vscode.window.showInformationMessage(`Enterprise Switched to branch: ${branch}`);
+        showInfo(`Enterprise Switched to branch: ${branch}`);
     });
 }
 
@@ -114,7 +114,7 @@ export async function getDbDumpFolder(dumpsFolder: string): Promise<string | und
     dumpsFolder = normalizePath(dumpsFolder);
 
     if (!fs.existsSync(dumpsFolder)) {
-        vscode.window.showErrorMessage('Downloads folder not found.');
+        showError(`Dumps folder not found: ${dumpsFolder}`);
         return undefined;
     }
 
@@ -132,7 +132,7 @@ export async function getDbDumpFolder(dumpsFolder: string): Promise<string | und
     }
 
     if (matchingFolders.length === 0) {
-        vscode.window.showInformationMessage('No folders with dump.sql found in Downloads.');
+        showInfo(`No folders with dump.sql found in ${path.basename(dumpsFolder)}.`);
         return undefined;
     }
 
@@ -179,7 +179,7 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
                 ignoreFocusOut: true
             });
             if (!existingDbName) {
-                vscode.window.showErrorMessage('Database name is required');
+                showError('Database name is required');
                 return undefined;
             }
         }else{
@@ -266,13 +266,21 @@ export async function selectDatabase(event: any) {
         return;
     }
     const { data, project } = result;
+    
+    // Find the project index in the projects array
+    const projectIndex = data.projects.findIndex((p: any) => p.uid === project.uid);
+    if (projectIndex === -1) {
+        showError('Project not found');
+        return;
+    }
+    
     const oldSelectedDbIndex = project.dbs.findIndex((db: DatabaseModel) => db.isSelected);
     if (oldSelectedDbIndex !== -1) {
-        SettingsStore.save(false, ["projects", project.uid, "dbs", oldSelectedDbIndex, "isSelected"], "odoo-debugger-data.json");
+        SettingsStore.save(false, ["projects", projectIndex, "dbs", oldSelectedDbIndex, "isSelected"], "odoo-debugger-data.json");
     }
     const newSelectedDbIndex = project.dbs.findIndex((db: DatabaseModel) => db.id === database.id);
     if (newSelectedDbIndex !== -1) {
-        SettingsStore.save(true, ["projects", project.uid, "dbs", newSelectedDbIndex, "isSelected"], "odoo-debugger-data.json");
+        SettingsStore.save(true, ["projects", projectIndex, "dbs", newSelectedDbIndex, "isSelected"], "odoo-debugger-data.json");
     }
     if (
         database.odooVersion !== '' ||
@@ -291,7 +299,15 @@ export async function deleteDb(event: any) {
         return;
     }
     const { data, project } = result;
+    
+    // Find the project index in the projects array
+    const projectIndex = data.projects.findIndex((p: any) => p.uid === project.uid);
+    if (projectIndex === -1) {
+        showError('Project not found');
+        return;
+    }
+    
     setupDatabase(db.id, undefined, true);
     project.dbs = project.dbs.filter((database: DatabaseModel) => database.id !== db.id);
-    await SettingsStore.save(project.dbs, ["projects", project.uid, "dbs"], 'odoo-debugger-data.json');
+    await SettingsStore.save(project.dbs, ["projects", projectIndex, "dbs"], 'odoo-debugger-data.json');
 }

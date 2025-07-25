@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { ProjectModel } from "./models/project";
 import { SettingsModel } from "./models/settings";
-import { saveToFileWithComments, , getWorkspacePath, normalizePath} from './utils';
+import { getWorkspacePath, normalizePath, showError, showInfo } from './utils';
 import { SettingsStore } from './settingsStore';
 
 
@@ -19,12 +19,12 @@ export async function setupDebugger(): Promise<void> {
     // Normalize paths to handle absolute vs relative
     const normalizedOdooPath = normalizePath(settings.odooPath);
     const normalizedPythonPath = normalizePath(settings.pythonPath);
-    let launchJsonFile: any = SettingsStore.get('launch.json');
-    if (!launchJsonFile) {
-        vscode.window.showErrorMessage('Error reading launch.json');
+    const launchData: any = await SettingsStore.get('launch.json');
+    if (!launchData) {
+        showError('Error reading launch.json');
         return;
     }
-    let configurations: Object[] = launchJsonFile?.configurations;
+    let configurations: Object[] = launchData.configurations;
     let odooConfig = configurations.find((config: any) => config.name === settings.debuggerName);
 
     let newOdooConfig: {};
@@ -78,7 +78,7 @@ function prepareArgs(project: ProjectModel, settings: SettingsModel, isShell=fal
     }
     let db = project.dbs.find((db) => db.isSelected);
     if (!db) {
-        vscode.window.showErrorMessage('No database selected');
+        showError('No database selected');
         return;
     }
     let installs = db?.modules.filter((module: any) => {
@@ -151,7 +151,7 @@ export async function startDebugShell(): Promise<void> {
 export async function startDebugServer(): Promise<void> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
-        vscode.window.showErrorMessage("No workspace open.");
+        showError("No workspace open.");
         return;
     }
     const result = await SettingsStore.getSelectedProject();

@@ -1,7 +1,7 @@
 import { ModuleModel } from "./models/module";
 import { DatabaseModel } from "./models/db";
 import * as vscode from "vscode";
-import { listSubdirectories } from './utils';
+import { listSubdirectories, showError } from './utils';
 import { SettingsStore } from './settingsStore';
 
 export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
@@ -26,12 +26,12 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
         const { project } = result;
         const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
         if (!db) {
-            vscode.window.showErrorMessage('No database selected');
+            showError('No database selected');
             return [];
         }
         const modules: ModuleModel[] = db.modules;
         if (!modules) {
-            vscode.window.showErrorMessage('No modules found');
+            showError('No modules found');
             return [];
         }
         let allModules: {"path": string, "name": string}[] = [];
@@ -100,7 +100,7 @@ export async function selectModule(event: any) {
     const { data, project } = result;
     const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        vscode.window.showErrorMessage('No database selected');
+        showError('No database selected');
         return;
     }
     const moduleExistsInDb = db.modules.find(mod => mod.name === module.name);
@@ -113,5 +113,5 @@ export async function selectModule(event: any) {
             db.modules = db.modules.filter(mod => mod.name !== module.name);
         }
     }
-    await SettingsStore.save(data);
+    await SettingsStore.saveAll(data);
 }
