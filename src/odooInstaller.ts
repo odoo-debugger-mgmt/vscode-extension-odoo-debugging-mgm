@@ -1,7 +1,7 @@
 // VSCode Extension Utility: Clone Odoo & Enterprise for a selected branch and setup venv with progress
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getWorkspacePath } from './utils';
+import { getWorkspacePath, showInfo, showError } from './utils';
 
 export async function setupOdooBranch() {
     await vscode.window.withProgress({
@@ -9,9 +9,8 @@ export async function setupOdooBranch() {
         title: 'Setting up Odoo…',
         cancellable: false
     }, async (progress) => {
-        const confirm = await vscode.window.showInformationMessage(
+        const confirm = await showInfo(
             'Please Know that this command will only download odoo source code and enterprise. Also it will install a venv only.',
-            { modal: true },
             'Continue'
         );
         if (!confirm) {
@@ -35,7 +34,7 @@ export async function setupOdooBranch() {
         try {
             terminal.sendText(`${pythonCmd} -m venv ${venvPath}`);
         } catch (e) {
-            vscode.window.showErrorMessage('Python venv creation failed: ' + e);
+            showError('Python venv creation failed: ' + e);
         }
     });
 }

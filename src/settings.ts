@@ -1,5 +1,5 @@
 import { SettingsModel } from "./models/settings";
-import { camelCaseToTitleCase } from './utils';
+import { camelCaseToTitleCase, showError } from './utils';
 import * as vscode from "vscode";
 import { SettingsStore } from './settingsStore';
 
@@ -29,11 +29,11 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<vscode.Tree
         if (!settings) {
             settings = new SettingsModel();
             data.settings = settings;
-            await SettingsStore.save(data);
+            await SettingsStore.saveAll(data);
         }
 
         if (typeof settings === 'string') {
-            vscode.window.showErrorMessage('Error reading settings');
+            showError('Error reading settings');
             return [];
         }
 
@@ -62,7 +62,7 @@ export async function editSetting(event: any) {
 
     const settings = data.settings;
     if (!settings) {
-        vscode.window.showErrorMessage('Error reading settings');
+        showError('Error reading settings');
         return;
     }
 
@@ -70,6 +70,6 @@ export async function editSetting(event: any) {
     const newValue = await vscode.window.showInputBox({ prompt: `Edit ${camelCaseToTitleCase(key)}`, value: currentValue });
     if (newValue !== undefined) {
         settings[key] = newValue;
-        await SettingsStore.save(data);
+        await SettingsStore.saveAll(data);
     }
 }

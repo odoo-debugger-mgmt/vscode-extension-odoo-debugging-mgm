@@ -1,6 +1,6 @@
 import { RepoModel } from "./models/repo";
 import * as vscode from "vscode";
-import { listSubdirectories, getWorkspacePath, normalizePath } from './utils';
+import { listSubdirectories, getWorkspacePath, normalizePath, showError, showInfo } from './utils';
 import { SettingsStore } from './settingsStore';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -38,12 +38,12 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
         const customAddonsPath = normalizePath(data.settings.customAddonsPath);
         const devsRepos = listSubdirectories(customAddonsPath);
         if (devsRepos.length === 0) {
-            vscode.window.showInformationMessage('No folders found in custom-addons.');
+            showInfo('No folders found in custom-addons.');
             throw new Error('No folders found in custom-addons.');
         }
 
         if (!repos) {
-            vscode.window.showErrorMessage('No modules found');
+            showError('No modules found');
             return [];
         }
 
@@ -103,5 +103,5 @@ export async function selectRepo(event: any) {
         project.repos = project.repos.filter((repo: RepoModel) => repo.name !== selectedRepo.name);
     }
 
-    await SettingsStore.save(data);
+    await SettingsStore.saveAll(data);
 }

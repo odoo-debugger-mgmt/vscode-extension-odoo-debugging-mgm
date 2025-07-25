@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-import { checkWorkSpaceOrFolderOpened, normalizePath } from './utils';
+import { checkWorkSpaceOrFolderOpened, normalizePath, showError, showInfo } from './utils';
 import { ProjectModel } from './models/project';
 import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb } from './dbs';
 import { ProjectTreeProvider, createProject, selectProject, getRepo, getProjectName, deleteProject} from './project';
@@ -51,7 +51,7 @@ export function activate(context: vscode.ExtensionContext) {
 			await createProject(name, repos, db);
 			refreshAll();
 		} catch (err: any) {
-			vscode.window.showErrorMessage(err.message);
+			showError(err.message);
 		}
 	});
 	vscode.commands.registerCommand('projectSelector.selectProject', async (event) => {
@@ -78,12 +78,12 @@ export function activate(context: vscode.ExtensionContext) {
 			const db = await createDb(project.name, project.repos, settings.dumpsFolder, settings);
 			if (db) {
 				project.dbs.push(db);
-				await SettingsStore.save({ settings, projects });
+				await SettingsStore.saveAll({ settings, projects });
 				await selectDatabase(db);
 			}
 			refreshAll();
 		} catch (err: any) {
-			vscode.window.showErrorMessage(err.message);
+			showError(err.message);
 		}
 	});
 	vscode.commands.registerCommand('dbSelector.selectDb', async (event) => {
@@ -97,7 +97,7 @@ export function activate(context: vscode.ExtensionContext) {
 	vscode.commands.registerCommand('dbSelector.restore', async (event) => {
 		await restoreDb(event);
 		refreshAll();
-		vscode.window.showInformationMessage(`Database ${event.id} restored successfully!`);
+		showInfo(`Database ${event.id} restored successfully!`);
 	});
 	// Repos
 	vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {

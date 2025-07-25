@@ -1,26 +1,69 @@
 import { SettingsModel } from './models/settings';
-import { readFromFile, DebuggerData, showError } from './utils';
+import { readFromFile, DebuggerData, showError, showInfo, showWarning, MessageType, getWorkspacePath } from './utils';
 import { ProjectModel } from './models/project';
 import { parse, modify, applyEdits } from "jsonc-parser";
 import fs from 'fs';
+import path from 'path';
 
 
 export class SettingsStore {
+    /**
+     * Helper function to read raw file content for JSON modification
+     */
+    private static async readRawFileContent(fileName: string): Promise<string | null> {
+        const workspacePath = getWorkspacePath();
+        if (!workspacePath) {
+            return null;
+        }
+
+        try {
+            const filePath = path.join(workspacePath, '.vscode', fileName);
+            if (!fs.existsSync(filePath)) {
+                return null;
+            }
+            return fs.readFileSync(filePath, 'utf-8');
+        } catch (error) {
+            showError(`Failed to read raw content from ${fileName}: ${error}`);
+            return null;
+        }
+    }
+
     static async get(fileName: string): Promise<DebuggerData> {
         const data = await readFromFile(fileName);
         if (!data) {
             throw new Error(`Error reading file: ${fileName}`);
         }
-        return parse(data, undefined, { allowTrailingComma: true });
+        return data;
     }
-    static async save(value: any, path: any[], fileName: string, options: any = {}): Promise<void> {
-        const data = await readFromFile(fileName);
-        if (!data) {
+    static async save(value: any, jsonPath: any[], fileName: string, options: any = {}): Promise<void> {
+        const workspacePath = getWorkspacePath();
+        if (!workspacePath) {
             return;
         }
-        let edits = modify(data, path, value, options);
-        const updatedJson = applyEdits(data, edits);
-        fs.writeFileSync(fileName, updatedJson, 'utf8');
+
+        const rawData = await this.readRawFileContent(fileName);
+        if (!rawData) {
+            return;
+        }
+
+        const filePath = path.join(workspacePath, '.vscode', fileName);
+        let edits = modify(rawData, jsonPath, value, options);
+        const updatedJson = applyEdits(rawData, edits);
+        fs.writeFileSync(filePath, updatedJson, 'utf8');
+    }
+
+    /**
+     * Saves the entire data object to file
+     */
+    static async saveAll(data: DebuggerData, fileName: string = 'odoo-debugger-data.json'): Promise<void> {
+        const workspacePath = getWorkspacePath();
+        if (!workspacePath) {
+            return;
+        }
+
+        const filePath = path.join(workspacePath, '.vscode', fileName);
+        const jsonString = JSON.stringify(data, null, 4);
+        fs.writeFileSync(filePath, jsonString, 'utf8');
     }
     static async load(): Promise<DebuggerData> {
         const data = await readFromFile('odoo-debugger-data.json') || {};
@@ -41,7 +84,7 @@ export class SettingsStore {
         const data = await this.load();
         const updated = Object.assign(new SettingsModel(), data.settings, partial);
         data.settings = updated;
-        await this.save(data);
+        await this.saveAll(data);
     }
 
     static async getProjects(): Promise<ProjectModel[]> {
@@ -52,7 +95,7 @@ export class SettingsStore {
     static async updateProjects(projects: ProjectModel[]): Promise<void> {
         const data = await this.load();
         data.projects = projects;
-        await this.save(data);
+        await this.saveAll(data);
     }
 
     /**

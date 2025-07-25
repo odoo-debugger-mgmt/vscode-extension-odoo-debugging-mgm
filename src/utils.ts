@@ -212,7 +212,7 @@ export async function readFromFile(fileName: string): Promise<any> {
         const filePath = path.join(workspacePath, '.vscode', fileName);
 
         if (!fs.existsSync(filePath)) {
-            vscode.window.showInformationMessage(`Creating ${fileName} file...`);
+            showInfo(`Creating ${fileName} file...`);
             return await createOdooDebuggerFile(filePath, workspacePath, fileName);
         }
 
@@ -229,17 +229,119 @@ export async function readFromFile(fileName: string): Promise<any> {
 // ============================================================================
 
 /**
- * Shows an error message with optional actions
+ * Output channel for logging messages
+ */
+let outputChannel: vscode.OutputChannel | null = null;
+
+/**
+ * Gets or creates the output channel for logging
+ */
+function getOutputChannel(): vscode.OutputChannel {
+    if (!outputChannel) {
+        outputChannel = vscode.window.createOutputChannel('Odoo Debugger');
+    }
+    return outputChannel;
+}
+
+/**
+ * Message types for the show message function
+ */
+export enum MessageType {
+    Error = 'error',
+    Warning = 'warning',
+    Info = 'info'
+}
+
+/**
+ * Shows a message with logging to output channel and console
+ * @param message - the message to display
+ * @param type - the type of message (error, warning, info)
+ * @param actions - optional action buttons
+ * @returns the selected action or undefined
+ */
+export async function showMessage(
+    message: string, 
+    type: MessageType = MessageType.Error, 
+    ...actions: string[]
+): Promise<string | undefined> {
+    const timestamp = new Date().toISOString();
+    const logMessage = `[${timestamp}] ${type.toUpperCase()}: ${message}`;
+    
+    // Log to output channel
+    const channel = getOutputChannel();
+    channel.appendLine(logMessage);
+    
+    // Log to console for debugging
+    switch (type) {
+        case MessageType.Error:
+            console.error(`[Odoo Debugger] ${logMessage}`);
+            break;
+        case MessageType.Warning:
+            console.warn(`[Odoo Debugger] ${logMessage}`);
+            break;
+        case MessageType.Info:
+            console.info(`[Odoo Debugger] ${logMessage}`);
+            break;
+    }
+    
+    // Show the appropriate message type
+    let result: string | undefined;
+    
+    switch (type) {
+        case MessageType.Error:
+            if (actions.length > 0) {
+                result = await vscode.window.showErrorMessage(message, ...actions);
+            } else {
+                vscode.window.showErrorMessage(message);
+            }
+            break;
+        case MessageType.Warning:
+            if (actions.length > 0) {
+                result = await vscode.window.showWarningMessage(message, ...actions);
+            } else {
+                vscode.window.showWarningMessage(message);
+            }
+            break;
+        case MessageType.Info:
+            if (actions.length > 0) {
+                result = await vscode.window.showInformationMessage(message, ...actions);
+            } else {
+                vscode.window.showInformationMessage(message);
+            }
+            break;
+    }
+    
+    return result;
+}
+
+/**
+ * Shows an error message with optional actions (backward compatibility)
  * @param message - the error message to display
  * @param actions - optional action buttons
  * @returns the selected action or undefined
  */
 export async function showError(message: string, ...actions: string[]): Promise<string | undefined> {
-    if (actions.length > 0) {
-        return await vscode.window.showErrorMessage(message, ...actions);
-    }
-    vscode.window.showErrorMessage(message);
-    return undefined;
+    return showMessage(message, MessageType.Error, ...actions);
+}
+
+/**
+ * Shows an info message with optional actions
+ * @param message - the info message to display
+ * @param actions - optional action buttons
+ * @returns the selected action or undefined
+ */
+export async function showInfo(message: string, ...actions: string[]): Promise<string | undefined> {
+    return showMessage(message, MessageType.Info, ...actions);
+}
+
+/**
+ * Shows a warning message with optional actions
+ * @param message - the warning message to display
+ * @param actions - optional action buttons
+ * @returns the selected action or undefined
+ */
+export async function showWarning(message: string, ...actions: string[]): Promise<string | undefined> {
+    return showMessage(message, MessageType.Warning, ...actions);
 }
 
 /**
