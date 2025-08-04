@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { SettingsModel } from './models/settings';
 import { ProjectModel } from './models/project';
+import { RepoModel } from './models/repo';
 import { modify, applyEdits, parse } from 'jsonc-parser';
 
 const launchJsonFileContent = `{
@@ -374,4 +375,46 @@ export async function getGitBranch(repoPath: string | undefined): Promise<string
         console.warn(`Failed to read branch for ${repoPath}: ${err}`);
     }
     return null;
+}
+
+// ============================================================================
+// PSAE-INTERNAL UTILITIES
+// ============================================================================
+
+/**
+ * Checks if psae-internal directory exists in the given path
+ * @param basePath - the base path to check for psae-internal
+ * @returns the full path to psae-internal if it exists, null otherwise
+ */
+export function findPsaeInternalPath(basePath: string): string | null {
+    const normalizedPath = normalizePath(basePath);
+    const psaeInternalPath = path.join(normalizedPath, 'psae-internal');
+    
+    try {
+        if (fs.existsSync(psaeInternalPath) && fs.statSync(psaeInternalPath).isDirectory()) {
+            return psaeInternalPath;
+        }
+    } catch (error) {
+        // Directory doesn't exist or isn't accessible
+    }
+    
+    return null;
+}
+
+/**
+ * Auto-detects psae-internal paths from project repositories
+ * @param repos - array of repository models
+ * @returns array of detected psae-internal paths
+ */
+export function autoDetectPsaeInternal(repos: RepoModel[]): string[] {
+    const psaePaths: string[] = [];
+    
+    for (const repo of repos) {
+        const psaePath = findPsaeInternalPath(repo.path);
+        if (psaePath) {
+            psaePaths.push(psaePath);
+        }
+    }
+    
+    return psaePaths;
 }

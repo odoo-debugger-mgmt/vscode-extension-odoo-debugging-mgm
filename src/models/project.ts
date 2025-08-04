@@ -8,13 +8,15 @@ export class ProjectModel {
     repos: RepoModel[] = [];
     isSelected: boolean = false;
     uid: string; // unique identifier for the project
+    includedPsaeInternalPaths: string[] = []; // Manually included psae-internal paths
     constructor(
         name: string,
         createdAt: Date,
         dbs: DatabaseModel[] = [],
         repos: RepoModel[] = [],
         isSelected: boolean = false,
-        uid: string = randomUUID()
+        uid: string = randomUUID(),
+        includedPsaeInternalPaths: string[] = []
     ) {
         this.name = name;
         this.dbs = dbs;
@@ -22,5 +24,6 @@ export class ProjectModel {
         this.createdAt = createdAt;
         this.isSelected = isSelected;
         this.uid = uid;
+        this.includedPsaeInternalPaths = includedPsaeInternalPaths;
     }
 }

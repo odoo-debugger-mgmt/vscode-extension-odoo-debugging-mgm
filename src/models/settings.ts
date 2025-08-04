@@ -14,6 +14,7 @@ export class SettingsModel {
     dumpsFolder: string = "/dumps";
     odooPath: string = "./odoo";
     enterprisePath: string = "./enterprise";
+    designThemesPath: string = "./design-themes";
     customAddonsPath: string = "./custom-addons";
     pythonPath: string = "./venv/bin/python";
     subModulesPaths: string = "";
