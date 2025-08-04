@@ -3,19 +3,35 @@ import * as vscode from 'vscode';
 import { checkWorkSpaceOrFolderOpened, normalizePath, showError, showInfo } from './utils';
 import { ProjectModel } from './models/project';
 import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb } from './dbs';
-import { ProjectTreeProvider, createProject, selectProject, getRepo, getProjectName, deleteProject} from './project';
+import { ProjectTreeProvider, createProject, selectProject, getRepo, getProjectName, deleteProject, editProjectSettings, duplicateProject, exportProject, importProject, quickProjectSearch} from './project';
 import { RepoTreeProvider, selectRepo } from './repos';
-import { ModuleTreeProvider, selectModule } from './module';
+import { ModuleTreeProvider, selectModule, togglePsaeInternalModule } from './module';
 import { SettingsTreeProvider, editSetting } from './settings';
 import { setupDebugger, startDebugShell, startDebugServer } from './debugger';
 import { setupOdooBranch } from './odooInstaller';
 import { SettingsStore } from './settingsStore';
 
+// Store disposables for proper cleanup
+let extensionDisposables: vscode.Disposable[] = [];
 
 export function activate(context: vscode.ExtensionContext) {
-	vscode.commands.executeCommand("setContext", "odoo-debugger.is_active", checkWorkSpaceOrFolderOpened() ? "true" : "false");
+    // Enable hot reload in development
+    if (process.env.NODE_ENV === 'development') {
+        try {
+            const { enableHotReload } = require('@hediet/node-reload');
+            enableHotReload(module);
+        } catch (error) {
+            console.log('Hot reload not available:', (error as Error).message || error);
+        }
+    }
 
-	const providers = {
+    // Clear any existing disposables
+    extensionDisposables.forEach(d => d.dispose());
+    extensionDisposables = [];
+
+    vscode.commands.executeCommand("setContext", "odoo-debugger.is_active", checkWorkSpaceOrFolderOpened() ? "true" : "false");
+
+    const providers = {
         project: new ProjectTreeProvider(context),
         repo: new RepoTreeProvider(context),
         db: new DbsTreeProvider(context),
@@ -23,100 +39,174 @@ export function activate(context: vscode.ExtensionContext) {
         settings: new SettingsTreeProvider(context)
     };
 
-    vscode.window.registerTreeDataProvider('projectSelector', providers.project);
-    vscode.window.registerTreeDataProvider('repoSelector', providers.repo);
-    vscode.window.registerTreeDataProvider('dbSelector', providers.db);
-    vscode.window.registerTreeDataProvider('moduleSelector', providers.module);
-    vscode.window.registerTreeDataProvider('workspaceSettings', providers.settings);
+    // Register tree data providers and store disposables
+    extensionDisposables.push(vscode.window.registerTreeDataProvider('projectSelector', providers.project));
+    extensionDisposables.push(vscode.window.registerTreeDataProvider('repoSelector', providers.repo));
+    extensionDisposables.push(vscode.window.registerTreeDataProvider('dbSelector', providers.db));
+    extensionDisposables.push(vscode.window.registerTreeDataProvider('moduleSelector', providers.module));
+    extensionDisposables.push(vscode.window.registerTreeDataProvider('workspaceSettings', providers.settings));
 
     const refreshAll = () => {
         setupDebugger();
         Object.values(providers).forEach(provider => provider.refresh());
     };
 
-	// Refresh commands
-	vscode.commands.registerCommand('projectSelector.refresh', refreshAll),
+    // Register all commands and store disposables
+    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.refresh', refreshAll));
 
-	// Projects
-	vscode.commands.registerCommand('projectSelector.create', async () => {
-		try {
-			const settings = await SettingsStore.getSettings();
-			const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-			if (!workspaceFolder) {throw new Error("No workspace open.");}
-			const name = await getProjectName(workspaceFolder);
-			const customAddonsPath = normalizePath(settings.customAddonsPath);
-			const repos = await getRepo(customAddonsPath);
-			const createADb = await vscode.window.showQuickPick(["Yes", "No"], { placeHolder: 'Create a database?' });
-			const db = createADb === "Yes" ? await createDb(name, repos, settings.dumpsFolder, settings) : undefined;
-			await createProject(name, repos, db);
-			refreshAll();
-		} catch (err: any) {
-			showError(err.message);
-		}
-	});
-	vscode.commands.registerCommand('projectSelector.selectProject', async (event) => {
-		await selectProject(event);
-		refreshAll();
-	});
-	vscode.commands.registerCommand('projectSelector.delete', async (event) => {
-		await deleteProject(event);
-		refreshAll();
-	});
-	vscode.commands.registerCommand('projectSelector.setup', async (event) => {
-		await setupOdooBranch();
-		refreshAll();
-	});
-	// DBS
-	vscode.commands.registerCommand('dbSelector.create', async () => {
-		try {
-			const settings = await SettingsStore.getSettings();
-			const projects = await SettingsStore.getProjects();
-			const project = projects?.find((p: ProjectModel) => p.isSelected);
-			if (!project) {
-				throw new Error('No project selected');
-			}
-			const db = await createDb(project.name, project.repos, settings.dumpsFolder, settings);
-			if (db) {
-				project.dbs.push(db);
-				await SettingsStore.saveAll({ settings, projects });
-				await selectDatabase(db);
-			}
-			refreshAll();
-		} catch (err: any) {
-			showError(err.message);
-		}
-	});
-	vscode.commands.registerCommand('dbSelector.selectDb', async (event) => {
-		await selectDatabase(event);
-		refreshAll();
-	});
-	vscode.commands.registerCommand('dbSelector.delete', async (event) => {
-		await deleteDb(event);
-		refreshAll();
-	});
-	vscode.commands.registerCommand('dbSelector.restore', async (event) => {
-		await restoreDb(event);
-		refreshAll();
-		showInfo(`Database ${event.id} restored successfully!`);
-	});
-	// Repos
-	vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
-		await selectRepo(event);
-		refreshAll();
-	});
-	// Modules
-	vscode.commands.registerCommand('moduleSelector.select', async (event) => {
-		await selectModule(event);
-		refreshAll();
-	});
-	// SETTINGS
-	vscode.commands.registerCommand('workspaceSettings.editSetting', async (event) => {
-		await editSetting(event);
-		refreshAll();
-	});
+    // Projects
+    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.create', async () => {
+        try {
+            const settings = await SettingsStore.getSettings();
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {throw new Error("No workspace open.");}
+            const name = await getProjectName(workspaceFolder);
+            const customAddonsPath = normalizePath(settings.customAddonsPath);
+            const repos = await getRepo(customAddonsPath);
+            const createADb = await vscode.window.showQuickPick(["Yes", "No"], { placeHolder: 'Create a database?' });
+            const db = createADb === "Yes" ? await createDb(name, repos, settings.dumpsFolder, settings) : undefined;
+            await createProject(name, repos, db);
+            refreshAll();
+        } catch (err: any) {
+            showError(err.message);
+        }
+    }));
 
-	vscode.commands.registerCommand('workspaceSettings.startServer', startDebugServer);
-	vscode.commands.registerCommand('workspaceSettings.startShell', startDebugShell);
+    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.selectProject', async (event) => {
+        await selectProject(event);
+        refreshAll();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.delete', async (event) => {
+        await deleteProject(event);
+        refreshAll();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.editSettings', async (event) => {
+        await editProjectSettings(event);
+        refreshAll();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.duplicateProject', async (event) => {
+        await duplicateProject(event);
+        refreshAll();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.exportProject', async (event) => {
+        await exportProject(event);
+        refreshAll();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.importProject', async () => {
+        await importProject();
+        refreshAll();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.setup', async (event) => {
+        await setupOdooBranch();
+        refreshAll();
+    }));
+
+    // Quick Project Search
+    extensionDisposables.push(vscode.commands.registerCommand('odoo-debugger.quickProjectSearch', async () => {
+        await quickProjectSearch();
+        refreshAll();
+    }));
+
+    // DBS
+    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.create', async () => {
+        try {
+            const settings = await SettingsStore.getSettings();
+            const projects = await SettingsStore.getProjects();
+            const project = projects?.find((p: ProjectModel) => p.isSelected);
+            if (!project) {
+                throw new Error('No project selected');
+            }
+            const db = await createDb(project.name, project.repos, settings.dumpsFolder, settings);
+            if (db) {
+                project.dbs.push(db);
+                await SettingsStore.saveAll({ settings, projects });
+                await selectDatabase(db);
+            }
+            refreshAll();
+        } catch (err: any) {
+            showError(err.message);
+        }
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.selectDb', async (event) => {
+        await selectDatabase(event);
+        refreshAll();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.delete', async (event) => {
+        await deleteDb(event);
+        refreshAll();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.restore', async (event) => {
+        await restoreDb(event);
+        refreshAll();
+        showInfo(`Database ${event.name || event.id} restored successfully!`);
+    }));
+
+    // Repos
+    extensionDisposables.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
+        await selectRepo(event);
+        refreshAll();
+    }));
+
+    // Modules
+    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.select', async (event) => {
+        await selectModule(event);
+        refreshAll();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.togglePsaeInternalModule', async (event) => {
+        await togglePsaeInternalModule(event);
+        refreshAll();
+    }));
+
+    // SETTINGS
+    extensionDisposables.push(vscode.commands.registerCommand('workspaceSettings.editSetting', async (event) => {
+        await editSetting(event);
+        refreshAll();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('workspaceSettings.startServer', startDebugServer));
+    extensionDisposables.push(vscode.commands.registerCommand('workspaceSettings.startShell', startDebugShell));
+
+    // Add all disposables to the context for automatic cleanup
+    extensionDisposables.forEach(disposable => context.subscriptions.push(disposable));
+
+    return {
+        dispose() {
+            // Clean up all disposables
+            extensionDisposables.forEach(d => d.dispose());
+            extensionDisposables = [];
+            
+            // Reset the context
+            vscode.commands.executeCommand(
+                "setContext",
+                "odoo-debugger.is_active",
+                "false"
+            );
+        }
+    };
 }
 
-// export function deactivate() {}
+// Proper deactivate function
+export function deactivate() {
+    // Clean up all disposables
+    extensionDisposables.forEach(d => d.dispose());
+    extensionDisposables = [];
+    
+    // Reset the context
+    vscode.commands.executeCommand(
+        "setContext",
+        "odoo-debugger.is_active",
+        "false"
+    );
+    
+    console.log('Odoo Debugger extension deactivated');
+}

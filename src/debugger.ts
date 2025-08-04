@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
+import * as fs from 'fs';
 import { ProjectModel } from "./models/project";
 import { SettingsModel } from "./models/settings";
-import { getWorkspacePath, normalizePath, showError, showInfo } from './utils';
+import { getWorkspacePath, normalizePath, showError, showInfo, listSubdirectories } from './utils';
 import { SettingsStore } from './settingsStore';
 
 
@@ -69,6 +70,47 @@ function prepareArgs(project: ProjectModel, settings: SettingsModel, isShell=fal
         './odoo/addons',
         ...normalizedRepoPaths
     ].join(',');
+    
+    let db = project.dbs.find((db) => db.isSelected);
+    if (!db) {
+        showError('No database selected');
+        return;
+    }
+    
+    // Auto-detect psae-internal paths needed based on selected modules
+    const psaeInternalPaths = new Set<string>();
+    
+    // Add manually included psae-internal paths first
+    for (const path of project.includedPsaeInternalPaths) {
+        psaeInternalPaths.add(normalizePath(path));
+    }
+    
+    // Check if any selected modules are from psae-internal
+    for (const module of db.modules) {
+        if (module.state === 'install' || module.state === 'upgrade') {
+            // Check each repo for this module in psae-internal
+            for (const repo of project.repos) {
+                const psaeInternalPath = `${repo.path}/psae-internal`;
+                if (fs.existsSync(psaeInternalPath) && fs.statSync(psaeInternalPath).isDirectory()) {
+                    try {
+                        const psaeModules = listSubdirectories(psaeInternalPath);
+                        if (psaeModules.some((psaeModule: {name: string, path: string}) => psaeModule.name === module.name)) {
+                            psaeInternalPaths.add(normalizePath(psaeInternalPath));
+                        }
+                    } catch (error) {
+                        console.warn(`Failed to read psae-internal modules from ${psaeInternalPath}:`, error);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Add auto-detected psae-internal paths
+    if (psaeInternalPaths.size > 0) {
+        addonsPath += `,${Array.from(psaeInternalPaths).join(',')}`;
+    }
+    
+    // Add global submodules paths from settings (for backward compatibility)
     if (settings.subModulesPaths !== '') {
         const normalizedSubModulePaths = settings.subModulesPaths
             .split(',')
@@ -76,11 +118,7 @@ function prepareArgs(project: ProjectModel, settings: SettingsModel, isShell=fal
             .join(',');
         addonsPath += `,${normalizedSubModulePaths}`;
     }
-    let db = project.dbs.find((db) => db.isSelected);
-    if (!db) {
-        showError('No database selected');
-        return;
-    }
+    
     let installs = db?.modules.filter((module: any) => {
         return module.state === "install";
     }
