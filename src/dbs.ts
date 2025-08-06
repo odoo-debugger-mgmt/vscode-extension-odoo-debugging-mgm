@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { DatabaseModel } from './models/db';
 import { ModuleModel } from './models/module';
-import { listSubdirectories, normalizePath, getGitBranch, showError, showInfo, showWarning } from './utils';
+import { listSubdirectories, normalizePath, getGitBranch, showError, showInfo, showWarning, showAutoInfo, showBriefStatus } from './utils';
 import { SettingsStore } from './settingsStore';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
@@ -215,7 +215,7 @@ export async function checkoutBranch(settings: SettingsModel, branch: string): P
     });
 }
 
-export async function getDbDumpFolder(dumpsFolder: string): Promise<string | undefined> {
+export async function getDbDumpFolder(dumpsFolder: string, searchFilter?: string): Promise<string | undefined> {
     dumpsFolder = normalizePath(dumpsFolder);
 
     if (!fs.existsSync(dumpsFolder)) {
@@ -241,16 +241,37 @@ export async function getDbDumpFolder(dumpsFolder: string): Promise<string | und
         return undefined;
     }
 
-    const selected = await vscode.window.showQuickPick(
-        matchingFolders.map(folder => ({
-            label: path.basename(folder),
-            description: folder,
-        })),
-        {
-            placeHolder: 'Select a folder containing dump.sql',
-            ignoreFocusOut: true
-        }
-    );
+    // Filter and sort folders if search filter is provided
+    let foldersToShow = matchingFolders.map(folder => ({
+        label: path.basename(folder),
+        description: folder,
+    }));
+    
+    if (searchFilter && searchFilter.trim() !== '') {
+        const filterTerm = searchFilter.toLowerCase();
+        
+        // Separate exact matches, partial matches, and no matches for sorting
+        const exactMatches = foldersToShow.filter(item => 
+            item.label.toLowerCase() === filterTerm
+        );
+        const partialMatches = foldersToShow.filter(item => 
+            item.label.toLowerCase().includes(filterTerm) && 
+            item.label.toLowerCase() !== filterTerm
+        );
+        const noMatches = foldersToShow.filter(item => 
+            !item.label.toLowerCase().includes(filterTerm)
+        );
+        
+        // Show exact matches first, then partial matches, then everything else
+        foldersToShow = [...exactMatches, ...partialMatches, ...noMatches];
+    }
+
+    const selected = await vscode.window.showQuickPick(foldersToShow, {
+        placeHolder: searchFilter 
+            ? `Select a dump folder (showing "${searchFilter}" matches first)` 
+            : 'Select a folder containing dump.sql',
+        ignoreFocusOut: true
+    });
 
     return selected ? selected.description : undefined;
 }
@@ -308,7 +329,7 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
             
         case "From Dump File":
             // Select dump folder
-            dumpFolder = await getDbDumpFolder(dumpFolderPath);
+            dumpFolder = await getDbDumpFolder(dumpFolderPath, projectName);
             if (!dumpFolder) {
                 showError('No dump folder selected');
                 return undefined;
@@ -417,7 +438,7 @@ export async function restoreDb(db: any): Promise<void> {
     }
     
     await setupDatabase(database.id, db.command.arguments[0].sqlFilePath);
-    showInfo(`Database "${database.name}" restored successfully`);
+    showAutoInfo(`Database "${database.name}" restored successfully`, 3000);
 }
 
 export async function setupDatabase(dbName: string, dumpPath: string | undefined, remove: boolean = false): Promise<void> {
@@ -517,7 +538,7 @@ export async function selectDatabase(event: any) {
         }
     }
     
-    showInfo(`Database switched to: ${database.name}`);
+    showBriefStatus(`Database switched to: ${database.name}`, 2000);
 }
 
 export async function deleteDb(event: any) {
@@ -553,12 +574,12 @@ export async function deleteDb(event: any) {
     project.dbs = project.dbs.filter((database: DatabaseModel) => database.id !== db.id);
     await SettingsStore.save(project.dbs, ["projects", projectIndex, "dbs"], 'odoo-debugger-data.json');
     
-    showInfo(`Database "${db.name}" deleted successfully`);
+    showAutoInfo(`Database "${db.name}" deleted successfully`, 2500);
     
     // If the deleted database was selected and there are other databases, select the first one
     if (db.isSelected && project.dbs.length > 0) {
         project.dbs[0].isSelected = true;
         await SettingsStore.save(project.dbs, ["projects", projectIndex, "dbs"], 'odoo-debugger-data.json');
-        showInfo(`Switched to database: ${project.dbs[0].name}`);
+        showBriefStatus(`Switched to database: ${project.dbs[0].name}`, 2000);
     }
 }
