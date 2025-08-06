@@ -346,6 +346,62 @@ export async function showWarning(message: string, ...actions: string[]): Promis
 }
 
 /**
+ * Shows an auto-dismissing information message that disappears after a specified time
+ * @param message - the info message to display
+ * @param timeoutMs - time in milliseconds before auto-dismiss (default: 3000ms = 3 seconds)
+ * @returns void
+ */
+export function showAutoInfo(message: string, timeoutMs: number = 3000): void {
+    vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: message,
+        cancellable: false
+    }, async (progress) => {
+        // Show progress for visual feedback
+        progress.report({ increment: 0 });
+        
+        // Auto-dismiss after timeout
+        return new Promise<void>((resolve) => {
+            setTimeout(() => {
+                resolve();
+            }, timeoutMs);
+        });
+    });
+    
+    // Also log to output channel and console
+    const timestamp = new Date().toISOString();
+    const logMessage = `[${timestamp}] INFO (AUTO): ${message}`;
+    
+    const channel = getOutputChannel();
+    channel.appendLine(logMessage);
+    console.info(`[Odoo Debugger] ${logMessage}`);
+}
+
+/**
+ * Shows a brief status bar message that disappears automatically
+ * @param message - the message to display in status bar
+ * @param timeoutMs - time in milliseconds before auto-dismiss (default: 2000ms = 2 seconds)
+ */
+export function showBriefStatus(message: string, timeoutMs: number = 2000): void {
+    const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    statusBarItem.text = `$(info) ${message}`;
+    statusBarItem.show();
+    
+    // Auto-dismiss after timeout
+    setTimeout(() => {
+        statusBarItem.dispose();
+    }, timeoutMs);
+    
+    // Also log to output channel and console
+    const timestamp = new Date().toISOString();
+    const logMessage = `[${timestamp}] STATUS: ${message}`;
+    
+    const channel = getOutputChannel();
+    channel.appendLine(logMessage);
+    console.info(`[Odoo Debugger] ${logMessage}`);
+}
+
+/**
  * Converts a camelCase string to a human-readable title case
  * @param str - the camelCase string to convert
  * @returns the converted title case string

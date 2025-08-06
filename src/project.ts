@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import { ProjectModel } from './models/project';
 import { DatabaseModel } from './models/db';
 import { RepoModel } from './models/repo';
-import { listSubdirectories, showError, showInfo, getGitBranch, normalizePath } from './utils';
+import { listSubdirectories, showError, showInfo, getGitBranch, normalizePath, showAutoInfo, showBriefStatus } from './utils';
 import { SettingsStore } from './settingsStore';
 import { randomUUID } from 'crypto';
 import { checkoutBranch } from './dbs';
@@ -105,7 +105,7 @@ export async function createProject(name: string, repos: RepoModel[], db?: Datab
         }
     }
     
-    showInfo(`Created project "${project.name}" with ${repos.length} repositories ${db ? `and database ${db.name}` : ''}`);    // Force a small delay to ensure data is persisted before refresh
+    showAutoInfo(`Created project "${project.name}" with ${repos.length} repositories ${db ? `and database ${db.name}` : ''}`, 4000);    // Force a small delay to ensure data is persisted before refresh
     await new Promise(resolve => setTimeout(resolve, 100));
 }
 
@@ -212,21 +212,49 @@ export async function selectProject(projectUid: string) {
     }
 }
 
-export async function getRepo(targetPath:string): Promise<RepoModel[] > {
+export async function getRepo(targetPath:string, searchFilter?: string): Promise<RepoModel[] > {
     const devsRepos = listSubdirectories(targetPath);
         if (devsRepos.length === 0) {
         showInfo('No folders found in custom-addons.');
         throw new Error('No folders found in custom-addons.');
     }
+    
     // Show QuickPick with both name and path as label and description
     const quickPickItems = devsRepos.map(entry => ({
         label: entry.name,
         description: entry.path
     }));
-    const selectedItems = await vscode.window.showQuickPick(quickPickItems, {
-        placeHolder: 'Select a folder from custom-addons',
-        canPickMany: true
+    
+    // Filter and sort items if search filter is provided
+    let itemsToShow = quickPickItems;
+    if (searchFilter && searchFilter.trim() !== '') {
+        const filterTerm = searchFilter.toLowerCase();
+        
+        // Separate exact matches, partial matches, and no matches for sorting
+        const exactMatches = quickPickItems.filter(item => 
+            item.label.toLowerCase() === filterTerm
+        );
+        const partialMatches = quickPickItems.filter(item => 
+            item.label.toLowerCase().includes(filterTerm) && 
+            item.label.toLowerCase() !== filterTerm
+        );
+        const noMatches = quickPickItems.filter(item => 
+            !item.label.toLowerCase().includes(filterTerm)
+        );
+        
+        // Show exact matches first, then partial matches, then everything else
+        itemsToShow = [...exactMatches, ...partialMatches, ...noMatches];
+    }
+    
+    const selectedItems = await vscode.window.showQuickPick(itemsToShow, {
+        placeHolder: searchFilter 
+            ? `Select folders from custom-addons (showing "${searchFilter}" matches first)` 
+            : 'Select a folder from custom-addons',
+        canPickMany: true,
+        matchOnDescription: true,
+        matchOnDetail: true
     });
+    
     if (selectedItems) {
         return selectedItems.map(item => {
             return new RepoModel(item.label, item.description, true);
@@ -718,8 +746,7 @@ export async function quickProjectSearch(): Promise<void> {
                 label: `${project.isSelected ? '$(arrow-right) ' : ''}${project.name}`,
                 description: `${repoCount} repo${repoCount === 1 ? '' : 's'}${dbInfo}`,
                 detail: `Created: ${new Date(project.createdAt).toLocaleDateString()} | Repositories: ${project.repos.map(r => r.name).join(', ')}`,
-                projectUid: project.uid,
-                alwaysShow: true
+                projectUid: project.uid
             };
         });
 
@@ -727,7 +754,9 @@ export async function quickProjectSearch(): Promise<void> {
             placeHolder: 'Search and select a project...',
             matchOnDescription: true,
             matchOnDetail: true,
-            ignoreFocusOut: true
+            ignoreFocusOut: true,
+            canPickMany: false,
+            title: 'Select Project'
         });
 
         if (selectedItem) {

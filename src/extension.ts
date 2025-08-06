@@ -62,7 +62,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (!workspaceFolder) {throw new Error("No workspace open.");}
             const name = await getProjectName(workspaceFolder);
             const customAddonsPath = normalizePath(settings.customAddonsPath);
-            const repos = await getRepo(customAddonsPath);
+            const repos = await getRepo(customAddonsPath, name); // Pass project name as search filter
             const createADb = await vscode.window.showQuickPick(["Yes", "No"], { placeHolder: 'Create a database?' });
             const db = createADb === "Yes" ? await createDb(name, repos, settings.dumpsFolder, settings) : undefined;
             await createProject(name, repos, db);
