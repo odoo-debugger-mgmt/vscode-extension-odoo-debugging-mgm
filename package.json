@@ -123,6 +123,11 @@
         "title": "Select Repo"
       },
       {
+        "command": "repoSelector.refresh",
+        "title": "Refresh",
+        "icon": "resources/icons/refresh.svg"
+      },
+      {
         "command": "dbSelector.selectDb",
         "title": "Select Database"
       },
@@ -153,7 +158,7 @@
       },
       {
         "command": "moduleSelector.refresh",
-        "title": "Refresh Modules",
+        "title": "Refresh",
         "icon": "resources/icons/refresh.svg"
       },
       {
@@ -168,6 +173,26 @@
       {
         "command": "moduleSelector.togglePsaeInternalModule",
         "title": "Toggle psae-internal Module"
+      },
+      {
+        "command": "moduleSelector.installAll", 
+        "title": "Install All Modules",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "moduleSelector.updateInstalled",
+        "title": "Update Installed Modules",
+        "icon": "$(arrow-circle-up)"
+      },
+      {
+        "command": "moduleSelector.updateAll",
+        "title": "Update All Modules",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "moduleSelector.clearAll",
+        "title": "Clear All Selections",
+        "icon": "$(clear-all)"
       },
       {
         "command": "workspaceSettings.startServer",
@@ -194,26 +219,41 @@
         {
           "command": "projectSelector.create",
           "when": "view == projectSelector",
-          "group": "navigation"
-        },
-        {
-          "command": "projectSelector.refresh",
-          "when": "view == projectSelector",
-          "group": "navigation"
+          "group": "navigation@1"
         },
         {
           "command": "projectSelector.setup",
           "when": "view == projectSelector",
-          "group": "navigation"
+          "group": "navigation@2"
         },
         {
           "command": "projectSelector.importProject",
           "when": "view == projectSelector",
-          "group": "navigation"
+          "group": "navigation@3"
         },
         {
           "command": "projectSelector.editSettings",
           "when": "view == projectSelector",
+          "group": "navigation@4"
+        },
+        {
+          "command": "workspaceSettings.startServer",
+          "when": "view == projectSelector",
+          "group": "navigation@5"
+        },
+        {
+          "command": "workspaceSettings.startShell",
+          "when": "view == projectSelector",
+          "group": "navigation@6"
+        },
+        {
+          "command": "projectSelector.refresh",
+          "when": "view == projectSelector",
+          "group": "navigation@7"
+        },
+        {
+          "command": "dbSelector.refresh",
+          "when": "view == dbSelector",
           "group": "navigation"
         },
         {
@@ -222,14 +262,34 @@
           "group": "navigation"
         },
         {
-          "command": "workspaceSettings.startServer",
-          "when": "view == projectSelector",
+          "command": "repoSelector.refresh",
+          "when": "view == repoSelector",
           "group": "navigation"
         },
         {
-          "command": "workspaceSettings.startShell",
-          "when": "view == projectSelector",
-          "group": "navigation"
+          "command": "moduleSelector.installAll", 
+          "when": "view == moduleSelector",
+          "group": "navigation@1"
+        },
+        {
+          "command": "moduleSelector.updateInstalled",
+          "when": "view == moduleSelector",
+          "group": "navigation@2"
+        },
+        {
+          "command": "moduleSelector.updateAll",
+          "when": "view == moduleSelector",
+          "group": "navigation@3"
+        },
+        {
+          "command": "moduleSelector.clearAll",
+          "when": "view == moduleSelector",
+          "group": "navigation@4"
+        },
+        {
+          "command": "moduleSelector.refresh",
+          "when": "view == moduleSelector",
+          "group": "navigation@5"
         }
       ],
       "view/item/context": [
