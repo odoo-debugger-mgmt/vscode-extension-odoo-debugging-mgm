@@ -2,7 +2,7 @@ import { ModuleModel } from "./models/module";
 import { DatabaseModel } from "./models/db";
 import * as vscode from "vscode";
 import * as fs from 'fs';
-import { listSubdirectories, showError, showInfo, normalizePath } from './utils';
+import { listSubdirectories, showError, showInfo, showAutoInfo, normalizePath } from './utils';
 import { SettingsStore } from './settingsStore';
 
 export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
@@ -259,4 +259,276 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
         await SettingsStore.saveAll(data);
         showInfo(`Included psae-internal (${repoName}) in addons path. Modules are now available for selection.`);
     }
+}
+
+export async function updateAllModules(): Promise<void> {
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
+        showError('No project selected');
+        return;
+    }
+
+    const { data, project } = result;
+    const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    if (!db) {
+        showError('No database selected');
+        return;
+    }
+
+    // Get all available modules from repositories
+    let allModules: {"path": string, "name": string, "repoName": string, "isPsaeInternal": boolean}[] = [];
+    let psaeInternalDirs: {"path": string, "repoName": string}[] = [];
+    
+    // Add modules from regular repositories
+    for (const repo of project.repos) {
+        const repoModules = listSubdirectories(repo.path);
+        allModules = allModules.concat(repoModules.map(module => ({
+            ...module,
+            repoName: repo.name,
+            isPsaeInternal: false
+        })));
+        
+        // Check if this repo has psae-internal directory
+        const psaeInternalPath = normalizePath(`${repo.path}/psae-internal`);
+        if (fs.existsSync(psaeInternalPath)) {
+            psaeInternalDirs.push({ path: psaeInternalPath, repoName: repo.name });
+        }
+    }
+    
+    // Add modules from included psae-internal directories
+    if (project.includedPsaeInternalPaths) {
+        for (const psaePath of project.includedPsaeInternalPaths) {
+            if (fs.existsSync(psaePath)) {
+                const repoDir = psaeInternalDirs.find(dir => dir.path === psaePath);
+                const repoName = repoDir ? repoDir.repoName : 'unknown';
+                const psaeModules = listSubdirectories(psaePath);
+                allModules = allModules.concat(psaeModules.map(module => ({
+                    ...module,
+                    repoName: repoName,
+                    isPsaeInternal: true
+                })));
+            }
+        }
+    }
+
+    const availableModules = allModules.filter(m => m.name !== 'psae-internal');
+    
+    if (availableModules.length === 0) {
+        showInfo('No modules available to update');
+        return;
+    }
+
+    // Confirm action
+    const confirm = await vscode.window.showWarningMessage(
+        `Are you sure you want to set all ${availableModules.length} available modules to "upgrade" state regardless of their current state?`,
+        { modal: true },
+        'Update All'
+    );
+
+    if (confirm !== 'Update All') {
+        return;
+    }
+
+    // Set all modules to upgrade state (add new ones or update existing ones)
+    let addedCount = 0;
+    let updatedCount = 0;
+    
+    for (const module of availableModules) {
+        const existingModule = db.modules.find(mod => mod.name === module.name);
+        if (!existingModule) {
+            db.modules.push(new ModuleModel(module.name, 'upgrade'));
+            addedCount++;
+        } else if (existingModule.state !== 'upgrade') {
+            existingModule.state = 'upgrade';
+            updatedCount++;
+        }
+    }
+
+    await SettingsStore.saveAll(data);
+    const message = addedCount > 0 && updatedCount > 0 
+        ? `Added ${addedCount} new modules and updated ${updatedCount} existing modules to "upgrade" state (${db.modules.length} total)`
+        : addedCount > 0 
+        ? `Added ${addedCount} modules for upgrade (${db.modules.length} total modules selected)`
+        : updatedCount > 0 
+        ? `Updated ${updatedCount} modules to "upgrade" state`
+        : `All ${availableModules.length} modules already set to "upgrade" state`;
+    
+    showAutoInfo(message, 4000);
+}
+
+export async function updateInstalledModules(): Promise<void> {
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
+        showError('No project selected');
+        return;
+    }
+
+    const { data, project } = result;
+    const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    if (!db) {
+        showError('No database selected');
+        return;
+    }
+
+    if (!db.modules || db.modules.length === 0) {
+        showInfo('No modules found to update');
+        return;
+    }
+
+    const installedModules = db.modules.filter(module => module.state === 'install');
+    if (installedModules.length === 0) {
+        showInfo('No modules with "install" state found to update');
+        return;
+    }
+
+    // Confirm action
+    const confirm = await vscode.window.showWarningMessage(
+        `Are you sure you want to set all ${installedModules.length} modules with "install" state to "upgrade" state?`,
+        { modal: true },
+        'Update Installed'
+    );
+
+    if (confirm !== 'Update Installed') {
+        return;
+    }
+
+    // Set only installed modules to upgrade state
+    installedModules.forEach(module => {
+        module.state = 'upgrade';
+    });
+
+    await SettingsStore.saveAll(data);
+    showAutoInfo(`${installedModules.length} installed modules set to upgrade state`, 3000);
+}
+
+export async function installAllModules(): Promise<void> {
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
+        showError('No project selected');
+        return;
+    }
+
+    const { data, project } = result;
+    const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    if (!db) {
+        showError('No database selected');
+        return;
+    }
+
+    // Get all available modules from repositories
+    let allModules: {"path": string, "name": string, "repoName": string, "isPsaeInternal": boolean}[] = [];
+    let psaeInternalDirs: {"path": string, "repoName": string}[] = [];
+    
+    // Add modules from regular repositories
+    for (const repo of project.repos) {
+        const repoModules = listSubdirectories(repo.path);
+        allModules = allModules.concat(repoModules.map(module => ({
+            ...module,
+            repoName: repo.name,
+            isPsaeInternal: false
+        })));
+        
+        // Check if this repo has psae-internal directory
+        const psaeInternalPath = normalizePath(`${repo.path}/psae-internal`);
+        if (fs.existsSync(psaeInternalPath)) {
+            psaeInternalDirs.push({ path: psaeInternalPath, repoName: repo.name });
+        }
+    }
+    
+    // Add modules from included psae-internal directories
+    if (project.includedPsaeInternalPaths) {
+        for (const psaePath of project.includedPsaeInternalPaths) {
+            if (fs.existsSync(psaePath)) {
+                const repoDir = psaeInternalDirs.find(dir => dir.path === psaePath);
+                const repoName = repoDir ? repoDir.repoName : 'unknown';
+                const psaeModules = listSubdirectories(psaePath);
+                allModules = allModules.concat(psaeModules.map(module => ({
+                    ...module,
+                    repoName: repoName,
+                    isPsaeInternal: true
+                })));
+            }
+        }
+    }
+
+    const availableModules = allModules.filter(m => m.name !== 'psae-internal');
+    
+    if (availableModules.length === 0) {
+        showInfo('No modules available to install');
+        return;
+    }
+
+    // Confirm action
+    const confirm = await vscode.window.showWarningMessage(
+        `Are you sure you want to set all ${availableModules.length} available modules to "install" state?`,
+        { modal: true },
+        'Install All'
+    );
+
+    if (confirm !== 'Install All') {
+        return;
+    }
+
+    // Set all modules to install state (add new ones or update existing ones)
+    let addedCount = 0;
+    let updatedCount = 0;
+    
+    for (const module of availableModules) {
+        const existingModule = db.modules.find(mod => mod.name === module.name);
+        if (!existingModule) {
+            db.modules.push(new ModuleModel(module.name, 'install'));
+            addedCount++;
+        } else if (existingModule.state !== 'install') {
+            existingModule.state = 'install';
+            updatedCount++;
+        }
+    }
+
+    await SettingsStore.saveAll(data);
+    const message = addedCount > 0 && updatedCount > 0 
+        ? `Added ${addedCount} new modules and updated ${updatedCount} existing modules to "install" state (${db.modules.length} total)`
+        : addedCount > 0 
+        ? `Added ${addedCount} modules for installation (${db.modules.length} total modules selected)`
+        : updatedCount > 0 
+        ? `Updated ${updatedCount} modules to "install" state`
+        : `All ${availableModules.length} modules already set to "install" state`;
+    
+    showAutoInfo(message, 4000);
+}
+
+export async function clearAllModuleSelections(): Promise<void> {
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
+        showError('No project selected');
+        return;
+    }
+
+    const { data, project } = result;
+    const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    if (!db) {
+        showError('No database selected');
+        return;
+    }
+
+    if (!db.modules || db.modules.length === 0) {
+        return; // Silently return if no modules to clear
+    }
+
+    // Confirm action
+    const confirm = await vscode.window.showWarningMessage(
+        `Are you sure you want to clear all ${db.modules.length} selected modules?`,
+        { modal: true },
+        'Clear All'
+    );
+
+    if (confirm !== 'Clear All') {
+        return;
+    }
+
+    // Clear all module selections
+    const clearedCount = db.modules.length;
+    db.modules = [];
+
+    await SettingsStore.saveAll(data);
+    showAutoInfo(`Cleared ${clearedCount} module selections`, 3000);
 }

@@ -5,7 +5,7 @@ import { ProjectModel } from './models/project';
 import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb } from './dbs';
 import { ProjectTreeProvider, createProject, selectProject, getRepo, getProjectName, deleteProject, editProjectSettings, duplicateProject, exportProject, importProject, quickProjectSearch} from './project';
 import { RepoTreeProvider, selectRepo } from './repos';
-import { ModuleTreeProvider, selectModule, togglePsaeInternalModule } from './module';
+import { ModuleTreeProvider, selectModule, togglePsaeInternalModule, updateAllModules, installAllModules, clearAllModuleSelections, updateInstalledModules } from './module';
 import { SettingsTreeProvider, editSetting } from './settings';
 import { setupDebugger, startDebugShell, startDebugServer } from './debugger';
 import { setupOdooBranch } from './odooInstaller';
@@ -53,6 +53,9 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Register all commands and store disposables
     extensionDisposables.push(vscode.commands.registerCommand('projectSelector.refresh', refreshAll));
+    extensionDisposables.push(vscode.commands.registerCommand('repoSelector.refresh', refreshAll));
+    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.refresh', refreshAll));
+    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.refresh', refreshAll));
 
     // Projects
     extensionDisposables.push(vscode.commands.registerCommand('projectSelector.create', async () => {
@@ -164,6 +167,27 @@ export function activate(context: vscode.ExtensionContext) {
 
     extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.togglePsaeInternalModule', async (event) => {
         await togglePsaeInternalModule(event);
+        refreshAll();
+    }));
+
+    // Module Quick Actions
+    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.updateAll', async () => {
+        await updateAllModules();
+        refreshAll();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.updateInstalled', async () => {
+        await updateInstalledModules();
+        refreshAll();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.installAll', async () => {
+        await installAllModules();
+        refreshAll();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.clearAll', async () => {
+        await clearAllModuleSelections();
         refreshAll();
     }));
 
