@@ -15,16 +15,6 @@ import { SettingsStore } from './settingsStore';
 let extensionDisposables: vscode.Disposable[] = [];
 
 export function activate(context: vscode.ExtensionContext) {
-    // Enable hot reload in development
-    if (process.env.NODE_ENV === 'development') {
-        try {
-            const { enableHotReload } = require('@hediet/node-reload');
-            enableHotReload(module);
-        } catch (error) {
-            console.log('Hot reload not available:', (error as Error).message || error);
-        }
-    }
-
     // Clear any existing disposables
     extensionDisposables.forEach(d => d.dispose());
     extensionDisposables = [];
