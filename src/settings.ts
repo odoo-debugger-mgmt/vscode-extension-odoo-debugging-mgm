@@ -29,7 +29,7 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<vscode.Tree
         if (!settings) {
             settings = new SettingsModel();
             data.settings = settings;
-            await SettingsStore.saveAll(data);
+            await SettingsStore.saveWithoutComments(data);
         }
 
         if (typeof settings === 'string') {
@@ -70,6 +70,6 @@ export async function editSetting(event: any) {
     const newValue = await vscode.window.showInputBox({ prompt: `Edit ${camelCaseToTitleCase(key)}`, value: currentValue });
     if (newValue !== undefined) {
         settings[key] = newValue;
-        await SettingsStore.saveAll(data);
+        await SettingsStore.saveWithoutComments(data);
     }
 }

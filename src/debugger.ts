@@ -42,7 +42,7 @@ export async function setupDebugger(): Promise<void> {
                 ...prepareArgs(project, settings),
             ]
         };
-        await SettingsStore.save(
+        await SettingsStore.saveWithComments(
             newOdooConfig, ["configurations", 0], "launch.json", { isArrayInsertion: true, formattingOptions: { insertSpaces: true, tabSize: 2 } }
         );
     } else {
@@ -55,7 +55,7 @@ export async function setupDebugger(): Promise<void> {
                 ...prepareArgs(project, settings),
             ]
         };
-        await SettingsStore.save(
+        await SettingsStore.saveWithComments(
             newOdooConfig, ["configurations", configurations.indexOf(odooConfig)], "launch.json", {formattingOptions: { insertSpaces: true, tabSize: 2 } }
         );
     }
@@ -70,21 +70,21 @@ function prepareArgs(project: ProjectModel, settings: SettingsModel, isShell=fal
         './odoo/addons',
         ...normalizedRepoPaths
     ].join(',');
-    
+
     let db = project.dbs.find((db) => db.isSelected);
     if (!db) {
         showError('No database selected');
         return;
     }
-    
+
     // Auto-detect psae-internal paths needed based on selected modules
     const psaeInternalPaths = new Set<string>();
-    
+
     // Add manually included psae-internal paths first
     for (const path of project.includedPsaeInternalPaths) {
         psaeInternalPaths.add(normalizePath(path));
     }
-    
+
     // Check if any selected modules are from psae-internal
     for (const module of db.modules) {
         if (module.state === 'install' || module.state === 'upgrade') {
@@ -104,12 +104,12 @@ function prepareArgs(project: ProjectModel, settings: SettingsModel, isShell=fal
             }
         }
     }
-    
+
     // Add auto-detected psae-internal paths
     if (psaeInternalPaths.size > 0) {
         addonsPath += `,${Array.from(psaeInternalPaths).join(',')}`;
     }
-    
+
     // Add global submodules paths from settings (for backward compatibility)
     if (settings.subModulesPaths !== '') {
         const normalizedSubModulePaths = settings.subModulesPaths
@@ -118,7 +118,7 @@ function prepareArgs(project: ProjectModel, settings: SettingsModel, isShell=fal
             .join(',');
         addonsPath += `,${normalizedSubModulePaths}`;
     }
-    
+
     let installs = db?.modules.filter((module: any) => {
         return module.state === "install";
     }

@@ -7,7 +7,6 @@ import * as fs from 'fs';
 import { execSync } from 'child_process';
 
 
-
 export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
     readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
@@ -103,5 +102,5 @@ export async function selectRepo(event: any) {
         project.repos = project.repos.filter((repo: RepoModel) => repo.name !== selectedRepo.name);
     }
 
-    await SettingsStore.saveAll(data);
+    await SettingsStore.saveWithoutComments(data);
 }

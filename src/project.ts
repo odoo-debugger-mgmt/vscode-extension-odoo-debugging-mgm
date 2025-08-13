@@ -1,10 +1,9 @@
 import * as vscode from 'vscode';
 import * as os from 'os';
-import * as fs from 'fs';
 import { ProjectModel } from './models/project';
 import { DatabaseModel } from './models/db';
 import { RepoModel } from './models/repo';
-import { listSubdirectories, showError, showInfo, getGitBranch, normalizePath, showAutoInfo, showBriefStatus } from './utils';
+import { listSubdirectories, showError, showInfo, getGitBranch, normalizePath, showAutoInfo } from './utils';
 import { SettingsStore } from './settingsStore';
 import { randomUUID } from 'crypto';
 import { checkoutBranch } from './dbs';
@@ -37,19 +36,19 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
         // Ensure all projects have UIDs (migration for existing data)
         const needsSave = await ensureProjectUIDs(data);
         if (needsSave) {
-            await SettingsStore.saveAll(data);
+            await SettingsStore.saveWithoutComments(data);
         }
 
         return projects.map(project => {
             const treeItem = new vscode.TreeItem(`${project.isSelected ? '👉' : ''} ${project.name}`);
             treeItem.id = project.uid; // Use UID instead of name for uniqueness
-            
+
             let tooltip = `Project: ${project.name}`;
             treeItem.tooltip = tooltip;
-            
+
             // Set context value for menu commands
             treeItem.contextValue = 'project';
-            
+
             treeItem.command = {
                 command: 'projectSelector.selectProject',
                 title: 'Select Project',
@@ -68,43 +67,43 @@ export async function createProject(name: string, repos: RepoModel[], db?: Datab
     if (!data.projects) {
         data.projects = [];
     }
-    
+
     // Deselect any currently selected project
     const currentSelectedIndex = data.projects.findIndex((p: ProjectModel) => p.isSelected);
     if (currentSelectedIndex !== -1) {
         data.projects[currentSelectedIndex].isSelected = false;
     }
-    
+
     let project: ProjectModel;
     if (!db) {
         project = new ProjectModel(name, new Date(), [], repos, true, randomUUID(), []);
     } else {
         project = new ProjectModel(name, new Date(), [db], repos, true, randomUUID(), []);
     }
-    
+
     // Add the new project to the array
     data.projects.push(project);
-    
+
     // Save the entire updated data
-    await SettingsStore.saveAll(data);
-    
+    await SettingsStore.saveWithoutComments(data);
+
     // If the project has a database with a version, check if branches need switching
     if (db && db.odooVersion && db.odooVersion !== '') {
         const currentOdooBranch = await getGitBranch(data.settings.odooPath);
         const currentEnterpriseBranch = await getGitBranch(data.settings.enterprisePath);
         const currentDesignThemesBranch = await getGitBranch(data.settings.designThemesPath || './design-themes');
-        
+
         const shouldSwitch = await promptBranchSwitch(db.odooVersion, {
             odoo: currentOdooBranch,
             enterprise: currentEnterpriseBranch,
             designThemes: currentDesignThemesBranch
         });
-        
+
         if (shouldSwitch) {
             await checkoutBranch(data.settings, db.odooVersion);
         }
     }
-    
+
     showAutoInfo(`Created project "${project.name}" with ${repos.length} repositories ${db ? `and database ${db.name}` : ''}`, 4000);    // Force a small delay to ensure data is persisted before refresh
     await new Promise(resolve => setTimeout(resolve, 100));
 }
@@ -138,20 +137,20 @@ async function promptBranchSwitch(targetVersion: string, currentBranches: {odoo:
     if (currentBranches.designThemes !== targetVersion) {
         mismatchedRepos.push(`Design Themes (currently: ${currentBranches.designThemes || 'unknown'})`);
     }
-    
+
     if (mismatchedRepos.length === 0) {
         return false; // No switch needed
     }
-    
+
     const message = `Database requires Odoo version ${targetVersion}, but the following repositories are on different branches:\n\n${mismatchedRepos.join('\n')}\n\nWould you like to switch all repositories to version ${targetVersion}?`;
-    
+
     const choice = await vscode.window.showWarningMessage(
         message,
         { modal: false },
         'Switch Branches',
         'Keep Current Branches'
     );
-    
+
     return choice === 'Switch Branches';
 }
 
@@ -162,28 +161,28 @@ export async function selectProject(projectUid: string) {
         showError('Error reading projects');
         return;
     }
-    
+
     // Ensure all projects have UIDs (migration for existing data)
     const needsSave = await ensureProjectUIDs(data);
     if (needsSave) {
-        await SettingsStore.saveAll(data);
+        await SettingsStore.saveWithoutComments(data);
     }
-    
+
     // Find and deselect the currently selected project
     const oldSelectedIndex = projects.findIndex((p: ProjectModel) => p.isSelected);
     if (oldSelectedIndex !== -1) {
-        await SettingsStore.save(false, ["projects", oldSelectedIndex, "isSelected"], 'odoo-debugger-data.json');
+        await SettingsStore.saveWithComments(false, ["projects", oldSelectedIndex, "isSelected"], 'odoo-debugger-data.json');
     }
-    
+
     // Find and select the new project by UID
     const newSelectedIndex = projects.findIndex((p: ProjectModel) => p.uid === projectUid);
-    
+
     if (newSelectedIndex !== -1) {
-        await SettingsStore.save(true, ["projects", newSelectedIndex, "isSelected"], 'odoo-debugger-data.json');
-        
+        await SettingsStore.saveWithComments(true, ["projects", newSelectedIndex, "isSelected"], 'odoo-debugger-data.json');
+
         // Get the newly selected project
         const selectedProject = projects[newSelectedIndex];
-        
+
         // Check if the project has a selected database with a specific version/branch
         const selectedDb = selectedProject.dbs?.find((db: DatabaseModel) => db.isSelected);
         if (selectedDb && selectedDb.odooVersion && selectedDb.odooVersion !== '') {
@@ -191,20 +190,20 @@ export async function selectProject(projectUid: string) {
             const currentOdooBranch = await getGitBranch(data.settings.odooPath);
             const currentEnterpriseBranch = await getGitBranch(data.settings.enterprisePath);
             const currentDesignThemesBranch = await getGitBranch(data.settings.designThemesPath || './design-themes');
-            
+
             const shouldSwitch = await promptBranchSwitch(selectedDb.odooVersion, {
                 odoo: currentOdooBranch,
                 enterprise: currentEnterpriseBranch,
                 designThemes: currentDesignThemesBranch
             });
-            
+
             if (shouldSwitch) {
                 await checkoutBranch(data.settings, selectedDb.odooVersion);
             }
         }
-        
+
         showInfo(`Project switched to: ${selectedProject.name}`);
-        
+
         // Force a small delay and refresh to ensure UI is updated
         await new Promise(resolve => setTimeout(resolve, 100));
     } else {
@@ -218,43 +217,43 @@ export async function getRepo(targetPath:string, searchFilter?: string): Promise
         showInfo('No folders found in custom-addons.');
         throw new Error('No folders found in custom-addons.');
     }
-    
+
     // Show QuickPick with both name and path as label and description
     const quickPickItems = devsRepos.map(entry => ({
         label: entry.name,
         description: entry.path
     }));
-    
+
     // Filter and sort items if search filter is provided
     let itemsToShow = quickPickItems;
     if (searchFilter && searchFilter.trim() !== '') {
         const filterTerm = searchFilter.toLowerCase();
-        
+
         // Separate exact matches, partial matches, and no matches for sorting
-        const exactMatches = quickPickItems.filter(item => 
+        const exactMatches = quickPickItems.filter(item =>
             item.label.toLowerCase() === filterTerm
         );
-        const partialMatches = quickPickItems.filter(item => 
-            item.label.toLowerCase().includes(filterTerm) && 
+        const partialMatches = quickPickItems.filter(item =>
+            item.label.toLowerCase().includes(filterTerm) &&
             item.label.toLowerCase() !== filterTerm
         );
-        const noMatches = quickPickItems.filter(item => 
+        const noMatches = quickPickItems.filter(item =>
             !item.label.toLowerCase().includes(filterTerm)
         );
-        
+
         // Show exact matches first, then partial matches, then everything else
         itemsToShow = [...exactMatches, ...partialMatches, ...noMatches];
     }
-    
+
     const selectedItems = await vscode.window.showQuickPick(itemsToShow, {
-        placeHolder: searchFilter 
-            ? `Select folders from custom-addons (showing "${searchFilter}" matches first)` 
+        placeHolder: searchFilter
+            ? `Select folders from custom-addons (showing "${searchFilter}" matches first)`
             : 'Select a folder from custom-addons',
         canPickMany: true,
         matchOnDescription: true,
         matchOnDetail: true
     });
-    
+
     if (selectedItems) {
         return selectedItems.map(item => {
             return new RepoModel(item.label, item.description, true);
@@ -266,8 +265,8 @@ export async function getRepo(targetPath:string, searchFilter?: string): Promise
 }
 
 export async function getProjectName(workspaceFolder: vscode.WorkspaceFolder): Promise<string> {
-    const name = await vscode.window.showInputBox({ 
-        prompt: "Enter a name for your new project", 
+    const name = await vscode.window.showInputBox({
+        prompt: "Enter a name for your new project",
         title: "Project Name",
         placeHolder: "e.g., My Odoo Project"
     });
@@ -284,7 +283,7 @@ export async function deleteProject(event: any) {
     // 2. Tree item from context menu (with id property containing the uid)
     // 3. String uid directly
     let projectUid: string;
-    
+
     if (typeof event === 'string') {
         // Direct UID string
         projectUid = event;
@@ -301,36 +300,36 @@ export async function deleteProject(event: any) {
         showError('Invalid project data for deletion');
         return;
     }
-    
+
     const data = await SettingsStore.get('odoo-debugger-data.json');
     const projects: ProjectModel[] = data.projects;
     if (!projects) {
         showError('Error reading projects');
         return;
     }
-    
+
     // Find the project index in the array by UID
     const projectIndex = projects.findIndex((p: ProjectModel) => p.uid === projectUid);
     if (projectIndex !== -1) {
         const projectToDelete = projects[projectIndex];
-        
+
         // Ask for confirmation
         const confirm = await vscode.window.showWarningMessage(
             `Are you sure you want to delete the project "${projectToDelete.name}"?`,
             { modal: true },
             'Delete'
         );
-        
+
         if (confirm !== 'Delete') {
             return; // User cancelled
         }
-        
+
         // Remove the project from the array and save the updated data
         data.projects.splice(projectIndex, 1);
-        await SettingsStore.saveAll(data);
-        
+        await SettingsStore.saveWithoutComments(data);
+
         showInfo(`Project "${projectToDelete.name}" deleted successfully`);
-        
+
         // If the deleted project was selected and there are other projects, select the first one
         if (projectToDelete.isSelected && data.projects.length > 0) {
             // Use the command to properly select the first project
@@ -344,7 +343,7 @@ export async function deleteProject(event: any) {
 export async function duplicateProject(event: any) {
     // Get project UID from event
     let projectUid: string;
-    
+
     if (typeof event === 'string') {
         projectUid = event;
     } else if (event && event.uid) {
@@ -357,42 +356,42 @@ export async function duplicateProject(event: any) {
         showError('Invalid project data');
         return;
     }
-    
+
     const data = await SettingsStore.get('odoo-debugger-data.json');
     const projects: ProjectModel[] = data.projects;
     if (!projects) {
         showError('Error reading projects');
         return;
     }
-    
+
     const projectIndex = projects.findIndex((p: ProjectModel) => p.uid === projectUid);
     if (projectIndex === -1) {
         showError('Project not found');
         return;
     }
-    
+
     const sourceProject = projects[projectIndex];
-    
+
     // Get a new name for the duplicate
     const duplicateName = await vscode.window.showInputBox({
         prompt: 'Enter a name for the duplicate project',
         value: `${sourceProject.name} - Copy`,
         ignoreFocusOut: true
     });
-    
+
     if (!duplicateName) {
         return; // User cancelled
     }
-    
+
     // Check if name already exists
     if (projects.some(p => p.name === duplicateName)) {
         showError('A project with this name already exists');
         return;
     }
-    
+
     // Deselect all projects
     projects.forEach(p => p.isSelected = false);
-    
+
     // Create duplicate project
     const duplicateProject = new ProjectModel(
         duplicateName,
@@ -403,19 +402,19 @@ export async function duplicateProject(event: any) {
         randomUUID(), // New unique ID
         [...(sourceProject.includedPsaeInternalPaths || [])] // Copy included psae-internal paths
     );
-    
+
     projects.push(duplicateProject);
-    
-    await SettingsStore.saveAll(data);
+
+    await SettingsStore.saveWithoutComments(data);
     showInfo(`Project "${duplicateName}" created as a duplicate of "${sourceProject.name}"`);
 }
 
 export async function editProjectSettings(event: any) {
     // Get project UID from event
     let projectUid: string;
-    
+
     console.log('editProjectSettings called with event:', event);
-    
+
     if (typeof event === 'string') {
         projectUid = event;
     } else if (event && event.uid) {
@@ -429,22 +428,22 @@ export async function editProjectSettings(event: any) {
         showError('Invalid project data for editing settings. Please try clicking on the project first to select it, then try again.');
         return;
     }
-    
+
     const data = await SettingsStore.get('odoo-debugger-data.json');
     const projects: ProjectModel[] = data.projects;
     if (!projects) {
         showError('Error reading projects');
         return;
     }
-    
+
     const projectIndex = projects.findIndex((p: ProjectModel) => p.uid === projectUid);
     if (projectIndex === -1) {
         showError('Project not found');
         return;
     }
-    
+
     const project = projects[projectIndex];
-    
+
     // Show project settings options
     const settingsOptions = [
         {
@@ -460,21 +459,21 @@ export async function editProjectSettings(event: any) {
             action: 'viewInfo'
         }
     ];
-    
+
     const selectedOption = await vscode.window.showQuickPick(settingsOptions, {
         placeHolder: `Edit settings for project "${project.name}"`,
         ignoreFocusOut: true
     });
-    
+
     if (!selectedOption) {
         return; // User cancelled
     }
-    
+
     switch (selectedOption.action) {
         case 'editName':
             await editProjectName(project, data);
             break;
-            
+
         case 'viewInfo':
             await viewProjectInfo(project);
             break;
@@ -492,7 +491,7 @@ async function editProjectName(project: ProjectModel, data: any) {
                 return 'Project name cannot be empty';
             }
             // Check if name already exists (excluding current project)
-            const existingProject = data.projects.find((p: ProjectModel) => 
+            const existingProject = data.projects.find((p: ProjectModel) =>
                 p.name === value.trim() && p.uid !== project.uid
             );
             if (existingProject) {
@@ -501,11 +500,11 @@ async function editProjectName(project: ProjectModel, data: any) {
             return null;
         }
     });
-    
+
     if (newName && newName.trim() !== project.name) {
         const oldName = project.name;
         project.name = newName.trim();
-        await SettingsStore.saveAll(data);
+        await SettingsStore.saveWithoutComments(data);
         showInfo(`Project renamed from "${oldName}" to "${project.name}"`);
     }
 }
@@ -513,7 +512,7 @@ async function editProjectName(project: ProjectModel, data: any) {
 async function viewProjectInfo(project: ProjectModel) {
     const dbCount = project.dbs?.length || 0;
     const selectedDb = project.dbs?.find((db: DatabaseModel) => db.isSelected);
-    
+
     let infoMessage = `Project Information
 
 Name: ${project.name}
@@ -533,7 +532,7 @@ export async function exportProject(event: any): Promise<void> {
     try {
         // Get project UID from event
         let projectUid: string;
-        
+
         if (typeof event === 'string') {
             projectUid = event;
         } else if (event && event.uid) {
@@ -546,20 +545,20 @@ export async function exportProject(event: any): Promise<void> {
             showError('Invalid project data');
             return;
         }
-        
+
         const data = await SettingsStore.get('odoo-debugger-data.json');
         const projects: ProjectModel[] = data.projects;
         if (!projects) {
             showError('No projects found');
             return;
         }
-        
+
         const project = projects.find(p => p.uid === projectUid);
         if (!project) {
             showError('Project not found');
             return;
         }
-        
+
         // Let user choose export location
         const saveUri = await vscode.window.showSaveDialog({
             defaultUri: vscode.Uri.file(`${project.name}.json`),
@@ -605,7 +604,7 @@ export async function exportProject(event: any): Promise<void> {
 4. Adjust repository paths as needed
 
 Note: Repository paths use ~ for home directory and may need adjustment on different systems.`;
-            
+
             await vscode.window.showInformationMessage(instructions, { modal: true });
         }
 
@@ -662,7 +661,7 @@ export async function importProject(): Promise<void> {
                 'Yes, Import with New Name',
                 'Cancel'
             );
-            
+
             if (useNewName !== 'Yes, Import with New Name') {
                 return;
             }
@@ -677,13 +676,13 @@ export async function importProject(): Promise<void> {
 
         for (const repo of importData.repositories) {
             // Expand ~ to home directory if present
-            const expandedPath = repo.path.startsWith('~') 
-                ? repo.path.replace('~', os.homedir()) 
+            const expandedPath = repo.path.startsWith('~')
+                ? repo.path.replace('~', os.homedir())
                 : repo.path;
 
             // Try to find the repository in the current custom-addons directory
             const localRepo = availableRepos.find(r => r.name === repo.name);
-            
+
             if (localRepo) {
                 validRepos.push(new RepoModel(localRepo.name, localRepo.path, true));
             } else {
@@ -705,7 +704,7 @@ export async function importProject(): Promise<void> {
         // Add to projects and save
         projects.push(newProject);
         data.projects = projects;
-        await SettingsStore.saveAll(data);
+        await SettingsStore.saveWithoutComments(data);
 
         // Show import results
         let message = `Project "${projectName}" imported successfully!`;
@@ -730,7 +729,7 @@ export async function quickProjectSearch(): Promise<void> {
     try {
         const data = await SettingsStore.get('odoo-debugger-data.json');
         const projects: ProjectModel[] = data.projects;
-        
+
         if (!projects || projects.length === 0) {
             showError('No projects found. Create a project first.');
             return;
@@ -741,7 +740,7 @@ export async function quickProjectSearch(): Promise<void> {
             const selectedDb = project.dbs?.find((db: DatabaseModel) => db.isSelected);
             const repoCount = project.repos.length;
             const dbInfo = selectedDb ? ` | DB: ${selectedDb.name}` : ' | No DB';
-            
+
             return {
                 label: `${project.isSelected ? '$(arrow-right) ' : ''}${project.name}`,
                 description: `${repoCount} repo${repoCount === 1 ? '' : 's'}${dbInfo}`,

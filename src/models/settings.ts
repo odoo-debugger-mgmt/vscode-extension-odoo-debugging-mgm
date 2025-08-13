@@ -20,7 +20,6 @@ export class SettingsModel {
     subModulesPaths: string = "";
     installApps: string = "";
     upgradeApps: string = "";
-    
     constructor(data?: Partial<SettingsModel>) {
         if (data) {
             Object.assign(this, data);

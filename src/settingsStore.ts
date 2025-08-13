@@ -1,7 +1,7 @@
 import { SettingsModel } from './models/settings';
-import { readFromFile, DebuggerData, showError, showInfo, showWarning, MessageType, getWorkspacePath } from './utils';
+import { readFromFile, DebuggerData, showError, getWorkspacePath } from './utils';
 import { ProjectModel } from './models/project';
-import { parse, modify, applyEdits } from "jsonc-parser";
+import { modify, applyEdits } from "jsonc-parser";
 import fs from 'fs';
 import path from 'path';
 
@@ -35,7 +35,7 @@ export class SettingsStore {
         }
         return data;
     }
-    static async save(value: any, jsonPath: any[], fileName: string, options: any = {}): Promise<void> {
+    static async saveWithComments(value: any, jsonPath: any[], fileName: string, options: any = {}): Promise<void> {
         const workspacePath = getWorkspacePath();
         if (!workspacePath) {
             return;
@@ -55,7 +55,7 @@ export class SettingsStore {
     /**
      * Saves the entire data object to file
      */
-    static async saveAll(data: DebuggerData, fileName: string = 'odoo-debugger-data.json'): Promise<void> {
+    static async saveWithoutComments(data: DebuggerData, fileName: string = 'odoo-debugger-data.json'): Promise<void> {
         const workspacePath = getWorkspacePath();
         if (!workspacePath) {
             return;
@@ -84,7 +84,7 @@ export class SettingsStore {
         const data = await this.load();
         const updated = Object.assign(new SettingsModel(), data.settings, partial);
         data.settings = updated;
-        await this.saveAll(data);
+        await this.saveWithoutComments(data);
     }
 
     static async getProjects(): Promise<ProjectModel[]> {
@@ -95,7 +95,7 @@ export class SettingsStore {
     static async updateProjects(projects: ProjectModel[]): Promise<void> {
         const data = await this.load();
         data.projects = projects;
-        await this.saveAll(data);
+        await this.saveWithoutComments(data);
     }
 
     /**

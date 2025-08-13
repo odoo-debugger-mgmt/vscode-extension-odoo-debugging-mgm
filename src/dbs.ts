@@ -20,20 +20,20 @@ async function promptBranchSwitch(targetVersion: string, currentBranches: {odoo:
     if (currentBranches.designThemes !== targetVersion) {
         mismatchedRepos.push(`Design Themes (currently: ${currentBranches.designThemes || 'unknown'})`);
     }
-    
+
     if (mismatchedRepos.length === 0) {
         return false; // No switch needed
     }
-    
+
     const message = `Database requires Odoo version ${targetVersion}, but the following repositories are on different branches:\n\n${mismatchedRepos.join('\n')}\n\nWould you like to switch all repositories to version ${targetVersion}?`;
-    
+
     const choice = await vscode.window.showWarningMessage(
         message,
         { modal: false },
         'Switch Branches',
         'Keep Current Branches'
     );
-    
+
     return choice === 'Switch Branches';
 }
 import { SettingsModel } from './models/settings';
@@ -133,12 +133,12 @@ export async function checkoutBranch(settings: SettingsModel, branch: string): P
         // Process each repository
         for (let i = 0; i < repos.length; i++) {
             const repo = repos[i];
-            
+
             progress.report({
                 message: `Processing ${repo.name}...`,
                 increment: (i / totalRepos) * 100
             });
-            
+
             if (!fs.existsSync(repo.path)) {
                 results.push({
                     name: repo.name,
@@ -246,29 +246,29 @@ export async function getDbDumpFolder(dumpsFolder: string, searchFilter?: string
         label: path.basename(folder),
         description: folder,
     }));
-    
+
     if (searchFilter && searchFilter.trim() !== '') {
         const filterTerm = searchFilter.toLowerCase();
-        
+
         // Separate exact matches, partial matches, and no matches for sorting
-        const exactMatches = foldersToShow.filter(item => 
+        const exactMatches = foldersToShow.filter(item =>
             item.label.toLowerCase() === filterTerm
         );
-        const partialMatches = foldersToShow.filter(item => 
-            item.label.toLowerCase().includes(filterTerm) && 
+        const partialMatches = foldersToShow.filter(item =>
+            item.label.toLowerCase().includes(filterTerm) &&
             item.label.toLowerCase() !== filterTerm
         );
-        const noMatches = foldersToShow.filter(item => 
+        const noMatches = foldersToShow.filter(item =>
             !item.label.toLowerCase().includes(filterTerm)
         );
-        
+
         // Show exact matches first, then partial matches, then everything else
         foldersToShow = [...exactMatches, ...partialMatches, ...noMatches];
     }
 
     const selected = await vscode.window.showQuickPick(foldersToShow, {
-        placeHolder: searchFilter 
-            ? `Select a dump folder (showing "${searchFilter}" matches first)` 
+        placeHolder: searchFilter
+            ? `Select a dump folder (showing "${searchFilter}" matches first)`
             : 'Select a folder containing dump.sql',
         ignoreFocusOut: true
     });
@@ -284,7 +284,7 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
     let selectedModules: string[] = [];
     let db: DatabaseModel | undefined;
     let modules: ModuleModel[] = [];
-    
+
     // Step 1: Choose database creation method
     const creationMethod = await vscode.window.showQuickPick([
         {
@@ -306,16 +306,16 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
         placeHolder: 'How do you want to create this database?',
         ignoreFocusOut: true
     });
-    
+
     if (!creationMethod) {
         return undefined; // User cancelled
     }
-    
+
     let dumpFolder: string | undefined;
     let existingDbName: string | undefined;
     let isExistingDb = false;
     let sqlDumpPath: string | undefined;
-    
+
     // Step 2: Handle the specific creation method
     switch (creationMethod.label) {
         case "Fresh Database":
@@ -326,7 +326,7 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
                 ignoreFocusOut: true
             }) || [];
             break;
-            
+
         case "From Dump File":
             // Select dump folder
             dumpFolder = await getDbDumpFolder(dumpFolderPath, projectName);
@@ -336,7 +336,7 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
             }
             sqlDumpPath = path.join(dumpFolder, 'dump.sql');
             break;
-            
+
         case "Connect to Existing":
             // Get existing database name
             existingDbName = await vscode.window.showInputBox({
@@ -351,25 +351,25 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
             isExistingDb = true;
             break;
     }
-    
+
     // Step 3: Get database branch name (optional)
     let branchName: string | undefined = await vscode.window.showInputBox({
         placeHolder: 'Enter a branch/tag name for this database (optional)',
         prompt: 'This helps identify which version/branch this database represents',
         ignoreFocusOut: true
     });
-    
+
     // Step 4: Select the Odoo version/branch
     const version = await showBranchSelector(settings.odooPath) || '';
     if (!version) {
         showInfo('No version selected, using current branch');
     }
-    
+
     // Step 5: Create the database model
     for (const module of selectedModules) {
         modules.push(new ModuleModel(module, 'install'));
     }
-    
+
     // Generate a more descriptive database name
     let dbName: string;
     if (existingDbName) {
@@ -380,17 +380,17 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
         dbName = `${projectName}-${methodPrefix}-${timestamp}`;
     }
     db = new DatabaseModel(
-        dbName, 
-        new Date(), 
-        modules, 
+        dbName,
+        new Date(),
+        modules,
         false, // isSelected (will be set when added to project)
         true, // isActive
-        sqlDumpPath, 
-        isExistingDb, 
-        branchName, 
+        sqlDumpPath,
+        isExistingDb,
+        branchName,
         version
     );
-    
+
     // Step 6: Set up the database if needed
     if (sqlDumpPath) {
         db.isItABackup = true;
@@ -399,24 +399,24 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
         // Create fresh database
         await setupDatabase(db.id, undefined);
     }
-    
+
     // Step 7: Check if branches need switching at the end, after all configuration is done
     if (version && version !== '') {
         const currentOdooBranch = await getGitBranch(settings.odooPath);
         const currentEnterpriseBranch = await getGitBranch(settings.enterprisePath);
         const currentDesignThemesBranch = await getGitBranch(settings.designThemesPath || './design-themes');
-        
+
         const shouldSwitch = await promptBranchSwitch(version, {
             odoo: currentOdooBranch,
             enterprise: currentEnterpriseBranch,
             designThemes: currentDesignThemesBranch
         });
-        
+
         if (shouldSwitch) {
             await checkoutBranch(settings, version);
         }
     }
-    
+
     return db;
 }
 
@@ -425,18 +425,18 @@ export async function restoreDb(db: any): Promise<void> {
     if (!db.command.arguments[0].sqlFilePath) {
         throw new Error('SQL dump path is not defined');
     }
-    
+
     // Ask for confirmation
     const confirm = await vscode.window.showWarningMessage(
         `Are you sure you want to restore the database "${database.name}"? This will overwrite the existing database.`,
         { modal: true },
         'Restore'
     );
-    
+
     if (confirm !== 'Restore') {
         return; // User cancelled
     }
-    
+
     await setupDatabase(database.id, db.command.arguments[0].sqlFilePath);
     showAutoInfo(`Database "${database.name}" restored successfully`, 3000);
 }
@@ -446,7 +446,7 @@ export async function setupDatabase(dbName: string, dumpPath: string | undefined
         console.error(`❌ Dump file not found at: ${dumpPath}`);
         return;
     }
-    
+
     const operation = remove ? 'Removing' : dumpPath ? 'Setting up' : 'Creating';
     await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
@@ -469,12 +469,12 @@ export async function setupDatabase(dbName: string, dumpPath: string | undefined
                 progress.report({ message: 'Creating database...', increment: 40 });
                 console.log(`🚀 Creating database: ${dbName}`);
                 execSync(`createdb ${dbName}`, { stdio: 'inherit' });
-                
+
                 if (dumpPath) {
                     progress.report({ message: 'Importing dump file...', increment: 60 });
                     console.log(`📥 Importing SQL dump into ${dbName}`);
                     execSync(`psql ${dbName} < "${dumpPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
-                    
+
                     progress.report({ message: 'Configuring database...', increment: 80 });
                     console.log(`🔐 Resetting admin credentials for ${dbName}`);
                     execSync(`psql ${dbName} -c "UPDATE res_users SET password='admin'"`, { stdio: 'inherit', shell: '/bin/sh' });
@@ -503,41 +503,41 @@ export async function selectDatabase(event: any) {
         return;
     }
     const { data, project } = result;
-    
+
     // Find the project index in the projects array
     const projectIndex = data.projects.findIndex((p: any) => p.uid === project.uid);
     if (projectIndex === -1) {
         showError('Project not found');
         return;
     }
-    
+
     // Update database selection
     const oldSelectedDbIndex = project.dbs.findIndex((db: DatabaseModel) => db.isSelected);
     if (oldSelectedDbIndex !== -1) {
-        await SettingsStore.save(false, ["projects", projectIndex, "dbs", oldSelectedDbIndex, "isSelected"], "odoo-debugger-data.json");
+        await SettingsStore.saveWithComments(false, ["projects", projectIndex, "dbs", oldSelectedDbIndex, "isSelected"], "odoo-debugger-data.json");
     }
     const newSelectedDbIndex = project.dbs.findIndex((db: DatabaseModel) => db.id === database.id);
     if (newSelectedDbIndex !== -1) {
-        await SettingsStore.save(true, ["projects", projectIndex, "dbs", newSelectedDbIndex, "isSelected"], "odoo-debugger-data.json");
+        await SettingsStore.saveWithComments(true, ["projects", projectIndex, "dbs", newSelectedDbIndex, "isSelected"], "odoo-debugger-data.json");
     }
-    
+
     // Check if we need to switch branches (only if database has a version and it's different from current)
     if (database.odooVersion && database.odooVersion !== '') {
         const currentOdooBranch = await getGitBranch(data.settings.odooPath);
         const currentEnterpriseBranch = await getGitBranch(data.settings.enterprisePath);
         const currentDesignThemesBranch = await getGitBranch(data.settings.designThemesPath || './design-themes');
-        
+
         const shouldSwitch = await promptBranchSwitch(database.odooVersion, {
             odoo: currentOdooBranch,
             enterprise: currentEnterpriseBranch,
             designThemes: currentDesignThemesBranch
         });
-        
+
         if (shouldSwitch) {
             await checkoutBranch(data.settings, database.odooVersion);
         }
     }
-    
+
     showBriefStatus(`Database switched to: ${database.name}`, 2000);
 }
 
@@ -548,38 +548,38 @@ export async function deleteDb(event: any) {
         return;
     }
     const { data, project } = result;
-    
+
     // Find the project index in the projects array
     const projectIndex = data.projects.findIndex((p: any) => p.uid === project.uid);
     if (projectIndex === -1) {
         showError('Project not found');
         return;
     }
-    
+
     // Ask for confirmation
     const confirm = await vscode.window.showWarningMessage(
         `Are you sure you want to delete the database "${db.name}"?`,
         { modal: true },
         'Delete'
     );
-    
+
     if (confirm !== 'Delete') {
         return; // User cancelled
     }
-    
+
     // Delete the database from PostgreSQL
     await setupDatabase(db.id, undefined, true);
-    
+
     // Remove from project data
     project.dbs = project.dbs.filter((database: DatabaseModel) => database.id !== db.id);
-    await SettingsStore.save(project.dbs, ["projects", projectIndex, "dbs"], 'odoo-debugger-data.json');
-    
+    await SettingsStore.saveWithComments(project.dbs, ["projects", projectIndex, "dbs"], 'odoo-debugger-data.json');
+
     showAutoInfo(`Database "${db.name}" deleted successfully`, 2500);
-    
+
     // If the deleted database was selected and there are other databases, select the first one
     if (db.isSelected && project.dbs.length > 0) {
         project.dbs[0].isSelected = true;
-        await SettingsStore.save(project.dbs, ["projects", projectIndex, "dbs"], 'odoo-debugger-data.json');
+        await SettingsStore.saveWithComments(project.dbs, ["projects", projectIndex, "dbs"], 'odoo-debugger-data.json');
         showBriefStatus(`Switched to database: ${project.dbs[0].name}`, 2000);
     }
 }

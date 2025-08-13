@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-import { checkWorkSpaceOrFolderOpened, normalizePath, showError, showInfo } from './utils';
+import { normalizePath, showError, showInfo } from './utils';
 import { ProjectModel } from './models/project';
 import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb } from './dbs';
 import { ProjectTreeProvider, createProject, selectProject, getRepo, getProjectName, deleteProject, editProjectSettings, duplicateProject, exportProject, importProject, quickProjectSearch} from './project';
@@ -28,8 +28,8 @@ export function activate(context: vscode.ExtensionContext) {
     // Clear any existing disposables
     extensionDisposables.forEach(d => d.dispose());
     extensionDisposables = [];
-
-    vscode.commands.executeCommand("setContext", "odoo-debugger.is_active", checkWorkSpaceOrFolderOpened() ? "true" : "false");
+    const isWorkspaceOpen = !!vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0;
+    vscode.commands.executeCommand("setContext", "odoo-debugger.is_active", isWorkspaceOpen ? "true" : "false");
 
     const providers = {
         project: new ProjectTreeProvider(context),
@@ -128,7 +128,7 @@ export function activate(context: vscode.ExtensionContext) {
             const db = await createDb(project.name, project.repos, settings.dumpsFolder, settings);
             if (db) {
                 project.dbs.push(db);
-                await SettingsStore.saveAll({ settings, projects });
+                await SettingsStore.saveWithoutComments({ settings, projects });
                 await selectDatabase(db);
             }
             refreshAll();
@@ -208,7 +208,7 @@ export function activate(context: vscode.ExtensionContext) {
             // Clean up all disposables
             extensionDisposables.forEach(d => d.dispose());
             extensionDisposables = [];
-            
+
             // Reset the context
             vscode.commands.executeCommand(
                 "setContext",
@@ -224,13 +224,13 @@ export function deactivate() {
     // Clean up all disposables
     extensionDisposables.forEach(d => d.dispose());
     extensionDisposables = [];
-    
+
     // Reset the context
     vscode.commands.executeCommand(
         "setContext",
         "odoo-debugger.is_active",
         "false"
     );
-    
+
     console.log('Odoo Debugger extension deactivated');
 }

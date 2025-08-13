@@ -4,7 +4,7 @@ import * as path from 'path';
 import { SettingsModel } from './models/settings';
 import { ProjectModel } from './models/project';
 import { RepoModel } from './models/repo';
-import { modify, applyEdits, parse } from 'jsonc-parser';
+import { parse } from 'jsonc-parser';
 
 const launchJsonFileContent = `{
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
@@ -21,7 +21,7 @@ const debuggerDataFileContent = `{
     "settings": {
         // Add your Odoo settings here
     },
-    "projects": {}
+    "projects": []
 }`;
 
 // ============================================================================
@@ -49,14 +49,6 @@ export const CONFIG = {
 // ============================================================================
 // WORKSPACE & PATH UTILITIES
 // ============================================================================
-
-/**
- * Checks if a workspace folder is open
- * @returns true if workspace is open, false otherwise
- */
-export function checkWorkSpaceOrFolderOpened(): boolean {
-    return !!vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0;
-}
 
 /**
  * Gets the workspace folder path with validation
@@ -261,17 +253,17 @@ export enum MessageType {
  * @returns the selected action or undefined
  */
 export async function showMessage(
-    message: string, 
-    type: MessageType = MessageType.Error, 
+    message: string,
+    type: MessageType = MessageType.Error,
     ...actions: string[]
 ): Promise<string | undefined> {
     const timestamp = new Date().toISOString();
     const logMessage = `[${timestamp}] ${type.toUpperCase()}: ${message}`;
-    
+
     // Log to output channel
     const channel = getOutputChannel();
     channel.appendLine(logMessage);
-    
+
     // Log to console for debugging
     switch (type) {
         case MessageType.Error:
@@ -284,10 +276,10 @@ export async function showMessage(
             console.info(`[Odoo Debugger] ${logMessage}`);
             break;
     }
-    
+
     // Show the appropriate message type
     let result: string | undefined;
-    
+
     switch (type) {
         case MessageType.Error:
             if (actions.length > 0) {
@@ -311,7 +303,7 @@ export async function showMessage(
             }
             break;
     }
-    
+
     return result;
 }
 
@@ -359,7 +351,7 @@ export function showAutoInfo(message: string, timeoutMs: number = 3000): void {
     }, async (progress) => {
         // Show progress for visual feedback
         progress.report({ increment: 0 });
-        
+
         // Auto-dismiss after timeout
         return new Promise<void>((resolve) => {
             setTimeout(() => {
@@ -367,11 +359,11 @@ export function showAutoInfo(message: string, timeoutMs: number = 3000): void {
             }, timeoutMs);
         });
     });
-    
+
     // Also log to output channel and console
     const timestamp = new Date().toISOString();
     const logMessage = `[${timestamp}] INFO (AUTO): ${message}`;
-    
+
     const channel = getOutputChannel();
     channel.appendLine(logMessage);
     console.info(`[Odoo Debugger] ${logMessage}`);
@@ -386,16 +378,16 @@ export function showBriefStatus(message: string, timeoutMs: number = 2000): void
     const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     statusBarItem.text = `$(info) ${message}`;
     statusBarItem.show();
-    
+
     // Auto-dismiss after timeout
     setTimeout(() => {
         statusBarItem.dispose();
     }, timeoutMs);
-    
+
     // Also log to output channel and console
     const timestamp = new Date().toISOString();
     const logMessage = `[${timestamp}] STATUS: ${message}`;
-    
+
     const channel = getOutputChannel();
     channel.appendLine(logMessage);
     console.info(`[Odoo Debugger] ${logMessage}`);
@@ -431,46 +423,4 @@ export async function getGitBranch(repoPath: string | undefined): Promise<string
         console.warn(`Failed to read branch for ${repoPath}: ${err}`);
     }
     return null;
-}
-
-// ============================================================================
-// PSAE-INTERNAL UTILITIES
-// ============================================================================
-
-/**
- * Checks if psae-internal directory exists in the given path
- * @param basePath - the base path to check for psae-internal
- * @returns the full path to psae-internal if it exists, null otherwise
- */
-export function findPsaeInternalPath(basePath: string): string | null {
-    const normalizedPath = normalizePath(basePath);
-    const psaeInternalPath = path.join(normalizedPath, 'psae-internal');
-    
-    try {
-        if (fs.existsSync(psaeInternalPath) && fs.statSync(psaeInternalPath).isDirectory()) {
-            return psaeInternalPath;
-        }
-    } catch (error) {
-        // Directory doesn't exist or isn't accessible
-    }
-    
-    return null;
-}
-
-/**
- * Auto-detects psae-internal paths from project repositories
- * @param repos - array of repository models
- * @returns array of detected psae-internal paths
- */
-export function autoDetectPsaeInternal(repos: RepoModel[]): string[] {
-    const psaePaths: string[] = [];
-    
-    for (const repo of repos) {
-        const psaePath = findPsaeInternalPath(repo.path);
-        if (psaePath) {
-            psaePaths.push(psaePath);
-        }
-    }
-    
-    return psaePaths;
 }

@@ -169,7 +169,7 @@ The codebase follows clean architecture principles:
 
 When adding new features:
 1. Use `SettingsStore.getSelectedProject()` for project operations
-2. Use `SettingsStore.load()` and `SettingsStore.save()` for data persistence
+2. Use `SettingsStore.load()` and `SettingsStore.saveWithComments()` for data persistence
 3. Use `saveToFileWithComments()` for JSON file operations that should preserve comments
 4. Follow the established error handling patterns
 4. Maintain TypeScript strict type checking
