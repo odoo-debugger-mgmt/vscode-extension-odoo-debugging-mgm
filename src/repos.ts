@@ -37,8 +37,8 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
         const customAddonsPath = normalizePath(data.settings.customAddonsPath);
         const devsRepos = listSubdirectories(customAddonsPath);
         if (devsRepos.length === 0) {
-            showInfo('No folders found in custom-addons.');
-            throw new Error('No folders found in custom-addons.');
+            showInfo('No folders found in the Customer Addons Directory');
+            return [];
         }
 
         if (!repos) {

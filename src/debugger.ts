@@ -1,7 +1,9 @@
 import * as vscode from "vscode";
 import * as fs from 'fs';
+import { execSync } from 'child_process';
 import { ProjectModel } from "./models/project";
 import { SettingsModel } from "./models/settings";
+import { InstalledModuleInfo } from "./models/module";
 import { getWorkspacePath, normalizePath, showError, showInfo, listSubdirectories } from './utils';
 import { SettingsStore } from './settingsStore';
 
@@ -39,7 +41,7 @@ export async function setupDebugger(): Promise<void> {
             "python": normalizedPythonPath,
             "console": "integratedTerminal",
             "args": [
-                ...prepareArgs(project, settings),
+                ...(await prepareArgs(project, settings)),
             ]
         };
         await SettingsStore.saveWithComments(
@@ -52,7 +54,7 @@ export async function setupDebugger(): Promise<void> {
             "program": `${normalizedOdooPath}/odoo-bin`,
             "python": normalizedPythonPath,
             "args": [
-                ...prepareArgs(project, settings),
+                ...(await prepareArgs(project, settings)),
             ]
         };
         await SettingsStore.saveWithComments(
@@ -61,15 +63,64 @@ export async function setupDebugger(): Promise<void> {
     }
 }
 
-function prepareArgs(project: ProjectModel, settings: SettingsModel, isShell=false ): any{
+async function getInstalledModules(dbName: string): Promise<InstalledModuleInfo[]> {
+    try {
+        const query = `SELECT id, name, shortdesc, latest_version, state, application FROM ir_module_module WHERE state IN ('installed','to upgrade') ORDER BY name;`;
+        const command = `psql ${dbName} -t -A -F'|' -c "${query}"`;
+
+        const output = execSync(command, {
+            encoding: 'utf-8',
+            stdio: ['pipe', 'pipe', 'pipe']
+        });
+
+        const lines = output.trim().split('\n').filter(line => line.trim());
+        const installedModules: InstalledModuleInfo[] = [];
+
+        for (const line of lines) {
+            const [id, name, shortdesc, latest_version, state, application] = line.split('|');
+            installedModules.push({
+                id: parseInt(id),
+                name,
+                shortdesc: shortdesc || '',
+                installed_version: latest_version || null,
+                latest_version: latest_version || null,
+                state,
+                application: application === 't'
+            });
+        }
+
+        return installedModules;
+    } catch (error) {
+        console.error(`Error getting installed modules for database ${dbName}:`, error);
+        return [];
+    }
+}
+
+async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShell=false ): Promise<any>{
     // Normalize the paths for addons
     const normalizedRepoPaths = project.repos.map(repo => normalizePath(repo.path));
-    let addonsPath = `--addons-path=` + [
-        './enterprise',
-        './odoo/odoo/addons',
-        './odoo/addons',
-        ...normalizedRepoPaths
-    ].join(',');
+
+    // Build addons path using settings paths
+    const addonsPaths = [];
+
+    // Add enterprise path if it exists
+    if (settings.enterprisePath) {
+        addonsPaths.push(normalizePath(settings.enterprisePath));
+    }
+
+    // Add design-themes path if it exists
+    if (settings.designThemesPath) {
+        addonsPaths.push(normalizePath(settings.designThemesPath));
+    }
+
+    // Add Odoo core addons paths
+    if (settings.odooPath) {
+        addonsPaths.push(normalizePath(`${settings.odooPath}/odoo/addons`));
+        addonsPaths.push(normalizePath(`${settings.odooPath}/addons`));
+    }
+
+    // Add repository paths
+    addonsPaths.push(...normalizedRepoPaths);
 
     let db = project.dbs.find((db) => db.isSelected);
     if (!db) {
@@ -77,46 +128,101 @@ function prepareArgs(project: ProjectModel, settings: SettingsModel, isShell=fal
         return;
     }
 
-    // Auto-detect psae-internal paths needed based on selected modules
-    const psaeInternalPaths = new Set<string>();
+    // Auto-detect ps*-internal paths needed based on selected modules
+    const psInternalPaths = new Set<string>();
+    const excludedPsInternalPaths = new Set<string>();
 
-    // Add manually included psae-internal paths first
+    // Process manually included/excluded ps*-internal paths
     for (const path of project.includedPsaeInternalPaths) {
-        psaeInternalPaths.add(normalizePath(path));
+        if (path.startsWith('!')) {
+            // This is an excluded path
+            const excludedPath = normalizePath(path.substring(1));
+            excludedPsInternalPaths.add(excludedPath);
+        } else {
+            // This is an included path
+            const includedPath = normalizePath(path);
+            psInternalPaths.add(includedPath);
+        }
     }
 
-    // Check if any selected modules are from psae-internal
-    for (const module of db.modules) {
-        if (module.state === 'install' || module.state === 'upgrade') {
-            // Check each repo for this module in psae-internal
-            for (const repo of project.repos) {
-                const psaeInternalPath = `${repo.path}/psae-internal`;
-                if (fs.existsSync(psaeInternalPath) && fs.statSync(psaeInternalPath).isDirectory()) {
-                    try {
-                        const psaeModules = listSubdirectories(psaeInternalPath);
-                        if (psaeModules.some((psaeModule: {name: string, path: string}) => psaeModule.name === module.name)) {
-                            psaeInternalPaths.add(normalizePath(psaeInternalPath));
+    // Scan all repos for ps*-internal directories
+    const foundPsInternalDirs = new Map<string, string[]>(); // path -> modules
+
+    for (const repo of project.repos) {
+        try {
+            const repoItems = fs.readdirSync(repo.path);
+            for (const item of repoItems) {
+                if (/^ps[a-z]*-internal$/i.test(item)) {
+                    const psInternalPath = `${repo.path}/${item}`;
+
+                    if (fs.existsSync(psInternalPath) && fs.statSync(psInternalPath).isDirectory()) {
+                        try {
+                            const psModules = listSubdirectories(psInternalPath);
+                            const moduleNames = psModules.map(m => m.name);
+                            foundPsInternalDirs.set(normalizePath(psInternalPath), moduleNames);
+                        } catch (error) {
+                            console.warn(`Failed to read modules from ${psInternalPath}:`, error);
                         }
-                    } catch (error) {
-                        console.warn(`Failed to read psae-internal modules from ${psaeInternalPath}:`, error);
                     }
                 }
+            }
+        } catch (error) {
+            console.warn(`Failed to scan repo ${repo.path}:`, error);
+        }
+    }
+
+    // Determine which modules to use for ps*-internal detection
+    if (!db || !db.modules || db.modules.length === 0) {
+        // If no modules in project data, query database directly for installed modules
+        try {
+            const installedModules = await getInstalledModules(db.id);
+
+            if (installedModules.length > 0) {
+                const installedModuleNames = installedModules.map((m: InstalledModuleInfo) => m.name);
+
+                // Check which ps*-internal directories contain installed modules
+                for (const [psPath, psModules] of foundPsInternalDirs.entries()) {
+                    if (excludedPsInternalPaths.has(psPath)) {
+                        continue;
+                    }
+
+                    const matchingModules = psModules.filter((psModule: string) => installedModuleNames.includes(psModule));
+                    if (matchingModules.length > 0) {
+                        psInternalPaths.add(psPath);
+                    }
+                }
+            }
+
+        } catch (error) {
+            console.warn('Failed to get installed modules from database:', error);
+        }
+    } else {
+        // Use modules from project data
+        const dbModuleNames = db.modules.map(m => m.name);
+
+        for (const [psPath, psModules] of foundPsInternalDirs.entries()) {
+            if (excludedPsInternalPaths.has(psPath)) {
+                continue;
+            }
+
+            const matchingModules = psModules.filter((psModule: string) => dbModuleNames.includes(psModule));
+            if (matchingModules.length > 0) {
+                psInternalPaths.add(psPath);
             }
         }
     }
 
-    // Add auto-detected psae-internal paths
-    if (psaeInternalPaths.size > 0) {
-        addonsPath += `,${Array.from(psaeInternalPaths).join(',')}`;
+    // Add auto-detected ps*-internal paths to addons paths
+    if (psInternalPaths.size > 0) {
+        addonsPaths.push(...Array.from(psInternalPaths));
     }
 
     // Add global submodules paths from settings (for backward compatibility)
     if (settings.subModulesPaths !== '') {
         const normalizedSubModulePaths = settings.subModulesPaths
             .split(',')
-            .map(p => normalizePath(p.trim()))
-            .join(',');
-        addonsPath += `,${normalizedSubModulePaths}`;
+            .map(p => normalizePath(p.trim()));
+        addonsPaths.push(...normalizedSubModulePaths);
     }
 
     let installs = db?.modules.filter((module: any) => {
@@ -133,9 +239,9 @@ function prepareArgs(project: ProjectModel, settings: SettingsModel, isShell=fal
     }
     ) || [];
     let args: any[] = [];
-    if (isShell) { args.push(`shell`); args.push('-p', settings.shellPortNumber.toString());}
+    if (isShell) { args.push('shell'); args.push('-p', settings.shellPortNumber.toString());}
     else{args.push('-p', settings.portNumber.toString());}
-    args.push(addonsPath);
+    args.push('--addons-path', addonsPaths.join(','));
     args.push("-d", db.id);
     if (installs.length > 0 || settings.installApps !== "") {
         args.push("-i", `${installs.join(',')}${settings.installApps ? "," : ""}${settings.installApps ? settings.installApps : ""}`);
@@ -147,11 +253,27 @@ function prepareArgs(project: ProjectModel, settings: SettingsModel, isShell=fal
     args.push('--limit-time-cpu', settings.limitTimeCpu.toString());
     args.push('--max-cron-threads', settings.maxCronThreads.toString());
 
-    if (settings.isTestingEnabled) {
-        args.push(`--test-enable`);
-        if (settings.testFile) {args.push(`--test-file=${settings.testFile}`);}
-        if (settings.testTags) {args.push(`--test-tags=${settings.testTags}`);}
+    // Use new testing system from project configuration
+    if (project.testingConfig?.isEnabled) {
+        args.push('--test-enable');
+
+        if (project.testingConfig.testFile) {
+            args.push('--test-file', project.testingConfig.testFile);
+        }
+
+        const activeTags = project.testingConfig.testTags.filter(tag => tag.state !== 'disabled');
+        if (activeTags.length > 0) {
+            const tagsString = activeTags
+                .map(tag => (tag.state === 'exclude' ? '-' : '') + tag.value)
+                .join(',');
+            args.push('--test-tags', tagsString);
+        }
+
+        if (project.testingConfig.stopAfterInit) {
+            args.push('--stop-after-init');
+        }
     }
+
     if(settings.extraParams){args.push(...settings.extraParams.split(","));};
     if(settings.devMode){args.push(settings.devMode);};
     return args;
@@ -173,7 +295,7 @@ export async function startDebugShell(): Promise<void> {
     const normalizedOdooPath = normalizePath(workspaceSettings.odooPath);
     const normalizedPythonPath = normalizePath(workspaceSettings.pythonPath);
 
-    const args = prepareArgs(project, workspaceSettings, true);
+    const args = await prepareArgs(project, workspaceSettings, true);
     const odooBinPath = `${normalizedOdooPath}/odoo-bin`;
 
     const fullCommand = `${normalizedPythonPath} ${odooBinPath} ${args.join(' ')}`;

@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { RepoModel } from './models/repo';
 import { exec } from 'child_process';
+import { randomUUID } from 'crypto';
 
 async function promptBranchSwitch(targetVersion: string, currentBranches: {odoo: string | null, enterprise: string | null, designThemes: string | null}): Promise<boolean> {
     const mismatchedRepos = [];
@@ -277,10 +278,42 @@ export async function getDbDumpFolder(dumpsFolder: string, searchFilter?: string
 }
 
 export async function createDb(projectName:string, repos:RepoModel[], dumpFolderPath:string, settings: SettingsModel): Promise<DatabaseModel | undefined> {
-    let allModules: {"path": string, "name": string}[] = [];
+    let allModules: {"path": string, "name": string, "source": string}[] = [];
+
+    // Collect modules from regular repositories and ps*-internal directories
     for (const repo of repos) {
-        allModules = allModules.concat(listSubdirectories(repo.path));
+        // Add regular modules from repo root
+        const repoModules = listSubdirectories(repo.path);
+        allModules = allModules.concat(repoModules.map(module => ({
+            ...module,
+            source: repo.name
+        })));
+
+        // Check for ps*-internal directories in this repo
+        try {
+            const repoDirContents = fs.readdirSync(repo.path);
+            for (const item of repoDirContents) {
+                // Match pattern: ps followed by any letters, then -internal
+                if (/^ps[a-z]*-internal$/i.test(item)) {
+                    const psInternalPath = `${repo.path}/${item}`;
+                    if (fs.existsSync(psInternalPath) && fs.statSync(psInternalPath).isDirectory()) {
+                        try {
+                            const psModules = listSubdirectories(psInternalPath);
+                            allModules = allModules.concat(psModules.map(module => ({
+                                ...module,
+                                source: `${repo.name}/${item}`
+                            })));
+                        } catch (error) {
+                            console.warn(`Failed to read ${item} modules from ${psInternalPath}:`, error);
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn(`Failed to read repo directory ${repo.path}:`, error);
+        }
     }
+
     let selectedModules: string[] = [];
     let db: DatabaseModel | undefined;
     let modules: ModuleModel[] = [];
@@ -320,11 +353,19 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
     switch (creationMethod.label) {
         case "Fresh Database":
             // Select modules to install
-            selectedModules = await vscode.window.showQuickPick(allModules.map(entry => entry.name), {
+            const moduleChoices = allModules.map(entry => ({
+                label: entry.name,
+                description: entry.source,
+                detail: entry.path
+            }));
+
+            const selectedModuleObjects = await vscode.window.showQuickPick(moduleChoices, {
                 placeHolder: 'Select modules to install (optional)',
                 canPickMany: true,
                 ignoreFocusOut: true
             }) || [];
+
+            selectedModules = selectedModuleObjects.map(choice => choice.label);
             break;
 
         case "From Dump File":
@@ -471,18 +512,58 @@ export async function setupDatabase(dbName: string, dumpPath: string | undefined
                 execSync(`createdb ${dbName}`, { stdio: 'inherit' });
 
                 if (dumpPath) {
-                    progress.report({ message: 'Importing dump file...', increment: 60 });
+                    progress.report({ message: 'Importing dump file...', increment: 50 });
                     console.log(`📥 Importing SQL dump into ${dbName}`);
                     execSync(`psql ${dbName} < "${dumpPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
 
-                    progress.report({ message: 'Configuring database...', increment: 80 });
-                    console.log(`🔐 Resetting admin credentials for ${dbName}`);
-                    execSync(`psql ${dbName} -c "UPDATE res_users SET password='admin'"`, { stdio: 'inherit', shell: '/bin/sh' });
-                    execSync(`psql ${dbName} -c "UPDATE res_users SET login='admin' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
+                    progress.report({ message: 'Configuring database...', increment: 70 });
+                    console.log(`� Configuring database for development use`);
+
+                    // Generate a new UUID for the database
+                    const newUuid = randomUUID();
+
+                    // Disable crons
+                    console.log(`⏸️ Disabling cron jobs`);
+                    execSync(`psql ${dbName} -c "UPDATE ir_cron SET active='f';"`, { stdio: 'inherit', shell: '/bin/sh' });
+
+                    // Disable mail servers
+                    console.log(`📧 Disabling mail servers`);
+                    execSync(`psql ${dbName} -c "UPDATE ir_mail_server SET active=false;"`, { stdio: 'inherit', shell: '/bin/sh' });
+
+                    // Set enterprise expiration date far in the future
                     console.log(`⏰ Extending database expiry`);
-                    execSync(`psql ${dbName} -c "UPDATE ir_config_parameter SET value = '2042-01-01 00:00:00' WHERE key = 'database.expiration_date'"`, { stdio: 'inherit', shell: '/bin/sh' });
+                    execSync(`psql ${dbName} -c "UPDATE ir_config_parameter SET value = '2090-09-21 00:00:00' WHERE key = 'database.expiration_date';"`, { stdio: 'inherit', shell: '/bin/sh' });
+
+                    // Change database UUID to avoid conflicts with production
+                    console.log(`🔑 Updating database UUID`);
+                    execSync(`psql ${dbName} -c "UPDATE ir_config_parameter SET value = '${newUuid}' WHERE key = 'database.uuid';"`, { stdio: 'inherit', shell: '/bin/sh' });
+
+                    // Add mailcatcher server for development
+                    console.log(`📨 Adding mailcatcher server`);
+                    try {
+                        execSync(`psql ${dbName} -c "INSERT INTO ir_mail_server(active,name,smtp_host,smtp_port,smtp_encryption) VALUES (true,'mailcatcher','localhost',1025,false);"`, { stdio: 'inherit', shell: '/bin/sh' });
+                    } catch (error) {
+                        console.warn(`⚠️ Failed to add mailcatcher server (continuing setup): ${error}`);
+                    }
+
+                    // Reset user passwords to their login
+                    console.log(`👤 Resetting user passwords to login names`);
+                    execSync(`psql ${dbName} -c "UPDATE res_users SET password=login;"`, { stdio: 'inherit', shell: '/bin/sh' });
+
+                    // Configure admin user specifically
+                    console.log(`🔐 Configuring admin user`);
+                    execSync(`psql ${dbName} -c "UPDATE res_users SET password='admin' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
+                    execSync(`psql ${dbName} -c "UPDATE res_users SET login='admin' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
+                    execSync(`psql ${dbName} -c "UPDATE res_users SET totp_secret='' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
+                    execSync(`psql ${dbName} -c "UPDATE res_users SET active=true WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
+
+                    // Clear employee PINs
+                    console.log(`🏢 Clearing employee PINs`);
+                    execSync(`psql ${dbName} -c "UPDATE hr_employee SET pin = '';"`, { stdio: 'inherit', shell: '/bin/sh' });
+
+                    progress.report({ message: 'Database configured for development', increment: 90 });
                 } else {
-                    progress.report({ message: 'Database created (empty)...', increment: 80 });
+                    progress.report({ message: 'Database created (empty)...', increment: 90 });
                     console.log(`📝 Empty database created: ${dbName}`);
                 }
             }

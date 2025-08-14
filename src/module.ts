@@ -1,9 +1,10 @@
-import { ModuleModel } from "./models/module";
+import { ModuleModel, InstalledModuleInfo } from "./models/module";
 import { DatabaseModel } from "./models/db";
 import * as vscode from "vscode";
 import * as fs from 'fs';
 import { listSubdirectories, showError, showInfo, showAutoInfo, normalizePath } from './utils';
 import { SettingsStore } from './settingsStore';
+import { execSync } from 'child_process';
 
 export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
@@ -36,8 +37,15 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
             return [];
         }
 
-        let allModules: {"path": string, "name": string, "repoName": string, "isPsaeInternal": boolean}[] = [];
-        let psaeInternalDirs: {"path": string, "repoName": string}[] = [];
+        // Check if testing is enabled
+        const isTestingEnabled = project.testingConfig && project.testingConfig.isEnabled;
+
+        // Get installed modules from database
+        const installedModules = await getInstalledModules(db.id);
+        const installedModuleNames = new Set(installedModules.map(m => m.name));
+
+        let allModules: {"path": string, "name": string, "repoName": string, "isPsaeInternal": boolean, "psInternalDirName"?: string}[] = [];
+        let psaeInternalDirs: {"path": string, "repoName": string, "dirName": string}[] = [];
 
         // Add modules from regular repositories
         for (const repo of project.repos) {
@@ -48,87 +56,131 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
                 isPsaeInternal: false
             })));
 
-            // Check for psae-internal in this repo and collect both the directory info and modules
-            const psaeInternalPath = `${repo.path}/psae-internal`;
-            if (fs.existsSync(psaeInternalPath) && fs.statSync(psaeInternalPath).isDirectory()) {
-                // Add psae-internal directory as a special entry
-                psaeInternalDirs.push({
-                    path: psaeInternalPath,
-                    repoName: repo.name
-                });
+            // Check for ps*-internal directories in this repo
+            try {
+                const repoDirContents = fs.readdirSync(repo.path);
+                for (const item of repoDirContents) {
+                    // Match pattern: ps followed by any letters, then -internal
+                    if (/^ps[a-z]*-internal$/i.test(item)) {
+                        const psInternalPath = `${repo.path}/${item}`;
+                        if (fs.existsSync(psInternalPath) && fs.statSync(psInternalPath).isDirectory()) {
+                            // Add ps*-internal directory as a special entry
+                            psaeInternalDirs.push({
+                                path: psInternalPath,
+                                repoName: repo.name,
+                                dirName: item
+                            });
 
-                try {
-                    const psaeModules = listSubdirectories(psaeInternalPath);
-                    allModules = allModules.concat(psaeModules.map(module => ({
-                        ...module,
-                        repoName: repo.name,
-                        isPsaeInternal: true
-                    })));
-                } catch (error) {
-                    console.warn(`Failed to read psae-internal modules from ${psaeInternalPath}:`, error);
+                            try {
+                                const psModules = listSubdirectories(psInternalPath);
+                                allModules = allModules.concat(psModules.map(module => ({
+                                    ...module,
+                                    repoName: repo.name,
+                                    isPsaeInternal: true,
+                                    psInternalDirName: item
+                                })));
+                            } catch (error) {
+                                console.warn(`Failed to read ${item} modules from ${psInternalPath}:`, error);
+                            }
+                        }
+                    }
                 }
+            } catch (error) {
+                console.warn(`Failed to read repo directory ${repo.path}:`, error);
             }
         }
 
         let treeItems: vscode.TreeItem[] = [];
 
+        // ALWAYS add testing mode notification first when testing is enabled
+        if (isTestingEnabled) {
+            const testingModeItem = new vscode.TreeItem(
+                '⚠️ Module Management Disabled (Testing Mode)',
+                vscode.TreeItemCollapsibleState.None
+            );
+            testingModeItem.tooltip = 'Testing is enabled. Disable testing to manage modules again.';
+            testingModeItem.description = 'Go to Testing tab to disable';
+            treeItems.push(testingModeItem);
+        }
+
         // Add psae-internal directories as special meta-modules
         for (const psaeDir of psaeInternalDirs) {
             const psaeInternalModules = allModules.filter(m =>
-                m.isPsaeInternal && m.repoName === psaeDir.repoName
+                m.isPsaeInternal && m.repoName === psaeDir.repoName && m.psInternalDirName === psaeDir.dirName
             );
 
-            // Check if any modules from this psae-internal are selected OR if it's manually included
+            // Check if any modules from this ps*-internal are selected OR installed in DB
             const hasSelectedModules = psaeInternalModules.some(m =>
                 modules.some(dbModule =>
                     dbModule.name === m.name && (dbModule.state === 'install' || dbModule.state === 'upgrade')
                 )
             );
 
+            const hasInstalledModules = psaeInternalModules.some(m =>
+                installedModuleNames.has(m.name)
+            );
+
             const isManuallyIncluded = project.includedPsaeInternalPaths?.includes(psaeDir.path) || false;
 
-            // Determine icon based on status
+            // Manual override has highest priority
+            // If manually included: always included regardless of modules
+            // If manually excluded: never auto-include regardless of modules
+            // If not manually set: auto-include if has selected OR installed modules
+            const shouldBeIncluded = isManuallyIncluded || (!project.includedPsaeInternalPaths?.includes(`!${psaeDir.path}`) && (hasSelectedModules || hasInstalledModules));
+
+            // Determine icon and tooltip based on status
             let psaeIcon: string;
             let psaeTooltip: string;
 
-            if (hasSelectedModules || isManuallyIncluded) {
+            if (shouldBeIncluded) {
                 psaeIcon = '📦'; // Package icon when included in addons path
-                if (hasSelectedModules && isManuallyIncluded) {
-                    psaeTooltip = `psae-internal: Included (has selected modules + manually included)\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to exclude from addons path`;
-                } else if (hasSelectedModules) {
-                    psaeTooltip = `psae-internal: Included (has selected modules)\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to exclude from addons path`;
-                } else {
-                    psaeTooltip = `psae-internal: Included (manually)\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to exclude from addons path`;
-                }
+                const reasons = [];
+                if (isManuallyIncluded) reasons.push('manually included');
+                if (hasSelectedModules) reasons.push('has selected modules');
+                if (hasInstalledModules) reasons.push('has installed modules');
+
+                psaeTooltip = `${psaeDir.dirName}: Included (${reasons.join(' + ')})\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to exclude from addons path`;
             } else {
                 psaeIcon = '📋'; // Clipboard icon when not included
-                psaeTooltip = `psae-internal: Not included\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to include in addons path`;
+                const reason = project.includedPsaeInternalPaths?.includes(`!${psaeDir.path}`) ? 'manually excluded' : 'no modules';
+                psaeTooltip = `${psaeDir.dirName}: Not included (${reason})\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to include in addons path`;
             }
 
             treeItems.push({
-                label: `${psaeIcon} psae-internal`,
-                tooltip: psaeTooltip,
+                label: `${psaeIcon} ${psaeDir.dirName}`,
+                tooltip: isTestingEnabled
+                    ? `${psaeTooltip}\n⚠️ Module management disabled while testing is enabled`
+                    : psaeTooltip,
                 description: `${psaeDir.repoName} (${psaeInternalModules.length} modules)`,
-                command: {
+                command: isTestingEnabled ? undefined : {
                     command: 'moduleSelector.togglePsaeInternalModule',
-                    title: 'Toggle psae-internal',
+                    title: `Toggle ${psaeDir.dirName}`,
                     arguments: [{
                         path: psaeDir.path,
                         repoName: psaeDir.repoName,
+                        dirName: psaeDir.dirName,
                         hasSelectedModules: hasSelectedModules,
+                        hasInstalledModules: hasInstalledModules,
                         isManuallyIncluded: isManuallyIncluded,
+                        shouldBeIncluded: shouldBeIncluded,
                         modules: psaeInternalModules
                     }]
                 }
             });
         }
 
-        // Add regular modules (excluding psae-internal from the name display since we show them separately)
-        for (const module of allModules.filter(m => m.name !== 'psae-internal')) {
-            const repoPath = module.isPsaeInternal ? `${module.repoName}/psae-internal` : module.repoName;
+        // Add regular modules (excluding ps*-internal from the name display since we show them separately)
+        for (const module of allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i))) {
+            const repoPath = module.isPsaeInternal ? `${module.repoName}/${module.psInternalDirName}` : module.repoName;
             const existingModule = modules.find(mod => mod.name === module.name);
+            const isInstalledInDb = installedModuleNames.has(module.name);
+
             if (existingModule) {
+                // Update the isInstalled flag based on database state
+                existingModule.isInstalled = isInstalledInDb;
+
                 let moduleIcon: string;
+
                 switch (existingModule.state) {
                     case 'install':
                         moduleIcon = '🟢';
@@ -137,39 +189,44 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
                         moduleIcon = '🟡';
                         break;
                     default:
-                        moduleIcon = '⚪';
+                        moduleIcon = existingModule.isInstalled ? '⚫' : '⚪'; // Black circle for installed but not managed
                         break;
                 }
+
                 treeItems.push({
                     label: `${moduleIcon} ${module.name}`,
                     tooltip: `Module: ${module.name}\nState: ${existingModule.state}\nSource: ${repoPath}\nPath: ${module.path}`,
                     description: repoPath,
-                    command: {
+                    command: isTestingEnabled ? undefined : {
                         command: 'moduleSelector.select',
                         title: 'Select Module',
-                        arguments: [{ name: module.name, path: module.path, state: existingModule.state, repoName: module.repoName, isPsaeInternal: module.isPsaeInternal }]
+                        arguments: [{ name: module.name, path: module.path, state: existingModule.state, repoName: module.repoName, isPsaeInternal: module.isPsaeInternal, isInstalled: existingModule.isInstalled }]
                     }
                 });
             } else {
-                // If the module does not exist, treat it as a new module
+                // Module not in our managed list
+                const moduleIcon = isInstalledInDb ? '⚫' : '⚪'; // Black circle for installed, white for not installed
+                const moduleState = isInstalledInDb ? 'Installed' : 'none';
+
                 treeItems.push({
-                    label: `⚪ ${module.name}`,
-                    tooltip: `Module: ${module.name}\nState: none\nSource: ${repoPath}\nPath: ${module.path}`,
+                    label: `${moduleIcon} ${module.name}`,
+                    tooltip: `Module: ${module.name}\nState: ${moduleState}\nSource: ${repoPath}\nPath: ${module.path}`,
                     description: repoPath,
-                    command: {
+                    command: isTestingEnabled ? undefined : {
                         command: 'moduleSelector.select',
                         title: 'Select Module',
-                        arguments: [{ name: module.name, path: module.path, state: 'none', repoName: module.repoName, isPsaeInternal: module.isPsaeInternal }]
+                        arguments: [{ name: module.name, path: module.path, state: 'none', repoName: module.repoName, isPsaeInternal: module.isPsaeInternal, isInstalled: isInstalledInDb }]
                     }
                 });
             }
         }
 
-        // Sort: psae-internal first, then 🟢 (install) and 🟡 (upgrade), then the rest
+        // Sort: Testing warning first, then ps*-internal, then 🟢 (install) and 🟡 (upgrade), then the rest
         treeItems.sort((a, b) => {
             const getPriority = (label: string | vscode.TreeItemLabel | undefined) => {
                 if (typeof label === 'string') {
-                    if (label.includes('psae-internal')) {return -1;} // psae-internal first
+                    if (label.includes('⚠️ Module Management Disabled (Testing Mode)')) {return -2;} // Warning message first
+                    if (/ps[a-z]*-internal/i.test(label)) {return -1;} // ps*-internal second
                     if (label.startsWith('🟢')) {return 0;}
                     if (label.startsWith('🟡')) {return 1;}
                 }
@@ -193,6 +250,12 @@ export async function selectModule(event: any) {
         showError('No database selected');
         return;
     }
+
+    // Check if testing is enabled - prevent module modifications
+    if (project.testingConfig && project.testingConfig.isEnabled) {
+        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        return;
+    }
     const moduleExistsInDb = db.modules.find(mod => mod.name === module.name);
     if (!moduleExistsInDb) {
         db.modules.push(new ModuleModel(module.name, 'install'));
@@ -207,7 +270,16 @@ export async function selectModule(event: any) {
 }
 
 export async function togglePsaeInternalModule(event: any): Promise<void> {
-    const { path: psaeInternalPath, repoName, hasSelectedModules, isManuallyIncluded, modules: psaeModules } = event;
+    const {
+        path: psaeInternalPath,
+        repoName,
+        dirName,
+        hasSelectedModules,
+        hasInstalledModules,
+        isManuallyIncluded,
+        shouldBeIncluded,
+        modules: psaeModules
+    } = event;
 
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
@@ -221,43 +293,67 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
         return;
     }
 
-    // Initialize includedPsaeInternalPaths if it doesn't exist (for backward compatibility)
+    // Check if testing is enabled - prevent module modifications
+    if (project.testingConfig && project.testingConfig.isEnabled) {
+        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        return;
+    }
+
+    // Initialize includedPsaeInternalPaths if it doesn't exist
     if (!project.includedPsaeInternalPaths) {
         project.includedPsaeInternalPaths = [];
     }
 
-    if (hasSelectedModules || isManuallyIncluded) {
-        // If it's included either way, we need to decide what to do
-        if (hasSelectedModules && isManuallyIncluded) {
-            // Both selected modules and manually included - remove manual inclusion but keep modules
+    const excludePath = `!${psaeInternalPath}`;
+    const isManuallyExcluded = project.includedPsaeInternalPaths.includes(excludePath);
+
+    if (shouldBeIncluded) {
+        if (isManuallyIncluded) {
+            // Currently manually included - remove manual inclusion (may still be auto-included)
             const pathIndex = project.includedPsaeInternalPaths.indexOf(psaeInternalPath);
             if (pathIndex > -1) {
                 project.includedPsaeInternalPaths.splice(pathIndex, 1);
             }
-            await SettingsStore.saveWithoutComments(data);
-            showInfo(`Removed manual inclusion of psae-internal (${repoName}). Will still be included due to selected modules.`);
-        } else if (hasSelectedModules) {
-            // Only has selected modules - remove all modules
+            // If would still be auto-included, add manual exclusion and remove selected modules
+            if (hasSelectedModules || hasInstalledModules) {
+                project.includedPsaeInternalPaths.push(excludePath);
+                // Remove selected modules from this psae-internal directory
+                const moduleNamesToRemove = psaeModules.map((m: any) => m.name);
+                db.modules = db.modules.filter(dbModule => !moduleNamesToRemove.includes(dbModule.name));
+                await SettingsStore.saveWithoutComments(data);
+                showInfo(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
+            } else {
+                await SettingsStore.saveWithoutComments(data);
+                showInfo(`Removed manual inclusion of ${dirName} (${repoName})`);
+            }
+        } else {
+            // Currently auto-included - add manual exclusion to override and remove selected modules
+            project.includedPsaeInternalPaths.push(excludePath);
+            // Remove selected modules from this psae-internal directory
             const moduleNamesToRemove = psaeModules.map((m: any) => m.name);
             db.modules = db.modules.filter(dbModule => !moduleNamesToRemove.includes(dbModule.name));
             await SettingsStore.saveWithoutComments(data);
-            showInfo(`Removed all modules from psae-internal (${repoName}) from the project`);
-        } else {
-            // Only manually included - remove manual inclusion
-            const pathIndex = project.includedPsaeInternalPaths.indexOf(psaeInternalPath);
+            showInfo(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
+        }
+    } else {
+        if (isManuallyExcluded) {
+            // Currently manually excluded - remove exclusion (may auto-include)
+            const pathIndex = project.includedPsaeInternalPaths.indexOf(excludePath);
             if (pathIndex > -1) {
                 project.includedPsaeInternalPaths.splice(pathIndex, 1);
             }
             await SettingsStore.saveWithoutComments(data);
-            showInfo(`Excluded psae-internal (${repoName}) from addons path`);
-        }
-    } else {
-        // Not included at all - add manual inclusion
-        if (!project.includedPsaeInternalPaths.includes(psaeInternalPath)) {
+            if (hasSelectedModules || hasInstalledModules) {
+                showInfo(`Removed manual exclusion of ${dirName} (${repoName}). Now auto-included due to modules.`);
+            } else {
+                showInfo(`Removed manual exclusion of ${dirName} (${repoName})`);
+            }
+        } else {
+            // Currently not included - add manual inclusion
             project.includedPsaeInternalPaths.push(psaeInternalPath);
+            await SettingsStore.saveWithoutComments(data);
+            showInfo(`Manually included ${dirName} (${repoName}) in addons path`);
         }
-        await SettingsStore.saveWithoutComments(data);
-        showInfo(`Included psae-internal (${repoName}) in addons path. Modules are now available for selection.`);
     }
 }
 
@@ -275,6 +371,12 @@ export async function updateAllModules(): Promise<void> {
         return;
     }
 
+    // Check if testing is enabled - prevent module modifications
+    if (project.testingConfig && project.testingConfig.isEnabled) {
+        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        return;
+    }
+
     // Get all available modules from repositories
     let allModules: {"path": string, "name": string, "repoName": string, "isPsaeInternal": boolean}[] = [];
     let psaeInternalDirs: {"path": string, "repoName": string}[] = [];
@@ -288,10 +390,19 @@ export async function updateAllModules(): Promise<void> {
             isPsaeInternal: false
         })));
 
-        // Check if this repo has psae-internal directory
-        const psaeInternalPath = normalizePath(`${repo.path}/psae-internal`);
-        if (fs.existsSync(psaeInternalPath)) {
-            psaeInternalDirs.push({ path: psaeInternalPath, repoName: repo.name });
+        // Check if this repo has ps*-internal directories
+        try {
+            const repoDirContents = fs.readdirSync(repo.path);
+            for (const item of repoDirContents) {
+                if (/^ps[a-z]*-internal$/i.test(item)) {
+                    const psInternalPath = normalizePath(`${repo.path}/${item}`);
+                    if (fs.existsSync(psInternalPath)) {
+                        psaeInternalDirs.push({ path: psInternalPath, repoName: repo.name });
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn(`Failed to read repo directory ${repo.path}:`, error);
         }
     }
 
@@ -311,7 +422,7 @@ export async function updateAllModules(): Promise<void> {
         }
     }
 
-    const availableModules = allModules.filter(m => m.name !== 'psae-internal');
+    const availableModules = allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i));
 
     if (availableModules.length === 0) {
         showInfo('No modules available to update');
@@ -370,6 +481,12 @@ export async function updateInstalledModules(): Promise<void> {
         return;
     }
 
+    // Check if testing is enabled - prevent module modifications
+    if (project.testingConfig && project.testingConfig.isEnabled) {
+        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        return;
+    }
+
     if (!db.modules || db.modules.length === 0) {
         showInfo('No modules found to update');
         return;
@@ -415,6 +532,12 @@ export async function installAllModules(): Promise<void> {
         return;
     }
 
+    // Check if testing is enabled - prevent module modifications
+    if (project.testingConfig && project.testingConfig.isEnabled) {
+        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        return;
+    }
+
     // Get all available modules from repositories
     let allModules: {"path": string, "name": string, "repoName": string, "isPsaeInternal": boolean}[] = [];
     let psaeInternalDirs: {"path": string, "repoName": string}[] = [];
@@ -428,10 +551,19 @@ export async function installAllModules(): Promise<void> {
             isPsaeInternal: false
         })));
 
-        // Check if this repo has psae-internal directory
-        const psaeInternalPath = normalizePath(`${repo.path}/psae-internal`);
-        if (fs.existsSync(psaeInternalPath)) {
-            psaeInternalDirs.push({ path: psaeInternalPath, repoName: repo.name });
+        // Check if this repo has ps*-internal directories
+        try {
+            const repoDirContents = fs.readdirSync(repo.path);
+            for (const item of repoDirContents) {
+                if (/^ps[a-z]*-internal$/i.test(item)) {
+                    const psInternalPath = normalizePath(`${repo.path}/${item}`);
+                    if (fs.existsSync(psInternalPath)) {
+                        psaeInternalDirs.push({ path: psInternalPath, repoName: repo.name });
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn(`Failed to read repo directory ${repo.path}:`, error);
         }
     }
 
@@ -451,7 +583,7 @@ export async function installAllModules(): Promise<void> {
         }
     }
 
-    const availableModules = allModules.filter(m => m.name !== 'psae-internal');
+    const availableModules = allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i));
 
     if (availableModules.length === 0) {
         showInfo('No modules available to install');
@@ -510,6 +642,12 @@ export async function clearAllModuleSelections(): Promise<void> {
         return;
     }
 
+    // Check if testing is enabled - prevent module modifications
+    if (project.testingConfig && project.testingConfig.isEnabled) {
+        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        return;
+    }
+
     if (!db.modules || db.modules.length === 0) {
         return; // Silently return if no modules to clear
     }
@@ -531,4 +669,97 @@ export async function clearAllModuleSelections(): Promise<void> {
 
     await SettingsStore.saveWithoutComments(data);
     showAutoInfo(`Cleared ${clearedCount} module selections`, 3000);
+}
+
+/**
+ * Gets installed modules from the database using psql
+ */
+async function getInstalledModules(dbName: string): Promise<InstalledModuleInfo[]> {
+    try {
+        const query = `SELECT id, name, shortdesc, latest_version, state, application FROM ir_module_module WHERE state IN ('installed','to upgrade') ORDER BY name;`;
+        const command = `psql ${dbName} -t -A -F'|' -c "${query}"`;
+
+        const output = execSync(command, {
+            encoding: 'utf-8',
+            stdio: ['pipe', 'pipe', 'pipe']
+        });
+
+        const lines = output.trim().split('\n').filter(line => line.trim());
+        const installedModules: InstalledModuleInfo[] = [];
+
+        for (const line of lines) {
+            const [id, name, shortdesc, latest_version, state, application] = line.split('|');
+
+            // Parse shortdesc JSON and extract en_US description
+            let description = '';
+            try {
+                if (shortdesc) {
+                    const descObj = JSON.parse(shortdesc);
+                    description = descObj.en_US || descObj[Object.keys(descObj)[0]] || '';
+                }
+            } catch (error) {
+                description = shortdesc || '';
+            }
+
+            installedModules.push({
+                id: parseInt(id),
+                name: name || '',
+                shortdesc: description,
+                installed_version: latest_version || null,
+                latest_version: latest_version || null,
+                state: state || '',
+                application: application === 't'
+            });
+        }
+
+        return installedModules;
+    } catch (error) {
+        console.warn(`Failed to get installed modules from database ${dbName}:`, error);
+        return [];
+    }
+}
+
+export async function viewInstalledModules(): Promise<void> {
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
+        showError('No project selected');
+        return;
+    }
+
+    const { project } = result;
+    const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    if (!db) {
+        showError('No database selected');
+        return;
+    }
+
+    try {
+        // Get all installed modules from database
+        const installedModules = await getInstalledModules(db.id);
+
+        if (installedModules.length === 0) {
+            showInfo('No installed modules found in the database');
+            return;
+        }
+
+        // Create quick pick items with detailed information
+        const quickPickItems = installedModules.map(module => ({
+            label: `$(${module.application ? 'device-mobile' : 'diff-added'}) ${module.name}`,
+            description: `$(check) Installed | v${module.latest_version || 'unknown'}`,
+            detail: module.shortdesc || 'No description available',
+            module: module
+        }));
+
+        await vscode.window.showQuickPick(quickPickItems, {
+            placeHolder: `Browse installed modules (${installedModules.length} total)`,
+            matchOnDescription: true,
+            matchOnDetail: true,
+            ignoreFocusOut: true,
+            canPickMany: false,
+            title: `Installed Modules in ${db.name}`
+        });
+
+    } catch (error) {
+        showError(`Failed to retrieve installed modules: ${error}`);
+    }
 }

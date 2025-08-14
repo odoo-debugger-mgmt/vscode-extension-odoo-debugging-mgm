@@ -6,9 +6,6 @@ export class SettingsModel {
     limitTimeReal: number = 0;
     limitTimeCpu: number = 0;
     maxCronThreads: number = 0;
-    isTestingEnabled: boolean = false;
-    testFile: string = "";
-    testTags: string = "";
     extraParams: string = "--log-handler,odoo.addons.base.models.ir_attachment:WARNING";
     devMode: string = "--dev=all";
     dumpsFolder: string = "/dumps";

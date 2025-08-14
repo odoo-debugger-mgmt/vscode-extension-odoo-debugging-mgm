@@ -2,7 +2,7 @@
   "name": "odoo-debugging-mgm-tool",
   "displayName": "Odoo Debugging Management Tool",
   "description": "A Visual Studio Code extension for managing Odoo debugging.",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "publisher": "odoo-ps",
   "author": {
     "name": "odoo-ps"
@@ -61,6 +61,10 @@
         {
           "id": "moduleSelector",
           "name": "Modules"
+        },
+        {
+          "id": "testingSelector",
+          "name": "Testing"
         },
         {
           "id": "workspaceSettings",
@@ -175,7 +179,7 @@
         "title": "Toggle psae-internal Module"
       },
       {
-        "command": "moduleSelector.installAll", 
+        "command": "moduleSelector.installAll",
         "title": "Install All Modules",
         "icon": "$(checklist)"
       },
@@ -193,6 +197,46 @@
         "command": "moduleSelector.clearAll",
         "title": "Clear All Selections",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "moduleSelector.viewInstalled",
+        "title": "View Installed Modules",
+        "icon": "$(database)"
+      },
+      {
+        "command": "testingSelector.refresh",
+        "title": "Refresh Testing",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "testingSelector.toggleTesting",
+        "title": "Toggle Testing",
+        "icon": "$(testing)"
+      },
+      {
+        "command": "testingSelector.addTestTag",
+        "title": "Add Test Target",
+        "icon": "$(add)"
+      },
+      {
+        "command": "testingSelector.setTestFile",
+        "title": "Set Test File",
+        "icon": "$(file)"
+      },
+      {
+        "command": "testingSelector.toggleStopAfterInit",
+        "title": "Toggle Stop After Init",
+        "icon": "$(stop)"
+      },
+      {
+        "command": "testingSelector.removeTestTag",
+        "title": "Remove Test Target",
+        "icon": "$(remove)"
+      },
+      {
+        "command": "testingSelector.cycleTestTagState",
+        "title": "Cycle Test Target State",
+        "icon": "$(sync)"
       },
       {
         "command": "workspaceSettings.startServer",
@@ -267,29 +311,49 @@
           "group": "navigation"
         },
         {
-          "command": "moduleSelector.installAll", 
-          "when": "view == moduleSelector",
+          "command": "moduleSelector.installAll",
+          "when": "view == moduleSelector && !odoo-debugger.testing_enabled",
           "group": "navigation@1"
         },
         {
           "command": "moduleSelector.updateInstalled",
-          "when": "view == moduleSelector",
+          "when": "view == moduleSelector && !odoo-debugger.testing_enabled",
           "group": "navigation@2"
         },
         {
           "command": "moduleSelector.updateAll",
-          "when": "view == moduleSelector",
+          "when": "view == moduleSelector && !odoo-debugger.testing_enabled",
           "group": "navigation@3"
         },
         {
           "command": "moduleSelector.clearAll",
-          "when": "view == moduleSelector",
+          "when": "view == moduleSelector && !odoo-debugger.testing_enabled",
           "group": "navigation@4"
+        },
+        {
+          "command": "moduleSelector.viewInstalled",
+          "when": "view == moduleSelector",
+          "group": "navigation@5"
         },
         {
           "command": "moduleSelector.refresh",
           "when": "view == moduleSelector",
-          "group": "navigation@5"
+          "group": "navigation@6"
+        },
+        {
+          "command": "testingSelector.addTestTag",
+          "when": "view == testingSelector",
+          "group": "navigation@1"
+        },
+        {
+          "command": "testingSelector.setTestFile",
+          "when": "view == testingSelector",
+          "group": "navigation@2"
+        },
+        {
+          "command": "testingSelector.refresh",
+          "when": "view == testingSelector",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -321,6 +385,11 @@
         {
           "when": "view == dbSelector",
           "command": "dbSelector.delete",
+          "group": "inline"
+        },
+        {
+          "command": "testingSelector.removeTestTag",
+          "when": "view == testingSelector && viewItem == testTag",
           "group": "inline"
         }
       ]

@@ -67,11 +67,12 @@ export async function createProject(name: string, repos: RepoModel[], db?: Datab
     if (!data.projects) {
         data.projects = [];
     }
-
-    // Deselect any currently selected project
-    const currentSelectedIndex = data.projects.findIndex((p: ProjectModel) => p.isSelected);
-    if (currentSelectedIndex !== -1) {
-        data.projects[currentSelectedIndex].isSelected = false;
+    else {
+        // Deselect any currently selected project if there are existing projects
+        const currentSelectedIndex = data.projects.findIndex((p: ProjectModel) => p.isSelected);
+        if (currentSelectedIndex !== -1) {
+            data.projects[currentSelectedIndex].isSelected = false;
+        }
     }
 
     let project: ProjectModel;

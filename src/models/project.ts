@@ -1,5 +1,6 @@
 import { DatabaseModel } from "./db";
 import { RepoModel } from "./repo";
+import { TestingConfigModel } from "./testing";
 import { randomUUID } from "crypto";
 export class ProjectModel {
     name: string; // project sh name
@@ -9,6 +10,7 @@ export class ProjectModel {
     isSelected: boolean = false;
     uid: string; // unique identifier for the project
     includedPsaeInternalPaths: string[] = []; // Manually included psae-internal paths
+    testingConfig: TestingConfigModel; // Testing configuration
     constructor(
         name: string,
         createdAt: Date,
@@ -16,7 +18,8 @@ export class ProjectModel {
         repos: RepoModel[] = [],
         isSelected: boolean = false,
         uid: string = randomUUID(),
-        includedPsaeInternalPaths: string[] = []
+        includedPsaeInternalPaths: string[] = [],
+        testingConfig: TestingConfigModel = new TestingConfigModel()
     ) {
         this.name = name;
         this.dbs = dbs;
@@ -25,5 +28,6 @@ export class ProjectModel {
         this.isSelected = isSelected;
         this.uid = uid;
         this.includedPsaeInternalPaths = includedPsaeInternalPaths;
+        this.testingConfig = testingConfig;
     }
 }
