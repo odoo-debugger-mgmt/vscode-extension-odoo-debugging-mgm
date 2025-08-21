@@ -1,5 +1,5 @@
 import { SettingsModel } from './models/settings';
-import { readFromFile, DebuggerData, showError, getWorkspacePath } from './utils';
+import { readFromFile, DebuggerData, showError, getWorkspacePath, stripSettings } from './utils';
 import { ProjectModel } from './models/project';
 import { modify, applyEdits } from "jsonc-parser";
 import fs from 'fs';
@@ -69,22 +69,28 @@ export class SettingsStore {
         const data = await readFromFile('odoo-debugger-data.json') || {};
 
         return {
-            settings: Object.assign(new SettingsModel(), data.settings || {}),
+            settings: data.settings ? Object.assign(new SettingsModel(), data.settings) : undefined,
             projects: data.projects || [],
-            // ...add other top-level keys if needed
+            versions: data.versions || {},
+            activeVersion: data.activeVersion || ''
         };
     }
 
-    static async getSettings(): Promise<SettingsModel> {
+    static async getSettings(): Promise<SettingsModel | null> {
         const data = await this.load();
-        return data.settings;
+        return data.settings || null;
     }
 
+    /**
+     * @deprecated Settings should only be managed through VersionsService now.
+     * This method should not be used as it violates the versions-exclusive settings management.
+     */
     static async updateSettings(partial: Partial<SettingsModel>): Promise<void> {
         const data = await this.load();
         const updated = Object.assign(new SettingsModel(), data.settings, partial);
         data.settings = updated;
-        await this.saveWithoutComments(data);
+        // Even though this method sets settings, we must strip them to prevent persistence
+        await this.saveWithoutComments(stripSettings(data));
     }
 
     static async getProjects(): Promise<ProjectModel[]> {
@@ -95,7 +101,7 @@ export class SettingsStore {
     static async updateProjects(projects: ProjectModel[]): Promise<void> {
         const data = await this.load();
         data.projects = projects;
-        await this.saveWithoutComments(data);
+        await this.saveWithoutComments(stripSettings(data));
     }
 
     /**

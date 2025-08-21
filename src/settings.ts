@@ -1,35 +1,34 @@
-import { SettingsModel } from "./models/settings";
-import { camelCaseToTitleCase, showError } from './utils';
+import { getSettingDisplayName, getSettingDisplayValue, showError } from './utils';
 import * as vscode from "vscode";
-import { SettingsStore } from './settingsStore';
+import { VersionsService } from './versionsService';
 
-export class SettingsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>{
-    private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
-    readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
+type TreeDataChangeEvent = vscode.TreeItem | undefined | null | void;
+
+export class SettingsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
+    private readonly _onDidChangeTreeData: vscode.EventEmitter<TreeDataChangeEvent> = new vscode.EventEmitter<TreeDataChangeEvent>();
+    readonly onDidChangeTreeData: vscode.Event<TreeDataChangeEvent> = this._onDidChangeTreeData.event;
 
     refresh(): void {
         this._onDidChangeTreeData.fire();
     }
 
-    constructor(private context: vscode.ExtensionContext) {
+    constructor(private readonly context: vscode.ExtensionContext) {
         this.context = context;
         this._onDidChangeTreeData = new vscode.EventEmitter<vscode.TreeItem>();
         this.onDidChangeTreeData = this._onDidChangeTreeData.event;
     }
+
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
         return element;
     }
-    async getChildren(element?: any): Promise<vscode.TreeItem[] | undefined> {
-        const data = await SettingsStore.load();
-        if (!data) {
-            return;
-        }
 
-        let settings = data.settings;
+    async getChildren(element?: any): Promise<vscode.TreeItem[] | undefined> {
+        const versionsService = VersionsService.getInstance();
+        const settings = await versionsService.getActiveVersionSettings();
+
         if (!settings) {
-            settings = new SettingsModel();
-            data.settings = settings;
-            await SettingsStore.saveWithoutComments(data);
+            showError('No active version found');
+            return [];
         }
 
         if (typeof settings === 'string') {
@@ -40,7 +39,8 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<vscode.Tree
         const settingsTreeItems: vscode.TreeItem[] = [];
         for (const key in settings) {
             const setting = settings[key];
-            const item = `✏️ ${camelCaseToTitleCase(key)}: ${setting}`;
+            const displayValue = getSettingDisplayValue(key, setting);
+            const item = `✏️ ${getSettingDisplayName(key)}: ${displayValue}`;
             const treeItem = new vscode.TreeItem(item);
             treeItem.command = {
                 command: 'workspaceSettings.editSetting',
@@ -55,21 +55,38 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<vscode.Tree
 
 export async function editSetting(event: any) {
     const key = event;
-    const data = await SettingsStore.load();
-    if (!data) {
-        return;
-    }
+    const versionsService = VersionsService.getInstance();
+    const settings = await versionsService.getActiveVersionSettings();
 
-    const settings = data.settings;
     if (!settings) {
-        showError('Error reading settings');
+        showError('No active version found');
         return;
     }
 
     const currentValue = settings[key];
-    const newValue = await vscode.window.showInputBox({ prompt: `Edit ${camelCaseToTitleCase(key)}`, value: currentValue });
+    // Show clean value for editing
+    const displayValue = getSettingDisplayValue(key, currentValue);
+    const newValue = await vscode.window.showInputBox({
+        prompt: `Edit ${getSettingDisplayName(key)}`,
+        value: displayValue,
+        placeHolder: key === 'devMode' ? 'Enter development mode (e.g., all, xml, reload)' : undefined
+    });
+
     if (newValue !== undefined) {
-        settings[key] = newValue;
-        await SettingsStore.saveWithoutComments(data);
+        // Convert back to full format if needed
+        let finalValue = newValue;
+        if (key === 'devMode' && newValue.trim()) {
+            // Add --dev= prefix if not already present and not empty
+            finalValue = newValue.startsWith('--dev=') ? newValue : `--dev=${newValue}`;
+        } else if (key === 'devMode' && !newValue.trim()) {
+            // Empty string means no dev mode
+            finalValue = '';
+        }
+
+        // Update the setting in the active version
+        await versionsService.updateActiveSettings({ [key]: finalValue });
+
+        // Refresh the UI
+        vscode.commands.executeCommand('workspaceSettings.refresh');
     }
 }

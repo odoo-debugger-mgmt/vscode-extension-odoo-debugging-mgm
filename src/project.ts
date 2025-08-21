@@ -3,8 +3,9 @@ import * as os from 'os';
 import { ProjectModel } from './models/project';
 import { DatabaseModel } from './models/db';
 import { RepoModel } from './models/repo';
-import { listSubdirectories, showError, showInfo, getGitBranch, normalizePath, showAutoInfo } from './utils';
+import { listSubdirectories, showError, showInfo, getGitBranch, normalizePath, showAutoInfo, addActiveIndicator, stripSettings } from './utils';
 import { SettingsStore } from './settingsStore';
+import { VersionsService } from './versionsService';
 import { randomUUID } from 'crypto';
 import { checkoutBranch } from './dbs';
 
@@ -36,11 +37,11 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
         // Ensure all projects have UIDs (migration for existing data)
         const needsSave = await ensureProjectUIDs(data);
         if (needsSave) {
-            await SettingsStore.saveWithoutComments(data);
+            await SettingsStore.saveWithoutComments(stripSettings(data));
         }
 
         return projects.map(project => {
-            const treeItem = new vscode.TreeItem(`${project.isSelected ? '👉' : ''} ${project.name}`);
+            const treeItem = new vscode.TreeItem(addActiveIndicator(project.name, project.isSelected));
             treeItem.id = project.uid; // Use UID instead of name for uniqueness
 
             let tooltip = `Project: ${project.name}`;
@@ -86,13 +87,17 @@ export async function createProject(name: string, repos: RepoModel[], db?: Datab
     data.projects.push(project);
 
     // Save the entire updated data
-    await SettingsStore.saveWithoutComments(data);
+    await SettingsStore.saveWithoutComments(stripSettings(data));
 
     // If the project has a database with a version, check if branches need switching
     if (db && db.odooVersion && db.odooVersion !== '') {
-        const currentOdooBranch = await getGitBranch(data.settings.odooPath);
-        const currentEnterpriseBranch = await getGitBranch(data.settings.enterprisePath);
-        const currentDesignThemesBranch = await getGitBranch(data.settings.designThemesPath || './design-themes');
+        // Get settings from active version
+        const versionsService = VersionsService.getInstance();
+        const settings = await versionsService.getActiveVersionSettings();
+
+        const currentOdooBranch = await getGitBranch(settings.odooPath);
+        const currentEnterpriseBranch = await getGitBranch(settings.enterprisePath);
+        const currentDesignThemesBranch = await getGitBranch(settings.designThemesPath || './design-themes');
 
         const shouldSwitch = await promptBranchSwitch(db.odooVersion, {
             odoo: currentOdooBranch,
@@ -101,7 +106,7 @@ export async function createProject(name: string, repos: RepoModel[], db?: Datab
         });
 
         if (shouldSwitch) {
-            await checkoutBranch(data.settings, db.odooVersion);
+            await checkoutBranch(settings, db.odooVersion);
         }
     }
 
@@ -166,7 +171,7 @@ export async function selectProject(projectUid: string) {
     // Ensure all projects have UIDs (migration for existing data)
     const needsSave = await ensureProjectUIDs(data);
     if (needsSave) {
-        await SettingsStore.saveWithoutComments(data);
+        await SettingsStore.saveWithoutComments(stripSettings(data));
     }
 
     // Find and deselect the currently selected project
@@ -184,23 +189,10 @@ export async function selectProject(projectUid: string) {
         // Get the newly selected project
         const selectedProject = projects[newSelectedIndex];
 
-        // Check if the project has a selected database with a specific version/branch
+        // Check if the project has a selected database with a specific version
         const selectedDb = selectedProject.dbs?.find((db: DatabaseModel) => db.isSelected);
-        if (selectedDb && selectedDb.odooVersion && selectedDb.odooVersion !== '') {
-            // Check if we need to switch branches
-            const currentOdooBranch = await getGitBranch(data.settings.odooPath);
-            const currentEnterpriseBranch = await getGitBranch(data.settings.enterprisePath);
-            const currentDesignThemesBranch = await getGitBranch(data.settings.designThemesPath || './design-themes');
-
-            const shouldSwitch = await promptBranchSwitch(selectedDb.odooVersion, {
-                odoo: currentOdooBranch,
-                enterprise: currentEnterpriseBranch,
-                designThemes: currentDesignThemesBranch
-            });
-
-            if (shouldSwitch) {
-                await checkoutBranch(data.settings, selectedDb.odooVersion);
-            }
+        if (selectedDb) {
+            await handleDatabaseVersionSwitchForProject(selectedDb);
         }
 
         showInfo(`Project switched to: ${selectedProject.name}`);
@@ -209,6 +201,54 @@ export async function selectProject(projectUid: string) {
         await new Promise(resolve => setTimeout(resolve, 100));
     } else {
         showError('Project not found');
+    }
+}
+
+async function handleDatabaseVersionSwitchForProject(database: DatabaseModel): Promise<void> {
+    const versionsService = VersionsService.getInstance();
+    await versionsService.initialize();
+    const settings = await versionsService.getActiveVersionSettings();
+
+    // Check if database has a version associated with it
+    if (database.versionId) {
+        const dbVersion = versionsService.getVersion(database.versionId);
+        if (dbVersion) {
+            // Silently activate the version for project switching (no user prompt)
+            await versionsService.setActiveVersion(dbVersion.id);
+
+            const currentOdooBranch = await getGitBranch(settings.odooPath);
+
+            // Check if branch switching is needed
+            if (currentOdooBranch !== dbVersion.odooVersion) {
+                const shouldSwitch = await promptBranchSwitch(dbVersion.odooVersion, {
+                    odoo: currentOdooBranch,
+                    enterprise: await getGitBranch(settings.enterprisePath),
+                    designThemes: await getGitBranch(settings.designThemesPath || './design-themes')
+                });
+
+                if (shouldSwitch) {
+                    await checkoutBranch(settings, dbVersion.odooVersion);
+                }
+            }
+            return;
+        }
+    }
+
+    // Fallback to old behavior for databases without version
+    if (database.odooVersion && database.odooVersion !== '') {
+        const currentOdooBranch = await getGitBranch(settings.odooPath);
+        const currentEnterpriseBranch = await getGitBranch(settings.enterprisePath);
+        const currentDesignThemesBranch = await getGitBranch(settings.designThemesPath || './design-themes');
+
+        const shouldSwitch = await promptBranchSwitch(database.odooVersion, {
+            odoo: currentOdooBranch,
+            enterprise: currentEnterpriseBranch,
+            designThemes: currentDesignThemesBranch
+        });
+
+        if (shouldSwitch) {
+            await checkoutBranch(settings, database.odooVersion);
+        }
     }
 }
 
@@ -327,7 +367,7 @@ export async function deleteProject(event: any) {
 
         // Remove the project from the array and save the updated data
         data.projects.splice(projectIndex, 1);
-        await SettingsStore.saveWithoutComments(data);
+        await SettingsStore.saveWithoutComments(stripSettings(data));
 
         showInfo(`Project "${projectToDelete.name}" deleted successfully`);
 
@@ -406,7 +446,7 @@ export async function duplicateProject(event: any) {
 
     projects.push(duplicateProject);
 
-    await SettingsStore.saveWithoutComments(data);
+    await SettingsStore.saveWithoutComments(stripSettings(data));
     showInfo(`Project "${duplicateName}" created as a duplicate of "${sourceProject.name}"`);
 }
 
@@ -505,7 +545,7 @@ async function editProjectName(project: ProjectModel, data: any) {
     if (newName && newName.trim() !== project.name) {
         const oldName = project.name;
         project.name = newName.trim();
-        await SettingsStore.saveWithoutComments(data);
+        await SettingsStore.saveWithoutComments(stripSettings(data));
         showInfo(`Project renamed from "${oldName}" to "${project.name}"`);
     }
 }
@@ -646,7 +686,10 @@ export async function importProject(): Promise<void> {
         // Load existing data
         const data = await SettingsStore.get('odoo-debugger-data.json');
         const projects: ProjectModel[] = data.projects || [];
-        const settings = data.settings;
+
+        // Get settings from active version
+        const versionsService = VersionsService.getInstance();
+        const settings = await versionsService.getActiveVersionSettings();
 
         // Check if project name already exists and suggest alternative
         let projectName = importData.name;
@@ -705,7 +748,7 @@ export async function importProject(): Promise<void> {
         // Add to projects and save
         projects.push(newProject);
         data.projects = projects;
-        await SettingsStore.saveWithoutComments(data);
+        await SettingsStore.saveWithoutComments(stripSettings(data));
 
         // Show import results
         let message = `Project "${projectName}" imported successfully!`;

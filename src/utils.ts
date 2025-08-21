@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as child_process from 'child_process';
 import { SettingsModel } from './models/settings';
 import { ProjectModel } from './models/project';
-import { RepoModel } from './models/repo';
+
 import { parse } from 'jsonc-parser';
 
 const launchJsonFileContent = `{
@@ -29,8 +30,21 @@ const debuggerDataFileContent = `{
 // ============================================================================
 
 export interface DebuggerData {
-    settings: any;
+    settings?: any;
     projects: ProjectModel[];
+    versions?: { [id: string]: any };
+    activeVersion?: string;
+}
+
+/**
+ * Strip settings from DebuggerData to ensure settings are managed exclusively by versions
+ */
+export function stripSettings(data: DebuggerData): DebuggerData {
+    return {
+        projects: data.projects,
+        versions: data.versions,
+        activeVersion: data.activeVersion
+    };
 }
 
 // ============================================================================
@@ -44,6 +58,21 @@ export const CONFIG = {
     tabSize: 4,
     insertSpaces: true
 };
+
+// ============================================================================
+// UI UTILITIES
+// ============================================================================
+
+/**
+ * Adds the pointing hand emoji (👉) to the beginning of a string if the condition is true
+ * Used consistently across the extension for indicating active/selected items
+ * @param text The text to potentially prefix
+ * @param isActive Whether to add the pointing hand emoji
+ * @returns The text with or without the pointing hand prefix
+ */
+export function addActiveIndicator(text: string, isActive: boolean): string {
+    return `${isActive ? '👉' : ''} ${text}`;
+}
 
 
 // ============================================================================
@@ -230,9 +259,7 @@ let outputChannel: vscode.OutputChannel | null = null;
  * Gets or creates the output channel for logging
  */
 function getOutputChannel(): vscode.OutputChannel {
-    if (!outputChannel) {
-        outputChannel = vscode.window.createOutputChannel('Odoo Debugger');
-    }
+    outputChannel ??= vscode.window.createOutputChannel('Odoo Debugger');
     return outputChannel;
 }
 
@@ -406,6 +433,50 @@ export function camelCaseToTitleCase(str: string): string {
 }
 
 /**
+ * Gets the display name for a settings key
+ * @param key - The settings key in camelCase
+ * @returns The human-readable display name
+ */
+export function getSettingDisplayName(key: string): string {
+    const displayNames: Record<string, string> = {
+        debuggerName: 'Debugger',
+        debuggerVersion: 'Version',
+        portNumber: 'Port',
+        shellPortNumber: 'Shell Port',
+        limitTimeReal: 'Time Limit (Real)',
+        limitTimeCpu: 'Time Limit (CPU)',
+        maxCronThreads: 'Max Cron Threads',
+        extraParams: 'Extra Params',
+        devMode: 'Dev Mode',
+        installApps: 'Install Apps',
+        upgradeApps: 'Upgrade Apps',
+        dumpsFolder: 'Dumps Dir',
+        odooPath: 'Odoo Dir',
+        enterprisePath: 'Enterprise Dir',
+        designThemesPath: 'Themes Dir',
+        customAddonsPath: 'Custom Addons',
+        pythonPath: 'Python Exec',
+        subModulesPaths: 'Sub-modules'
+    };
+
+    return displayNames[key] || camelCaseToTitleCase(key);
+}
+
+/**
+ * Gets the display value for a setting, cleaning up internal prefixes for UI display
+ * @param key - The settings key
+ * @param value - The internal setting value
+ * @returns The cleaned value for UI display
+ */
+export function getSettingDisplayValue(key: string, value: any): string {
+    if (key === 'devMode' && typeof value === 'string' && value.startsWith('--dev=')) {
+        // Remove --dev= prefix for display, show clean value
+        return value.substring(6) || 'none';
+    }
+    return value?.toString() || '';
+}
+
+/**
  * Gets the current git branch for a given repository path.
  * @param repoPath - The path to the git repository.
  * @returns The current branch name, or null if not found or error occurs.
@@ -416,11 +487,111 @@ export async function getGitBranch(repoPath: string | undefined): Promise<string
     try {
         if (fs.existsSync(gitHeadPath)) {
             const headContent = fs.readFileSync(gitHeadPath, 'utf-8').trim();
-            const match = headContent.match(/^ref: refs\/heads\/(.+)$/);
+            const match = /^ref: refs\/heads\/(.+)$/.exec(headContent);
             return match ? match[1] : headContent;
         }
     } catch (err) {
         console.warn(`Failed to read branch for ${repoPath}: ${err}`);
     }
     return null;
+}
+
+/**
+ * Gets all available Git branches from a repository path.
+ * @param repoPath - The path to the git repository.
+ * @returns Array of branch names, or empty array if not found or error occurs.
+ */
+export async function getGitBranches(repoPath: string | undefined): Promise<string[]> {
+    if (!repoPath) {
+        return [];
+    }
+
+    try {
+        // Check if it's a git repository
+        const gitDir = path.join(repoPath, '.git');
+        if (!fs.existsSync(gitDir)) {
+            console.warn(`Not a git repository: ${repoPath}`);
+            return [];
+        }
+
+        return new Promise<string[]>((resolve, reject) => {
+            child_process.exec(
+                'git branch -a --format="%(refname:short)"',
+                { cwd: repoPath },
+                (error, stdout, stderr) => {
+                    if (error) {
+                        console.warn(`Failed to get branches for ${repoPath}: ${error.message}`);
+                        resolve([]);
+                        return;
+                    }
+
+                    if (stderr) {
+                        console.warn(`Git branch warning for ${repoPath}: ${stderr}`);
+                    }
+
+                    const branches = stdout
+                        .split('\n')
+                        .map(branch => branch.trim())
+                        .filter(branch => {
+                            // Filter out empty lines and HEAD reference
+                            if (!branch || branch === 'HEAD') {
+                                return false;
+                            }
+                            // Remove remote prefix for remote branches
+                            return true;
+                        })
+                        .map(branch => {
+                            // Clean up branch names
+                            if (branch.startsWith('origin/')) {
+                                return branch.replace('origin/', '');
+                            }
+                            if (branch.startsWith('remotes/origin/')) {
+                                return branch.replace('remotes/origin/', '');
+                            }
+                            return branch;
+                        })
+                        .filter((branch, index, array) => {
+                            // Remove duplicates (local and remote of same branch)
+                            return array.indexOf(branch) === index;
+                        })
+                        .sort((a, b) => a.localeCompare(b)); // Sort alphabetically
+
+                    resolve(branches);
+                }
+            );
+        });
+    } catch (err) {
+        console.warn(`Failed to get branches for ${repoPath}: ${err}`);
+        return [];
+    }
+}
+
+/**
+ * Get default settings for new versions from VS Code configuration
+ * These settings can be configured via VS Code Settings UI or by searching for "odooDebugger.defaultVersion"
+ * @returns SettingsModel with default values from configuration
+ */
+export function getDefaultVersionSettings(): any {
+    const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
+
+    return {
+        debuggerName: config.get('debuggerName', 'odoo:18.0'),
+        debuggerVersion: config.get('debuggerVersion', '1.0.0'),
+        portNumber: config.get('portNumber', 8018),
+        shellPortNumber: config.get('shellPortNumber', 5018),
+        limitTimeReal: config.get('limitTimeReal', 0),
+        limitTimeCpu: config.get('limitTimeCpu', 0),
+        maxCronThreads: config.get('maxCronThreads', 0),
+        extraParams: config.get('extraParams', '--log-handler,odoo.addons.base.models.ir_attachment:WARNING'),
+        devMode: config.get('devMode', '--dev=all'),
+        dumpsFolder: config.get('dumpsFolder', '/dumps'),
+        odooPath: config.get('odooPath', './odoo'),
+        enterprisePath: config.get('enterprisePath', './enterprise'),
+        designThemesPath: config.get('designThemesPath', './design-themes'),
+        customAddonsPath: config.get('customAddonsPath', './custom-addons'),
+        pythonPath: config.get('pythonPath', './venv/bin/python'),
+        subModulesPaths: config.get('subModulesPaths', ''),
+        installApps: config.get('installApps', ''),
+        upgradeApps: config.get('upgradeApps', '')
+    };
 }

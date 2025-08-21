@@ -6,6 +6,7 @@ import { SettingsModel } from "./models/settings";
 import { InstalledModuleInfo } from "./models/module";
 import { getWorkspacePath, normalizePath, showError, showInfo, listSubdirectories } from './utils';
 import { SettingsStore } from './settingsStore';
+import { VersionsService } from './versionsService';
 
 
 export async function setupDebugger(): Promise<void> {
@@ -17,8 +18,10 @@ export async function setupDebugger(): Promise<void> {
     if (!result) {
         return;
     }
-    const { data, project } = result;
-    const settings = data.settings;
+    const { project } = result;
+    // Get settings from active version instead of legacy settings
+    const versionsService = VersionsService.getInstance();
+    const settings = await versionsService.getActiveVersionSettings();
     // Normalize paths to handle absolute vs relative
     const normalizedOdooPath = normalizePath(settings.odooPath);
     const normalizedPythonPath = normalizePath(settings.pythonPath);
@@ -289,8 +292,10 @@ export async function startDebugShell(): Promise<void> {
     if (!result) {
         return;
     }
-    const { data, project } = result;
-    const workspaceSettings = data.settings;
+    const { project } = result;
+    // Get settings from active version instead of legacy settings
+    const versionsService = VersionsService.getInstance();
+    const workspaceSettings = await versionsService.getActiveVersionSettings();
     // Normalize paths for terminal commands
     const normalizedOdooPath = normalizePath(workspaceSettings.odooPath);
     const normalizedPythonPath = normalizePath(workspaceSettings.pythonPath);
@@ -318,8 +323,9 @@ export async function startDebugServer(): Promise<void> {
     if (!result) {
         return;
     }
-    const { data } = result;
-    const workspaceSettings = data.settings;
+    // Get settings from active version instead of legacy settings
+    const versionsService = VersionsService.getInstance();
+    const workspaceSettings = await versionsService.getActiveVersionSettings();
     const existingSession = vscode.debug.activeDebugSession;
     if (existingSession) {
         await vscode.debug.stopDebugging(existingSession);

@@ -2,7 +2,7 @@ import { ModuleModel, InstalledModuleInfo } from "./models/module";
 import { DatabaseModel } from "./models/db";
 import * as vscode from "vscode";
 import * as fs from 'fs';
-import { listSubdirectories, showError, showInfo, showAutoInfo, normalizePath } from './utils';
+import { listSubdirectories, showError, showInfo, showAutoInfo, normalizePath, stripSettings } from './utils';
 import { SettingsStore } from './settingsStore';
 import { execSync } from 'child_process';
 
@@ -193,31 +193,71 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
                         break;
                 }
 
-                treeItems.push({
+                // Create module tooltip with consistent formatting
+                const moduleTooltipDetails = [];
+                moduleTooltipDetails.push(`**Module:** ${module.name}`);
+                moduleTooltipDetails.push(`**State:** ${existingModule.state}`);
+                moduleTooltipDetails.push(`**Source:** ${repoPath}`);
+                moduleTooltipDetails.push(`**Path:** ${module.path}`);
+
+                const managedModuleItem = {
                     label: `${moduleIcon} ${module.name}`,
-                    tooltip: `Module: ${module.name}\nState: ${existingModule.state}\nSource: ${repoPath}\nPath: ${module.path}`,
+                    tooltip: new vscode.MarkdownString(moduleTooltipDetails.join('\n\n')),
                     description: repoPath,
+                    contextValue: 'module',
                     command: isTestingEnabled ? undefined : {
                         command: 'moduleSelector.select',
                         title: 'Select Module',
                         arguments: [{ name: module.name, path: module.path, state: existingModule.state, repoName: module.repoName, isPsaeInternal: module.isPsaeInternal, isInstalled: existingModule.isInstalled }]
                     }
-                });
+                } as vscode.TreeItem & { contextValue: string };
+
+                // Store module data for context menu commands
+                (managedModuleItem as any).moduleData = {
+                    name: module.name,
+                    path: module.path,
+                    state: existingModule.state,
+                    repoName: module.repoName,
+                    isPsaeInternal: module.isPsaeInternal,
+                    isInstalled: existingModule.isInstalled
+                };
+
+                treeItems.push(managedModuleItem);
             } else {
                 // Module not in our managed list
                 const moduleIcon = isInstalledInDb ? '⚫' : '⚪'; // Black circle for installed, white for not installed
                 const moduleState = isInstalledInDb ? 'Installed' : 'none';
 
-                treeItems.push({
+                // Create module tooltip with consistent formatting
+                const moduleTooltipDetails = [];
+                moduleTooltipDetails.push(`**Module:** ${module.name}`);
+                moduleTooltipDetails.push(`**State:** ${moduleState}`);
+                moduleTooltipDetails.push(`**Source:** ${repoPath}`);
+                moduleTooltipDetails.push(`**Path:** ${module.path}`);
+
+                const unmanagedModuleItem = {
                     label: `${moduleIcon} ${module.name}`,
-                    tooltip: `Module: ${module.name}\nState: ${moduleState}\nSource: ${repoPath}\nPath: ${module.path}`,
+                    tooltip: new vscode.MarkdownString(moduleTooltipDetails.join('\n\n')),
                     description: repoPath,
+                    contextValue: 'module',
                     command: isTestingEnabled ? undefined : {
                         command: 'moduleSelector.select',
                         title: 'Select Module',
                         arguments: [{ name: module.name, path: module.path, state: 'none', repoName: module.repoName, isPsaeInternal: module.isPsaeInternal, isInstalled: isInstalledInDb }]
                     }
-                });
+                } as vscode.TreeItem & { contextValue: string };
+
+                // Store module data for context menu commands
+                (unmanagedModuleItem as any).moduleData = {
+                    name: module.name,
+                    path: module.path,
+                    state: 'none',
+                    repoName: module.repoName,
+                    isPsaeInternal: module.isPsaeInternal,
+                    isInstalled: isInstalledInDb
+                };
+
+                treeItems.push(unmanagedModuleItem);
             }
         }
 
@@ -266,7 +306,105 @@ export async function selectModule(event: any) {
             db.modules = db.modules.filter(mod => mod.name !== module.name);
         }
     }
-    await SettingsStore.saveWithoutComments(data);
+    await SettingsStore.saveWithoutComments(stripSettings(data));
+}
+
+/**
+ * Set a module to 'install' state
+ */
+export async function setModuleToInstall(event: any): Promise<void> {
+    const moduleData = event.moduleData || event;
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
+        return;
+    }
+    const { data, project } = result;
+    const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    if (!db) {
+        showError('No database selected');
+        return;
+    }
+
+    // Check if testing is enabled
+    if (project.testingConfig && project.testingConfig.isEnabled) {
+        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        return;
+    }
+
+    const moduleExistsInDb = db.modules.find(mod => mod.name === moduleData.name);
+    if (!moduleExistsInDb) {
+        db.modules.push(new ModuleModel(moduleData.name, 'install'));
+        showAutoInfo(`Module "${moduleData.name}" set to install`, 2000);
+    } else {
+        moduleExistsInDb.state = 'install';
+        showAutoInfo(`Module "${moduleData.name}" state changed to install`, 2000);
+    }
+    await SettingsStore.saveWithoutComments(stripSettings(data));
+}
+
+/**
+ * Set a module to 'upgrade' state
+ */
+export async function setModuleToUpgrade(event: any): Promise<void> {
+    const moduleData = event.moduleData || event;
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
+        return;
+    }
+    const { data, project } = result;
+    const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    if (!db) {
+        showError('No database selected');
+        return;
+    }
+
+    // Check if testing is enabled
+    if (project.testingConfig && project.testingConfig.isEnabled) {
+        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        return;
+    }
+
+    const moduleExistsInDb = db.modules.find(mod => mod.name === moduleData.name);
+    if (!moduleExistsInDb) {
+        db.modules.push(new ModuleModel(moduleData.name, 'upgrade'));
+        showAutoInfo(`Module "${moduleData.name}" set to upgrade`, 2000);
+    } else {
+        moduleExistsInDb.state = 'upgrade';
+        showAutoInfo(`Module "${moduleData.name}" state changed to upgrade`, 2000);
+    }
+    await SettingsStore.saveWithoutComments(stripSettings(data));
+}
+
+/**
+ * Clear a module's state (remove from managed modules)
+ */
+export async function clearModuleState(event: any): Promise<void> {
+    const moduleData = event.moduleData || event;
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
+        return;
+    }
+    const { data, project } = result;
+    const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    if (!db) {
+        showError('No database selected');
+        return;
+    }
+
+    // Check if testing is enabled
+    if (project.testingConfig && project.testingConfig.isEnabled) {
+        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        return;
+    }
+
+    const moduleExistsInDb = db.modules.find(mod => mod.name === moduleData.name);
+    if (moduleExistsInDb) {
+        db.modules = db.modules.filter(mod => mod.name !== moduleData.name);
+        showAutoInfo(`Module "${moduleData.name}" state cleared`, 2000);
+    } else {
+        showAutoInfo(`Module "${moduleData.name}" was already not managed`, 1500);
+    }
+    await SettingsStore.saveWithoutComments(stripSettings(data));
 }
 
 export async function togglePsaeInternalModule(event: any): Promise<void> {
@@ -320,10 +458,10 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
                 // Remove selected modules from this psae-internal directory
                 const moduleNamesToRemove = psaeModules.map((m: any) => m.name);
                 db.modules = db.modules.filter(dbModule => !moduleNamesToRemove.includes(dbModule.name));
-                await SettingsStore.saveWithoutComments(data);
+                await SettingsStore.saveWithoutComments(stripSettings(data));
                 showInfo(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
             } else {
-                await SettingsStore.saveWithoutComments(data);
+                await SettingsStore.saveWithoutComments(stripSettings(data));
                 showInfo(`Removed manual inclusion of ${dirName} (${repoName})`);
             }
         } else {
@@ -332,7 +470,7 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
             // Remove selected modules from this psae-internal directory
             const moduleNamesToRemove = psaeModules.map((m: any) => m.name);
             db.modules = db.modules.filter(dbModule => !moduleNamesToRemove.includes(dbModule.name));
-            await SettingsStore.saveWithoutComments(data);
+            await SettingsStore.saveWithoutComments(stripSettings(data));
             showInfo(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
         }
     } else {
@@ -342,7 +480,7 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
             if (pathIndex > -1) {
                 project.includedPsaeInternalPaths.splice(pathIndex, 1);
             }
-            await SettingsStore.saveWithoutComments(data);
+            await SettingsStore.saveWithoutComments(stripSettings(data));
             if (hasSelectedModules || hasInstalledModules) {
                 showInfo(`Removed manual exclusion of ${dirName} (${repoName}). Now auto-included due to modules.`);
             } else {
@@ -351,7 +489,7 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
         } else {
             // Currently not included - add manual inclusion
             project.includedPsaeInternalPaths.push(psaeInternalPath);
-            await SettingsStore.saveWithoutComments(data);
+            await SettingsStore.saveWithoutComments(stripSettings(data));
             showInfo(`Manually included ${dirName} (${repoName}) in addons path`);
         }
     }
@@ -455,7 +593,7 @@ export async function updateAllModules(): Promise<void> {
         }
     }
 
-    await SettingsStore.saveWithoutComments(data);
+    await SettingsStore.saveWithoutComments(stripSettings(data));
     const message = addedCount > 0 && updatedCount > 0
         ? `Added ${addedCount} new modules and updated ${updatedCount} existing modules to "upgrade" state (${db.modules.length} total)`
         : addedCount > 0
@@ -514,7 +652,7 @@ export async function updateInstalledModules(): Promise<void> {
         module.state = 'upgrade';
     });
 
-    await SettingsStore.saveWithoutComments(data);
+    await SettingsStore.saveWithoutComments(stripSettings(data));
     showAutoInfo(`${installedModules.length} installed modules set to upgrade state`, 3000);
 }
 
@@ -616,7 +754,7 @@ export async function installAllModules(): Promise<void> {
         }
     }
 
-    await SettingsStore.saveWithoutComments(data);
+    await SettingsStore.saveWithoutComments(stripSettings(data));
     const message = addedCount > 0 && updatedCount > 0
         ? `Added ${addedCount} new modules and updated ${updatedCount} existing modules to "install" state (${db.modules.length} total)`
         : addedCount > 0
@@ -667,7 +805,7 @@ export async function clearAllModuleSelections(): Promise<void> {
     const clearedCount = db.modules.length;
     db.modules = [];
 
-    await SettingsStore.saveWithoutComments(data);
+    await SettingsStore.saveWithoutComments(stripSettings(data));
     showAutoInfo(`Cleared ${clearedCount} module selections`, 3000);
 }
 
@@ -676,6 +814,22 @@ export async function clearAllModuleSelections(): Promise<void> {
  */
 async function getInstalledModules(dbName: string): Promise<InstalledModuleInfo[]> {
     try {
+        // First check if the ir_module_module table exists (to handle fresh databases gracefully)
+        const checkTableQuery = `SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'ir_module_module');`;
+        const checkCommand = `psql ${dbName} -t -A -c "${checkTableQuery}"`;
+
+        const tableExists = execSync(checkCommand, {
+            encoding: 'utf-8',
+            stdio: ['pipe', 'pipe', 'pipe']
+        }).trim() === 't';
+
+        if (!tableExists) {
+            // Database doesn't have Odoo tables yet (fresh database)
+            console.debug(`Database ${dbName} doesn't have Odoo tables yet (fresh database)`);
+            return [];
+        }
+
+        // Now query the modules
         const query = `SELECT id, name, shortdesc, latest_version, state, application FROM ir_module_module WHERE state IN ('installed','to upgrade') ORDER BY name;`;
         const command = `psql ${dbName} -t -A -F'|' -c "${query}"`;
 
@@ -713,7 +867,15 @@ async function getInstalledModules(dbName: string): Promise<InstalledModuleInfo[
         }
 
         return installedModules;
-    } catch (error) {
+    } catch (error: any) {
+        // Check if this is a "table doesn't exist" error (common for fresh databases)
+        if (error?.message?.includes('relation "ir_module_module" does not exist')) {
+            // This is expected for fresh databases - don't log as an error
+            console.debug(`Database ${dbName} doesn't have Odoo tables yet (fresh database)`);
+            return [];
+        }
+
+        // For other errors, log a warning
         console.warn(`Failed to get installed modules from database ${dbName}:`, error);
         return [];
     }

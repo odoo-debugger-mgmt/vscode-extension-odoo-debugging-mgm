@@ -1,7 +1,8 @@
 import { RepoModel } from "./models/repo";
 import * as vscode from "vscode";
-import { listSubdirectories, getWorkspacePath, normalizePath, showError, showInfo } from './utils';
+import { listSubdirectories, getWorkspacePath, normalizePath, showError, showInfo, stripSettings } from './utils';
 import { SettingsStore } from './settingsStore';
+import { VersionsService } from './versionsService';
 import * as path from 'path';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
@@ -34,7 +35,18 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
         }
 
         const repos: RepoModel[] = project.repos;
-        const customAddonsPath = normalizePath(data.settings.customAddonsPath);
+
+        // Get settings from active version
+        const versionsService = VersionsService.getInstance();
+        const settings = await versionsService.getActiveVersionSettings();
+        const customAddonsPath = normalizePath(settings.customAddonsPath);
+
+        // Check if path exists first
+        if (!fs.existsSync(customAddonsPath)) {
+            showError(`Path does not exist: ${customAddonsPath}`);
+            return [];
+        }
+
         const devsRepos = listSubdirectories(customAddonsPath);
         if (devsRepos.length === 0) {
             showInfo('No folders found in the Customer Addons Directory');
@@ -102,5 +114,5 @@ export async function selectRepo(event: any) {
         project.repos = project.repos.filter((repo: RepoModel) => repo.name !== selectedRepo.name);
     }
 
-    await SettingsStore.saveWithoutComments(data);
+    await SettingsStore.saveWithoutComments(stripSettings(data));
 }

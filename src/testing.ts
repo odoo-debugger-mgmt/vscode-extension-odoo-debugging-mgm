@@ -4,7 +4,7 @@ import { SettingsStore } from './settingsStore';
 import { TestTag, TestingConfigModel } from './models/testing';
 import { ModuleModel } from './models/module';
 import { InstalledModuleInfo } from './models/module';
-import { showError, showInfo, showAutoInfo, showWarning } from './utils';
+import { showError, showInfo, showAutoInfo, showWarning, stripSettings } from './utils';
 import { execSync } from 'child_process';
 import { updateTestingContext } from './extension';
 
@@ -115,7 +115,7 @@ export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
         if (testingConfig !== project.testingConfig) {
             // Save the converted model back to persist the conversion
             project.testingConfig = testingConfig;
-            await SettingsStore.saveWithoutComments(data).catch(error => {
+            await SettingsStore.saveWithoutComments(stripSettings(data)).catch(error => {
                 console.warn('Failed to save converted testing config:', error);
             });
         }
@@ -324,7 +324,7 @@ export async function toggleTesting(event: any): Promise<void> {
                 project.testingConfig.savedModuleStates = undefined;
             }
 
-            await SettingsStore.saveWithoutComments(data);
+            await SettingsStore.saveWithoutComments(stripSettings(data));
             updateTestingContext(false);
             showAutoInfo('Testing disabled. Module states restored.', 3000);
 
@@ -350,7 +350,7 @@ export async function toggleTesting(event: any): Promise<void> {
             db.modules = [];
             project.testingConfig.isEnabled = true;
 
-            await SettingsStore.saveWithoutComments(data);
+            await SettingsStore.saveWithoutComments(stripSettings(data));
             updateTestingContext(true);
             showAutoInfo('Testing enabled. Module selections cleared and saved for restoration.', 4000);
         }
@@ -372,7 +372,7 @@ export async function toggleStopAfterInit(): Promise<void> {
         project.testingConfig = ensureTestingConfigModel(project.testingConfig);
 
         project.testingConfig.stopAfterInit = !project.testingConfig.stopAfterInit;
-        await SettingsStore.saveWithoutComments(data);
+        await SettingsStore.saveWithoutComments(stripSettings(data));
 
         const status = project.testingConfig.stopAfterInit ? 'enabled' : 'disabled';
         showAutoInfo(`Stop after init ${status}`, 2000);
@@ -402,7 +402,7 @@ export async function setTestFile(): Promise<void> {
 
         if (newPath !== undefined) {
             project.testingConfig.testFile = newPath.trim() || undefined;
-            await SettingsStore.saveWithoutComments(data);
+            await SettingsStore.saveWithoutComments(stripSettings(data));
 
             if (project.testingConfig.testFile) {
                 showAutoInfo(`Test file set to: ${project.testingConfig.testFile}`, 2000);
@@ -513,7 +513,7 @@ export async function addTestTag(): Promise<void> {
                         project.testingConfig.testTags.push(newTag);
                     }
 
-                    await SettingsStore.saveWithoutComments(data);
+                    await SettingsStore.saveWithoutComments(stripSettings(data));
                     showAutoInfo(`Added ${selectedModules.length} module test targets.`, 4000);
                 }
             } catch (error) {
@@ -576,7 +576,7 @@ export async function addTestTag(): Promise<void> {
                 };
 
                 project.testingConfig.testTags.push(newTag);
-                await SettingsStore.saveWithoutComments(data);
+                await SettingsStore.saveWithoutComments(stripSettings(data));
 
                 let formatInfo = '';
                 if (selectedType.value === 'class') {
@@ -632,7 +632,7 @@ export async function cycleTestTagState(tag: TestTag): Promise<void> {
                     break;
             }
 
-            await SettingsStore.saveWithoutComments(data);
+            await SettingsStore.saveWithoutComments(stripSettings(data));
         } else {
             showError('Test tag not found');
         }
@@ -682,7 +682,7 @@ export async function removeTestTag(tagOrTreeItem: TestTag | vscode.TreeItem): P
         const tagIndex = project.testingConfig.testTags.findIndex(t => t.id === tagId);
         if (tagIndex > -1) {
             project.testingConfig.testTags.splice(tagIndex, 1);
-            await SettingsStore.saveWithoutComments(data);
+            await SettingsStore.saveWithoutComments(stripSettings(data));
             showAutoInfo(`Removed test target: ${tagValue}`, 2000);
         } else {
             showError('Test tag not found');

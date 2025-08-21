@@ -1,14 +1,65 @@
 import * as vscode from 'vscode';
 import { DatabaseModel } from './models/db';
 import { ModuleModel } from './models/module';
-import { listSubdirectories, normalizePath, getGitBranch, showError, showInfo, showWarning, showAutoInfo, showBriefStatus } from './utils';
+import { VersionModel } from './models/version';
+import { listSubdirectories, normalizePath, getGitBranch, showError, showInfo, showWarning, showAutoInfo, showBriefStatus, addActiveIndicator, stripSettings } from './utils';
 import { SettingsStore } from './settingsStore';
-import { execSync } from 'child_process';
+import { VersionsService } from './versionsService';
+import { execSync, exec } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { RepoModel } from './models/repo';
-import { exec } from 'child_process';
 import { randomUUID } from 'crypto';
+
+/**
+ * Gets the effective Odoo version for a database object.
+ * Works with both DatabaseModel instances and plain database objects.
+ */
+function getEffectiveOdooVersion(db: DatabaseModel | any): string | undefined {
+    // If it's a DatabaseModel instance, use its method
+    if (db && typeof db.getEffectiveOdooVersion === 'function') {
+        return db.getEffectiveOdooVersion();
+    }
+
+    // For plain objects, implement the same logic
+    if (db && db.versionId) {
+        try {
+            const versionsService = VersionsService.getInstance();
+            const version = versionsService.getVersion(db.versionId);
+            if (version) {
+                return version.odooVersion;
+            }
+        } catch (error) {
+            console.warn(`Failed to get version for database ${db.name}:`, error);
+        }
+    }
+    // Fall back to legacy odooVersion property
+    return db?.odooVersion || undefined;
+}
+
+/**
+ * Gets the version name for a database object if it has a version assigned.
+ * Works with both DatabaseModel instances and plain database objects.
+ */
+function getVersionName(db: DatabaseModel | any): string | undefined {
+    // If it's a DatabaseModel instance, use its method
+    if (db && typeof db.getVersionName === 'function') {
+        return db.getVersionName();
+    }
+
+    // For plain objects, implement the same logic
+    if (db && db.versionId) {
+        try {
+            const versionsService = VersionsService.getInstance();
+            const version = versionsService.getVersion(db.versionId);
+            return version?.name;
+        } catch (error) {
+            console.warn(`Failed to get version name for database ${db.name}:`, error);
+            return undefined;
+        }
+    }
+    return undefined;
+}
 
 async function promptBranchSwitch(targetVersion: string, currentBranches: {odoo: string | null, enterprise: string | null, designThemes: string | null}): Promise<boolean> {
     const mismatchedRepos = [];
@@ -39,6 +90,37 @@ async function promptBranchSwitch(targetVersion: string, currentBranches: {odoo:
 }
 import { SettingsModel } from './models/settings';
 
+/**
+ * Helper function to extract DatabaseModel from various event sources
+ * (direct database object, VS Code TreeItem, or command arguments)
+ */
+function extractDatabaseFromEvent(event: any): DatabaseModel | null {
+    if (!event) {
+        return null;
+    }
+
+    // Check if we received a VS Code TreeItem (context menu call)
+    // TreeItems have properties like collapsibleState, label, id, and our custom database property
+    if (typeof event === 'object' &&
+        'collapsibleState' in event &&
+        'label' in event &&
+        'database' in event &&
+        event.database) {
+        return event.database;
+    }
+
+    // Check if it's a direct database object (has required DatabaseModel properties)
+    if (typeof event === 'object' &&
+        event.name &&
+        event.id &&
+        typeof event.name === 'string' &&
+        typeof event.id === 'string') {
+        return event;
+    }
+
+    return null;
+}
+
 
 export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
@@ -65,13 +147,146 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
         }
 
         return dbs.map(db => {
-            const editedDate = new Date(db.createdAt);
-            const formattedDate = `${editedDate.toISOString().split('T')[0]}-${editedDate.toTimeString().split(' ')[0]}`;
-            const branchName = db.branchName ? `🌿 ${db.branchName} ` : '';
-            const version = db.odooVersion ? `🛠️ ${db.odooVersion} ` : '';
-            let itemName = `${db.isSelected ? '👉' : ''} ${db.name} ${branchName}${version}🕒 ${formattedDate} ${db.isItABackup ? ' ☁️' : ''} ${db.isExisting ? ' 📂' : ''}`;
-            const treeItem = new vscode.TreeItem(itemName);
+            // Handle date parsing defensively
+            let editedDate: Date;
+            try {
+                editedDate = new Date(db.createdAt);
+                if (isNaN(editedDate.getTime())) {
+                    // If date is invalid, use current date
+                    editedDate = new Date();
+                }
+            } catch {
+                // If date parsing fails, use current date
+                editedDate = new Date();
+            }
+
+            const formattedDate = `${editedDate.toISOString().split('T')[0]} ${editedDate.toTimeString().split(' ')[0]}`;
+
+            // Main label is just the database name with active indicator and badges
+            const badges = `${db.isItABackup ? ' ☁️' : ''}${db.isExisting ? ' 📂' : ''}`;
+            const mainLabel = addActiveIndicator(db.name, db.isSelected) + badges;
+
+                        // Description shows branch and version info as subtext
+            let description = '';
+            if (db.versionId) {
+                // Try to get version name from versions service
+                try {
+                    const versionsService = VersionsService.getInstance();
+                    const version = versionsService.getVersion(db.versionId);
+                    if (version) {
+                        // Show branch first if different from version's odoo version, then version
+                        if (db.branchName && db.branchName !== version.odooVersion) {
+                            description = `🌿 ${db.branchName} • 📦 ${version.name}`;
+                        } else {
+                            description = `📦 ${version.name}`;
+                        }
+                    } else {
+                        // Fallback to version ID if version not found
+                        if (db.branchName) {
+                            description = `🌿 ${db.branchName} • 📦 ${db.versionId.substring(0, 8)}...`;
+                        } else {
+                            description = `📦 ${db.versionId.substring(0, 8)}...`;
+                        }
+                    }
+                } catch (error) {
+                    // Fallback to version ID if versions service fails
+                    if (db.branchName) {
+                        description = `🌿 ${db.branchName} • 📦 ${db.versionId.substring(0, 8)}...`;
+                    } else {
+                        description = `📦 ${db.versionId.substring(0, 8)}...`;
+                    }
+                }
+            } else if (db.branchName && db.branchName.trim() !== '') {
+                // Show branch when no version is selected
+                description = `🌿 ${db.branchName}`;
+                const effectiveOdooVersion = getEffectiveOdooVersion(db);
+                if (effectiveOdooVersion && effectiveOdooVersion !== db.branchName) {
+                    description += ` • 🛠️ ${effectiveOdooVersion}`;
+                }
+            } else {
+                const effectiveOdooVersion = getEffectiveOdooVersion(db);
+                if (effectiveOdooVersion && effectiveOdooVersion.trim() !== '') {
+                    description = `🛠️ ${effectiveOdooVersion}`;
+                } else {
+                    description = '';
+                }
+            }
+
+            const treeItem = new vscode.TreeItem(mainLabel, vscode.TreeItemCollapsibleState.None);
             treeItem.id = `${db.name}-${formattedDate}`;
+            treeItem.description = description;
+
+            // Create tooltip - push each detail into array, join with \n\n at the end
+            const tooltipDetails = [];
+
+            // Database name header
+            tooltipDetails.push(`**${db.name}**`);
+
+            // Version information
+            if (db.versionId) {
+                try {
+                    const versionsService = VersionsService.getInstance();
+                    const version = versionsService.getVersion(db.versionId);
+                    if (version) {
+                        tooltipDetails.push(`**Version:** ${version.name}`);
+                        tooltipDetails.push(`**Odoo Version:** ${version.odooVersion}`);
+                    } else {
+                        tooltipDetails.push(`**Version ID:** ${db.versionId}`);
+                    }
+                } catch (error) {
+                    tooltipDetails.push(`**Version ID:** ${db.versionId}`);
+                }
+            } else {
+                tooltipDetails.push(`**Version:** None`);
+                // Get Odoo version from effective lookup (legacy odooVersion property)
+                const effectiveOdooVersion = getEffectiveOdooVersion(db);
+                if (effectiveOdooVersion) {
+                    tooltipDetails.push(`**Odoo Version:** ${effectiveOdooVersion}`);
+                }
+            }
+
+            // Branch information
+            if (db.branchName) {
+                tooltipDetails.push(`**Branch:** ${db.branchName}`);
+            }
+
+            // Database details
+            tooltipDetails.push(`**Created:** ${formattedDate}`);
+            tooltipDetails.push(`**Database ID:** ${db.id}`);
+
+            // Database type
+            if (db.isItABackup) {
+                tooltipDetails.push(`**Type:** Restored from backup`);
+                if (db.sqlFilePath) {
+                    tooltipDetails.push(`**Backup Path:** ${db.sqlFilePath}`);
+                }
+            } else if (db.isExisting) {
+                tooltipDetails.push(`**Type:** Connected to existing database`);
+            } else {
+                tooltipDetails.push(`**Type:** Fresh database`);
+            }
+
+            // Status
+            if (db.isSelected) {
+                tooltipDetails.push(`**Status:** Currently selected`);
+            }
+
+            // Module information
+            if (db.modules && db.modules.length > 0) {
+                tooltipDetails.push(`**Modules:** ${db.modules.length} installed`);
+            }
+
+            // Join all details with double newlines
+            const tooltip = tooltipDetails.join('\n\n');
+
+            treeItem.tooltip = new vscode.MarkdownString(tooltip);
+
+            // Set contextValue to enable right-click context menu
+            treeItem.contextValue = 'database';
+
+            // Store the database object for commands that need it
+            (treeItem as any).database = db;
+
             treeItem.command = {
                 command: 'dbSelector.selectDb',
                 title: 'Select DB',
@@ -400,10 +615,41 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
         ignoreFocusOut: true
     });
 
-    // Step 4: Select the Odoo version/branch
-    const version = await showBranchSelector(settings.odooPath) || '';
-    if (!version) {
-        showInfo('No version selected, using current branch');
+    // Step 4: Select the Odoo version from available versions
+    const versionsService = VersionsService.getInstance();
+    await versionsService.initialize();
+    const availableVersions = versionsService.getVersions();
+
+    let selectedVersion: VersionModel | undefined;
+    let selectedVersionId: string | undefined;
+
+    if (availableVersions.length > 0) {
+        const versionChoices = [
+            {
+                label: "$(close) No Version",
+                description: "Use current branch settings",
+                detail: "Database will use the current repository branches",
+                versionId: undefined
+            },
+            ...availableVersions.map(version => ({
+                label: `$(versions) ${version.name}`,
+                description: `Odoo ${version.odooVersion}`,
+                detail: `Use settings and configuration from ${version.name}`,
+                versionId: version.id
+            }))
+        ];
+
+        const selectedChoice = await vscode.window.showQuickPick(versionChoices, {
+            placeHolder: 'Select a version for this database (optional)',
+            ignoreFocusOut: true
+        });
+
+        if (selectedChoice) {
+            selectedVersionId = selectedChoice.versionId;
+            if (selectedVersionId) {
+                selectedVersion = versionsService.getVersion(selectedVersionId);
+            }
+        }
     }
 
     // Step 5: Create the database model
@@ -423,13 +669,17 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
     db = new DatabaseModel(
         dbName,
         new Date(),
-        modules,
-        false, // isSelected (will be set when added to project)
-        true, // isActive
-        sqlDumpPath,
-        isExistingDb,
-        branchName,
-        version
+        {
+            modules,
+            isItABackup: false, // isSelected (will be set when added to project)
+            isSelected: true, // isActive
+            sqlFilePath: sqlDumpPath,
+            isExisting: isExistingDb,
+            branchName,
+            // Only set odooVersion if no version is selected (legacy compatibility)
+            odooVersion: selectedVersionId ? undefined : (selectedVersion?.odooVersion || ''),
+            versionId: selectedVersionId
+        }
     );
 
     // Step 6: Set up the database if needed
@@ -441,30 +691,21 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
         await setupDatabase(db.id, undefined);
     }
 
-    // Step 7: Check if branches need switching at the end, after all configuration is done
-    if (version && version !== '') {
-        const currentOdooBranch = await getGitBranch(settings.odooPath);
-        const currentEnterpriseBranch = await getGitBranch(settings.enterprisePath);
-        const currentDesignThemesBranch = await getGitBranch(settings.designThemesPath || './design-themes');
-
-        const shouldSwitch = await promptBranchSwitch(version, {
-            odoo: currentOdooBranch,
-            enterprise: currentEnterpriseBranch,
-            designThemes: currentDesignThemesBranch
-        });
-
-        if (shouldSwitch) {
-            await checkoutBranch(settings, version);
-        }
-    }
+    // Note: Version switching will be handled when the database is selected or activated,
+    // not during creation, to avoid redundant prompts
 
     return db;
 }
 
-export async function restoreDb(db: any): Promise<void> {
-    const database: DatabaseModel = db;
-    if (!db.command.arguments[0].sqlFilePath) {
-        throw new Error('SQL dump path is not defined');
+export async function restoreDb(event: any): Promise<void> {
+    const database = extractDatabaseFromEvent(event);
+    if (!database) {
+        throw new Error('Invalid database object for restoration');
+    }
+
+    // Check if database has a backup file path
+    if (!database.sqlFilePath || database.sqlFilePath.trim() === '') {
+        throw new Error('No backup file path defined for this database');
     }
 
     // Ask for confirmation
@@ -478,7 +719,7 @@ export async function restoreDb(db: any): Promise<void> {
         return; // User cancelled
     }
 
-    await setupDatabase(database.id, db.command.arguments[0].sqlFilePath);
+    await setupDatabase(database.id, database.sqlFilePath);
     showAutoInfo(`Database "${database.name}" restored successfully`, 3000);
 }
 
@@ -578,7 +819,12 @@ export async function setupDatabase(dbName: string, dumpPath: string | undefined
 }
 
 export async function selectDatabase(event: any) {
-    const database: DatabaseModel = event;
+    const database = extractDatabaseFromEvent(event);
+    if (!database) {
+        showError('Invalid database object for selection');
+        return;
+    }
+
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
         return;
@@ -595,35 +841,175 @@ export async function selectDatabase(event: any) {
     // Update database selection
     const oldSelectedDbIndex = project.dbs.findIndex((db: DatabaseModel) => db.isSelected);
     if (oldSelectedDbIndex !== -1) {
-        await SettingsStore.saveWithComments(false, ["projects", projectIndex, "dbs", oldSelectedDbIndex, "isSelected"], "odoo-debugger-data.json");
+        project.dbs[oldSelectedDbIndex].isSelected = false;
     }
     const newSelectedDbIndex = project.dbs.findIndex((db: DatabaseModel) => db.id === database.id);
     if (newSelectedDbIndex !== -1) {
-        await SettingsStore.saveWithComments(true, ["projects", projectIndex, "dbs", newSelectedDbIndex, "isSelected"], "odoo-debugger-data.json");
+        project.dbs[newSelectedDbIndex].isSelected = true;
     }
 
-    // Check if we need to switch branches (only if database has a version and it's different from current)
-    if (database.odooVersion && database.odooVersion !== '') {
-        const currentOdooBranch = await getGitBranch(data.settings.odooPath);
-        const currentEnterpriseBranch = await getGitBranch(data.settings.enterprisePath);
-        const currentDesignThemesBranch = await getGitBranch(data.settings.designThemesPath || './design-themes');
+    // Save the updated databases array without settings
+    const updatedData = stripSettings(data);
+    await SettingsStore.saveWithoutComments(updatedData);
 
-        const shouldSwitch = await promptBranchSwitch(database.odooVersion, {
-            odoo: currentOdooBranch,
-            enterprise: currentEnterpriseBranch,
-            designThemes: currentDesignThemesBranch
-        });
-
-        if (shouldSwitch) {
-            await checkoutBranch(data.settings, database.odooVersion);
-        }
+    // Handle version and branch switching with enhanced options
+    try {
+        await handleDatabaseVersionSwitch(database);
+    } catch (error: any) {
+        console.error('Error in database version switching:', error);
+        showWarning(`Database selected, but version switching failed: ${error.message}`);
     }
 
     showBriefStatus(`Database switched to: ${database.name}`, 2000);
 }
 
+async function handleDatabaseVersionSwitch(database: DatabaseModel): Promise<void> {
+    const versionsService = VersionsService.getInstance();
+    await versionsService.initialize();
+    const settings = await versionsService.getActiveVersionSettings();
+
+    // Get the database switch behavior setting
+    const switchBehavior = vscode.workspace.getConfiguration('odooDebugger').get('databaseSwitchBehavior', 'ask') as string;
+
+    // Check if database has a version associated with it
+    if (database.versionId) {
+        const dbVersion = versionsService.getVersion(database.versionId);
+        if (dbVersion) {
+            // Handle automatic behaviors first
+            if (switchBehavior !== 'ask') {
+                switch (switchBehavior) {
+                    case 'auto-both':
+                        // Automatically switch both version and branch
+                        await versionsService.setActiveVersion(dbVersion.id);
+                        const currentOdooBranch = await getGitBranch(settings.odooPath);
+                        if (currentOdooBranch !== dbVersion.odooVersion) {
+                            await checkoutBranch(settings, dbVersion.odooVersion);
+                            showAutoInfo(`Auto-switched to version "${dbVersion.name}" and branch "${dbVersion.odooVersion}"`, 3000);
+                        } else {
+                            showAutoInfo(`Auto-switched to version "${dbVersion.name}" (branch already correct)`, 3000);
+                        }
+                        return;
+
+                    case 'auto-version-only':
+                        // Automatically switch version settings only
+                        await versionsService.setActiveVersion(dbVersion.id);
+                        showAutoInfo(`Auto-switched to version "${dbVersion.name}" settings`, 3000);
+                        return;
+
+                    case 'auto-branch-only':
+                        // Automatically switch branches only (no version change)
+                        const currentOdooBranchOnly = await getGitBranch(settings.odooPath);
+                        if (currentOdooBranchOnly !== dbVersion.odooVersion) {
+                            await checkoutBranch(settings, dbVersion.odooVersion);
+                            showAutoInfo(`Auto-switched to branch "${dbVersion.odooVersion}"`, 3000);
+                        } else {
+                            showAutoInfo(`Branch "${dbVersion.odooVersion}" already active`, 2000);
+                        }
+                        return;
+                }
+            }
+
+            // Show enhanced switching options (when switchBehavior is 'ask')
+            const switchOptions = [
+                {
+                    label: "$(rocket) Switch to Version Settings Only",
+                    description: "Use version settings without changing branches",
+                    detail: `Apply settings from ${dbVersion.name} but keep current branches`,
+                    action: 'version-only'
+                },
+                {
+                    label: "$(git-branch) Switch Version + Branch",
+                    description: "Use version settings and switch to matching branch",
+                    detail: `Apply settings from ${dbVersion.name} and switch to ${dbVersion.odooVersion} branch`,
+                    action: 'version-and-branch'
+                },
+                {
+                    label: "$(close) Do Nothing",
+                    description: "Keep current settings and branches",
+                    detail: "No changes will be made",
+                    action: 'nothing'
+                }
+            ];
+
+            const selectedOption = await vscode.window.showQuickPick(switchOptions, {
+                placeHolder: `Database "${database.name}" uses version "${dbVersion.name}". What would you like to do?`,
+                ignoreFocusOut: true
+            });
+
+            if (selectedOption) {
+                switch (selectedOption.action) {
+                    case 'version-only':
+                        // Activate the version (which applies its settings)
+                        await versionsService.setActiveVersion(dbVersion.id);
+                        showAutoInfo(`Switched to version "${dbVersion.name}" settings`, 3000);
+                        break;
+
+                    case 'version-and-branch': {
+                        // Activate the version and switch branches
+                        await versionsService.setActiveVersion(dbVersion.id);
+
+                        const currentOdooBranch = await getGitBranch(settings.odooPath);
+
+                        // Check if branch switching is needed
+                        if (currentOdooBranch !== dbVersion.odooVersion) {
+                            await checkoutBranch(settings, dbVersion.odooVersion);
+                            showAutoInfo(`Switched to version "${dbVersion.name}" and branch "${dbVersion.odooVersion}"`, 3000);
+                        } else {
+                            showAutoInfo(`Switched to version "${dbVersion.name}" (branch already correct)`, 3000);
+                        }
+                        break;
+                    }
+
+                    case 'nothing':
+                        // Do nothing
+                        break;
+                }
+            }
+            return;
+        }
+    }
+
+    // Fallback to old behavior for databases without version (only branch switching available)
+    const effectiveOdooVersion = getEffectiveOdooVersion(database);
+    if (effectiveOdooVersion && effectiveOdooVersion !== '') {
+        const currentOdooBranch = await getGitBranch(settings.odooPath);
+        const currentEnterpriseBranch = await getGitBranch(settings.enterprisePath);
+        const currentDesignThemesBranch = await getGitBranch(settings.designThemesPath || './design-themes');
+
+        // Handle automatic branch switching for databases without version
+        if (switchBehavior === 'auto-both' || switchBehavior === 'auto-branch-only') {
+            // For databases without version, we can only do branch switching
+            if (currentOdooBranch !== effectiveOdooVersion) {
+                await checkoutBranch(settings, effectiveOdooVersion);
+                showAutoInfo(`Auto-switched to branch "${effectiveOdooVersion}"`, 3000);
+            } else {
+                showAutoInfo(`Branch "${effectiveOdooVersion}" already active`, 2000);
+            }
+        } else if (switchBehavior === 'auto-version-only') {
+            // Can't switch version for databases without version - do nothing
+            showAutoInfo(`No version settings to switch to for database "${database.name}"`, 2000);
+        } else {
+            // Ask user (default behavior)
+            const shouldSwitch = await promptBranchSwitch(effectiveOdooVersion, {
+                odoo: currentOdooBranch,
+                enterprise: currentEnterpriseBranch,
+                designThemes: currentDesignThemesBranch
+            });
+
+            if (shouldSwitch) {
+                await checkoutBranch(settings, effectiveOdooVersion);
+            }
+        }
+    }
+}
+
 export async function deleteDb(event: any) {
-    const db: DatabaseModel = event;
+    const db = extractDatabaseFromEvent(event);
+    if (!db) {
+        showError('Invalid database object for deletion');
+        return;
+    }
+
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
         return;
@@ -653,14 +1039,139 @@ export async function deleteDb(event: any) {
 
     // Remove from project data
     project.dbs = project.dbs.filter((database: DatabaseModel) => database.id !== db.id);
-    await SettingsStore.saveWithComments(project.dbs, ["projects", projectIndex, "dbs"], 'odoo-debugger-data.json');
-
-    showAutoInfo(`Database "${db.name}" deleted successfully`, 2500);
 
     // If the deleted database was selected and there are other databases, select the first one
     if (db.isSelected && project.dbs.length > 0) {
         project.dbs[0].isSelected = true;
-        await SettingsStore.saveWithComments(project.dbs, ["projects", projectIndex, "dbs"], 'odoo-debugger-data.json');
+    }
+
+    // Save the updated data without settings
+    const updatedData = stripSettings(data);
+    await SettingsStore.saveWithoutComments(updatedData);
+
+    showAutoInfo(`Database "${db.name}" deleted successfully`, 2500);
+
+    if (db.isSelected && project.dbs.length > 0) {
         showBriefStatus(`Switched to database: ${project.dbs[0].name}`, 2000);
+    }
+}
+
+export async function changeDatabaseVersion(event: any) {
+    try {
+        const db = extractDatabaseFromEvent(event);
+        if (!db) {
+            showError('Invalid database object for version change');
+            return;
+        }
+
+        const result = await SettingsStore.getSelectedProject();
+        if (!result) {
+            return;
+        }
+    const { data, project } = result;
+
+    // Find the project index in the projects array
+    const projectIndex = data.projects.findIndex((p: any) => p.uid === project.uid);
+    if (projectIndex === -1) {
+        showError('Project not found');
+        return;
+    }
+
+    // Find the database index
+    const dbIndex = project.dbs.findIndex((database: DatabaseModel) => database.id === db.id);
+    if (dbIndex === -1) {
+        showError('Database not found');
+        return;
+    }
+
+    // Get available versions
+    const versionsService = VersionsService.getInstance();
+    await versionsService.initialize();
+    const availableVersions = versionsService.getVersions();
+
+    // Create version choices including "No Version" option
+    const versionChoices = [
+        {
+            label: "$(close) No Version",
+            description: "Remove version association",
+            detail: "Database will use current branch settings without version",
+            versionId: undefined
+        },
+        ...availableVersions.map(version => ({
+            label: `$(versions) ${version.name}`,
+            description: `Odoo ${version.odooVersion}`,
+            detail: `Use settings and configuration from ${version.name}`,
+            versionId: version.id
+        }))
+    ];
+
+    // Show current version in the placeholder
+    let currentVersionText = "No version";
+    if (db.versionId) {
+        const currentVersion = versionsService.getVersion(db.versionId);
+        currentVersionText = currentVersion ? currentVersion.name : "Unknown version";
+    } else {
+        const effectiveOdooVersion = getEffectiveOdooVersion(db);
+        if (effectiveOdooVersion) {
+            currentVersionText = `Branch: ${effectiveOdooVersion}`;
+        }
+    }
+
+    const selectedChoice = await vscode.window.showQuickPick(versionChoices, {
+        placeHolder: `Current: ${currentVersionText}. Select a new version for database "${db.name}"`,
+        ignoreFocusOut: true
+    });
+
+    if (!selectedChoice) {
+        return; // User cancelled
+    }
+
+    // Update the database version - modify the existing database object in place
+    // to avoid date serialization issues
+    if (selectedChoice.versionId) {
+        const selectedVersion = versionsService.getVersion(selectedChoice.versionId);
+        if (selectedVersion) {
+            project.dbs[dbIndex].versionId = selectedChoice.versionId;
+            // Don't set odooVersion when version is assigned - it should come from the version
+            project.dbs[dbIndex].odooVersion = undefined;
+        }
+    } else {
+        // Remove version association but preserve original branch name
+        project.dbs[dbIndex].versionId = undefined;
+        // When no version, we can fall back to empty odooVersion (will use branchName if available)
+        project.dbs[dbIndex].odooVersion = undefined;
+        // Keep branchName - it's independent of version management
+    }
+
+    // Save only the databases array to avoid touching settings
+    const updatedData = stripSettings(data);
+    await SettingsStore.saveWithoutComments(updatedData);
+
+    // Show confirmation message
+    const updatedDb = project.dbs[dbIndex]; // Use the updated database object
+    const dbNameForMessage = updatedDb?.name || db?.name || 'Unknown Database';
+    const newVersionText = selectedChoice.versionId
+        ? `version "${availableVersions.find(v => v.id === selectedChoice.versionId)?.name}"`
+        : "no version";
+
+    showAutoInfo(`Database "${dbNameForMessage}" updated to use ${newVersionText}`, 3000);
+
+    // If this is the currently selected database, offer to switch to the new version
+    if (db.isSelected && selectedChoice.versionId) {
+        const switchChoice = await vscode.window.showInformationMessage(
+            `Would you like to immediately switch to the new version settings?`,
+            { modal: false },
+            'Switch Now',
+            'Not Now'
+        );
+
+        if (switchChoice === 'Switch Now') {
+            // Use the same switching logic as database selection
+            await handleDatabaseVersionSwitch(project.dbs[dbIndex]);
+        }
+    }
+    } catch (error: any) {
+        showError(`Failed to change database version: ${error.message}`);
+        console.error('Error in changeDatabaseVersion:', error);
     }
 }

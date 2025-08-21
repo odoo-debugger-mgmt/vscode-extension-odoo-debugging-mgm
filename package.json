@@ -2,7 +2,7 @@
   "name": "odoo-debugging-mgm-tool",
   "displayName": "Odoo Debugging Management Tool",
   "description": "A Visual Studio Code extension for managing Odoo debugging.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "odoo-ps",
   "author": {
     "name": "odoo-ps"
@@ -67,8 +67,9 @@
           "name": "Testing"
         },
         {
-          "id": "workspaceSettings",
-          "name": "Settings"
+          "id": "versionsManager",
+          "name": "Versions",
+          "icon": "$(versions)"
         }
       ]
     },
@@ -76,7 +77,7 @@
       {
         "command": "projectSelector.create",
         "title": "Create Project",
-        "icon": "resources/icons/create.svg"
+        "icon": "$(add)"
       },
       {
         "command": "projectSelector.setup",
@@ -138,7 +139,7 @@
       {
         "command": "dbSelector.create",
         "title": "Create Database",
-        "icon": "resources/icons/create_database.svg"
+        "icon": "$(add)"
       },
       {
         "command": "dbSelector.restore",
@@ -149,6 +150,11 @@
         "command": "dbSelector.delete",
         "title": "Delete Database",
         "icon": "resources/icons/delete.svg"
+      },
+      {
+        "command": "dbSelector.changeVersion",
+        "title": "Change Version",
+        "icon": "$(versions)"
       },
       {
         "command": "dbSelector.getDb",
@@ -179,6 +185,18 @@
         "title": "Toggle psae-internal Module"
       },
       {
+        "command": "moduleSelector.setToInstall",
+        "title": "Set to Install"
+      },
+      {
+        "command": "moduleSelector.setToUpgrade",
+        "title": "Set to Upgrade"
+      },
+      {
+        "command": "moduleSelector.clearState",
+        "title": "Clear State"
+      },
+      {
         "command": "moduleSelector.installAll",
         "title": "Install All Modules",
         "icon": "$(checklist)"
@@ -205,8 +223,8 @@
       },
       {
         "command": "testingSelector.refresh",
-        "title": "Refresh Testing",
-        "icon": "$(refresh)"
+        "title": "Refresh",
+        "icon": "resources/icons/refresh.svg"
       },
       {
         "command": "testingSelector.toggleTesting",
@@ -239,23 +257,70 @@
         "icon": "$(sync)"
       },
       {
-        "command": "workspaceSettings.startServer",
+        "command": "odoo.createVersion",
+        "title": "Create Version",
+        "icon": "$(add)"
+      },
+      {
+        "command": "odoo.changeBranch",
+        "title": "Change Branch",
+        "icon": "$(git-branch)"
+      },
+
+      {
+        "command": "odoo.cloneVersion",
+        "title": "Clone Version",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "odoo.deleteVersion",
+        "title": "Delete Version",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "odoo.refreshVersions",
+        "title": "Refresh",
+        "icon": "resources/icons/refresh.svg"
+      },
+      {
+        "command": "odoo.openVersionDefaults",
+        "title": "Configure Version Defaults",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "odoo.setSettingToDefault",
+        "title": "Set to Default Value",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "odoo.setSettingAsDefault",
+        "title": "Set as Default",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "odoo.setAllSettingsToDefault",
+        "title": "Set All to Default Values",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "odoo.setAllSettingsAsDefault",
+        "title": "Set All as Default",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "odoo.manageVersions",
+        "title": "Manage Versions",
+        "category": "Odoo"
+      },
+      {
+        "command": "odoo.startServer",
         "title": "Start Server",
         "icon": "resources/icons/debug.svg"
       },
       {
-        "command": "workspaceSettings.startShell",
+        "command": "odoo.startShell",
         "title": "Start Shell",
         "icon": "resources/icons/shell.svg"
-      },
-      {
-        "command": "workspaceSettings.refresh",
-        "title": "Refresh Settings",
-        "icon": "resources/icons/refresh.svg"
-      },
-      {
-        "command": "workspaceSettings.editSetting",
-        "title": "Edit Setting"
       }
     ],
     "menus": {
@@ -281,12 +346,12 @@
           "group": "navigation@4"
         },
         {
-          "command": "workspaceSettings.startServer",
+          "command": "odoo.startServer",
           "when": "view == projectSelector",
           "group": "navigation@5"
         },
         {
-          "command": "workspaceSettings.startShell",
+          "command": "odoo.startShell",
           "when": "view == projectSelector",
           "group": "navigation@6"
         },
@@ -354,6 +419,21 @@
           "command": "testingSelector.refresh",
           "when": "view == testingSelector",
           "group": "navigation@3"
+        },
+        {
+          "command": "odoo.createVersion",
+          "when": "view == versionsManager",
+          "group": "navigation@1"
+        },
+        {
+          "command": "odoo.openVersionDefaults",
+          "when": "view == versionsManager",
+          "group": "navigation@2"
+        },
+        {
+          "command": "odoo.refreshVersions",
+          "when": "view == versionsManager",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -378,19 +458,75 @@
           "group": "project"
         },
         {
-          "when": "view == dbSelector",
+          "when": "view == dbSelector && viewItem == database",
           "command": "dbSelector.restore",
-          "group": "inline"
+          "group": "database@1"
         },
         {
-          "when": "view == dbSelector",
+          "when": "view == dbSelector && viewItem == database",
           "command": "dbSelector.delete",
-          "group": "inline"
+          "group": "database@2"
+        },
+        {
+          "when": "view == dbSelector && viewItem == database",
+          "command": "dbSelector.changeVersion",
+          "group": "database@3"
+        },
+        {
+          "when": "view == moduleSelector && viewItem == module",
+          "command": "moduleSelector.setToInstall",
+          "group": "module@1"
+        },
+        {
+          "when": "view == moduleSelector && viewItem == module",
+          "command": "moduleSelector.setToUpgrade",
+          "group": "module@2"
+        },
+        {
+          "when": "view == moduleSelector && viewItem == module",
+          "command": "moduleSelector.clearState",
+          "group": "module@3"
         },
         {
           "command": "testingSelector.removeTestTag",
           "when": "view == testingSelector && viewItem == testTag",
           "group": "inline"
+        },
+
+        {
+          "command": "odoo.changeBranch",
+          "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
+          "group": "version"
+        },
+        {
+          "command": "odoo.cloneVersion",
+          "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
+          "group": "version"
+        },
+        {
+          "command": "odoo.deleteVersion",
+          "when": "view == versionsManager && viewItem == version",
+          "group": "version"
+        },
+        {
+          "command": "odoo.setSettingToDefault",
+          "when": "view == versionsManager && viewItem == versionSetting",
+          "group": "versionSetting@1"
+        },
+        {
+          "command": "odoo.setSettingAsDefault",
+          "when": "view == versionsManager && viewItem == versionSetting",
+          "group": "versionSetting@2"
+        },
+        {
+          "command": "odoo.setAllSettingsToDefault",
+          "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
+          "group": "versionDefaults@1"
+        },
+        {
+          "command": "odoo.setAllSettingsAsDefault",
+          "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
+          "group": "versionDefaults@2"
         }
       ]
     },
@@ -408,7 +544,122 @@
         "mac": "cmd+alt+p",
         "when": "editorTextFocus || !inputFocus"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Odoo Debugger",
+      "properties": {
+        "odooDebugger.defaultVersion.debuggerName": {
+          "type": "string",
+          "default": "odoo:18.0",
+          "description": "Default debugger name for new versions"
+        },
+        "odooDebugger.defaultVersion.debuggerVersion": {
+          "type": "string",
+          "default": "1.0.0",
+          "description": "Default debugger version for new versions"
+        },
+        "odooDebugger.defaultVersion.portNumber": {
+          "type": "number",
+          "default": 8018,
+          "description": "Default port number for new versions"
+        },
+        "odooDebugger.defaultVersion.shellPortNumber": {
+          "type": "number",
+          "default": 5018,
+          "description": "Default shell port number for new versions"
+        },
+        "odooDebugger.defaultVersion.limitTimeReal": {
+          "type": "number",
+          "default": 0,
+          "description": "Default real time limit for new versions (0 = unlimited)"
+        },
+        "odooDebugger.defaultVersion.limitTimeCpu": {
+          "type": "number",
+          "default": 0,
+          "description": "Default CPU time limit for new versions (0 = unlimited)"
+        },
+        "odooDebugger.defaultVersion.maxCronThreads": {
+          "type": "number",
+          "default": 0,
+          "description": "Default maximum cron threads for new versions (0 = unlimited)"
+        },
+        "odooDebugger.defaultVersion.extraParams": {
+          "type": "string",
+          "default": "--log-handler,odoo.addons.base.models.ir_attachment:WARNING",
+          "description": "Default extra parameters for new versions"
+        },
+        "odooDebugger.defaultVersion.devMode": {
+          "type": "string",
+          "default": "--dev=all",
+          "enum": ["", "--dev=all", "--dev=xml", "--dev=reload", "--dev=qweb"],
+          "enumDescriptions": [
+            "No development mode",
+            "All development features",
+            "XML development features",
+            "Auto-reload",
+            "QWeb development features"
+          ],
+          "description": "Default development mode for new versions"
+        },
+        "odooDebugger.defaultVersion.dumpsFolder": {
+          "type": "string",
+          "default": "/dumps",
+          "description": "Default dumps folder path for new versions"
+        },
+        "odooDebugger.defaultVersion.odooPath": {
+          "type": "string",
+          "default": "./odoo",
+          "description": "Default Odoo installation path for new versions"
+        },
+        "odooDebugger.defaultVersion.enterprisePath": {
+          "type": "string",
+          "default": "./enterprise",
+          "description": "Default enterprise addons path for new versions"
+        },
+        "odooDebugger.defaultVersion.designThemesPath": {
+          "type": "string",
+          "default": "./design-themes",
+          "description": "Default design themes path for new versions"
+        },
+        "odooDebugger.defaultVersion.customAddonsPath": {
+          "type": "string",
+          "default": "./custom-addons",
+          "description": "Default custom addons path for new versions"
+        },
+        "odooDebugger.defaultVersion.pythonPath": {
+          "type": "string",
+          "default": "./venv/bin/python",
+          "description": "Default Python executable path for new versions"
+        },
+        "odooDebugger.defaultVersion.subModulesPaths": {
+          "type": "string",
+          "default": "",
+          "description": "Default sub-modules paths for new versions"
+        },
+        "odooDebugger.defaultVersion.installApps": {
+          "type": "string",
+          "default": "",
+          "description": "Default apps to install for new versions"
+        },
+        "odooDebugger.defaultVersion.upgradeApps": {
+          "type": "string",
+          "default": "",
+          "description": "Default apps to upgrade for new versions"
+        },
+        "odooDebugger.databaseSwitchBehavior": {
+          "type": "string",
+          "default": "ask",
+          "enum": ["ask", "auto-both", "auto-version-only", "auto-branch-only"],
+          "enumDescriptions": [
+            "Always ask what to do when selecting a database",
+            "Automatically switch both version settings and git branches",
+            "Automatically switch version settings only (no branch switching)",
+            "Automatically switch git branches only (no version switching)"
+          ],
+          "description": "Controls what happens automatically when selecting a database with a different version"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
