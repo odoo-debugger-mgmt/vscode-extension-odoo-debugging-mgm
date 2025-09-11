@@ -5,11 +5,14 @@ export interface TestTag {
     type: 'tag' | 'module' | 'class' | 'method';
 }
 
+export type LogLevel = 'disabled' | 'critical' | 'error' | 'warn' | 'debug';
+
 export interface TestingConfig {
     isEnabled: boolean;
     testTags: TestTag[];
     testFile?: string;
     stopAfterInit: boolean;
+    logLevel: LogLevel;
     // Store the module states before enabling tests
     savedModuleStates?: Array<{name: string, state: string}>;
 }
@@ -19,6 +22,7 @@ export class TestingConfigModel implements TestingConfig {
     public testTags: TestTag[];
     public testFile?: string;
     public stopAfterInit: boolean;
+    public logLevel: LogLevel;
     public savedModuleStates?: Array<{name: string, state: string}>;
 
     constructor(
@@ -26,12 +30,14 @@ export class TestingConfigModel implements TestingConfig {
         testTags: TestTag[] = [],
         testFile?: string,
         stopAfterInit: boolean = false,
+        logLevel: LogLevel = 'disabled',
         savedModuleStates?: Array<{name: string, state: string}>
     ) {
         this.isEnabled = isEnabled;
         this.testTags = testTags;
         this.testFile = testFile;
         this.stopAfterInit = stopAfterInit;
+        this.logLevel = logLevel;
         this.savedModuleStates = savedModuleStates;
     }
 

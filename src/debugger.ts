@@ -7,6 +7,31 @@ import { InstalledModuleInfo } from "./models/module";
 import { getWorkspacePath, normalizePath, showError, showInfo, listSubdirectories } from './utils';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
+import { TestingConfigModel } from './models/testing';
+
+function ensureTestingConfigModel(testingConfig: any): TestingConfigModel {
+    if (!testingConfig) {
+        return new TestingConfigModel();
+    }
+    if (testingConfig instanceof TestingConfigModel) {
+        return testingConfig;
+    }
+
+    // Convert plain object to TestingConfigModel instance
+    try {
+        return new TestingConfigModel(
+            testingConfig.isEnabled || false,
+            Array.isArray(testingConfig.testTags) ? testingConfig.testTags : [],
+            testingConfig.testFile,
+            testingConfig.stopAfterInit || false,
+            testingConfig.logLevel || 'disabled',
+            Array.isArray(testingConfig.savedModuleStates) ? testingConfig.savedModuleStates : undefined
+        );
+    } catch (error) {
+        console.warn('Error converting testing config, creating new instance:', error);
+        return new TestingConfigModel();
+    }
+}
 
 
 export async function setupDebugger(): Promise<void> {
@@ -260,20 +285,24 @@ async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShe
     if (project.testingConfig?.isEnabled) {
         args.push('--test-enable');
 
-        if (project.testingConfig.testFile) {
-            args.push('--test-file', project.testingConfig.testFile);
+        // Ensure testingConfig is a proper TestingConfigModel instance
+        const testingConfig = ensureTestingConfigModel(project.testingConfig);
+
+        if (testingConfig.testFile) {
+            args.push('--test-file', testingConfig.testFile);
         }
 
-        const activeTags = project.testingConfig.testTags.filter(tag => tag.state !== 'disabled');
-        if (activeTags.length > 0) {
-            const tagsString = activeTags
-                .map(tag => (tag.state === 'exclude' ? '-' : '') + tag.value)
-                .join(',');
+        const tagsString = testingConfig.getTestTagsString();
+        if (tagsString) {
             args.push('--test-tags', tagsString);
         }
 
-        if (project.testingConfig.stopAfterInit) {
+        if (testingConfig.stopAfterInit) {
             args.push('--stop-after-init');
+        }
+
+        if (testingConfig.logLevel && testingConfig.logLevel !== 'disabled') {
+            args.push('--log-level', testingConfig.logLevel);
         }
     }
 

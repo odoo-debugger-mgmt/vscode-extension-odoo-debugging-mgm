@@ -257,6 +257,16 @@
         "icon": "$(sync)"
       },
       {
+        "command": "testingSelector.toggleLogLevel",
+        "title": "Toggle Log Level",
+        "icon": "$(symbol-parameter)"
+      },
+      {
+        "command": "testingSelector.setSpecificLogLevel",
+        "title": "Set Specific Log Level",
+        "icon": "$(list-selection)"
+      },
+      {
         "command": "odoo.createVersion",
         "title": "Create Version",
         "icon": "$(add)"
@@ -491,6 +501,11 @@
           "command": "testingSelector.removeTestTag",
           "when": "view == testingSelector && viewItem == testTag",
           "group": "inline"
+        },
+        {
+          "command": "testingSelector.setSpecificLogLevel",
+          "when": "view == testingSelector && viewItem == logLevel",
+          "group": "logLevel"
         },
 
         {

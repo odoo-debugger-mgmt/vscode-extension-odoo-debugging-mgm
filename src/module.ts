@@ -40,9 +40,9 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
         // Check if testing is enabled
         const isTestingEnabled = project.testingConfig && project.testingConfig.isEnabled;
 
-        // Get installed modules from database
+        // Get modules that are installed or marked for upgrade in the database
         const installedModules = await getInstalledModules(db.id);
-        const installedModuleNames = new Set(installedModules.map(m => m.name));
+        const installedModuleNames = new Set(installedModules.map((m: InstalledModuleInfo) => m.name));
 
         let allModules: {"path": string, "name": string, "repoName": string, "isPsaeInternal": boolean, "psInternalDirName"?: string}[] = [];
         let psaeInternalDirs: {"path": string, "repoName": string, "dirName": string}[] = [];
@@ -116,17 +116,16 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
                 )
             );
 
-            const hasInstalledModules = psaeInternalModules.some(m =>
+            // Check if any modules from this ps*-internal directory are installed/to upgrade in DB
+            const hasDbModules = psaeInternalModules.some(m =>
                 installedModuleNames.has(m.name)
             );
 
             const isManuallyIncluded = project.includedPsaeInternalPaths?.includes(psaeDir.path) || false;
 
-            // Manual override has highest priority
-            // If manually included: always included regardless of modules
-            // If manually excluded: never auto-include regardless of modules
-            // If not manually set: auto-include if has selected OR installed modules
-            const shouldBeIncluded = isManuallyIncluded || (!project.includedPsaeInternalPaths?.includes(`!${psaeDir.path}`) && (hasSelectedModules || hasInstalledModules));
+            // Auto-include if has selected OR database modules
+            // If not manually set: auto-include if has selected OR database modules
+            const shouldBeIncluded = isManuallyIncluded || (!project.includedPsaeInternalPaths?.includes(`!${psaeDir.path}`) && (hasSelectedModules || hasDbModules));
 
             // Determine icon and tooltip based on status
             let psaeIcon: string;
@@ -137,7 +136,7 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
                 const reasons = [];
                 if (isManuallyIncluded) reasons.push('manually included');
                 if (hasSelectedModules) reasons.push('has selected modules');
-                if (hasInstalledModules) reasons.push('has installed modules');
+                if (hasDbModules) reasons.push('has database modules');
 
                 psaeTooltip = `${psaeDir.dirName}: Included (${reasons.join(' + ')})\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to exclude from addons path`;
             } else {
@@ -160,7 +159,7 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
                         repoName: psaeDir.repoName,
                         dirName: psaeDir.dirName,
                         hasSelectedModules: hasSelectedModules,
-                        hasInstalledModules: hasInstalledModules,
+                        hasDbModules: hasDbModules,
                         isManuallyIncluded: isManuallyIncluded,
                         shouldBeIncluded: shouldBeIncluded,
                         modules: psaeInternalModules
@@ -829,7 +828,7 @@ async function getInstalledModules(dbName: string): Promise<InstalledModuleInfo[
             return [];
         }
 
-        // Now query the modules
+        // Now query the modules - only get installed and to upgrade modules from DB
         const query = `SELECT id, name, shortdesc, latest_version, state, application FROM ir_module_module WHERE state IN ('installed','to upgrade') ORDER BY name;`;
         const command = `psql ${dbName} -t -A -F'|' -c "${query}"`;
 
@@ -905,7 +904,7 @@ export async function viewInstalledModules(): Promise<void> {
         }
 
         // Create quick pick items with detailed information
-        const quickPickItems = installedModules.map(module => ({
+        const quickPickItems = installedModules.map((module: InstalledModuleInfo) => ({
             label: `$(${module.application ? 'device-mobile' : 'diff-added'}) ${module.name}`,
             description: `$(check) Installed | v${module.latest_version || 'unknown'}`,
             detail: module.shortdesc || 'No description available',

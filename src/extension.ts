@@ -6,7 +6,7 @@ import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb, changeD
 import { ProjectTreeProvider, createProject, selectProject, getRepo, getProjectName, deleteProject, editProjectSettings, duplicateProject, exportProject, importProject, quickProjectSearch} from './project';
 import { RepoTreeProvider, selectRepo } from './repos';
 import { ModuleTreeProvider, selectModule, setModuleToInstall, setModuleToUpgrade, clearModuleState, togglePsaeInternalModule, updateAllModules, installAllModules, clearAllModuleSelections, updateInstalledModules, viewInstalledModules } from './module';
-import { TestingTreeProvider, toggleTesting, toggleStopAfterInit, setTestFile, addTestTag, removeTestTag, cycleTestTagState } from './testing';
+import { TestingTreeProvider, toggleTesting, toggleStopAfterInit, setTestFile, addTestTag, removeTestTag, cycleTestTagState, toggleLogLevel, setSpecificLogLevel } from './testing';
 import { setupDebugger, startDebugShell, startDebugServer } from './debugger';
 import { setupOdooBranch } from './odooInstaller';
 import { SettingsStore } from './settingsStore';
@@ -305,6 +305,16 @@ export async function activate(context: vscode.ExtensionContext) {
 
     extensionDisposables.push(vscode.commands.registerCommand('testingSelector.cycleTestTagState', async (event) => {
         await cycleTestTagState(event);
+        providers.testing.refresh();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.toggleLogLevel', async () => {
+        await toggleLogLevel();
+        providers.testing.refresh();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setSpecificLogLevel', async () => {
+        await setSpecificLogLevel();
         providers.testing.refresh();
     }));
 

@@ -1,12 +1,13 @@
 import * as vscode from "vscode";
 import * as fs from 'fs';
 import { SettingsStore } from './settingsStore';
-import { TestTag, TestingConfigModel } from './models/testing';
+import { TestTag, TestingConfigModel, LogLevel } from './models/testing';
 import { ModuleModel } from './models/module';
 import { InstalledModuleInfo } from './models/module';
 import { showError, showInfo, showAutoInfo, showWarning, stripSettings } from './utils';
 import { execSync } from 'child_process';
 import { updateTestingContext } from './extension';
+import { setupDebugger } from './debugger';
 
 /**
  * Gets installed modules from the database using psql
@@ -75,6 +76,7 @@ function ensureTestingConfigModel(testingConfig: any): TestingConfigModel {
             Array.isArray(testingConfig.testTags) ? testingConfig.testTags : [],
             testingConfig.testFile,
             testingConfig.stopAfterInit || false,
+            testingConfig.logLevel || 'disabled',
             Array.isArray(testingConfig.savedModuleStates) ? testingConfig.savedModuleStates : undefined
         );
     } catch (error) {
@@ -220,6 +222,32 @@ export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
             };
             stopAfterInitToggle.tooltip = 'Toggle --stop-after-init option';
             treeItems.push(stopAfterInitToggle);
+
+            // Log Level toggle
+            const getLogLevelIcon = (level: LogLevel): string => {
+                switch (level) {
+                    case 'disabled': return '⚪';
+                    case 'critical': return '🔴';
+                    case 'error': return '🟠';
+                    case 'warn': return '🟡';
+                    case 'debug': return '🔵';
+                    default: return '⚪';
+                }
+            };
+
+            const logLevelIcon = getLogLevelIcon(testingConfig.logLevel);
+            const logLevelDisplay = testingConfig.logLevel === 'disabled' ? 'Log Level: Disabled' : `Log Level: ${testingConfig.logLevel.charAt(0).toUpperCase() + testingConfig.logLevel.slice(1)}`;
+            const logLevelToggle = new vscode.TreeItem(
+                `${logLevelIcon} ${logLevelDisplay}`,
+                vscode.TreeItemCollapsibleState.None
+            );
+            logLevelToggle.command = {
+                command: 'testingSelector.toggleLogLevel',
+                title: 'Toggle Log Level'
+            };
+            logLevelToggle.contextValue = 'logLevel';
+            logLevelToggle.tooltip = 'Click to cycle through log levels: disabled → critical → error → warn → debug. Right-click for specific level.';
+            treeItems.push(logLevelToggle);
 
             // Current command preview
             const commandPreview = this.generateCommandPreview(testingConfig);
@@ -376,6 +404,9 @@ export async function toggleStopAfterInit(): Promise<void> {
 
         const status = project.testingConfig.stopAfterInit ? 'enabled' : 'disabled';
         showAutoInfo(`Stop after init ${status}`, 2000);
+
+        // Update launch.json with new test configuration
+        await setupDebugger();
     } catch (error) {
         console.error('Error in toggleStopAfterInit:', error);
         showError(`Failed to toggle stop after init: ${error}`);
@@ -409,6 +440,9 @@ export async function setTestFile(): Promise<void> {
             } else {
                 showAutoInfo('Test file cleared', 2000);
             }
+
+            // Update launch.json with new test configuration
+            await setupDebugger();
         }
     } catch (error) {
         console.error('Error in setTestFile:', error);
@@ -515,6 +549,9 @@ export async function addTestTag(): Promise<void> {
 
                     await SettingsStore.saveWithoutComments(stripSettings(data));
                     showAutoInfo(`Added ${selectedModules.length} module test targets.`, 4000);
+
+                    // Update launch.json with new test configuration
+                    await setupDebugger();
                 }
             } catch (error) {
                 showError(`Failed to get installed modules: ${error}`);
@@ -596,6 +633,9 @@ export async function addTestTag(): Promise<void> {
                 }
 
                 showAutoInfo(`Added ${selectedType.value} "${userInput.trim()}"${formatInfo} as test target.`, 4000);
+
+                // Update launch.json with new test configuration
+                await setupDebugger();
             }
         }
     } catch (error) {
@@ -633,6 +673,9 @@ export async function cycleTestTagState(tag: TestTag): Promise<void> {
             }
 
             await SettingsStore.saveWithoutComments(stripSettings(data));
+
+            // Update launch.json with new test configuration
+            await setupDebugger();
         } else {
             showError('Test tag not found');
         }
@@ -684,11 +727,105 @@ export async function removeTestTag(tagOrTreeItem: TestTag | vscode.TreeItem): P
             project.testingConfig.testTags.splice(tagIndex, 1);
             await SettingsStore.saveWithoutComments(stripSettings(data));
             showAutoInfo(`Removed test target: ${tagValue}`, 2000);
+
+            // Update launch.json with new test configuration
+            await setupDebugger();
         } else {
             showError('Test tag not found');
         }
     } catch (error) {
         console.error('Error in removeTestTag:', error);
         showError(`Failed to remove test tag: ${error}`);
+    }
+}
+
+export async function toggleLogLevel(): Promise<void> {
+    try {
+        const result = await SettingsStore.getSelectedProject();
+        if (!result) {
+            showError('No project selected');
+            return;
+        }
+
+        const { data, project } = result;
+        project.testingConfig = ensureTestingConfigModel(project.testingConfig);
+
+        // Cycle through log levels: disabled -> critical -> error -> warn -> debug -> disabled
+        const logLevels: LogLevel[] = ['disabled', 'critical', 'error', 'warn', 'debug'];
+        const currentIndex = logLevels.indexOf(project.testingConfig.logLevel);
+        const nextIndex = (currentIndex + 1) % logLevels.length;
+
+        project.testingConfig.logLevel = logLevels[nextIndex];
+        await SettingsStore.saveWithoutComments(stripSettings(data));
+
+        const displayLevel = project.testingConfig.logLevel === 'disabled' ? 'disabled (no --log-level argument)' : project.testingConfig.logLevel;
+        showAutoInfo(`Log level set to: ${displayLevel}`, 2000);
+
+        // Update launch.json with new test configuration
+        await setupDebugger();
+    } catch (error) {
+        console.error('Error in toggleLogLevel:', error);
+        showError(`Failed to toggle log level: ${error}`);
+    }
+}
+
+export async function setSpecificLogLevel(): Promise<void> {
+    try {
+        const result = await SettingsStore.getSelectedProject();
+        if (!result) {
+            showError('No project selected');
+            return;
+        }
+
+        const { data, project } = result;
+        project.testingConfig = ensureTestingConfigModel(project.testingConfig);
+
+        const logLevelOptions = [
+            {
+                label: '⚪ Disabled',
+                detail: 'No --log-level argument (default Odoo logging)',
+                value: 'disabled' as LogLevel
+            },
+            {
+                label: '🔴 Critical',
+                detail: 'Only critical errors',
+                value: 'critical' as LogLevel
+            },
+            {
+                label: '🟠 Error',
+                detail: 'Critical and error messages',
+                value: 'error' as LogLevel
+            },
+            {
+                label: '🟡 Warn',
+                detail: 'Critical, error, and warning messages',
+                value: 'warn' as LogLevel
+            },
+            {
+                label: '🔵 Debug',
+                detail: 'All messages including debug information',
+                value: 'debug' as LogLevel
+            }
+        ];
+
+        const selectedOption = await vscode.window.showQuickPick(logLevelOptions, {
+            placeHolder: 'Select log level for testing',
+            matchOnDetail: true,
+            ignoreFocusOut: true
+        });
+
+        if (selectedOption) {
+            project.testingConfig.logLevel = selectedOption.value;
+            await SettingsStore.saveWithoutComments(stripSettings(data));
+
+            const displayLevel = selectedOption.value === 'disabled' ? 'disabled (no --log-level argument)' : selectedOption.value;
+            showAutoInfo(`Log level set to: ${displayLevel}`, 2000);
+
+            // Update launch.json with new test configuration
+            await setupDebugger();
+        }
+    } catch (error) {
+        console.error('Error in setSpecificLogLevel:', error);
+        showError(`Failed to set log level: ${error}`);
     }
 }
