@@ -225,16 +225,28 @@ async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShe
             console.warn('Failed to get installed modules from database:', error);
         }
     } else {
-        // Use modules from project data
+        // Use modules from project data AND check installed modules from database
         const dbModuleNames = db.modules.map(m => m.name);
+
+        // Also check for modules that are actually installed in the database
+        let installedModuleNames: string[] = [];
+        try {
+            const installedModules = await getInstalledModules(db.id);
+            installedModuleNames = installedModules.map((m: InstalledModuleInfo) => m.name);
+        } catch (error) {
+            console.warn('Failed to get installed modules from database:', error);
+        }
 
         for (const [psPath, psModules] of foundPsInternalDirs.entries()) {
             if (excludedPsInternalPaths.has(psPath)) {
                 continue;
             }
 
-            const matchingModules = psModules.filter((psModule: string) => dbModuleNames.includes(psModule));
-            if (matchingModules.length > 0) {
+            // Check for both extension-managed modules AND database-installed modules
+            const matchingExtensionModules = psModules.filter((psModule: string) => dbModuleNames.includes(psModule));
+            const matchingInstalledModules = psModules.filter((psModule: string) => installedModuleNames.includes(psModule));
+
+            if (matchingExtensionModules.length > 0 || matchingInstalledModules.length > 0) {
                 psInternalPaths.add(psPath);
             }
         }
