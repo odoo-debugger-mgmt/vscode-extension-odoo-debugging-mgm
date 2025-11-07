@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as child_process from 'child_process';
+import * as childProcess from 'child_process';
 import { SettingsModel } from './models/settings';
 import { ProjectModel } from './models/project';
+import { RepoModel } from './models/repo';
+import { getBranchesViaSourceControl } from './services/gitService';
 
 import { parse } from 'jsonc-parser';
 
@@ -74,6 +76,23 @@ export function addActiveIndicator(text: string, isActive: boolean): string {
     return `${isActive ? '👉' : ''} ${text}`;
 }
 
+/**
+ * Returns a user-friendly database label prioritizing displayName, then name, then id.
+ */
+export function getDatabaseLabel(db: { displayName?: string; name?: string; id?: string } | null | undefined): string {
+    if (!db) {
+        return 'Unknown Database';
+    }
+
+    const candidates = [
+        typeof db.displayName === 'string' ? db.displayName.trim() : '',
+        typeof db.name === 'string' ? db.name.trim() : '',
+        typeof db.id === 'string' ? db.id.trim() : ''
+    ].filter(Boolean);
+
+    return candidates[0] || 'Unknown Database';
+}
+
 
 // ============================================================================
 // WORKSPACE & PATH UTILITIES
@@ -86,7 +105,7 @@ export function addActiveIndicator(text: string, isActive: boolean): string {
 export function getWorkspacePath(): string | null {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
-        showError("No workspace open.");
+        showError("Open a workspace to use this command.");
         return null;
     }
     return workspaceFolders[0].uri.fsPath;
@@ -130,53 +149,384 @@ function ensureVSCodeDirectory(workspacePath: string): string {
     return vscodeDir;
 }
 
-/**
- * Gets folder paths and names from a target directory, filtering out hidden directories
- * @param targetPath - the path to scan for directories
- * @returns array of objects containing path and name for each directory
- */
-export function listSubdirectories(targetPath: string): { path: string; name: string }[] {
+export interface SearchOverrides {
+    maxDepth?: number;
+    maxEntries?: number;
+    excludePatterns?: string[];
+    token?: vscode.CancellationToken;
+}
+
+interface SearchOptions {
+    maxDepth: number;
+    maxEntries: number;
+    excludeRegexes: RegExp[];
+    token?: vscode.CancellationToken;
+}
+
+type DiscoveryKind = 'modules' | 'repositories';
+
+interface StackEntry {
+    dir: string;
+    depth: number;
+}
+
+const DEFAULT_MODULE_EXCLUDES = [
+    '**/node_modules/**',
+    '**/.venv/**',
+    '**/__pycache__/**',
+    '**/.git/**'
+];
+
+const DEFAULT_REPOSITORY_EXCLUDES = [
+    '**/node_modules/**',
+    '**/.venv/**',
+    '**/__pycache__/**'
+];
+
+function globToRegExp(pattern: string): RegExp {
+    const normalizedPattern = pattern.split(path.sep).join('/');
+
+    const placeholders = {
+        doubleStar: '__GLOB_DOUBLE_STAR__',
+        singleStar: '__GLOB_SINGLE_STAR__',
+        question: '__GLOB_QUESTION__'
+    };
+
+    let working = normalizedPattern
+        .replaceAll('**', placeholders.doubleStar)
+        .replaceAll('*', placeholders.singleStar)
+        .replaceAll('?', placeholders.question);
+
+    working = working.replaceAll(/[.+^${}()|[\]\\]/g, String.raw`\$&`);
+
+    working = working
+        .replaceAll(new RegExp(placeholders.doubleStar, 'g'), '.*')
+        .replaceAll(new RegExp(placeholders.singleStar, 'g'), '[^/]*')
+        .replaceAll(new RegExp(placeholders.question, 'g'), '[^/]');
+
+    return new RegExp(`^${working}$`, 'i');
+}
+
+function compilePatterns(patterns: string[]): RegExp[] {
+    return patterns.map(globToRegExp);
+}
+
+function shouldExcludePath(fullPath: string, root: string, regexes: RegExp[]): boolean {
+    if (regexes.length === 0) {
+        return false;
+    }
+    const normalized = fullPath.split(path.sep).join('/');
+    const relative = normalized.startsWith(root) ? normalized.slice(root.length) : normalized;
+    const candidates = new Set<string>();
+    candidates.add(normalized);
+    candidates.add(`${normalized}/`);
+    if (relative) {
+        const trimmed = relative.replace(/^\//, '');
+        candidates.add(trimmed);
+        candidates.add(`${trimmed}/`);
+    }
+    for (const candidate of candidates) {
+        for (const regex of regexes) {
+            if (regex.test(candidate)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function getSearchOptions(kind: DiscoveryKind, overrides: SearchOverrides = {}): SearchOptions {
+    const config = vscode.workspace.getConfiguration('odooDebugger.search');
+    const maxDepth = Math.max(0, overrides.maxDepth ?? config.get<number>('maxDepth', 4));
+    const maxEntries = Math.max(1, overrides.maxEntries ?? config.get<number>('maxEntries', 100000));
+    const patternKey = kind === 'modules' ? 'excludePatterns.modules' : 'excludePatterns.repositories';
+    const defaults = kind === 'modules' ? DEFAULT_MODULE_EXCLUDES : DEFAULT_REPOSITORY_EXCLUDES;
+    const patterns = overrides.excludePatterns ?? config.get<string[]>(patternKey, defaults);
+    return {
+        maxDepth,
+        maxEntries,
+        excludeRegexes: compilePatterns(patterns),
+        token: overrides.token
+    };
+}
+
+function discoverDirectories(targetPath: string, kind: DiscoveryKind, options: SearchOptions): { path: string; name: string }[] {
     if (!targetPath) {
-        showError('Target path is required');
+        showError('Enter a target path to continue.');
         return [];
     }
 
-    try {
-        if (!fs.existsSync(targetPath)) {
-            showError(`Path does not exist: ${targetPath}`);
-            return [];
+    const normalizedRoot = normalizePath(targetPath);
+    if (!fs.existsSync(normalizedRoot)) {
+        showError(`Path does not exist: ${normalizedRoot}`);
+        return [];
+    }
+
+    const stack: StackEntry[] = [{ dir: normalizedRoot, depth: 0 }];
+    const visited = new Set<string>();
+    const results: { path: string; name: string }[] = [];
+    let processed = 0;
+    let limitWarningShown = false;
+    const rootNormalized = normalizedRoot.split(path.sep).join('/');
+
+    while (stack.length > 0) {
+        if (options.token?.isCancellationRequested) {
+            break;
         }
 
-        const entries = fs.readdirSync(targetPath);
-        const result: { path: string; name: string }[] = [];
+        const current = stack.pop()!;
+        const resolved = path.resolve(current.dir);
+        if (visited.has(resolved)) {
+            continue;
+        }
+        visited.add(resolved);
+
+        if (current.depth > 0 && shouldExcludePath(resolved, rootNormalized, options.excludeRegexes)) {
+            continue;
+        }
+
+        let entries: fs.Dirent[];
+        try {
+            entries = fs.readdirSync(resolved, { withFileTypes: true });
+        } catch (error) {
+            console.warn(`Failed to read directory ${resolved}:`, error);
+            continue;
+        }
+
+        processed++;
+        if (processed > options.maxEntries) {
+            if (!limitWarningShown) {
+                showWarning(`Search limit reached while scanning ${targetPath}. Some folders may be skipped. Adjust "odooDebugger.search.maxEntries" to increase the limit.`);
+                limitWarningShown = true;
+            }
+            break;
+        }
+
+        const hasManifest = entries.some(entry => entry.isFile() && entry.name === '__manifest__.py');
+        const hasGitDir = entries.some(entry => entry.isDirectory() && entry.name === '.git');
+
+        if (kind === 'modules' && hasManifest) {
+            results.push({ path: resolved, name: path.basename(resolved) });
+            continue;
+        }
+
+        if (kind === 'repositories' && hasGitDir) {
+            results.push({ path: resolved, name: path.basename(resolved) });
+            // Do not recurse into repository contents.
+            continue;
+        }
+
+        if (current.depth >= options.maxDepth) {
+            continue;
+        }
 
         for (const entry of entries) {
-            // Skip hidden files/directories
-            if (entry.startsWith('.')) {
+            if (!entry.isDirectory()) {
+                continue;
+            }
+            if (entry.name === '.' || entry.name === '..') {
+                continue;
+            }
+            const childPath = path.join(resolved, entry.name);
+            stack.push({ dir: childPath, depth: current.depth + 1 });
+        }
+    }
+
+    return results.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+}
+
+export function findModules(targetPath: string, overrides: SearchOverrides = {}): { path: string; name: string }[] {
+    const options = getSearchOptions('modules', overrides);
+    return discoverDirectories(targetPath, 'modules', options);
+}
+
+export function findRepositories(targetPath: string, overrides: SearchOverrides = {}): { path: string; name: string }[] {
+    const options = getSearchOptions('repositories', overrides);
+    return discoverDirectories(targetPath, 'repositories', options);
+}
+
+const PSAE_INTERNAL_REGEX = /^ps[a-z]*-internal$/i;
+
+export interface RepoModuleInfo {
+    path: string;
+    name: string;
+    repoName: string;
+    repoPath: string;
+    relativePath: string;
+    isPsaeInternal: boolean;
+    psInternalDirName?: string;
+    psInternalDirPath?: string;
+}
+
+export interface PsaeInternalDirectoryInfo {
+    path: string;
+    repoName: string;
+    dirName: string;
+    moduleNames: string[];
+}
+
+export interface ModuleDiscoveryResult {
+    modules: RepoModuleInfo[];
+    psaeDirectories: PsaeInternalDirectoryInfo[];
+}
+
+export interface ModuleDiscoveryOptions {
+    search?: SearchOverrides;
+    manualIncludePaths?: string[];
+}
+
+function findRepoContext(repos: RepoModel[], targetPath: string): { repoName: string; repoPath: string } | undefined {
+    for (const repo of repos) {
+        const repoPath = normalizePath(repo.path);
+        const relative = path.relative(repoPath, targetPath);
+        if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+            return { repoName: repo.name, repoPath };
+        }
+        if (!relative.startsWith('..')) {
+            // When target is exactly the repo root, relative can be ''
+            return { repoName: repo.name, repoPath };
+        }
+    }
+    return undefined;
+}
+
+function addPsaeDirectory(
+    psaeMap: Map<string, { repoName: string; dirName: string; moduleNames: Set<string> }>,
+    pathKey: string,
+    repoName: string,
+    dirName: string
+) {
+    if (!psaeMap.has(pathKey)) {
+        psaeMap.set(pathKey, { repoName, dirName, moduleNames: new Set<string>() });
+    }
+}
+
+function toPosixRelative(relativePath: string): string {
+    return relativePath.split(path.sep).join('/');
+}
+
+export function discoverModulesInRepos(repos: RepoModel[], options: ModuleDiscoveryOptions = {}): ModuleDiscoveryResult {
+    const modulesByPath = new Map<string, RepoModuleInfo>();
+    const psaeDirectories = new Map<string, { repoName: string; dirName: string; moduleNames: Set<string> }>();
+    const searchOverrides = options.search ?? {};
+
+    const accumulateModule = (entry: { path: string; name: string }, repoName: string, repoRoot: string) => {
+        const resolvedRepoRoot = path.resolve(repoRoot);
+        const resolvedModulePath = path.resolve(entry.path);
+        const relative = path.relative(resolvedRepoRoot, resolvedModulePath);
+        const normalizedRelative = relative ? toPosixRelative(relative) : entry.name;
+        const segments = normalizedRelative.split('/').filter(Boolean);
+        const psaeIndex = segments.findIndex(segment => PSAE_INTERNAL_REGEX.test(segment));
+
+        let isPsaeInternal = false;
+        let psInternalDirName: string | undefined;
+        let psInternalDirPath: string | undefined;
+
+        if (psaeIndex >= 0) {
+            isPsaeInternal = true;
+            psInternalDirName = segments[psaeIndex];
+            const dirSegments = segments.slice(0, psaeIndex + 1);
+            psInternalDirPath = path.join(resolvedRepoRoot, ...dirSegments);
+            addPsaeDirectory(psaeDirectories, psInternalDirPath, repoName, psInternalDirName);
+            psaeDirectories.get(psInternalDirPath)?.moduleNames.add(entry.name);
+        }
+
+        modulesByPath.set(resolvedModulePath, {
+            path: resolvedModulePath,
+            name: entry.name,
+            repoName,
+            repoPath: resolvedRepoRoot,
+            relativePath: normalizedRelative,
+            isPsaeInternal,
+            psInternalDirName,
+            psInternalDirPath
+        });
+    };
+
+    for (const repo of repos) {
+        const repoPath = normalizePath(repo.path);
+        if (!fs.existsSync(repoPath)) {
+            continue;
+        }
+        const repoModules = findModules(repoPath, searchOverrides);
+        for (const module of repoModules) {
+            accumulateModule(module, repo.name, repoPath);
+        }
+    }
+
+    for (const manualRaw of options.manualIncludePaths ?? []) {
+        const manualPath = normalizePath(manualRaw);
+        if (!fs.existsSync(manualPath)) {
+            continue;
+        }
+
+        const repoContext = findRepoContext(repos, manualPath);
+        const repoName = repoContext?.repoName ?? 'unknown';
+        const repoRoot = repoContext?.repoPath ?? path.dirname(manualPath);
+        const resolvedRepoRoot = path.resolve(repoRoot);
+        const dirName = path.basename(manualPath);
+
+        addPsaeDirectory(psaeDirectories, manualPath, repoName, dirName);
+
+        const manualModules = findModules(manualPath, searchOverrides);
+        for (const module of manualModules) {
+            if (modulesByPath.has(path.resolve(module.path))) {
+                psaeDirectories.get(manualPath)?.moduleNames.add(module.name);
                 continue;
             }
 
-            const fullPath = path.join(targetPath, entry);
+            const relative = repoContext
+                ? toPosixRelative(path.relative(resolvedRepoRoot, module.path))
+                : toPosixRelative(path.join(dirName, module.name));
 
-            try {
-                const stat = fs.statSync(fullPath);
-                if (stat.isDirectory()) {
-                    result.push({
-                        path: fullPath,
-                        name: entry
-                    });
-                }
-            } catch (statError) {
-                // Skip entries that can't be stat'd (permission issues, etc.)
-                console.warn(`Skipping ${fullPath}: ${statError}`);
-            }
+            modulesByPath.set(path.resolve(module.path), {
+                path: path.resolve(module.path),
+                name: module.name,
+                repoName,
+                repoPath: resolvedRepoRoot,
+                relativePath: relative || module.name,
+                isPsaeInternal: true,
+                psInternalDirName: dirName,
+                psInternalDirPath: manualPath
+            });
+
+            psaeDirectories.get(manualPath)?.moduleNames.add(module.name);
         }
-
-        return result;
-    } catch (error) {
-        showError(`Error reading directory ${targetPath}: ${error}`);
-        return [];
     }
+
+    const modules = Array.from(modulesByPath.values()).sort((a, b) => {
+        const repoCompare = a.repoName.localeCompare(b.repoName, undefined, { sensitivity: 'base' });
+        if (repoCompare !== 0) {
+            return repoCompare;
+        }
+        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
+
+    const psaeDirs = Array.from(psaeDirectories.entries())
+        .map(([dirPath, info]) => ({
+            path: dirPath,
+            repoName: info.repoName,
+            dirName: info.dirName,
+            moduleNames: Array.from(info.moduleNames).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+        }))
+        .sort((a, b) => {
+            const repoCompare = a.repoName.localeCompare(b.repoName, undefined, { sensitivity: 'base' });
+            if (repoCompare !== 0) {
+                return repoCompare;
+            }
+            return a.dirName.localeCompare(b.dirName, undefined, { sensitivity: 'base' });
+        });
+
+    return { modules, psaeDirectories: psaeDirs };
+}
+
+/**
+ * Creates a read-only tree item used for informational placeholders.
+ */
+export function createInfoTreeItem(message: string): vscode.TreeItem {
+    const item = new vscode.TreeItem(message, vscode.TreeItemCollapsibleState.None);
+    item.contextValue = 'info';
+    return item;
 }
 
 // ============================================================================
@@ -506,27 +856,34 @@ export async function getGitBranches(repoPath: string | undefined): Promise<stri
         return [];
     }
 
+    const normalizedPath = normalizePath(repoPath);
+
+    const apiBranches = await getBranchesViaSourceControl(normalizedPath);
+    if (apiBranches && apiBranches.length > 0) {
+        return apiBranches;
+    }
+
     try {
         // Check if it's a git repository
-        const gitDir = path.join(repoPath, '.git');
+        const gitDir = path.join(normalizedPath, '.git');
         if (!fs.existsSync(gitDir)) {
-            console.warn(`Not a git repository: ${repoPath}`);
+            console.warn(`Not a git repository: ${normalizedPath}`);
             return [];
         }
 
-        return new Promise<string[]>((resolve, reject) => {
-            child_process.exec(
+        return new Promise<string[]>((resolve) => {
+            childProcess.exec(
                 'git branch -a --format="%(refname:short)"',
-                { cwd: repoPath },
+                { cwd: normalizedPath },
                 (error, stdout, stderr) => {
                     if (error) {
-                        console.warn(`Failed to get branches for ${repoPath}: ${error.message}`);
+                        console.warn(`Failed to get branches for ${normalizedPath}: ${error.message}`);
                         resolve([]);
                         return;
                     }
 
                     if (stderr) {
-                        console.warn(`Git branch warning for ${repoPath}: ${stderr}`);
+                        console.warn(`Git branch warning for ${normalizedPath}: ${stderr}`);
                     }
 
                     const branches = stdout
@@ -561,7 +918,7 @@ export async function getGitBranches(repoPath: string | undefined): Promise<stri
             );
         });
     } catch (err) {
-        console.warn(`Failed to get branches for ${repoPath}: ${err}`);
+        console.warn(`Failed to get branches for ${normalizedPath}: ${err}`);
         return [];
     }
 }
@@ -592,6 +949,8 @@ export function getDefaultVersionSettings(): any {
         pythonPath: config.get('pythonPath', './venv/bin/python'),
         subModulesPaths: config.get('subModulesPaths', ''),
         installApps: config.get('installApps', ''),
-        upgradeApps: config.get('upgradeApps', '')
+        upgradeApps: config.get('upgradeApps', ''),
+        preCheckoutCommands: config.get('preCheckoutCommands', []),
+        postCheckoutCommands: config.get('postCheckoutCommands', [])
     };
 }

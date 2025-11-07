@@ -4,7 +4,7 @@ import { TestingConfigModel } from "./testing";
 import { randomUUID } from "crypto";
 export class ProjectModel {
     name: string; // project sh name
-    createdAt: Date;
+    createdAt: string | Date;
     dbs: DatabaseModel[];
     repos: RepoModel[] = [];
     isSelected: boolean = false;
@@ -13,7 +13,7 @@ export class ProjectModel {
     testingConfig: TestingConfigModel; // Testing configuration
     constructor(
         name: string,
-        createdAt: Date,
+        createdAt: string | Date,
         dbs: DatabaseModel[] = [],
         repos: RepoModel[] = [],
         isSelected: boolean = false,

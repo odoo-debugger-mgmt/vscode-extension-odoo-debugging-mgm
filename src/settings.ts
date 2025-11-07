@@ -22,17 +22,17 @@ export class SettingsTreeProvider implements vscode.TreeDataProvider<vscode.Tree
         return element;
     }
 
-    async getChildren(element?: any): Promise<vscode.TreeItem[] | undefined> {
+    async getChildren(_element?: any): Promise<vscode.TreeItem[] | undefined> {
         const versionsService = VersionsService.getInstance();
         const settings = await versionsService.getActiveVersionSettings();
 
         if (!settings) {
-            showError('No active version found');
+            showError('No active version is configured.');
             return [];
         }
 
         if (typeof settings === 'string') {
-            showError('Error reading settings');
+            showError('Unable to load settings.');
             return [];
         }
 
@@ -59,7 +59,7 @@ export async function editSetting(event: any) {
     const settings = await versionsService.getActiveVersionSettings();
 
     if (!settings) {
-        showError('No active version found');
+        showError('No active version is configured.');
         return;
     }
 

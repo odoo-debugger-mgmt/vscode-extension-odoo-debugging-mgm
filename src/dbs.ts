@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { DatabaseModel } from './models/db';
 import { ModuleModel } from './models/module';
 import { VersionModel } from './models/version';
-import { listSubdirectories, normalizePath, getGitBranch, showError, showInfo, showWarning, showAutoInfo, showBriefStatus, addActiveIndicator, stripSettings } from './utils';
+import { discoverModulesInRepos, normalizePath, getGitBranch, showError, showInfo, showWarning, showAutoInfo, showBriefStatus, addActiveIndicator, stripSettings, getDatabaseLabel } from './utils';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import { execSync, exec } from 'child_process';
@@ -10,6 +10,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { RepoModel } from './models/repo';
 import { randomUUID } from 'crypto';
+import { checkoutBranchViaSourceControl } from './services/gitService';
+import { generateDatabaseIdentifiers, DatabaseKind } from './services/dbNaming';
+import * as os from 'os';
+import { SortPreferences } from './sortPreferences';
+import { getDefaultSortOption } from './sortOptions';
+
+const checkoutHooksOutput = vscode.window.createOutputChannel('Odoo Debugger: Branch Hooks');
 
 /**
  * Gets the effective Odoo version for a database object.
@@ -30,7 +37,7 @@ function getEffectiveOdooVersion(db: DatabaseModel | any): string | undefined {
                 return version.odooVersion;
             }
         } catch (error) {
-            console.warn(`Failed to get version for database ${db.name}:`, error);
+            console.warn(`Failed to get version for database ${getDatabaseLabel(db)}:`, error);
         }
     }
     // Fall back to legacy odooVersion property
@@ -54,11 +61,60 @@ function getVersionName(db: DatabaseModel | any): string | undefined {
             const version = versionsService.getVersion(db.versionId);
             return version?.name;
         } catch (error) {
-            console.warn(`Failed to get version name for database ${db.name}:`, error);
+            console.warn(`Failed to get version name for database ${getDatabaseLabel(db)}:`, error);
             return undefined;
         }
     }
     return undefined;
+}
+
+async function collectExistingDatabaseIdentifiers(): Promise<Set<string>> {
+    const data = await SettingsStore.get('odoo-debugger-data.json');
+    const identifiers = new Set<string>();
+
+    for (const project of data.projects ?? []) {
+        for (const db of project.dbs ?? []) {
+            if (db && typeof db.id === 'string') {
+                identifiers.add(db.id.toLowerCase());
+            }
+        }
+    }
+
+    return identifiers;
+}
+
+function buildDumpDeterministicSeed(sqlDumpPath: string, projectName: string, repoSignature: string): string {
+    try {
+        const stats = fs.statSync(sqlDumpPath);
+        return [
+            path.resolve(sqlDumpPath),
+            projectName,
+            repoSignature,
+            stats.size,
+            Math.floor(stats.mtimeMs)
+        ].join('|');
+    } catch (error) {
+        console.warn(`Failed to read dump metadata from ${sqlDumpPath}:`, error);
+        return [path.resolve(sqlDumpPath), projectName, repoSignature].join('|');
+    }
+}
+
+function buildStandardDeterministicSeed(projectName: string, kind: string, timestamp: Date, branchName: string | undefined, versionId: string | undefined, repoSignature: string): string {
+    return [
+        projectName,
+        kind,
+        branchName ?? '',
+        versionId ?? '',
+        repoSignature,
+        timestamp.toISOString()
+    ].join('|');
+}
+
+function buildRepoSignature(repos: RepoModel[]): string {
+    return repos
+        .map(repo => normalizePath(repo.path))
+        .sort((a, b) => a.localeCompare(b))
+        .join('|');
 }
 
 async function promptBranchSwitch(targetVersion: string, currentBranches: {odoo: string | null, enterprise: string | null, designThemes: string | null}): Promise<boolean> {
@@ -126,14 +182,15 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
     readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
 
+    constructor(private readonly sortPreferences: SortPreferences) {}
+
     refresh(): void {
         this._onDidChangeTreeData.fire();
     }
-    constructor(context: vscode.ExtensionContext) {}
     getTreeItem(item: vscode.TreeItem): vscode.TreeItem {
         return item;
     }
-    async getChildren(element?: any): Promise<vscode.TreeItem[]> {
+    async getChildren(_element?: any): Promise<vscode.TreeItem[]> {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
             return [];
@@ -142,11 +199,14 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
         const { project } = result;
         const dbs: DatabaseModel[] = project.dbs;
         if (!dbs) {
-            showError('No databases found');
+            showError('No databases are configured for this project.');
             return [];
         }
 
-        return dbs.map(db => {
+        const sortId = this.sortPreferences.get('dbSelector', getDefaultSortOption('dbSelector'));
+        const sortedDbs = [...dbs].sort((a, b) => this.compareDatabases(a, b, sortId));
+
+        return sortedDbs.map(db => {
             // Handle date parsing defensively
             let editedDate: Date;
             try {
@@ -162,9 +222,9 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
 
             const formattedDate = `${editedDate.toISOString().split('T')[0]} ${editedDate.toTimeString().split(' ')[0]}`;
 
-            // Main label is just the database name with active indicator and badges
+            const dbLabel = getDatabaseLabel(db);
             const badges = `${db.isItABackup ? ' ☁️' : ''}${db.isExisting ? ' 📂' : ''}`;
-            const mainLabel = addActiveIndicator(db.name, db.isSelected) + badges;
+            const mainLabel = addActiveIndicator(dbLabel, db.isSelected) + badges;
 
                         // Description shows branch and version info as subtext
             let description = '';
@@ -213,14 +273,15 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
             }
 
             const treeItem = new vscode.TreeItem(mainLabel, vscode.TreeItemCollapsibleState.None);
-            treeItem.id = `${db.name}-${formattedDate}`;
+            treeItem.id = `${db.id}-${formattedDate}`;
             treeItem.description = description;
 
             // Create tooltip - push each detail into array, join with \n\n at the end
             const tooltipDetails = [];
 
             // Database name header
-            tooltipDetails.push(`**${db.name}**`);
+            tooltipDetails.push(`**${dbLabel}**`);
+            tooltipDetails.push(`**Internal name:** ${db.id}`);
 
             // Version information
             if (db.versionId) {
@@ -252,7 +313,6 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
 
             // Database details
             tooltipDetails.push(`**Created:** ${formattedDate}`);
-            tooltipDetails.push(`**Database ID:** ${db.id}`);
 
             // Database type
             if (db.isItABackup) {
@@ -295,6 +355,67 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
             return treeItem;
         });
     }
+
+    private compareDatabases(a: DatabaseModel, b: DatabaseModel, sortId: string): number {
+        const activeDelta = Number(b.isSelected) - Number(a.isSelected);
+        if (activeDelta !== 0) {
+            return activeDelta;
+        }
+
+        switch (sortId) {
+            case 'db:name:asc':
+                return this.getNameValue(a).localeCompare(this.getNameValue(b));
+            case 'db:name:desc':
+                return this.getNameValue(b).localeCompare(this.getNameValue(a));
+            case 'db:created:newest':
+                return this.getCreatedTimestamp(b) - this.getCreatedTimestamp(a);
+            case 'db:created:oldest':
+                return this.getCreatedTimestamp(a) - this.getCreatedTimestamp(b);
+            case 'db:branch:asc':
+                return this.compareBranch(a, b, false);
+            case 'db:branch:desc':
+                return this.compareBranch(a, b, true);
+            default:
+                return this.getNameValue(a).localeCompare(this.getNameValue(b));
+        }
+    }
+
+    private getCreatedTimestamp(db: DatabaseModel): number {
+        if (db.createdAt instanceof Date) {
+            return db.createdAt.getTime();
+        }
+        const date = new Date(db.createdAt);
+        return isNaN(date.getTime()) ? 0 : date.getTime();
+    }
+
+    private getBranchValue(db: DatabaseModel): string {
+        if (db.branchName && db.branchName.trim() !== '') {
+            return db.branchName.toLowerCase();
+        }
+        const effective = getEffectiveOdooVersion(db);
+        return effective ? effective.toLowerCase() : '';
+    }
+
+    private getNameValue(db: DatabaseModel): string {
+        return getDatabaseLabel(db).toLowerCase();
+    }
+
+    private compareBranch(a: DatabaseModel, b: DatabaseModel, descending: boolean): number {
+        const aBranch = this.getBranchValue(a);
+        const bBranch = this.getBranchValue(b);
+        const aHas = aBranch.trim().length > 0;
+        const bHas = bBranch.trim().length > 0;
+
+        const missingDelta = Number(bHas) - Number(aHas);
+        if (missingDelta !== 0) {
+            return descending ? -missingDelta : missingDelta;
+        }
+
+        if (descending) {
+            return bBranch.localeCompare(aBranch);
+        }
+        return aBranch.localeCompare(bBranch);
+    }
 }
 
 export async function showBranchSelector(repoPath: string): Promise<string | undefined> {
@@ -332,11 +453,83 @@ export async function showBranchSelector(repoPath: string): Promise<string | und
 }
 
 export async function checkoutBranch(settings: SettingsModel, branch: string): Promise<void> {
+    const runCheckoutHookCommands = async (
+        commands: string[] | undefined,
+        phase: 'pre-checkout' | 'post-checkout',
+        cwd: string,
+        contextLabel: string,
+        progress?: vscode.Progress<{ message?: string; increment?: number; }>
+    ): Promise<boolean> => {
+        if (!Array.isArray(commands) || commands.length === 0) {
+            return true;
+        }
+
+        const normalizedCommands = commands.map(cmd => cmd.trim()).filter(Boolean);
+        if (normalizedCommands.length === 0) {
+            return true;
+        }
+
+        checkoutHooksOutput.show(true);
+        checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: running ${normalizedCommands.length} command(s) in: ${cwd}`);
+
+        for (const [index, command] of normalizedCommands.entries()) {
+            progress?.report({ message: `${contextLabel}: ${phase} (${index + 1}/${normalizedCommands.length}): ${command}` });
+            checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: $ ${command}`);
+
+            const taskName = `Odoo Debugger: ${phase} (${index + 1}/${normalizedCommands.length})`;
+            const task = new vscode.Task(
+                { type: 'odooDebugger.branchHooks', phase, index },
+                vscode.TaskScope.Workspace,
+                taskName,
+                'odooDebugger',
+                new vscode.ShellExecution(command, { cwd }),
+                []
+            );
+            task.presentationOptions = {
+                reveal: vscode.TaskRevealKind.Always,
+                focus: false,
+                panel: vscode.TaskPanelKind.Shared,
+                clear: false
+            };
+
+            const execution = await vscode.tasks.executeTask(task);
+            const exitCode = await new Promise<number | undefined>((resolve) => {
+                const disposable = vscode.tasks.onDidEndTaskProcess(event => {
+                    if (event.execution === execution) {
+                        disposable.dispose();
+                        resolve(event.exitCode);
+                    }
+                });
+            });
+
+            if (exitCode !== 0 && exitCode !== undefined) {
+                showError(`${contextLabel}: failed during ${phase} command "${command}" (exit code ${exitCode})`);
+                checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: FAILED (exit ${exitCode})`);
+                return false;
+            }
+
+            if (exitCode === undefined) {
+                showError(`${contextLabel}: failed during ${phase} command "${command}" (no exit code)`);
+                checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: FAILED (no exit code)`);
+                return false;
+            }
+
+            checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: OK`);
+        }
+
+        return true;
+    };
+
     const repos = [
         { name: 'Odoo', path: normalizePath(settings.odooPath) },
         { name: 'Enterprise', path: normalizePath(settings.enterprisePath) },
-        { name: 'Design Themes', path: normalizePath(settings.designThemesPath || './design-themes') }
+        { name: 'Design Themes', path: normalizePath(settings.designThemesPath) }
     ];
+
+    // Pull hook commands directly from VS Code settings (not per-version settings)
+    const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
+    const preCheckoutCommands = config.get<string[]>('preCheckoutCommands', []);
+    const postCheckoutCommands = config.get<string[]>('postCheckoutCommands', []);
 
     return vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
@@ -347,13 +540,21 @@ export async function checkoutBranch(settings: SettingsModel, branch: string): P
         const totalRepos = repos.length;
 
         // Process each repository
-        for (let i = 0; i < repos.length; i++) {
-            const repo = repos[i];
+        for (const repo of repos) {
 
             progress.report({
                 message: `Processing ${repo.name}...`,
-                increment: (i / totalRepos) * 100
+                increment: totalRepos > 0 ? (100 / totalRepos) : 0
             });
+
+            if (!repo.path || repo.path.trim() === '') {
+                results.push({
+                    name: repo.name,
+                    success: false,
+                    message: 'Path not configured'
+                });
+                continue;
+            }
 
             if (!fs.existsSync(repo.path)) {
                 results.push({
@@ -364,43 +565,70 @@ export async function checkoutBranch(settings: SettingsModel, branch: string): P
                 continue;
             }
 
-            try {
-                await new Promise<void>((resolve, reject) => {
-                    exec(`git checkout ${branch}`, { cwd: repo.path }, (err, stdout, stderr) => {
-                        // Check if we're already on the target branch (this is actually success)
-                        if (stderr && stderr.includes(`Already on '${branch}'`)) {
-                            results.push({
-                                name: repo.name,
-                                success: true,
-                                message: `Already on branch: ${branch}`
-                            });
-                            resolve();
-                            return;
-                        }
-
-                        // Check for actual errors
-                        if (err || (stderr && !stderr.includes('Switched to branch'))) {
-                            results.push({
-                                name: repo.name,
-                                success: false,
-                                message: stderr || err?.message || 'Unknown error'
-                            });
-                            reject(new Error(`Failed to checkout branch ${branch} in ${repo.name}`));
-                            return;
-                        }
-
-                        // Success case
-                        results.push({
-                            name: repo.name,
-                            success: true,
-                            message: `Switched to branch: ${branch}`
-                        });
-                        resolve();
-                    });
+            const preOk = await runCheckoutHookCommands(preCheckoutCommands, 'pre-checkout', repo.path, repo.name, progress);
+            if (!preOk) {
+                results.push({
+                    name: repo.name,
+                    success: false,
+                    message: `Pre-checkout hook(s) failed`
                 });
-            } catch (error) {
-                // Error was already logged in results, continue with next repo
                 continue;
+            }
+
+            const apiCheckoutSucceeded = await checkoutBranchViaSourceControl(repo.path, branch);
+
+            let checkoutSucceededForRepo = false;
+            let checkoutMessage = '';
+
+            if (!apiCheckoutSucceeded) {
+                try {
+                    await new Promise<void>((resolve, reject) => {
+                        exec(`git checkout ${branch}`, { cwd: repo.path }, (err, _stdout, stderr) => {
+                            if (stderr && stderr.includes(`Already on '${branch}'`)) {
+                                checkoutSucceededForRepo = true;
+                                checkoutMessage = `Already on branch: ${branch}`;
+                                resolve();
+                                return;
+                            }
+
+                            if (err || (stderr && !stderr.includes('Switched to branch'))) {
+                                checkoutSucceededForRepo = false;
+                                checkoutMessage = stderr || err?.message || 'Unknown error';
+                                reject(new Error(`Failed to checkout branch ${branch} in ${repo.name}`));
+                                return;
+                            }
+
+                            checkoutSucceededForRepo = true;
+                            checkoutMessage = `Switched to branch: ${branch}`;
+                            resolve();
+                        });
+                    });
+                } catch (error) {
+                    results.push({
+                        name: repo.name,
+                        success: false,
+                        message: checkoutMessage || 'Failed to checkout branch'
+                    });
+                    continue;
+                }
+            } else {
+                checkoutSucceededForRepo = true;
+                checkoutMessage = `Switched to branch ${branch}`;
+            }
+
+            if (checkoutSucceededForRepo) {
+                const postOk = await runCheckoutHookCommands(postCheckoutCommands, 'post-checkout', repo.path, repo.name, progress);
+                results.push({
+                    name: repo.name,
+                    success: postOk,
+                    message: postOk ? checkoutMessage : `${checkoutMessage} (but post-checkout hook(s) failed)`
+                });
+            } else {
+                results.push({
+                    name: repo.name,
+                    success: false,
+                    message: checkoutMessage || 'Failed to checkout branch'
+                });
             }
         }
 
@@ -431,7 +659,61 @@ export async function checkoutBranch(settings: SettingsModel, branch: string): P
     });
 }
 
-export async function getDbDumpFolder(dumpsFolder: string, searchFilter?: string): Promise<string | undefined> {
+interface DumpSelection {
+    label: string;
+    kind: 'folder' | 'zip';
+    path: string;
+}
+
+interface PreparedDump {
+    sqlPath: string;
+    cleanup?: () => void;
+}
+
+function collectDumpSources(root: string, maxDepth = 2): DumpSelection[] {
+    const results: DumpSelection[] = [];
+    const stack: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }];
+
+    while (stack.length > 0) {
+        const { dir, depth } = stack.pop()!;
+        let entries: fs.Dirent[];
+        try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch (error) {
+            console.warn(`Failed to read dumps directory ${dir}:`, error);
+            continue;
+        }
+
+        for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            const relativeLabel = path.relative(root, fullPath) || entry.name;
+
+            if (entry.isDirectory()) {
+                const dumpSqlPath = path.join(fullPath, 'dump.sql');
+                if (fs.existsSync(dumpSqlPath)) {
+                    results.push({
+                        label: relativeLabel,
+                        kind: 'folder',
+                        path: fullPath
+                    });
+                }
+                if (depth < maxDepth) {
+                    stack.push({ dir: fullPath, depth: depth + 1 });
+                }
+            } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.zip')) {
+                results.push({
+                    label: relativeLabel,
+                    kind: 'zip',
+                    path: fullPath
+                });
+            }
+        }
+    }
+
+    return results;
+}
+
+export async function getDbDumpFolder(dumpsFolder: string, searchFilter?: string): Promise<DumpSelection | undefined> {
     dumpsFolder = normalizePath(dumpsFolder);
 
     if (!fs.existsSync(dumpsFolder)) {
@@ -439,134 +721,106 @@ export async function getDbDumpFolder(dumpsFolder: string, searchFilter?: string
         return undefined;
     }
 
-    const foldersInDumpsFolder = fs.readdirSync(dumpsFolder);
-    const matchingFolders: string[] = [];
+    const matches = collectDumpSources(dumpsFolder);
 
-    for (const folder of foldersInDumpsFolder) {
-        const fullPath = path.join(dumpsFolder, folder);
-        if (fs.statSync(fullPath).isDirectory()) {
-            const dumpSqlPath = path.join(fullPath, 'dump.sql');
-            if (fs.existsSync(dumpSqlPath)) {
-                matchingFolders.push(fullPath);
-            }
-        }
-    }
-
-    if (matchingFolders.length === 0) {
-        showInfo(`No folders with dump.sql found in ${path.basename(dumpsFolder)}.`);
+    if (matches.length === 0) {
+        showInfo(`No dump directories or zip archives found in ${path.basename(dumpsFolder)}.`);
         return undefined;
     }
 
-    // Filter and sort folders if search filter is provided
-    let foldersToShow = matchingFolders.map(folder => ({
-        label: path.basename(folder),
-        description: folder,
+    let foldersToShow = matches.map(item => ({
+        label: item.label,
+        description: item.path,
+        detail: item.kind === 'zip' ? 'Zip archive' : 'Folder',
+        item
     }));
 
     if (searchFilter && searchFilter.trim() !== '') {
         const filterTerm = searchFilter.toLowerCase();
-
-        // Separate exact matches, partial matches, and no matches for sorting
-        const exactMatches = foldersToShow.filter(item =>
-            item.label.toLowerCase() === filterTerm
-        );
-        const partialMatches = foldersToShow.filter(item =>
-            item.label.toLowerCase().includes(filterTerm) &&
-            item.label.toLowerCase() !== filterTerm
-        );
-        const noMatches = foldersToShow.filter(item =>
-            !item.label.toLowerCase().includes(filterTerm)
-        );
-
-        // Show exact matches first, then partial matches, then everything else
-        foldersToShow = [...exactMatches, ...partialMatches, ...noMatches];
+        const exact = foldersToShow.filter(item => item.label.toLowerCase() === filterTerm);
+        const partial = foldersToShow.filter(item => item.label.toLowerCase().includes(filterTerm) && item.label.toLowerCase() !== filterTerm);
+        const rest = foldersToShow.filter(item => !item.label.toLowerCase().includes(filterTerm));
+        foldersToShow = [...exact, ...partial, ...rest];
     }
 
     const selected = await vscode.window.showQuickPick(foldersToShow, {
         placeHolder: searchFilter
-            ? `Select a dump folder (showing "${searchFilter}" matches first)`
-            : 'Select a folder containing dump.sql',
+            ? `Select a dump source (showing "${searchFilter}" matches first)`
+            : 'Select a folder or zip archive containing dump.sql',
         ignoreFocusOut: true
     });
 
-    return selected ? selected.description : undefined;
+    return selected?.item;
 }
 
-export async function createDb(projectName:string, repos:RepoModel[], dumpFolderPath:string, settings: SettingsModel): Promise<DatabaseModel | undefined> {
-    let allModules: {"path": string, "name": string, "source": string}[] = [];
+type CreationMethod = 'fresh' | 'dump' | 'existing';
 
-    // Collect modules from regular repositories and ps*-internal directories
-    for (const repo of repos) {
-        // Add regular modules from repo root
-        const repoModules = listSubdirectories(repo.path);
-        allModules = allModules.concat(repoModules.map(module => ({
-            ...module,
-            source: repo.name
-        })));
+interface CreateDbOptions {
+    allowExistingOption?: boolean;
+    initialMethod?: CreationMethod;
+}
 
-        // Check for ps*-internal directories in this repo
-        try {
-            const repoDirContents = fs.readdirSync(repo.path);
-            for (const item of repoDirContents) {
-                // Match pattern: ps followed by any letters, then -internal
-                if (/^ps[a-z]*-internal$/i.test(item)) {
-                    const psInternalPath = `${repo.path}/${item}`;
-                    if (fs.existsSync(psInternalPath) && fs.statSync(psInternalPath).isDirectory()) {
-                        try {
-                            const psModules = listSubdirectories(psInternalPath);
-                            allModules = allModules.concat(psModules.map(module => ({
-                                ...module,
-                                source: `${repo.name}/${item}`
-                            })));
-                        } catch (error) {
-                            console.warn(`Failed to read ${item} modules from ${psInternalPath}:`, error);
-                        }
-                    }
-                }
-            }
-        } catch (error) {
-            console.warn(`Failed to read repo directory ${repo.path}:`, error);
-        }
+const CREATION_METHOD_ITEMS: Record<CreationMethod, { label: string; description: string; detail: string; method: CreationMethod }> = {
+    fresh: {
+        label: 'Fresh Database',
+        description: 'Create a new empty database and install modules',
+        detail: 'Start with a clean Odoo installation',
+        method: 'fresh'
+    },
+    dump: {
+        label: 'From Dump File',
+        description: 'Restore database from a dump/backup file',
+        detail: 'Import an existing database backup',
+        method: 'dump'
+    },
+    existing: {
+        label: 'Connect to Existing',
+        description: 'Reference an already existing database',
+        detail: 'Use a database that already exists in PostgreSQL',
+        method: 'existing'
     }
+};
+
+export async function createDb(projectName:string, repos:RepoModel[], dumpFolderPath:string, _settings: SettingsModel, options: CreateDbOptions = {}): Promise<DatabaseModel | undefined> {
+    const discovery = discoverModulesInRepos(repos);
+    const allModules = discovery.modules.map(module => ({
+        path: module.path,
+        name: module.name,
+        source: module.isPsaeInternal && module.psInternalDirName
+            ? `${module.repoName}/${module.psInternalDirName}`
+            : module.repoName
+    }));
 
     let selectedModules: string[] = [];
     let db: DatabaseModel | undefined;
     let modules: ModuleModel[] = [];
 
     // Step 1: Choose database creation method
-    const creationMethod = await vscode.window.showQuickPick([
-        {
-            label: "Fresh Database",
-            description: "Create a new empty database and install modules",
-            detail: "Start with a clean Odoo installation"
-        },
-        {
-            label: "From Dump File",
-            description: "Restore database from a dump/backup file",
-            detail: "Import an existing database backup"
-        },
-        {
-            label: "Connect to Existing",
-            description: "Reference an already existing database",
-            detail: "Use a database that already exists in PostgreSQL"
-        }
-    ], {
-        placeHolder: 'How do you want to create this database?',
-        ignoreFocusOut: true
-    });
+    let creationMethod: CreationMethod | undefined;
+    if (options.initialMethod) {
+        creationMethod = options.initialMethod;
+    } else {
+        const methodItems = Object.values(CREATION_METHOD_ITEMS)
+            .filter(item => options.allowExistingOption !== false || item.method !== 'existing');
 
-    if (!creationMethod) {
-        return undefined; // User cancelled
+        const selection = await vscode.window.showQuickPick(methodItems, {
+            placeHolder: 'How do you want to create this database?',
+            ignoreFocusOut: true
+        });
+
+        if (!selection) {
+            return undefined; // User cancelled
+        }
+        creationMethod = selection.method;
     }
 
-    let dumpFolder: string | undefined;
     let existingDbName: string | undefined;
     let isExistingDb = false;
     let sqlDumpPath: string | undefined;
 
     // Step 2: Handle the specific creation method
-    switch (creationMethod.label) {
-        case "Fresh Database":
+    switch (creationMethod) {
+        case 'fresh':
             // Select modules to install
             const moduleChoices = allModules.map(entry => ({
                 label: entry.name,
@@ -583,17 +837,26 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
             selectedModules = selectedModuleObjects.map(choice => choice.label);
             break;
 
-        case "From Dump File":
-            // Select dump folder
-            dumpFolder = await getDbDumpFolder(dumpFolderPath, projectName);
-            if (!dumpFolder) {
-                showError('No dump folder selected');
+        case 'dump': {
+            const selection = await getDbDumpFolder(dumpFolderPath, projectName);
+            if (!selection) {
+                showError('Select a dump folder or archive to continue.');
                 return undefined;
             }
-            sqlDumpPath = path.join(dumpFolder, 'dump.sql');
+            if (selection.kind === 'folder') {
+                const candidate = path.join(selection.path, 'dump.sql');
+                if (!fs.existsSync(candidate)) {
+                    showError(`dump.sql not found inside ${selection.path}`);
+                    return undefined;
+                }
+                sqlDumpPath = candidate;
+            } else {
+                sqlDumpPath = selection.path;
+            }
             break;
+        }
 
-        case "Connect to Existing":
+        case 'existing':
             // Get existing database name
             existingDbName = await vscode.window.showInputBox({
                 placeHolder: 'Enter the name of the existing PostgreSQL database',
@@ -601,7 +864,7 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
                 ignoreFocusOut: true
             });
             if (!existingDbName) {
-                showError('Database name is required');
+                showError('Enter a database name to continue.');
                 return undefined;
             }
             isExistingDb = true;
@@ -657,18 +920,41 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
         modules.push(new ModuleModel(module, 'install'));
     }
 
-    // Generate a more descriptive database name
-    let dbName: string;
-    if (existingDbName) {
-        dbName = existingDbName;
+    const creationTimestamp = new Date();
+    const existingIdentifiers = await collectExistingDatabaseIdentifiers();
+    const repoSignature = buildRepoSignature(repos);
+    let dbKind: DatabaseKind = creationMethod === 'dump' ? 'dump' : 'fresh';
+    let internalDbName: string;
+    let displayDbName: string;
+
+    if (isExistingDb) {
+        if (!existingDbName) {
+            throw new Error('Enter a database name to continue.');
+        }
+        internalDbName = existingDbName;
+        displayDbName = existingDbName;
+        dbKind = 'existing';
     } else {
-        const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
-        const methodPrefix = creationMethod.label === "From Dump File" ? "dump" : "fresh";
-        dbName = `${projectName}-${methodPrefix}-${timestamp}`;
+        const deterministicSeed = creationMethod === 'dump' && sqlDumpPath
+            ? buildDumpDeterministicSeed(sqlDumpPath, projectName, repoSignature)
+            : buildStandardDeterministicSeed(projectName, dbKind, creationTimestamp, branchName, selectedVersionId, repoSignature);
+
+        const identifiers = generateDatabaseIdentifiers({
+            projectName,
+            kind: dbKind,
+            timestamp: creationTimestamp,
+            deterministicSeed,
+            existingInternalNames: existingIdentifiers
+        });
+
+        internalDbName = identifiers.internalName;
+        displayDbName = identifiers.displayName;
+        existingIdentifiers.add(internalDbName.toLowerCase());
     }
+
     db = new DatabaseModel(
-        dbName,
-        new Date(),
+        displayDbName,
+        creationTimestamp,
         {
             modules,
             isItABackup: false, // isSelected (will be set when added to project)
@@ -678,7 +964,10 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
             branchName,
             // Only set odooVersion if no version is selected (legacy compatibility)
             odooVersion: selectedVersionId ? undefined : (selectedVersion?.odooVersion || ''),
-            versionId: selectedVersionId
+            versionId: selectedVersionId,
+            displayName: displayDbName,
+            internalName: internalDbName,
+            kind: dbKind
         }
     );
 
@@ -702,6 +991,7 @@ export async function restoreDb(event: any): Promise<void> {
     if (!database) {
         throw new Error('Invalid database object for restoration');
     }
+    const databaseLabel = getDatabaseLabel(database);
 
     // Check if database has a backup file path
     if (!database.sqlFilePath || database.sqlFilePath.trim() === '') {
@@ -710,7 +1000,7 @@ export async function restoreDb(event: any): Promise<void> {
 
     // Ask for confirmation
     const confirm = await vscode.window.showWarningMessage(
-        `Are you sure you want to restore the database "${database.name}"? This will overwrite the existing database.`,
+        `Are you sure you want to restore the database "${databaseLabel}"? This will overwrite the existing database.`,
         { modal: true },
         'Restore'
     );
@@ -720,7 +1010,7 @@ export async function restoreDb(event: any): Promise<void> {
     }
 
     await setupDatabase(database.id, database.sqlFilePath);
-    showAutoInfo(`Database "${database.name}" restored successfully`, 3000);
+    showAutoInfo(`Database "${databaseLabel}" restored successfully`, 3000);
 }
 
 export async function setupDatabase(dbName: string, dumpPath: string | undefined, remove: boolean = false): Promise<void> {
@@ -729,101 +1019,112 @@ export async function setupDatabase(dbName: string, dumpPath: string | undefined
         return;
     }
 
-    const operation = remove ? 'Removing' : dumpPath ? 'Setting up' : 'Creating';
-    await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: `${operation} database ${dbName}`,
-        cancellable: false
-    }, async (progress) => {
-        try {
-            // Check if the database exists
-            progress.report({ message: 'Checking database existence...', increment: 10 });
-            const checkCommand = `psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${dbName}'"`;
-            const result = execSync(checkCommand).toString().trim();
+    let preparedDump: PreparedDump | undefined;
+    try {
+        preparedDump = dumpPath ? prepareDumpIfNeeded(dumpPath) : undefined;
+    } catch (error: any) {
+        showError(`Unable to read dump file: ${error.message ?? error}`);
+        return;
+    }
 
-            if (result === '1') {
-                progress.report({ message: 'Dropping existing database...', increment: 20 });
-                console.log(`🗑️ Dropping existing database: ${dbName}`);
-                execSync(`dropdb ${dbName}`, { stdio: 'inherit' });
-            }
+    const finalDumpPath = preparedDump?.sqlPath;
+    const operation = remove ? 'Removing' : finalDumpPath ? 'Setting up' : 'Creating';
 
-            if (!remove) {
-                progress.report({ message: 'Creating database...', increment: 40 });
-                console.log(`🚀 Creating database: ${dbName}`);
-                execSync(`createdb ${dbName}`, { stdio: 'inherit' });
+    try {
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: `${operation} database ${dbName}`,
+            cancellable: false
+        }, async (progress) => {
+            try {
+                progress.report({ message: 'Checking database existence...', increment: 10 });
+                const checkCommand = `psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${dbName}'"`;
+                const result = execSync(checkCommand).toString().trim();
 
-                if (dumpPath) {
-                    progress.report({ message: 'Importing dump file...', increment: 50 });
-                    console.log(`📥 Importing SQL dump into ${dbName}`);
-                    execSync(`psql ${dbName} < "${dumpPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
-
-                    progress.report({ message: 'Configuring database...', increment: 70 });
-                    console.log(`� Configuring database for development use`);
-
-                    // Generate a new UUID for the database
-                    const newUuid = randomUUID();
-
-                    // Disable crons
-                    console.log(`⏸️ Disabling cron jobs`);
-                    execSync(`psql ${dbName} -c "UPDATE ir_cron SET active='f';"`, { stdio: 'inherit', shell: '/bin/sh' });
-
-                    // Disable mail servers
-                    console.log(`📧 Disabling mail servers`);
-                    execSync(`psql ${dbName} -c "UPDATE ir_mail_server SET active=false;"`, { stdio: 'inherit', shell: '/bin/sh' });
-
-                    // Set enterprise expiration date far in the future
-                    console.log(`⏰ Extending database expiry`);
-                    execSync(`psql ${dbName} -c "UPDATE ir_config_parameter SET value = '2090-09-21 00:00:00' WHERE key = 'database.expiration_date';"`, { stdio: 'inherit', shell: '/bin/sh' });
-
-                    // Change database UUID to avoid conflicts with production
-                    console.log(`🔑 Updating database UUID`);
-                    execSync(`psql ${dbName} -c "UPDATE ir_config_parameter SET value = '${newUuid}' WHERE key = 'database.uuid';"`, { stdio: 'inherit', shell: '/bin/sh' });
-
-                    // Add mailcatcher server for development
-                    console.log(`📨 Adding mailcatcher server`);
-                    try {
-                        execSync(`psql ${dbName} -c "INSERT INTO ir_mail_server(active,name,smtp_host,smtp_port,smtp_encryption) VALUES (true,'mailcatcher','localhost',1025,false);"`, { stdio: 'inherit', shell: '/bin/sh' });
-                    } catch (error) {
-                        console.warn(`⚠️ Failed to add mailcatcher server (continuing setup): ${error}`);
-                    }
-
-                    // Reset user passwords to their login
-                    console.log(`👤 Resetting user passwords to login names`);
-                    execSync(`psql ${dbName} -c "UPDATE res_users SET password=login;"`, { stdio: 'inherit', shell: '/bin/sh' });
-
-                    // Configure admin user specifically
-                    console.log(`🔐 Configuring admin user`);
-                    execSync(`psql ${dbName} -c "UPDATE res_users SET password='admin' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
-                    execSync(`psql ${dbName} -c "UPDATE res_users SET login='admin' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
-                    execSync(`psql ${dbName} -c "UPDATE res_users SET totp_secret='' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
-                    execSync(`psql ${dbName} -c "UPDATE res_users SET active=true WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
-
-                    // Clear employee PINs
-                    console.log(`🏢 Clearing employee PINs`);
-                    execSync(`psql ${dbName} -c "UPDATE hr_employee SET pin = '';"`, { stdio: 'inherit', shell: '/bin/sh' });
-
-                    progress.report({ message: 'Database configured for development', increment: 90 });
-                } else {
-                    progress.report({ message: 'Database created (empty)...', increment: 90 });
-                    console.log(`📝 Empty database created: ${dbName}`);
+                if (result === '1') {
+                    progress.report({ message: 'Dropping existing database...', increment: 20 });
+                    console.log(`🗑️ Dropping existing database: ${dbName}`);
+                    execSync(`dropdb ${dbName}`, { stdio: 'inherit' });
                 }
-            }
 
-            progress.report({ message: 'Complete!', increment: 100 });
-            console.log(`✅ Database "${dbName}" is ready.`);
-        } catch (error: any) {
-            console.error(`❌ Error: ${error.message}`);
-            showError(`Failed to setup database: ${error.message}`);
+                if (!remove) {
+                    progress.report({ message: 'Creating database...', increment: 40 });
+                    console.log(`🚀 Creating database: ${dbName}`);
+                    execSync(`createdb ${dbName}`, { stdio: 'inherit' });
+
+                    if (finalDumpPath) {
+                        progress.report({ message: 'Importing dump file...', increment: 50 });
+                        console.log(`📥 Importing SQL dump into ${dbName}`);
+                        execSync(`psql ${dbName} < "${finalDumpPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
+
+                        progress.report({ message: 'Configuring database...', increment: 70 });
+                        console.log(`� Configuring database for development use`);
+
+                        const newUuid = randomUUID();
+
+                        console.log(`⏸️ Disabling cron jobs`);
+                        execSync(`psql ${dbName} -c "UPDATE ir_cron SET active='f';"`, { stdio: 'inherit', shell: '/bin/sh' });
+
+                        console.log(`📧 Disabling mail servers`);
+                        execSync(`psql ${dbName} -c "UPDATE ir_mail_server SET active=false;"`, { stdio: 'inherit', shell: '/bin/sh' });
+
+                        console.log(`⏰ Extending database expiry`);
+                        execSync(`psql ${dbName} -c "UPDATE ir_config_parameter SET value = '2090-09-21 00:00:00' WHERE key = 'database.expiration_date';"`, { stdio: 'inherit', shell: '/bin/sh' });
+
+                        console.log(`🔑 Updating database UUID`);
+                        execSync(`psql ${dbName} -c "UPDATE ir_config_parameter SET value = '${newUuid}' WHERE key = 'database.uuid';"`, { stdio: 'inherit', shell: '/bin/sh' });
+
+                        console.log(`📨 Adding mailcatcher server`);
+                        try {
+                            execSync(`psql ${dbName} -c "INSERT INTO ir_mail_server(active,name,smtp_host,smtp_port,smtp_encryption) VALUES (true,'mailcatcher','localhost',1025,false);"`, { stdio: 'inherit', shell: '/bin/sh' });
+                        } catch (error) {
+                            console.warn(`⚠️ Failed to add mailcatcher server (continuing setup): ${error}`);
+                        }
+
+                        console.log(`👤 Resetting user passwords to login names`);
+                        execSync(`psql ${dbName} -c "UPDATE res_users SET password=login;"`, { stdio: 'inherit', shell: '/bin/sh' });
+
+                        console.log(`🔐 Configuring admin user`);
+                        execSync(`psql ${dbName} -c "UPDATE res_users SET password='admin' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
+                        execSync(`psql ${dbName} -c "UPDATE res_users SET login='admin' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
+                        execSync(`psql ${dbName} -c "UPDATE res_users SET totp_secret='' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
+                        execSync(`psql ${dbName} -c "UPDATE res_users SET active=true WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
+
+                        console.log(`🏢 Clearing employee PINs`);
+                        execSync(`psql ${dbName} -c "UPDATE hr_employee SET pin = '';"`, { stdio: 'inherit', shell: '/bin/sh' });
+
+                        progress.report({ message: 'Database configured for development', increment: 90 });
+                    } else {
+                        progress.report({ message: 'Database created (empty)...', increment: 90 });
+                        console.log(`📝 Empty database created: ${dbName}`);
+                    }
+                }
+
+                progress.report({ message: 'Complete!', increment: 100 });
+                console.log(`✅ Database "${dbName}" is ready.`);
+            } catch (error: any) {
+                console.error(`❌ Error: ${error.message}`);
+                showError(`Failed to setup database: ${error.message}`);
+            }
+        });
+    } finally {
+        if (preparedDump?.cleanup) {
+            try {
+                preparedDump.cleanup();
+            } catch (cleanupError) {
+                console.warn('Failed to cleanup temporary dump files:', cleanupError);
+            }
         }
-    });
+    }
 }
 
 export async function selectDatabase(event: any) {
     const database = extractDatabaseFromEvent(event);
     if (!database) {
-        showError('Invalid database object for selection');
+        showError('Could not identify the database to select.');
         return;
     }
+    const databaseLabel = getDatabaseLabel(database);
 
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
@@ -834,7 +1135,7 @@ export async function selectDatabase(event: any) {
     // Find the project index in the projects array
     const projectIndex = data.projects.findIndex((p: any) => p.uid === project.uid);
     if (projectIndex === -1) {
-        showError('Project not found');
+        showError('The selected project could not be found.');
         return;
     }
 
@@ -860,13 +1161,14 @@ export async function selectDatabase(event: any) {
         showWarning(`Database selected, but version switching failed: ${error.message}`);
     }
 
-    showBriefStatus(`Database switched to: ${database.name}`, 2000);
+    showBriefStatus(`Database switched to: ${databaseLabel}`, 2000);
 }
 
 async function handleDatabaseVersionSwitch(database: DatabaseModel): Promise<void> {
     const versionsService = VersionsService.getInstance();
     await versionsService.initialize();
     const settings = await versionsService.getActiveVersionSettings();
+    const databaseLabel = getDatabaseLabel(database);
 
     // Get the database switch behavior setting
     const switchBehavior = vscode.workspace.getConfiguration('odooDebugger').get('databaseSwitchBehavior', 'ask') as string;
@@ -932,7 +1234,7 @@ async function handleDatabaseVersionSwitch(database: DatabaseModel): Promise<voi
             ];
 
             const selectedOption = await vscode.window.showQuickPick(switchOptions, {
-                placeHolder: `Database "${database.name}" uses version "${dbVersion.name}". What would you like to do?`,
+                placeHolder: `Database "${databaseLabel}" uses version "${dbVersion.name}". What would you like to do?`,
                 ignoreFocusOut: true
             });
 
@@ -974,7 +1276,7 @@ async function handleDatabaseVersionSwitch(database: DatabaseModel): Promise<voi
     if (effectiveOdooVersion && effectiveOdooVersion !== '') {
         const currentOdooBranch = await getGitBranch(settings.odooPath);
         const currentEnterpriseBranch = await getGitBranch(settings.enterprisePath);
-        const currentDesignThemesBranch = await getGitBranch(settings.designThemesPath || './design-themes');
+        const currentDesignThemesBranch = await getGitBranch(settings.designThemesPath);
 
         // Handle automatic branch switching for databases without version
         if (switchBehavior === 'auto-both' || switchBehavior === 'auto-branch-only') {
@@ -987,7 +1289,7 @@ async function handleDatabaseVersionSwitch(database: DatabaseModel): Promise<voi
             }
         } else if (switchBehavior === 'auto-version-only') {
             // Can't switch version for databases without version - do nothing
-            showAutoInfo(`No version settings to switch to for database "${database.name}"`, 2000);
+            showAutoInfo(`No version settings to switch to for database "${databaseLabel}"`, 2000);
         } else {
             // Ask user (default behavior)
             const shouldSwitch = await promptBranchSwitch(effectiveOdooVersion, {
@@ -1006,9 +1308,10 @@ async function handleDatabaseVersionSwitch(database: DatabaseModel): Promise<voi
 export async function deleteDb(event: any) {
     const db = extractDatabaseFromEvent(event);
     if (!db) {
-        showError('Invalid database object for deletion');
+        showError('Could not identify the database to delete.');
         return;
     }
+    const dbLabel = getDatabaseLabel(db);
 
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
@@ -1019,13 +1322,13 @@ export async function deleteDb(event: any) {
     // Find the project index in the projects array
     const projectIndex = data.projects.findIndex((p: any) => p.uid === project.uid);
     if (projectIndex === -1) {
-        showError('Project not found');
+        showError('The selected project could not be found.');
         return;
     }
 
     // Ask for confirmation
     const confirm = await vscode.window.showWarningMessage(
-        `Are you sure you want to delete the database "${db.name}"?`,
+        `Are you sure you want to delete the database "${dbLabel}"?`,
         { modal: true },
         'Delete'
     );
@@ -1049,10 +1352,10 @@ export async function deleteDb(event: any) {
     const updatedData = stripSettings(data);
     await SettingsStore.saveWithoutComments(updatedData);
 
-    showAutoInfo(`Database "${db.name}" deleted successfully`, 2500);
+    showAutoInfo(`Database "${dbLabel}" deleted successfully`, 2500);
 
     if (db.isSelected && project.dbs.length > 0) {
-        showBriefStatus(`Switched to database: ${project.dbs[0].name}`, 2000);
+        showBriefStatus(`Switched to database: ${getDatabaseLabel(project.dbs[0])}`, 2000);
     }
 }
 
@@ -1060,9 +1363,10 @@ export async function changeDatabaseVersion(event: any) {
     try {
         const db = extractDatabaseFromEvent(event);
         if (!db) {
-            showError('Invalid database object for version change');
+            showError('Could not identify the database whose version should change.');
             return;
         }
+        const dbLabel = getDatabaseLabel(db);
 
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
@@ -1073,14 +1377,14 @@ export async function changeDatabaseVersion(event: any) {
     // Find the project index in the projects array
     const projectIndex = data.projects.findIndex((p: any) => p.uid === project.uid);
     if (projectIndex === -1) {
-        showError('Project not found');
+        showError('The selected project could not be found.');
         return;
     }
 
     // Find the database index
     const dbIndex = project.dbs.findIndex((database: DatabaseModel) => database.id === db.id);
     if (dbIndex === -1) {
-        showError('Database not found');
+        showError('The selected database could not be found.');
         return;
     }
 
@@ -1118,7 +1422,7 @@ export async function changeDatabaseVersion(event: any) {
     }
 
     const selectedChoice = await vscode.window.showQuickPick(versionChoices, {
-        placeHolder: `Current: ${currentVersionText}. Select a new version for database "${db.name}"`,
+        placeHolder: `Current: ${currentVersionText}. Select a new version for database "${dbLabel}"`,
         ignoreFocusOut: true
     });
 
@@ -1149,7 +1453,7 @@ export async function changeDatabaseVersion(event: any) {
 
     // Show confirmation message
     const updatedDb = project.dbs[dbIndex]; // Use the updated database object
-    const dbNameForMessage = updatedDb?.name || db?.name || 'Unknown Database';
+    const dbNameForMessage = getDatabaseLabel(updatedDb) || dbLabel;
     const newVersionText = selectedChoice.versionId
         ? `version "${availableVersions.find(v => v.id === selectedChoice.versionId)?.name}"`
         : "no version";
@@ -1174,4 +1478,74 @@ export async function changeDatabaseVersion(event: any) {
         showError(`Failed to change database version: ${error.message}`);
         console.error('Error in changeDatabaseVersion:', error);
     }
+}
+
+function prepareDumpIfNeeded(dumpPath: string): PreparedDump {
+    if (dumpPath.endsWith('.zip')) {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odoo-dump-'));
+        const tempSqlPath = path.join(tempDir, 'dump.sql');
+        try {
+            const listOutput = execSync(`unzip -Z1 "${dumpPath}"`, { encoding: 'utf8', shell: '/bin/sh' });
+            const entries = listOutput.split('\n').map(line => line.trim()).filter(Boolean);
+            if (entries.length === 0) {
+                throw new Error('Archive is empty.');
+            }
+
+            const sqlEntry = entries.find(entry => entry.toLowerCase().endsWith('.sql'));
+            const gzEntry = entries.find(entry => entry.toLowerCase().endsWith('.sql.gz'));
+
+            if (sqlEntry) {
+                execSync(`unzip -p "${dumpPath}" "${sqlEntry}" > "${tempSqlPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
+            } else if (gzEntry) {
+                execSync(`unzip -p "${dumpPath}" "${gzEntry}" | gunzip -c > "${tempSqlPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
+            } else {
+                execSync(`unzip -p "${dumpPath}" > "${tempSqlPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
+            }
+
+            return {
+                sqlPath: tempSqlPath,
+                cleanup: () => {
+                    try {
+                        fs.rmSync(tempDir, { recursive: true, force: true });
+                    } catch (cleanupError) {
+                        console.warn('Failed to cleanup temporary unzip folder:', cleanupError);
+                    }
+                }
+            };
+        } catch (error) {
+            try {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            } catch {
+                // ignore
+            }
+            throw error;
+        }
+    }
+
+    if (dumpPath.endsWith('.gz')) {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odoo-dump-'));
+        const tempSqlPath = path.join(tempDir, 'dump.sql');
+        try {
+            execSync(`gunzip -c "${dumpPath}" > "${tempSqlPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
+            return {
+                sqlPath: tempSqlPath,
+                cleanup: () => {
+                    try {
+                        fs.rmSync(tempDir, { recursive: true, force: true });
+                    } catch (cleanupError) {
+                        console.warn('Failed to cleanup temporary gunzip folder:', cleanupError);
+                    }
+                }
+            };
+        } catch (error) {
+            try {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            } catch {
+                // ignore
+            }
+            throw error;
+        }
+    }
+
+    return { sqlPath: dumpPath };
 }

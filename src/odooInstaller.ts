@@ -28,7 +28,7 @@ Continue?`;
 
     const baseDir = getWorkspacePath();
     if (!baseDir) {
-        showError('No workspace folder found. Please open a folder first.');
+        showError('Open a workspace folder before running this command.');
         return;
     }
 
@@ -38,9 +38,15 @@ Continue?`;
     const venvPath = path.join(baseDir, 'venv');
 
     const existingPaths = [];
-    if (fs.existsSync(odooPath)) existingPaths.push('odoo');
-    if (fs.existsSync(enterprisePath)) existingPaths.push('enterprise');
-    if (fs.existsSync(venvPath)) existingPaths.push('venv');
+    if (fs.existsSync(odooPath)) {
+        existingPaths.push('odoo');
+    }
+    if (fs.existsSync(enterprisePath)) {
+        existingPaths.push('enterprise');
+    }
+    if (fs.existsSync(venvPath)) {
+        existingPaths.push('venv');
+    }
 
     if (existingPaths.length > 0) {
         const overwriteConfirm = await vscode.window.showWarningMessage(
@@ -84,7 +90,7 @@ Continue?`;
             placeHolder: 'e.g., 17.0, master, saas-17.4',
             ignoreFocusOut: true
         });
-        
+
         if (!customBranch) {
             return;
         }
@@ -100,7 +106,7 @@ Continue?`;
             progress.report({ message: 'Preparing setup…', increment: 5 });
 
             // Create terminal for operations
-            const terminal = vscode.window.createTerminal({ 
+            const terminal = vscode.window.createTerminal({
                 name: `Odoo Setup (${branch})`,
                 cwd: baseDir
             });
@@ -109,27 +115,27 @@ Continue?`;
             // Clone Odoo repository
             progress.report({ message: 'Cloning Odoo repository…', increment: 15 });
             console.log(`🔄 Cloning Odoo repository (branch: ${branch})`);
-            
+
             terminal.sendText(`echo "🔄 Cloning Odoo repository (branch: ${branch})..."`);
             terminal.sendText(`git clone --depth 1 --branch ${branch} https://github.com/odoo/odoo.git`);
-            
+
             // Wait a bit for the clone to start
             await new Promise(resolve => setTimeout(resolve, 2000));
 
             // Clone Enterprise repository
             progress.report({ message: 'Cloning Enterprise repository…', increment: 35 });
             console.log(`🔄 Cloning Enterprise repository (branch: ${branch})`);
-            
+
             terminal.sendText(`echo "🔄 Cloning Enterprise repository (branch: ${branch})..."`);
             terminal.sendText(`git clone --depth 1 --branch ${branch} git@github.com:odoo/enterprise.git || git clone --depth 1 --branch ${branch} https://github.com/odoo/enterprise.git`);
-            
+
             // Wait for enterprise clone
             await new Promise(resolve => setTimeout(resolve, 2000));
 
             // Check Python availability
             progress.report({ message: 'Checking Python installation…', increment: 55 });
             console.log('🐍 Checking Python installation');
-            
+
             let pythonCmd = 'python3';
             try {
                 execSync('python3 --version', { stdio: 'ignore' });
@@ -145,30 +151,30 @@ Continue?`;
             // Create virtual environment
             progress.report({ message: 'Creating Python virtual environment…', increment: 75 });
             console.log('🔧 Creating Python virtual environment');
-            
+
             terminal.sendText(`echo "🔧 Creating Python virtual environment..."`);
             terminal.sendText(`${pythonCmd} -m venv venv`);
-            
+
             // Wait for venv creation
             await new Promise(resolve => setTimeout(resolve, 3000));
 
             // Activate venv and install basic requirements
             progress.report({ message: 'Installing basic Python packages…', increment: 85 });
             console.log('📦 Installing basic Python packages');
-            
+
             terminal.sendText(`echo "📦 Installing basic Python packages..."`);
-            
+
             // Platform-specific activation
             const isWindows = process.platform === 'win32';
             const activateCmd = isWindows ? '.\\venv\\Scripts\\activate' : 'source venv/bin/activate';
-            
+
             terminal.sendText(`${activateCmd} && pip install --upgrade pip setuptools wheel`);
-            
+
             // Install Odoo requirements if they exist
             terminal.sendText(`${activateCmd} && if [ -f odoo/requirements.txt ]; then pip install -r odoo/requirements.txt; else echo "No requirements.txt found in odoo directory"; fi`);
 
             progress.report({ message: 'Setup complete!', increment: 100 });
-            
+
             // Show completion message with next steps
             terminal.sendText(`echo ""`);
             terminal.sendText(`echo "✅ Odoo ${branch} setup complete!"`);

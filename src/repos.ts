@@ -1,12 +1,22 @@
 import { RepoModel } from "./models/repo";
 import * as vscode from "vscode";
-import { listSubdirectories, getWorkspacePath, normalizePath, showError, showInfo, stripSettings } from './utils';
+import { findRepositories, getWorkspacePath, normalizePath, showError, showInfo, stripSettings } from './utils';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import * as path from 'path';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
+import { SortPreferences } from './sortPreferences';
+import { getDefaultSortOption } from './sortOptions';
 
+interface RepoEntry {
+    name: string;
+    path: string;
+    isSelected: boolean;
+    branch: string | null;
+    repoModel?: RepoModel;
+    fsCreatedAt: number;
+}
 
 export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
@@ -16,13 +26,13 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
         this._onDidChangeTreeData.fire();
     }
 
-    constructor(private context: vscode.ExtensionContext) {
+    constructor(private context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
         this.context = context;
     }
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
         return element;
     }
-    async getChildren(element?: any): Promise<vscode.TreeItem[] | undefined> {
+    async getChildren(_element?: any): Promise<vscode.TreeItem[] | undefined> {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
             return [];
@@ -47,54 +57,93 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
             return [];
         }
 
-        const devsRepos = listSubdirectories(customAddonsPath);
+        const devsRepos = findRepositories(customAddonsPath);
         if (devsRepos.length === 0) {
-            showInfo('No folders found in the Customer Addons Directory');
+            showInfo('No repositories found in the custom addons directory.');
             return [];
         }
 
         if (!repos) {
-            showError('No modules found');
+            showError('No modules are configured for this database.');
             return [];
         }
 
-        let treeItems: vscode.TreeItem[] = [];
-        for (const repo of devsRepos) {
+        const repoEntries: RepoEntry[] = devsRepos.map(repo => {
             const existingRepo = repos.find(r => r.name === repo.name);
-            let repoIcon: string = existingRepo ? "☑️" : "⬜️";
-            const treeItem = new vscode.TreeItem(`${repoIcon} ${repo.name}`);
-            treeItem.tooltip = `Repo: ${repo.name}\nPath: ${repo.path}`;
-            treeItem.id = repo.path;
-            if (existingRepo) {
-                let branch: string | null = null;
-                const gitPath = path.join(repo.path, '.git');
-                if (fs.existsSync(gitPath)) {
-                    try {
-                        branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: repo.path })
-                            .toString()
-                            .trim();
-                    } catch (err) {
-                        branch = null;
-                    }
+            let branch: string | null = null;
+            const gitPath = path.join(repo.path, '.git');
+            if (fs.existsSync(gitPath)) {
+                try {
+                    branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: repo.path })
+                        .toString()
+                        .trim();
+                } catch {
+                    branch = null;
                 }
-                treeItem.description = `${branch}`;
-            } else {
-                treeItem.description = ``;
             }
+            let fsCreatedAt = 0;
+            try {
+                const stats = fs.statSync(repo.path);
+                fsCreatedAt = stats.birthtimeMs || stats.ctimeMs || 0;
+            } catch {
+                fsCreatedAt = 0;
+            }
+            return {
+                name: repo.name,
+                path: repo.path,
+                isSelected: !!existingRepo,
+                branch,
+                repoModel: existingRepo,
+                fsCreatedAt
+            };
+        });
+
+        const sortId = this.sortPreferences.get('repoSelector', getDefaultSortOption('repoSelector'));
+        repoEntries.sort((a, b) => this.compareRepos(a, b, sortId));
+
+        return repoEntries.map(entry => {
+            const repoIcon = entry.isSelected ? "☑️" : "⬜️";
+            const treeItem = new vscode.TreeItem(`${repoIcon} ${entry.name}`);
+            treeItem.tooltip = `Repo: ${entry.name}\nPath: ${entry.path}`;
+            treeItem.id = entry.path;
+            treeItem.description = entry.branch ?? '';
             treeItem.command = {
                 command: 'repoSelector.selectRepo',
                 title: 'Select Module',
-                arguments: [{isSelected: existingRepo ? true : false, path: repo.path, name: repo.name}]
+                arguments: [{ isSelected: entry.isSelected, path: entry.path, name: entry.name }]
             };
-            treeItems.push(treeItem);
-        }
-        // Sort so that selected repos show up first
-        treeItems.sort((a, b) => {
-            const aSelected = a.label?.toString().startsWith("☑️") ? 1 : 0;
-            const bSelected = b.label?.toString().startsWith("☑️") ? 1 : 0;
-            return bSelected - aSelected;
+            return treeItem;
         });
-        return treeItems;
+    }
+
+    private compareRepos(a: RepoEntry, b: RepoEntry, sortId: string): number {
+        const selectedDelta = Number(b.isSelected) - Number(a.isSelected);
+        if (selectedDelta !== 0) {
+            return selectedDelta;
+        }
+
+        switch (sortId) {
+            case 'repo:name:asc':
+                return a.name.localeCompare(b.name);
+            case 'repo:name:desc':
+                return b.name.localeCompare(a.name);
+            case 'repo:created:newest':
+                return this.getRepoTimestamp(b) - this.getRepoTimestamp(a);
+            case 'repo:created:oldest':
+                return this.getRepoTimestamp(a) - this.getRepoTimestamp(b);
+            default:
+                return a.name.localeCompare(b.name);
+        }
+    }
+
+    private getRepoTimestamp(entry: RepoEntry): number {
+        if (entry.repoModel?.addedAt) {
+            const added = new Date(entry.repoModel.addedAt).getTime();
+            if (!isNaN(added)) {
+                return added;
+            }
+        }
+        return entry.fsCreatedAt ?? 0;
     }
 }
 

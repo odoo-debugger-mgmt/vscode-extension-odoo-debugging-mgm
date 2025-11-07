@@ -82,3 +82,29 @@ export class TestingConfigModel implements TestingConfig {
             .join(',');
     }
 }
+
+/**
+ * Normalizes stored testing configuration objects into TestingConfigModel instances.
+ */
+export function ensureTestingConfigModel(testingConfig: any): TestingConfigModel {
+    if (!testingConfig) {
+        return new TestingConfigModel();
+    }
+    if (testingConfig instanceof TestingConfigModel) {
+        return testingConfig;
+    }
+
+    try {
+        return new TestingConfigModel(
+            Boolean(testingConfig.isEnabled),
+            Array.isArray(testingConfig.testTags) ? testingConfig.testTags : [],
+            testingConfig.testFile,
+            Boolean(testingConfig.stopAfterInit),
+            (testingConfig.logLevel as LogLevel) ?? 'disabled',
+            Array.isArray(testingConfig.savedModuleStates) ? testingConfig.savedModuleStates : undefined
+        );
+    } catch (error) {
+        console.warn('Error converting testing config, creating new instance:', error);
+        return new TestingConfigModel();
+    }
+}

@@ -1,89 +1,12 @@
 import * as vscode from "vscode";
-import * as fs from 'fs';
 import { SettingsStore } from './settingsStore';
-import { TestTag, TestingConfigModel, LogLevel } from './models/testing';
+import { TestTag, TestingConfigModel, LogLevel, ensureTestingConfigModel } from './models/testing';
 import { ModuleModel } from './models/module';
 import { InstalledModuleInfo } from './models/module';
-import { showError, showInfo, showAutoInfo, showWarning, stripSettings } from './utils';
-import { execSync } from 'child_process';
-import { updateTestingContext } from './extension';
+import { showError, showInfo, showAutoInfo, showWarning, stripSettings, createInfoTreeItem } from './utils';
+import { updateTestingContext } from './context';
 import { setupDebugger } from './debugger';
-
-/**
- * Gets installed modules from the database using psql
- */
-async function getInstalledModules(dbName: string): Promise<InstalledModuleInfo[]> {
-    try {
-        const query = `SELECT id, name, shortdesc, latest_version, state, application FROM ir_module_module WHERE state IN ('installed','to upgrade') ORDER BY name;`;
-        const command = `psql ${dbName} -t -A -F'|' -c "${query}"`;
-
-        const output = execSync(command, {
-            encoding: 'utf-8',
-            stdio: ['pipe', 'pipe', 'pipe']
-        });
-
-        const lines = output.trim().split('\n').filter(line => line.trim());
-        const installedModules: InstalledModuleInfo[] = [];
-
-        for (const line of lines) {
-            const [id, name, shortdesc, latest_version, state, application] = line.split('|');
-
-            // Parse shortdesc JSON and extract en_US description
-            let description = '';
-            try {
-                if (shortdesc) {
-                    const descObj = JSON.parse(shortdesc);
-                    description = descObj.en_US || descObj[Object.keys(descObj)[0]] || '';
-                }
-            } catch (error) {
-                description = shortdesc || '';
-            }
-
-            installedModules.push({
-                id: parseInt(id),
-                name: name || '',
-                shortdesc: description,
-                installed_version: latest_version || null,
-                latest_version: latest_version || null,
-                state: state || '',
-                application: application === 't'
-            });
-        }
-
-        return installedModules;
-    } catch (error) {
-        console.warn(`Failed to get installed modules from database ${dbName}:`, error);
-        return [];
-    }
-}
-
-/**
- * Ensures we have a proper TestingConfigModel instance
- * Handles converting plain objects from JSON storage back to class instances
- */
-function ensureTestingConfigModel(testingConfig: any): TestingConfigModel {
-    if (!testingConfig) {
-        return new TestingConfigModel();
-    }
-    if (testingConfig instanceof TestingConfigModel) {
-        return testingConfig;
-    }
-
-    // Convert plain object to TestingConfigModel instance
-    try {
-        return new TestingConfigModel(
-            testingConfig.isEnabled || false,
-            Array.isArray(testingConfig.testTags) ? testingConfig.testTags : [],
-            testingConfig.testFile,
-            testingConfig.stopAfterInit || false,
-            testingConfig.logLevel || 'disabled',
-            Array.isArray(testingConfig.savedModuleStates) ? testingConfig.savedModuleStates : undefined
-        );
-    } catch (error) {
-        console.warn('Error converting testing config, creating new instance:', error);
-        return new TestingConfigModel();
-    }
-}
+import { getInstalledModules } from './services/database';
 
 export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
@@ -104,13 +27,13 @@ export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
     async getChildren(element?: any): Promise<vscode.TreeItem[] | undefined> {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            return [this.createInfoItem('No project selected')];
+            return [createInfoTreeItem('Select a project before running this action.')];
         }
 
         const { data, project } = result;
         const db = project.dbs.find(db => db.isSelected === true);
         if (!db) {
-            return [this.createInfoItem('No database selected')];
+            return [createInfoTreeItem('Select a database before running this action.')];
         }
 
         let testingConfig = ensureTestingConfigModel(project.testingConfig);
@@ -163,7 +86,7 @@ export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
             }
 
             if (tagItems.length === 0) {
-                tagItems.push(this.createInfoItem('No test targets configured.'));
+                tagItems.push(createInfoTreeItem('No test targets configured.'));
             }
 
             return tagItems;
@@ -272,12 +195,6 @@ export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
         return treeItems;
     }
 
-    private createInfoItem(message: string): vscode.TreeItem {
-        const item = new vscode.TreeItem(message, vscode.TreeItemCollapsibleState.None);
-        item.contextValue = 'info';
-        return item;
-    }
-
     private getTypeIcon(type: string): string {
         switch (type) {
             case 'module': return '📦';
@@ -316,14 +233,14 @@ export async function toggleTesting(event: any): Promise<void> {
         const { isEnabled } = event;
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('No project selected');
+            showError('Select a project before running this action.');
             return;
         }
 
         const { data, project } = result;
         const db = project.dbs.find(db => db.isSelected === true);
         if (!db) {
-            showError('No database selected');
+            showError('Select a database before running this action.');
             return;
         }
 
@@ -354,7 +271,8 @@ export async function toggleTesting(event: any): Promise<void> {
 
             await SettingsStore.saveWithoutComments(stripSettings(data));
             updateTestingContext(false);
-            showAutoInfo('Testing disabled. Module states restored.', 3000);
+            showAutoInfo('Testing disabled. Previous module states restored.', 3000);
+            await setupDebugger();
 
         } else {
             // Enable testing - save current states and clear modules
@@ -380,7 +298,8 @@ export async function toggleTesting(event: any): Promise<void> {
 
             await SettingsStore.saveWithoutComments(stripSettings(data));
             updateTestingContext(true);
-            showAutoInfo('Testing enabled. Module selections cleared and saved for restoration.', 4000);
+            showAutoInfo('Testing enabled. Current module selections saved and cleared.', 4000);
+            await setupDebugger();
         }
     } catch (error) {
         console.error('Error in toggleTesting:', error);
@@ -392,7 +311,7 @@ export async function toggleStopAfterInit(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('No project selected');
+            showError('Select a project before running this action.');
             return;
         }
 
@@ -417,7 +336,7 @@ export async function setTestFile(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('No project selected');
+            showError('Select a project before running this action.');
             return;
         }
 
@@ -438,7 +357,7 @@ export async function setTestFile(): Promise<void> {
             if (project.testingConfig.testFile) {
                 showAutoInfo(`Test file set to: ${project.testingConfig.testFile}`, 2000);
             } else {
-                showAutoInfo('Test file cleared', 2000);
+                showAutoInfo('Cleared the test file path.', 2000);
             }
 
             // Update launch.json with new test configuration
@@ -454,7 +373,7 @@ export async function addTestTag(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('No project selected');
+            showError('Select a project before running this action.');
             return;
         }
 
@@ -462,13 +381,13 @@ export async function addTestTag(): Promise<void> {
         project.testingConfig = ensureTestingConfigModel(project.testingConfig);
 
         if (!project.testingConfig.isEnabled) {
-            showError('Testing is not enabled');
+            showError('Enable testing before running this command.');
             return;
         }
 
         const db = project.dbs.find(db => db.isSelected === true);
         if (!db) {
-            showError('No database selected');
+            showError('Select a database before running this action.');
             return;
         }
 
@@ -515,7 +434,7 @@ export async function addTestTag(): Promise<void> {
             try {
                 const installedModules = await getInstalledModules(db.id);
                 if (installedModules.length === 0) {
-                    showInfo('No installed modules found');
+                    showInfo('No installed modules were found.');
                     return;
                 }
 
@@ -648,7 +567,7 @@ export async function cycleTestTagState(tag: TestTag): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('No project selected');
+            showError('Select a project before running this action.');
             return;
         }
 
@@ -677,7 +596,7 @@ export async function cycleTestTagState(tag: TestTag): Promise<void> {
             // Update launch.json with new test configuration
             await setupDebugger();
         } else {
-            showError('Test tag not found');
+            showError('Could not find that test tag.');
         }
     } catch (error) {
         console.error('Error in cycleTestTagState:', error);
@@ -689,7 +608,7 @@ export async function removeTestTag(tagOrTreeItem: TestTag | vscode.TreeItem): P
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('No project selected');
+            showError('Select a project before running this action.');
             return;
         }
 
@@ -717,8 +636,8 @@ export async function removeTestTag(tagOrTreeItem: TestTag | vscode.TreeItem): P
                 tagValue = tag.value;
             }
         } else {
-            console.error('Invalid tag reference:', tagOrTreeItem);
-            showError('Invalid tag reference');
+            console.error('Could not find the referenced test tag:', tagOrTreeItem);
+            showError('Could not find the referenced test tag.');
             return;
         }
 
@@ -731,7 +650,7 @@ export async function removeTestTag(tagOrTreeItem: TestTag | vscode.TreeItem): P
             // Update launch.json with new test configuration
             await setupDebugger();
         } else {
-            showError('Test tag not found');
+            showError('Could not find that test tag.');
         }
     } catch (error) {
         console.error('Error in removeTestTag:', error);
@@ -743,7 +662,7 @@ export async function toggleLogLevel(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('No project selected');
+            showError('Select a project before running this action.');
             return;
         }
 
@@ -773,7 +692,7 @@ export async function setSpecificLogLevel(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('No project selected');
+            showError('Select a project before running this action.');
             return;
         }
 

@@ -26,6 +26,8 @@ export interface VersionSettings {
     customAddonsPath: string;
     pythonPath: string;
     subModulesPaths: string;
+    preCheckoutCommands: string[];
+    postCheckoutCommands: string[];
 }
 
 export class VersionModel {
@@ -71,6 +73,8 @@ export class VersionModel {
             subModulesPaths: "",
             installApps: "",
             upgradeApps: "",
+            preCheckoutCommands: [],
+            postCheckoutCommands: [],
             ...settings
         };
     }

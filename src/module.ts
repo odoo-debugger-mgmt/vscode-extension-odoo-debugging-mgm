@@ -1,10 +1,17 @@
 import { ModuleModel, InstalledModuleInfo } from "./models/module";
 import { DatabaseModel } from "./models/db";
+import { ProjectModel } from "./models/project";
 import * as vscode from "vscode";
-import * as fs from 'fs';
-import { listSubdirectories, showError, showInfo, showAutoInfo, normalizePath, stripSettings } from './utils';
+import { discoverModulesInRepos, showError, showInfo, showAutoInfo, normalizePath, stripSettings, createInfoTreeItem, ModuleDiscoveryResult, getDatabaseLabel } from './utils';
+
+function collectModuleDiscovery(project: ProjectModel): ModuleDiscoveryResult {
+    const manualIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
+    return discoverModulesInRepos(project.repos, { manualIncludePaths: manualIncludes });
+}
 import { SettingsStore } from './settingsStore';
-import { execSync } from 'child_process';
+import { getInstalledModules } from './services/database';
+import { SortPreferences } from './sortPreferences';
+import { getDefaultSortOption } from './sortOptions';
 
 export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
@@ -14,27 +21,25 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
         this._onDidChangeTreeData.fire();
     }
 
-    constructor(private context: vscode.ExtensionContext) {
+    constructor(private context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
         this.context = context;
     }
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
         return element;
     }
-    async getChildren(element?: any): Promise<vscode.TreeItem[] | undefined> {
+    async getChildren(_element?: any): Promise<vscode.TreeItem[] | undefined> {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            return [];
+            return [createInfoTreeItem('Select a project to manage modules.')];
         }
         const { project } = result;
         const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
         if (!db) {
-            showError('No database selected');
-            return [];
+            return [createInfoTreeItem('Select a database to view modules.')];
         }
         const modules: ModuleModel[] = db.modules;
         if (!modules) {
-            showError('No modules found');
-            return [];
+            return [createInfoTreeItem('No modules configured for this database.')];
         }
 
         // Check if testing is enabled
@@ -44,51 +49,7 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
         const installedModules = await getInstalledModules(db.id);
         const installedModuleNames = new Set(installedModules.map((m: InstalledModuleInfo) => m.name));
 
-        let allModules: {"path": string, "name": string, "repoName": string, "isPsaeInternal": boolean, "psInternalDirName"?: string}[] = [];
-        let psaeInternalDirs: {"path": string, "repoName": string, "dirName": string}[] = [];
-
-        // Add modules from regular repositories
-        for (const repo of project.repos) {
-            const repoModules = listSubdirectories(repo.path);
-            allModules = allModules.concat(repoModules.map(module => ({
-                ...module,
-                repoName: repo.name,
-                isPsaeInternal: false
-            })));
-
-            // Check for ps*-internal directories in this repo
-            try {
-                const repoDirContents = fs.readdirSync(repo.path);
-                for (const item of repoDirContents) {
-                    // Match pattern: ps followed by any letters, then -internal
-                    if (/^ps[a-z]*-internal$/i.test(item)) {
-                        const psInternalPath = `${repo.path}/${item}`;
-                        if (fs.existsSync(psInternalPath) && fs.statSync(psInternalPath).isDirectory()) {
-                            // Add ps*-internal directory as a special entry
-                            psaeInternalDirs.push({
-                                path: psInternalPath,
-                                repoName: repo.name,
-                                dirName: item
-                            });
-
-                            try {
-                                const psModules = listSubdirectories(psInternalPath);
-                                allModules = allModules.concat(psModules.map(module => ({
-                                    ...module,
-                                    repoName: repo.name,
-                                    isPsaeInternal: true,
-                                    psInternalDirName: item
-                                })));
-                            } catch (error) {
-                                console.warn(`Failed to read ${item} modules from ${psInternalPath}:`, error);
-                            }
-                        }
-                    }
-                }
-            } catch (error) {
-                console.warn(`Failed to read repo directory ${repo.path}:`, error);
-            }
-        }
+        const { modules: allModules, psaeDirectories } = collectModuleDiscovery(project);
 
         let treeItems: vscode.TreeItem[] = [];
 
@@ -104,9 +65,9 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
         }
 
         // Add psae-internal directories as special meta-modules
-        for (const psaeDir of psaeInternalDirs) {
+        for (const psaeDir of psaeDirectories) {
             const psaeInternalModules = allModules.filter(m =>
-                m.isPsaeInternal && m.repoName === psaeDir.repoName && m.psInternalDirName === psaeDir.dirName
+                m.isPsaeInternal && m.psInternalDirPath === psaeDir.path
             );
 
             // Check if any modules from this ps*-internal are selected OR installed in DB
@@ -134,9 +95,15 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
             if (shouldBeIncluded) {
                 psaeIcon = '📦'; // Package icon when included in addons path
                 const reasons = [];
-                if (isManuallyIncluded) reasons.push('manually included');
-                if (hasSelectedModules) reasons.push('has selected modules');
-                if (hasDbModules) reasons.push('has database modules');
+                if (isManuallyIncluded) {
+                    reasons.push('manually included');
+                }
+                if (hasSelectedModules) {
+                    reasons.push('has selected modules');
+                }
+                if (hasDbModules) {
+                    reasons.push('has database modules');
+                }
 
                 psaeTooltip = `${psaeDir.dirName}: Included (${reasons.join(' + ')})\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to exclude from addons path`;
             } else {
@@ -260,20 +227,81 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
             }
         }
 
-        // Sort: Testing warning first, then ps*-internal, then 🟢 (install) and 🟡 (upgrade), then the rest
-        treeItems.sort((a, b) => {
-            const getPriority = (label: string | vscode.TreeItemLabel | undefined) => {
-                if (typeof label === 'string') {
-                    if (label.includes('⚠️ Module Management Disabled (Testing Mode)')) {return -2;} // Warning message first
-                    if (/ps[a-z]*-internal/i.test(label)) {return -1;} // ps*-internal second
-                    if (label.startsWith('🟢')) {return 0;}
-                    if (label.startsWith('🟡')) {return 1;}
+        const sortId = this.sortPreferences.get('moduleSelector', getDefaultSortOption('moduleSelector'));
+        return this.sortModuleItems(treeItems, sortId);
+    }
+
+    private sortModuleItems(items: vscode.TreeItem[], sortId: string): vscode.TreeItem[] {
+        const testingItems: vscode.TreeItem[] = [];
+        const psaeItems: vscode.TreeItem[] = [];
+        const moduleItems: vscode.TreeItem[] = [];
+        const otherItems: vscode.TreeItem[] = [];
+
+        for (const item of items) {
+            if (typeof item.label === 'string' && item.label.includes('⚠️ Module Management Disabled (Testing Mode)')) {
+                testingItems.push(item);
+            } else if ((item.command?.command === 'moduleSelector.togglePsaeInternalModule') || (typeof item.label === 'string' && /ps[a-z]*-internal/i.test(item.label))) {
+                psaeItems.push(item);
+            } else if ((item as any).moduleData) {
+                moduleItems.push(item);
+            } else {
+                otherItems.push(item);
+            }
+        }
+
+        moduleItems.sort((a, b) => this.compareModules(a, b, sortId));
+
+        return [...testingItems, ...psaeItems, ...moduleItems, ...otherItems];
+    }
+
+    private compareModules(itemA: vscode.TreeItem, itemB: vscode.TreeItem, sortId: string): number {
+        const dataA = (itemA as any).moduleData;
+        const dataB = (itemB as any).moduleData;
+
+        if (!dataA || !dataB) {
+            return 0;
+        }
+
+        const nameCompare = dataA.name.localeCompare(dataB.name);
+        const repoCompare = (dataA.repoName || '').localeCompare(dataB.repoName || '');
+        const statePriority = (state: string) => {
+            if (state === 'install') {return 0;}
+            if (state === 'upgrade') {return 1;}
+            return 2;
+        };
+
+        switch (sortId) {
+            case 'module:state:active-first': {
+                const diff = statePriority(dataA.state) - statePriority(dataB.state);
+                if (diff !== 0) {
+                    return diff;
                 }
-                return 2;
-            };
-            return getPriority(a.label) - getPriority(b.label);
-        });
-        return treeItems;
+                return nameCompare;
+            }
+            case 'module:state:active-last': {
+                const diff = statePriority(dataB.state) - statePriority(dataA.state);
+                if (diff !== 0) {
+                    return diff;
+                }
+                return nameCompare;
+            }
+            case 'module:name:asc':
+                return nameCompare;
+            case 'module:name:desc':
+                return -nameCompare;
+            case 'module:repo:asc':
+                if (repoCompare !== 0) {
+                    return repoCompare;
+                }
+                return nameCompare;
+            case 'module:repo:desc':
+                if (repoCompare !== 0) {
+                    return -repoCompare;
+                }
+                return nameCompare;
+            default:
+                return nameCompare;
+        }
     }
 }
 
@@ -286,13 +314,13 @@ export async function selectModule(event: any) {
     const { data, project } = result;
     const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('No database selected');
+        showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        showError('Disable testing mode before changing module selections.');
         return;
     }
     const moduleExistsInDb = db.modules.find(mod => mod.name === module.name);
@@ -320,13 +348,13 @@ export async function setModuleToInstall(event: any): Promise<void> {
     const { data, project } = result;
     const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('No database selected');
+        showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -353,13 +381,13 @@ export async function setModuleToUpgrade(event: any): Promise<void> {
     const { data, project } = result;
     const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('No database selected');
+        showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -386,13 +414,13 @@ export async function clearModuleState(event: any): Promise<void> {
     const { data, project } = result;
     const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('No database selected');
+        showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -426,13 +454,13 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
     const { data, project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('No database selected');
+        showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -497,72 +525,29 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
 export async function updateAllModules(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        showError('No project selected');
+        showError('Select a project before running this action.');
         return;
     }
 
     const { data, project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('No database selected');
+        showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        showError('Disable testing mode before changing module selections.');
         return;
     }
 
-    // Get all available modules from repositories
-    let allModules: {"path": string, "name": string, "repoName": string, "isPsaeInternal": boolean}[] = [];
-    let psaeInternalDirs: {"path": string, "repoName": string}[] = [];
-
-    // Add modules from regular repositories
-    for (const repo of project.repos) {
-        const repoModules = listSubdirectories(repo.path);
-        allModules = allModules.concat(repoModules.map(module => ({
-            ...module,
-            repoName: repo.name,
-            isPsaeInternal: false
-        })));
-
-        // Check if this repo has ps*-internal directories
-        try {
-            const repoDirContents = fs.readdirSync(repo.path);
-            for (const item of repoDirContents) {
-                if (/^ps[a-z]*-internal$/i.test(item)) {
-                    const psInternalPath = normalizePath(`${repo.path}/${item}`);
-                    if (fs.existsSync(psInternalPath)) {
-                        psaeInternalDirs.push({ path: psInternalPath, repoName: repo.name });
-                    }
-                }
-            }
-        } catch (error) {
-            console.warn(`Failed to read repo directory ${repo.path}:`, error);
-        }
-    }
-
-    // Add modules from included psae-internal directories
-    if (project.includedPsaeInternalPaths) {
-        for (const psaePath of project.includedPsaeInternalPaths) {
-            if (fs.existsSync(psaePath)) {
-                const repoDir = psaeInternalDirs.find(dir => dir.path === psaePath);
-                const repoName = repoDir ? repoDir.repoName : 'unknown';
-                const psaeModules = listSubdirectories(psaePath);
-                allModules = allModules.concat(psaeModules.map(module => ({
-                    ...module,
-                    repoName: repoName,
-                    isPsaeInternal: true
-                })));
-            }
-        }
-    }
+    const { modules: allModules } = collectModuleDiscovery(project);
 
     const availableModules = allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i));
 
     if (availableModules.length === 0) {
-        showInfo('No modules available to update');
+        showInfo('No modules are available to update.');
         return;
     }
 
@@ -607,31 +592,31 @@ export async function updateAllModules(): Promise<void> {
 export async function updateInstalledModules(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        showError('No project selected');
+        showError('Select a project before running this action.');
         return;
     }
 
     const { data, project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('No database selected');
+        showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        showError('Disable testing mode before changing module selections.');
         return;
     }
 
     if (!db.modules || db.modules.length === 0) {
-        showInfo('No modules found to update');
+        showInfo('No modules are configured for this database to update');
         return;
     }
 
     const installedModules = db.modules.filter(module => module.state === 'install');
     if (installedModules.length === 0) {
-        showInfo('No modules with "install" state found to update');
+        showInfo('No modules are currently marked with the "install" state.');
         return;
     }
 
@@ -658,72 +643,29 @@ export async function updateInstalledModules(): Promise<void> {
 export async function installAllModules(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        showError('No project selected');
+        showError('Select a project before running this action.');
         return;
     }
 
     const { data, project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('No database selected');
+        showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        showError('Disable testing mode before changing module selections.');
         return;
     }
 
-    // Get all available modules from repositories
-    let allModules: {"path": string, "name": string, "repoName": string, "isPsaeInternal": boolean}[] = [];
-    let psaeInternalDirs: {"path": string, "repoName": string}[] = [];
-
-    // Add modules from regular repositories
-    for (const repo of project.repos) {
-        const repoModules = listSubdirectories(repo.path);
-        allModules = allModules.concat(repoModules.map(module => ({
-            ...module,
-            repoName: repo.name,
-            isPsaeInternal: false
-        })));
-
-        // Check if this repo has ps*-internal directories
-        try {
-            const repoDirContents = fs.readdirSync(repo.path);
-            for (const item of repoDirContents) {
-                if (/^ps[a-z]*-internal$/i.test(item)) {
-                    const psInternalPath = normalizePath(`${repo.path}/${item}`);
-                    if (fs.existsSync(psInternalPath)) {
-                        psaeInternalDirs.push({ path: psInternalPath, repoName: repo.name });
-                    }
-                }
-            }
-        } catch (error) {
-            console.warn(`Failed to read repo directory ${repo.path}:`, error);
-        }
-    }
-
-    // Add modules from included psae-internal directories
-    if (project.includedPsaeInternalPaths) {
-        for (const psaePath of project.includedPsaeInternalPaths) {
-            if (fs.existsSync(psaePath)) {
-                const repoDir = psaeInternalDirs.find(dir => dir.path === psaePath);
-                const repoName = repoDir ? repoDir.repoName : 'unknown';
-                const psaeModules = listSubdirectories(psaePath);
-                allModules = allModules.concat(psaeModules.map(module => ({
-                    ...module,
-                    repoName: repoName,
-                    isPsaeInternal: true
-                })));
-            }
-        }
-    }
+    const { modules: allModules } = collectModuleDiscovery(project);
 
     const availableModules = allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i));
 
     if (availableModules.length === 0) {
-        showInfo('No modules available to install');
+        showInfo('No modules are available to install.');
         return;
     }
 
@@ -768,20 +710,20 @@ export async function installAllModules(): Promise<void> {
 export async function clearAllModuleSelections(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        showError('No project selected');
+        showError('Select a project before running this action.');
         return;
     }
 
     const { data, project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('No database selected');
+        showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Module management is disabled while testing is enabled. Disable testing to manage modules.');
+        showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -807,90 +749,17 @@ export async function clearAllModuleSelections(): Promise<void> {
     await SettingsStore.saveWithoutComments(stripSettings(data));
     showAutoInfo(`Cleared ${clearedCount} module selections`, 3000);
 }
-
-/**
- * Gets installed modules from the database using psql
- */
-async function getInstalledModules(dbName: string): Promise<InstalledModuleInfo[]> {
-    try {
-        // First check if the ir_module_module table exists (to handle fresh databases gracefully)
-        const checkTableQuery = `SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'ir_module_module');`;
-        const checkCommand = `psql ${dbName} -t -A -c "${checkTableQuery}"`;
-
-        const tableExists = execSync(checkCommand, {
-            encoding: 'utf-8',
-            stdio: ['pipe', 'pipe', 'pipe']
-        }).trim() === 't';
-
-        if (!tableExists) {
-            // Database doesn't have Odoo tables yet (fresh database)
-            console.debug(`Database ${dbName} doesn't have Odoo tables yet (fresh database)`);
-            return [];
-        }
-
-        // Now query the modules - only get installed and to upgrade modules from DB
-        const query = `SELECT id, name, shortdesc, latest_version, state, application FROM ir_module_module WHERE state IN ('installed','to upgrade') ORDER BY name;`;
-        const command = `psql ${dbName} -t -A -F'|' -c "${query}"`;
-
-        const output = execSync(command, {
-            encoding: 'utf-8',
-            stdio: ['pipe', 'pipe', 'pipe']
-        });
-
-        const lines = output.trim().split('\n').filter(line => line.trim());
-        const installedModules: InstalledModuleInfo[] = [];
-
-        for (const line of lines) {
-            const [id, name, shortdesc, latest_version, state, application] = line.split('|');
-
-            // Parse shortdesc JSON and extract en_US description
-            let description = '';
-            try {
-                if (shortdesc) {
-                    const descObj = JSON.parse(shortdesc);
-                    description = descObj.en_US || descObj[Object.keys(descObj)[0]] || '';
-                }
-            } catch (error) {
-                description = shortdesc || '';
-            }
-
-            installedModules.push({
-                id: parseInt(id),
-                name: name || '',
-                shortdesc: description,
-                installed_version: latest_version || null,
-                latest_version: latest_version || null,
-                state: state || '',
-                application: application === 't'
-            });
-        }
-
-        return installedModules;
-    } catch (error: any) {
-        // Check if this is a "table doesn't exist" error (common for fresh databases)
-        if (error?.message?.includes('relation "ir_module_module" does not exist')) {
-            // This is expected for fresh databases - don't log as an error
-            console.debug(`Database ${dbName} doesn't have Odoo tables yet (fresh database)`);
-            return [];
-        }
-
-        // For other errors, log a warning
-        console.warn(`Failed to get installed modules from database ${dbName}:`, error);
-        return [];
-    }
-}
-
 export async function viewInstalledModules(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        showError('No project selected');
+        showError('Select a project before running this action.');
         return;
     }
 
     const { project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('No database selected');
+        showError('Select a database before running this action.');
         return;
     }
 
@@ -899,7 +768,7 @@ export async function viewInstalledModules(): Promise<void> {
         const installedModules = await getInstalledModules(db.id);
 
         if (installedModules.length === 0) {
-            showInfo('No installed modules found in the database');
+            showInfo('No installed modules were found in the database');
             return;
         }
 
@@ -917,7 +786,7 @@ export async function viewInstalledModules(): Promise<void> {
             matchOnDetail: true,
             ignoreFocusOut: true,
             canPickMany: false,
-            title: `Installed Modules in ${db.name}`
+            title: `Installed Modules in ${getDatabaseLabel(db)}`
         });
 
     } catch (error) {

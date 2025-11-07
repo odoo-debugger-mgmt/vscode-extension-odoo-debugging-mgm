@@ -10,6 +10,9 @@ export interface DatabaseOptions {
     branchName?: string;
     odooVersion?: string;
     versionId?: string;
+    displayName?: string;
+    internalName?: string;
+    kind?: string;
 }
 
 export class DatabaseModel {
@@ -24,9 +27,13 @@ export class DatabaseModel {
     branchName: string = '';
     odooVersion?: string; // Optional - only used when no version is assigned
     versionId?: string; // Reference to the VersionModel
+    displayName?: string;
+    internalName?: string;
+    kind?: string;
 
     constructor(name: string, createdAt: Date, options: DatabaseOptions = {}) {
-        this.name = name;
+        this.displayName = options.displayName || name;
+        this.name = this.displayName;
         this.createdAt = createdAt;
         this.modules = options.modules || [];
         this.isItABackup = options.isItABackup || false;
@@ -36,12 +43,17 @@ export class DatabaseModel {
         this.branchName = options.branchName || '';
         this.odooVersion = options.odooVersion; // Optional - undefined when version is assigned
         this.versionId = options.versionId;
+        this.kind = options.kind;
 
-        if(this.isExisting) {
-            this.id = name;
+        if (options.internalName) {
+            this.internalName = options.internalName;
+        } else if (this.isExisting) {
+            this.internalName = name;
         } else {
-            this.id = `${name}-${createdAt.toISOString().split('T')[0]}-${createdAt.toTimeString().split(' ')[0]}`;
+            this.internalName = `${name}-${createdAt.toISOString().split('T')[0]}`;
         }
+
+        this.id = this.internalName;
     }
 
     /**

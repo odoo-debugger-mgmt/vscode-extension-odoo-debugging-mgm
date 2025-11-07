@@ -1,0 +1,36 @@
+{
+    "projects": [],
+    "versions": {
+        "5d22a2fc-4883-42f9-b01e-ef82d5732844": {
+            "id": "5d22a2fc-4883-42f9-b01e-ef82d5732844",
+            "name": "Default Version",
+            "odooVersion": "17.0",
+            "settings": {
+                "debuggerName": "odoo:17.0",
+                "debuggerVersion": "1.0.0",
+                "portNumber": 8017,
+                "shellPortNumber": 5017,
+                "limitTimeReal": 0,
+                "limitTimeCpu": 0,
+                "maxCronThreads": 0,
+                "extraParams": "--log-handler,odoo.addons.base.models.ir_attachment:WARNING",
+                "devMode": "--dev=all",
+                "dumpsFolder": "/dumps",
+                "odooPath": "./odoo",
+                "enterprisePath": "./enterprise",
+                "designThemesPath": "./design-themes",
+                "customAddonsPath": "./custom-addons",
+                "pythonPath": "./venv/bin/python",
+                "subModulesPaths": "",
+                "installApps": "",
+                "upgradeApps": "",
+                "preCheckoutCommands": [],
+                "postCheckoutCommands": []
+            },
+            "isActive": true,
+            "createdAt": "2025-12-22T15:23:05.418Z",
+            "updatedAt": "2025-12-22T15:23:05.418Z"
+        }
+    },
+    "activeVersion": "5d22a2fc-4883-42f9-b01e-ef82d5732844"
+}

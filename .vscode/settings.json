@@ -29,5 +29,7 @@
 		"titleBar.inactiveBackground": "#ec3c0299",
 		"titleBar.inactiveForeground": "#e7e7e799"
 	},
-	"peacock.color": "#ec3c02"
+	"peacock.color": "#ec3c02",
+	"xml.symbols.enabled": false,
+	"python.languageServer": "None"
 }

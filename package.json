@@ -1,20 +1,29 @@
 {
-  "name": "odoo-debugging-mgm-tool",
-  "displayName": "Odoo Debugging Management Tool",
-  "description": "A Visual Studio Code extension for managing Odoo debugging.",
-  "version": "0.2.2",
-  "publisher": "odoo-ps",
-  "author": {
-    "name": "odoo-ps"
-  },
-  "license": "MIT",
-  "homepage": "https://github.com/odoo-ps/vscode-extension-odoo-debugging-mgm#readme",
+  "name": "odoo-devtools-vscode",
+  "displayName": "Odoo DevTools for VSCode",
+  "description": "All-in-one VS Code extension for managing Odoo projects, databases, modules, and debugging.",
+  "version": "1.0.0",
+  "publisher": "AhmadMansour",
+  "contributors": [
+    {
+      "name": "Mohamed Bahaa",
+      "email": "m.bahaa.saleh@gmail.com",
+      "url": "https://github.com/qahrb"
+    },
+    {
+      "name": "Ahmad Mansour",
+      "email": "work.ahmad.mansour@gmail.com",
+      "url": "https://github.com/ahmad-sm02"
+    }
+  ],
+  "license": "AGPL-3.0-only",
+  "homepage": "https://github.com/odoo-debugger-mgmt/vscode-extension-odoo-debugging-mgm/blob/main/README.md",
   "repository": {
     "type": "git",
-    "url": "https://github.com/odoo-ps/vscode-extension-odoo-debugging-mgm.git"
+    "url": "https://github.com/odoo-debugger-mgmt/vscode-extension-odoo-debugging-mgm.git"
   },
   "bugs": {
-    "url": "https://github.com/odoo-ps/vscode-extension-odoo-debugging-mgm/issues"
+    "url": "https://discord.com/channels/1417838211631157292/1427925513074114602"
   },
   "keywords": [
     "odoo",
@@ -24,6 +33,9 @@
     "development",
     "project-management"
   ],
+  "extensionDependencies": [
+    "vscode.git"
+  ],
   "engines": {
     "vscode": "^1.100.0"
   },
@@ -32,20 +44,24 @@
     "Debuggers",
     "Extension Packs"
   ],
-  "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "odoo-debugging-mgm-tool-OdooTools",
+          "id": "odoo-devtools",
           "icon": "resources/odoo.svg",
-          "title": "Odoo Tools"
+          "title": "Odoo DevTools"
+        },
+        {
+          "id": "odoo-project-repos",
+          "icon": "resources/icons/project-repos.svg",
+          "title": "Project Repos"
         }
       ]
     },
     "views": {
-      "odoo-debugging-mgm-tool-OdooTools": [
+      "odoo-devtools": [
         {
           "id": "projectSelector",
           "name": "Projects"
@@ -71,6 +87,19 @@
           "name": "Versions",
           "icon": "$(versions)"
         }
+      ],
+      "odoo-project-repos": [
+        {
+          "id": "projectRepos",
+          "name": "Project Repos",
+          "icon": "$(repo)"
+        }
+      ],
+      "explorer": [
+        {
+          "id": "odt.projectReposExplorer",
+          "name": "Project Repos"
+        }
       ]
     },
     "commands": [
@@ -83,6 +112,119 @@
         "command": "projectSelector.setup",
         "title": "Setup Odoo",
         "icon": "resources/icons/setup.svg"
+      },
+      {
+        "command": "projectSelector.sort",
+        "title": "Sort Projects",
+        "icon": "$(sort-precedence)"
+      },
+      {
+        "command": "repoSelector.sort",
+        "title": "Sort Repositories",
+        "icon": "$(sort-precedence)"
+      },
+      {
+        "command": "dbSelector.sort",
+        "title": "Sort Databases",
+        "icon": "$(sort-precedence)"
+      },
+      {
+        "command": "moduleSelector.sort",
+        "title": "Sort Modules",
+        "icon": "$(sort-precedence)"
+      },
+      {
+        "command": "versionsManager.sort",
+        "title": "Sort Versions",
+        "icon": "$(sort-precedence)"
+      },
+      {
+        "command": "projectRepos.sort",
+        "title": "Sort Project Repos",
+        "icon": "$(sort-precedence)"
+      },
+      {
+        "command": "projectRepos.reveal",
+        "title": "Reveal Project Repository",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "deleteFile",
+        "title": "Delete",
+        "category": "Explorer"
+      },
+      {
+        "command": "renameFile",
+        "title": "Rename",
+        "category": "Explorer"
+      },
+      {
+        "command": "explorer.newFile",
+        "title": "New File",
+        "category": "Explorer"
+      },
+      {
+        "command": "explorer.newFolder",
+        "title": "New Folder",
+        "category": "Explorer"
+      },
+      {
+        "command": "proj.openProjectWorkspace",
+        "title": "Open Project Workspace",
+        "category": "Odoo DevTools",
+        "icon": "$(files)"
+      },
+      {
+        "command": "proj.rebuildProjectWorkspace",
+        "title": "Rebuild Project Workspace",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "proj.quickSwitchProject",
+        "title": "Quick Switch Project Workspace",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "odt.projectReposExplorer.newFile",
+        "title": "New File (Project Repos)",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "odt.projectReposExplorer.newFolder",
+        "title": "New Folder (Project Repos)",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "odt.projectReposExplorer.rename",
+        "title": "Rename (Project Repos)"
+      },
+      {
+        "command": "odt.projectReposExplorer.delete",
+        "title": "Delete (Project Repos)"
+      },
+      {
+        "command": "odt.projectReposExplorer.openTerminalHere",
+        "title": "Open in Terminal (Project Repos)",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "odt.projectReposExplorer.selectProject",
+        "title": "Select Project (Project Repos)"
+      },
+      {
+        "command": "odt.projectReposExplorer.copy",
+        "title": "Copy (Project Repos)",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "odt.projectReposExplorer.cut",
+        "title": "Cut (Project Repos)",
+        "icon": "$(cut)"
+      },
+      {
+        "command": "odt.projectReposExplorer.paste",
+        "title": "Paste (Project Repos)",
+        "icon": "$(paste)"
       },
       {
         "command": "projectSelector.delete",
@@ -276,7 +418,6 @@
         "title": "Change Branch",
         "icon": "$(git-branch)"
       },
-
       {
         "command": "odoo.cloneVersion",
         "title": "Clone Version",
@@ -331,6 +472,56 @@
         "command": "odoo.startShell",
         "title": "Start Shell",
         "icon": "resources/icons/shell.svg"
+      },
+      {
+        "command": "odooDebugger.copyFilePath",
+        "title": "Copy Path",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "odooDebugger.copyRelativePath",
+        "title": "Copy Relative Path",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "odooDebugger.openInIntegratedTerminal",
+        "title": "Open in Integrated Terminal",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "odooDebugger.revealInExplorer",
+        "title": "Reveal in Explorer",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "odooDebugger.revealFileInOS",
+        "title": "Reveal in OS",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "odooDebugger.renameEntry",
+        "title": "Rename",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "odooDebugger.deleteEntry",
+        "title": "Delete",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "odooDebugger.copyEntry",
+        "title": "Copy",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "odooDebugger.cutEntry",
+        "title": "Cut",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "odooDebugger.pasteEntry",
+        "title": "Paste",
+        "category": "Odoo DevTools"
       }
     ],
     "menus": {
@@ -354,6 +545,11 @@
           "command": "projectSelector.editSettings",
           "when": "view == projectSelector",
           "group": "navigation@4"
+        },
+        {
+          "command": "projectSelector.sort",
+          "when": "view == projectSelector",
+          "group": "navigation@8"
         },
         {
           "command": "odoo.startServer",
@@ -381,7 +577,17 @@
           "group": "navigation"
         },
         {
+          "command": "dbSelector.sort",
+          "when": "view == dbSelector",
+          "group": "navigation"
+        },
+        {
           "command": "repoSelector.refresh",
+          "when": "view == repoSelector",
+          "group": "navigation"
+        },
+        {
+          "command": "repoSelector.sort",
           "when": "view == repoSelector",
           "group": "navigation"
         },
@@ -416,6 +622,11 @@
           "group": "navigation@6"
         },
         {
+          "command": "moduleSelector.sort",
+          "when": "view == moduleSelector",
+          "group": "navigation@7"
+        },
+        {
           "command": "testingSelector.addTestTag",
           "when": "view == testingSelector",
           "group": "navigation@1"
@@ -441,9 +652,19 @@
           "group": "navigation@2"
         },
         {
+          "command": "versionsManager.sort",
+          "when": "view == versionsManager",
+          "group": "navigation@2.5"
+        },
+        {
           "command": "odoo.refreshVersions",
           "when": "view == versionsManager",
           "group": "navigation@3"
+        },
+        {
+          "command": "projectRepos.sort",
+          "when": "view == projectRepos",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
@@ -507,11 +728,135 @@
           "when": "view == testingSelector && viewItem == logLevel",
           "group": "logLevel"
         },
-
         {
           "command": "odoo.changeBranch",
           "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
           "group": "version"
+        },
+        {
+          "command": "projectRepos.reveal",
+          "when": "view == projectRepos && viewItem == projectRepoRoot",
+          "group": "navigation@1"
+        },
+        {
+          "command": "odooDebugger.revealInExplorer",
+          "when": "view == projectRepos && viewItem =~ /^(projectRepoRoot|projectRepoFolder|projectRepoFile)$/",
+          "group": "navigation@2"
+        },
+        {
+          "command": "odooDebugger.revealFileInOS",
+          "when": "view == projectRepos && viewItem =~ /^(projectRepoRoot|projectRepoFolder|projectRepoFile)$/",
+          "group": "navigation@3"
+        },
+        {
+          "command": "odooDebugger.copyFilePath",
+          "when": "view == projectRepos && viewItem =~ /^(projectRepoRoot|projectRepoFolder|projectRepoFile)$/",
+          "group": "navigation@4"
+        },
+        {
+          "command": "odooDebugger.copyRelativePath",
+          "when": "view == projectRepos && viewItem =~ /^(projectRepoRoot|projectRepoFolder|projectRepoFile)$/",
+          "group": "navigation@5"
+        },
+        {
+          "command": "odooDebugger.openInIntegratedTerminal",
+          "when": "view == projectRepos && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
+          "group": "navigation@6"
+        },
+        {
+          "command": "odooDebugger.copyEntry",
+          "when": "view == projectRepos && viewItem =~ /^(projectRepoRoot|projectRepoFolder|projectRepoFile)$/",
+          "group": "navigation@6.1"
+        },
+        {
+          "command": "odooDebugger.cutEntry",
+          "when": "view == projectRepos && viewItem =~ /^(projectRepoRoot|projectRepoFolder|projectRepoFile)$/",
+          "group": "navigation@6.2"
+        },
+        {
+          "command": "odooDebugger.pasteEntry",
+          "when": "view == projectRepos && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
+          "group": "navigation@6.3"
+        },
+        {
+          "command": "odooDebugger.renameEntry",
+          "when": "view == projectRepos && viewItem =~ /^(projectRepoRoot|projectRepoFolder|projectRepoFile)$/",
+          "group": "navigation@7"
+        },
+        {
+          "command": "odooDebugger.deleteEntry",
+          "when": "view == projectRepos && viewItem =~ /^(projectRepoRoot|projectRepoFolder|projectRepoFile)$/",
+          "group": "navigation@8"
+        },
+        {
+          "command": "explorer.newFile",
+          "when": "view == projectRepos && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
+          "group": "navigation@9"
+        },
+        {
+          "command": "explorer.newFolder",
+          "when": "view == projectRepos && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
+          "group": "navigation@10"
+        },
+        {
+          "command": "odt.projectReposExplorer.newFile",
+          "when": "view == odt.projectReposExplorer && viewItem == projectRepoFolder",
+          "group": "inline"
+        },
+        {
+          "command": "odt.projectReposExplorer.newFolder",
+          "when": "view == odt.projectReposExplorer && viewItem == projectRepoFolder",
+          "group": "inline"
+        },
+        {
+          "command": "odt.projectReposExplorer.rename",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoFolder|projectRepoFile)$/",
+          "group": "inline"
+        },
+        {
+          "command": "odt.projectReposExplorer.delete",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoFolder|projectRepoFile)$/",
+          "group": "inline"
+        },
+        {
+          "command": "odt.projectReposExplorer.copy",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoFolder|projectRepoFile)$/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "odt.projectReposExplorer.cut",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoFolder|projectRepoFile)$/",
+          "group": "navigation@2"
+        },
+        {
+          "command": "odt.projectReposExplorer.paste",
+          "when": "view == odt.projectReposExplorer && viewItem == projectRepoFolder",
+          "group": "navigation@3"
+        },
+        {
+          "command": "odooDebugger.revealFileInOS",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoFolder|projectRepoFile)$/",
+          "group": "navigation@2"
+        },
+        {
+          "command": "odooDebugger.copyFilePath",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoFolder|projectRepoFile)$/",
+          "group": "navigation@3"
+        },
+        {
+          "command": "odooDebugger.copyRelativePath",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoFolder|projectRepoFile)$/",
+          "group": "navigation@4"
+        },
+        {
+          "command": "odooDebugger.openInIntegratedTerminal",
+          "when": "view == odt.projectReposExplorer && viewItem == projectRepoFolder",
+          "group": "navigation@5"
+        },
+        {
+          "command": "odt.projectReposExplorer.openTerminalHere",
+          "when": "view == odt.projectReposExplorer && viewItem == projectRepoFolder",
+          "group": "navigation@6"
         },
         {
           "command": "odoo.cloneVersion",
@@ -606,7 +951,13 @@
         "odooDebugger.defaultVersion.devMode": {
           "type": "string",
           "default": "--dev=all",
-          "enum": ["", "--dev=all", "--dev=xml", "--dev=reload", "--dev=qweb"],
+          "enum": [
+            "",
+            "--dev=all",
+            "--dev=xml",
+            "--dev=reload",
+            "--dev=qweb"
+          ],
           "enumDescriptions": [
             "No development mode",
             "All development features",
@@ -661,10 +1012,31 @@
           "default": "",
           "description": "Default apps to upgrade for new versions"
         },
+        "odooDebugger.defaultVersion.preCheckoutCommands": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "markdownDescription": "Commands to run before switching branches when using this version. Each entry runs in a shell; use workspace-absolute paths if needed."
+        },
+        "odooDebugger.defaultVersion.postCheckoutCommands": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "markdownDescription": "Commands to run after switching branches when using this version. Each entry runs in a shell; use workspace-absolute paths if needed."
+        },
         "odooDebugger.databaseSwitchBehavior": {
           "type": "string",
           "default": "ask",
-          "enum": ["ask", "auto-both", "auto-version-only", "auto-branch-only"],
+          "enum": [
+            "ask",
+            "auto-both",
+            "auto-version-only",
+            "auto-branch-only"
+          ],
           "enumDescriptions": [
             "Always ask what to do when selecting a database",
             "Automatically switch both version settings and git branches",
@@ -672,6 +1044,47 @@
             "Automatically switch git branches only (no version switching)"
           ],
           "description": "Controls what happens automatically when selecting a database with a different version"
+        },
+        "odooDebugger.search.maxDepth": {
+          "type": "number",
+          "default": 4,
+          "minimum": 0,
+          "scope": "resource",
+          "description": "Maximum folder depth to scan when discovering modules and repositories."
+        },
+        "odooDebugger.search.maxEntries": {
+          "type": "number",
+          "default": 100000,
+          "minimum": 1,
+          "scope": "resource",
+          "description": "Upper limit on the number of directories inspected during recursive discovery."
+        },
+        "odooDebugger.search.excludePatterns.modules": {
+          "type": "array",
+          "scope": "resource",
+          "default": [
+            "**/node_modules/**",
+            "**/.venv/**",
+            "**/__pycache__/**",
+            "**/.git/**"
+          ],
+          "description": "Glob patterns to skip while searching for Odoo modules.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "odooDebugger.search.excludePatterns.repositories": {
+          "type": "array",
+          "scope": "resource",
+          "default": [
+            "**/node_modules/**",
+            "**/.venv/**",
+            "**/__pycache__/**"
+          ],
+          "description": "Glob patterns to skip while searching for Git repositories.",
+          "items": {
+            "type": "string"
+          }
         }
       }
     }
@@ -687,7 +1100,7 @@
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "lint": "eslint src",
     "test": "vscode-test",
-    "build:vsix": "vsce package",
+    "build:vsix": "npx vsce package --no-dependencies",
     "version:patch": "npm version patch",
     "version:minor": "npm version minor",
     "version:major": "npm version major"
@@ -700,6 +1113,7 @@
     "@typescript-eslint/parser": "^8.31.1",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.6.2",
     "eslint": "^9.25.1",
     "ts-loader": "^9.5.2",
     "typescript": "^5.8.3",
@@ -710,5 +1124,15 @@
     "install": "^0.13.0",
     "jsonc-parser": "^3.3.1",
     "npm": "^11.5.2"
-  }
+  },
+  "files": [
+    "dist/extension.js",
+    "dist/**/*.map",
+    "dist/**/*.LICENSE.txt",
+    "resources/**",
+    "package.json",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ]
 }

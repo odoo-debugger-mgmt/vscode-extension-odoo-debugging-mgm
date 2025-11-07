@@ -112,18 +112,18 @@ export class SettingsStore {
 
         const projects: ProjectModel[] = data.projects;
         if (!projects || projects.length === 0) {
-            showError('Error reading projects, please create a project first');
+            showError('Unable to load projects, please create a project first');
             return null;
         }
 
         if (typeof projects !== 'object') {
-            showError('Error reading projects');
+            showError('Unable to load projects.');
             return null;
         }
 
         const project = projects.find((p: ProjectModel) => p.isSelected === true);
         if (!project) {
-            showError('No project selected');
+            showError('Select a project before running this action.');
             return null;
         }
 

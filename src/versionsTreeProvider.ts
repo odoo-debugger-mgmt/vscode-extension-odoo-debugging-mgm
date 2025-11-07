@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import { VersionModel } from './models/version';
 import { VersionsService } from './versionsService';
 import { addActiveIndicator, getSettingDisplayName, getSettingDisplayValue } from './utils';
+import { SortPreferences } from './sortPreferences';
+import { getDefaultSortOption } from './sortOptions';
 
 export class VersionTreeItem extends vscode.TreeItem {
     constructor(
@@ -79,7 +81,7 @@ export class VersionsTreeProvider implements vscode.TreeDataProvider<VersionTree
 
     private readonly versionsService: VersionsService;
 
-    constructor() {
+    constructor(private readonly sortPreferences: SortPreferences) {
         this.versionsService = VersionsService.getInstance();
 
         // Listen for version changes
@@ -100,7 +102,8 @@ export class VersionsTreeProvider implements vscode.TreeDataProvider<VersionTree
         if (!element) {
             // Root level - show versions
             return this.versionsService.initialize().then(() => {
-                const versions = this.versionsService.getVersions();
+                const sortId = this.sortPreferences.get('versionsManager', getDefaultSortOption('versionsManager'));
+                const versions = this.versionsService.getVersions().slice().sort((a, b) => this.compareVersions(a, b, sortId));
                 return versions.map(version =>
                     new VersionTreeItem(version, vscode.TreeItemCollapsibleState.Collapsed)
                 );
@@ -133,5 +136,33 @@ export class VersionsTreeProvider implements vscode.TreeDataProvider<VersionTree
             }
         }
         return undefined;
+    }
+
+    private compareVersions(a: VersionModel, b: VersionModel, sortId: string): number {
+        const activeDelta = Number(b.isActive) - Number(a.isActive);
+        if (activeDelta !== 0) {
+            return activeDelta;
+        }
+
+        switch (sortId) {
+            case 'version:name:asc':
+                return a.name.localeCompare(b.name);
+            case 'version:name:desc':
+                return b.name.localeCompare(a.name);
+            case 'version:created:newest':
+                return this.getTimestamp(b.createdAt) - this.getTimestamp(a.createdAt);
+            case 'version:created:oldest':
+                return this.getTimestamp(a.createdAt) - this.getTimestamp(b.createdAt);
+            case 'version:odoo:asc':
+                return a.odooVersion.localeCompare(b.odooVersion);
+            case 'version:odoo:desc':
+                return b.odooVersion.localeCompare(a.odooVersion);
+            default:
+                return a.name.localeCompare(b.name);
+        }
+    }
+
+    private getTimestamp(value: Date): number {
+        return value instanceof Date ? value.getTime() : new Date(value).getTime();
     }
 }

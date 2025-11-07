@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { VersionModel } from './models/version';
+import { VersionModel, VersionSettings } from './models/version';
 import { SettingsStore } from './settingsStore';
 import { SettingsModel } from './models/settings';
-import { getWorkspacePath, getDefaultVersionSettings, stripSettings } from './utils';
+import { getWorkspacePath, getDefaultVersionSettings, stripSettings, getDatabaseLabel } from './utils';
 
 export class VersionsService {
     private static instance: VersionsService;
@@ -239,16 +239,16 @@ export class VersionsService {
     /**
      * Create a new version
      */
-    public async createVersion(name: string, odooVersion: string): Promise<VersionModel> {
+    public async createVersion(name: string, odooVersion: string, settingsOverrides: Partial<VersionSettings> = {}): Promise<VersionModel> {
         await this.initialize(); // Ensure initialization
 
         // Get default settings from VS Code configuration
         const defaultSettings = getDefaultVersionSettings();
+        const mergedSettings = { ...defaultSettings, ...settingsOverrides };
+        delete mergedSettings.debuggerName;
 
-        // Update debugger name to include the Odoo version
-        defaultSettings.debuggerName = `odoo:${odooVersion}`;
-
-        const version = new VersionModel(name, odooVersion, defaultSettings);
+        const version = new VersionModel(name, odooVersion, mergedSettings);
+        version.settings.debuggerName = `odoo:${odooVersion}`;
         this.versions.set(version.id, version);
 
         await this.saveVersions();
@@ -268,18 +268,27 @@ export class VersionsService {
             return false;
         }
 
-        // Handle settings updates specially to merge instead of replace
-        if (updates.settings) {
-            // Merge new settings with existing settings
-            Object.assign(version.settings, updates.settings);
-            // Remove settings from updates to avoid double assignment
-            const { settings, ...otherUpdates } = updates;
-            // Update other properties
-            Object.assign(version, otherUpdates);
-        } else {
-            // Update version properties normally
-            Object.assign(version, updates);
+        const updatesCopy: Partial<VersionModel> = { ...updates };
+        let settingsPatch: Partial<VersionSettings> | undefined = updatesCopy.settings ? { ...updatesCopy.settings } : undefined;
+
+        if (updatesCopy.odooVersion) {
+            const defaultDebuggerForCurrent = `odoo:${version.odooVersion}`;
+            const hasCustomDebugger = version.settings.debuggerName && version.settings.debuggerName !== defaultDebuggerForCurrent;
+            const overrideDebuggerName = !hasCustomDebugger && !(settingsPatch && Object.hasOwn(settingsPatch, 'debuggerName'));
+            if (overrideDebuggerName) {
+                settingsPatch = {
+                    ...(settingsPatch),
+                    debuggerName: `odoo:${updatesCopy.odooVersion}`
+                };
+            }
         }
+
+        if (settingsPatch) {
+            Object.assign(version.settings, settingsPatch);
+        }
+
+        const { settings, ...otherUpdates } = updatesCopy;
+        Object.assign(version, otherUpdates);
 
         // Update the updatedAt timestamp
         version.updatedAt = new Date();
@@ -340,7 +349,7 @@ export class VersionsService {
                     if (project.dbs && Array.isArray(project.dbs)) {
                         for (const db of project.dbs) {
                             if (db.versionId === deletedVersionId) {
-                                console.log(`Clearing version reference from database "${db.name}" (was using deleted version)`);
+                                console.log(`Clearing version reference from database "${getDatabaseLabel(db)}" (was using deleted version)`);
                                 db.versionId = undefined;
                                 // Don't touch odooVersion - let it remain as is for backward compatibility
                                 needsSave = true;
@@ -403,7 +412,7 @@ export class VersionsService {
         await this.initialize(); // Ensure initialization
         const activeVersion = this.getActiveVersion();
         if (!activeVersion) {
-            console.warn('No active version found, cannot update settings');
+            console.warn('No active version is configured, cannot update settings');
             return;
         }
 
@@ -644,7 +653,7 @@ export class VersionsService {
     public async setSettingToDefault(versionId: string, settingKey: string): Promise<boolean> {
         const version = this.versions.get(versionId);
         if (!version) {
-            vscode.window.showErrorMessage('Version not found.');
+            vscode.window.showErrorMessage('The selected version could not be found.');
             return false;
         }
 
@@ -680,7 +689,7 @@ export class VersionsService {
     public async setSettingAsDefault(versionId: string, settingKey: string): Promise<boolean> {
         const version = this.versions.get(versionId);
         if (!version) {
-            vscode.window.showErrorMessage('Version not found.');
+            vscode.window.showErrorMessage('The selected version could not be found.');
             return false;
         }
 
@@ -698,8 +707,8 @@ export class VersionsService {
             vscode.window.showInformationMessage(`Setting "${settingKey}" value saved as new default.`);
             return true;
         } catch (error) {
-            console.error('Failed to set setting as default:', error);
-            vscode.window.showErrorMessage('Failed to set setting as default.');
+            console.error('Unable to save this setting as the default:', error);
+            vscode.window.showErrorMessage('Unable to save this setting as the default.');
             return false;
         }
     }
@@ -710,7 +719,7 @@ export class VersionsService {
     public async setAllSettingsToDefault(versionId: string): Promise<boolean> {
         const version = this.versions.get(versionId);
         if (!version) {
-            vscode.window.showErrorMessage('Version not found.');
+            vscode.window.showErrorMessage('The selected version could not be found.');
             return false;
         }
 
@@ -731,7 +740,7 @@ export class VersionsService {
             return true;
         } catch (error) {
             console.error('Failed to set all settings to default:', error);
-            vscode.window.showErrorMessage('Failed to reset all settings to default values.');
+            vscode.window.showErrorMessage('Unable to reset all settings to their default values.');
             return false;
         }
     }
@@ -742,7 +751,7 @@ export class VersionsService {
     public async setAllSettingsAsDefault(versionId: string): Promise<boolean> {
         const version = this.versions.get(versionId);
         if (!version) {
-            vscode.window.showErrorMessage('Version not found.');
+            vscode.window.showErrorMessage('The selected version could not be found.');
             return false;
         }
 
@@ -759,7 +768,7 @@ export class VersionsService {
             return true;
         } catch (error) {
             console.error('Failed to set all settings as default:', error);
-            vscode.window.showErrorMessage('Failed to save all settings as defaults.');
+            vscode.window.showErrorMessage('Unable to save these settings as the new defaults.');
             return false;
         }
     }
