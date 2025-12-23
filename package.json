@@ -2,7 +2,8 @@
   "name": "odoo-devtools-vscode",
   "displayName": "Odoo DevTools for VSCode",
   "description": "All-in-one VS Code extension for managing Odoo projects, databases, modules, and debugging.",
-  "version": "1.0.0",
+  "icon": "resources/extension-icon.png",
+  "version": "1.0.1",
   "publisher": "AhmadMansour",
   "contributors": [
     {
