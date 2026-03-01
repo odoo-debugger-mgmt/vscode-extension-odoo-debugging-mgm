@@ -11,6 +11,8 @@ import { checkoutBranch } from './dbs';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 
+let projectMetadataMigrationCompleted = false;
+
 export class ProjectTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
     readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
@@ -36,10 +38,13 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
             return [];
         }
 
-        // Ensure all projects have UIDs (migration for existing data)
-        const needsSave = await ensureProjectUIDs(data);
-        if (needsSave) {
-            await SettingsStore.saveWithoutComments(stripSettings(data));
+        if (!projectMetadataMigrationCompleted) {
+            // Ensure project metadata migration happens only once per session.
+            const needsSave = await ensureProjectUIDs(data);
+            if (needsSave) {
+                await SettingsStore.saveWithoutComments(stripSettings(data));
+            }
+            projectMetadataMigrationCompleted = true;
         }
 
         const sortId = this.sortPreferences.get('projectSelector', getDefaultSortOption('projectSelector'));

@@ -1,13 +1,14 @@
 import { RepoModel } from "./models/repo";
 import * as vscode from "vscode";
-import { findRepositories, getWorkspacePath, normalizePath, showError, showInfo, stripSettings } from './utils';
+import { findRepositories, getWorkspacePath, normalizePath, showError, showInfo, stripSettings, getGitBranch } from './utils';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import * as path from 'path';
 import * as fs from 'fs';
-import { execSync } from 'child_process';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
+import { getCurrentBranchViaSourceControl } from './services/gitService';
+import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache, runtimeCache } from './services/runtimeCache';
 
 interface RepoEntry {
     name: string;
@@ -16,6 +17,39 @@ interface RepoEntry {
     branch: string | null;
     repoModel?: RepoModel;
     fsCreatedAt: number;
+}
+
+async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+    if (items.length === 0) {
+        return [];
+    }
+
+    const normalizedLimit = Math.max(1, limit);
+    const results: R[] = new Array(items.length);
+    let cursor = 0;
+
+    const runNext = async (): Promise<void> => {
+        const index = cursor++;
+        if (index >= items.length) {
+            return;
+        }
+        results[index] = await worker(items[index]);
+        await runNext();
+    };
+
+    const workers = Array.from({ length: Math.min(normalizedLimit, items.length) }, () => runNext());
+    await Promise.all(workers);
+    return results;
+}
+
+async function resolveRepoBranch(repoPath: string): Promise<string | null> {
+    return runtimeCache.getGitBranch(repoPath, async () => {
+        const sourceControlBranch = await getCurrentBranchViaSourceControl(repoPath);
+        if (sourceControlBranch) {
+            return sourceControlBranch;
+        }
+        return getGitBranch(repoPath);
+    });
 }
 
 export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
@@ -38,7 +72,7 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
             return [];
         }
 
-        const { data, project } = result;
+        const { project } = result;
         const workspacePath = getWorkspacePath();
         if (!workspacePath) {
             return [];
@@ -68,15 +102,13 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
             return [];
         }
 
-        const repoEntries: RepoEntry[] = devsRepos.map(repo => {
+        const repoEntries = await mapWithConcurrency(devsRepos, 6, async repo => {
             const existingRepo = repos.find(r => r.name === repo.name);
             let branch: string | null = null;
             const gitPath = path.join(repo.path, '.git');
             if (fs.existsSync(gitPath)) {
                 try {
-                    branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: repo.path })
-                        .toString()
-                        .trim();
+                    branch = await resolveRepoBranch(repo.path);
                 } catch {
                     branch = null;
                 }
@@ -163,5 +195,7 @@ export async function selectRepo(event: any) {
         project.repos = project.repos.filter((repo: RepoModel) => repo.name !== selectedRepo.name);
     }
 
+    invalidateModuleDiscoveryCache();
+    invalidateRepositoryDiscoveryCache();
     await SettingsStore.saveWithoutComments(stripSettings(data));
 }

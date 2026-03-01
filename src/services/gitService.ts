@@ -46,6 +46,17 @@ export async function checkoutBranchViaSourceControl(repoPath: string, branch: s
     }
 }
 
+export async function getCurrentBranchViaSourceControl(repoPath: string): Promise<string | null> {
+    try {
+        const repo = await getRepository(repoPath);
+        const headName = repo?.state?.HEAD?.name;
+        return headName && headName.trim().length > 0 ? headName : null;
+    } catch (error) {
+        console.warn(`Git API branch lookup failed for ${repoPath}:`, error);
+        return null;
+    }
+}
+
 function normalizeBranchName(value: string): string {
     if (value.startsWith('remotes/origin/')) {
         return value.replace('remotes/origin/', '');

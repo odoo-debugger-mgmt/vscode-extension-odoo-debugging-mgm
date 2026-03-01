@@ -1,10 +1,8 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
 import { VersionModel, VersionSettings } from './models/version';
 import { SettingsStore } from './settingsStore';
 import { SettingsModel } from './models/settings';
-import { getWorkspacePath, getDefaultVersionSettings, stripSettings, getDatabaseLabel } from './utils';
+import { getDefaultVersionSettings, stripSettings, getDatabaseLabel } from './utils';
 
 export class VersionsService {
     private static instance: VersionsService;
@@ -54,7 +52,7 @@ export class VersionsService {
             });
 
             // Check if legacy settings exist - if so, skip auto-saving to preserve them for migration
-            const hasLegacySettings = this.hasLegacySettings();
+            const hasLegacySettings = await this.hasLegacySettings();
 
             // Create default version if none exist
             if (this.versions.size === 0) {
@@ -498,7 +496,7 @@ export class VersionsService {
             console.log('Starting migration check...');
 
             // Check if legacy settings actually exist in the file
-            if (!this.hasLegacySettings()) {
+            if (!(await this.hasLegacySettings())) {
                 console.log('No legacy settings found, migration not needed');
                 return;
             }
@@ -590,28 +588,12 @@ export class VersionsService {
      */
     private async clearLegacySettings(): Promise<void> {
         try {
-            const workspacePath = getWorkspacePath();
-            if (!workspacePath) {
-                return;
-            }
-
-            const filePath = path.join(workspacePath, '.vscode', 'odoo-debugger-data.json');
-            if (!fs.existsSync(filePath)) {
-                return;
-            }
-
-            // Read current data
-            const content = fs.readFileSync(filePath, 'utf-8');
-            const data = JSON.parse(content);
+            const data = await SettingsStore.load();
 
             // Remove the settings property but keep projects
             if (data.settings) {
                 delete data.settings;
-
-                // Write back the cleaned data
-                const cleanedContent = JSON.stringify(data, null, 4);
-                fs.writeFileSync(filePath, cleanedContent, 'utf-8');
-
+                await SettingsStore.saveWithoutComments(data);
                 console.log('Legacy settings cleared after successful migration');
             }
         } catch (error) {
@@ -623,24 +605,10 @@ export class VersionsService {
     /**
      * Check if legacy settings exist in the odoo-debugger-data.json file
      */
-    private hasLegacySettings(): boolean {
+    private async hasLegacySettings(): Promise<boolean> {
         try {
-            const workspacePath = getWorkspacePath();
-            if (!workspacePath) {
-                return false;
-            }
-
-            const filePath = path.join(workspacePath, '.vscode', 'odoo-debugger-data.json');
-            if (!fs.existsSync(filePath)) {
-                return false;
-            }
-
-            // Read current data
-            const content = fs.readFileSync(filePath, 'utf-8');
-            const data = JSON.parse(content);
-
-            // Check if settings property exists and has meaningful content
-            return data.settings && Object.keys(data.settings).length > 0;
+            const data = await SettingsStore.load();
+            return !!(data.settings && Object.keys(data.settings).length > 0);
         } catch (error) {
             console.warn('Failed to check for legacy settings:', error);
             return false;

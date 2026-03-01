@@ -5,7 +5,7 @@ import { VersionModel } from './models/version';
 import { discoverModulesInRepos, normalizePath, getGitBranch, showError, showInfo, showWarning, showAutoInfo, showBriefStatus, addActiveIndicator, stripSettings, getDatabaseLabel } from './utils';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
-import { execSync, exec } from 'child_process';
+import { execSync, exec, spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { RepoModel } from './models/repo';
@@ -15,6 +15,9 @@ import { generateDatabaseIdentifiers, DatabaseKind } from './services/dbNaming';
 import * as os from 'os';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
+import { PassThrough, Readable } from 'stream';
+import { clearInstalledModuleCache } from './services/database';
+import { invalidateGitBranchCache } from './services/runtimeCache';
 
 const checkoutHooksOutput = vscode.window.createOutputChannel('Odoo Debugger: Branch Hooks');
 
@@ -453,6 +456,47 @@ export async function showBranchSelector(repoPath: string): Promise<string | und
 }
 
 export async function checkoutBranch(settings: SettingsModel, branch: string): Promise<void> {
+    const quoteForSingleQuotedShell = (value: string): string => `'${value.replace(/'/g, `'\"'\"'`)}'`;
+
+    const buildHookExecutionScript = (
+        commands: string[],
+        phase: 'pre-checkout' | 'post-checkout',
+        contextLabel: string
+    ): string => {
+        const lines: string[] = [
+            'set -e',
+            '__odt_now_ms() {',
+            '  local __odt_now',
+            '  __odt_now="$(date +%s%3N 2>/dev/null)"',
+            '  if [ -n "$__odt_now" ]; then',
+            '    printf \'%s\\n\' "$__odt_now"',
+            '    return',
+            '  fi',
+            '  __odt_now="$(date +%s)"',
+            '  printf \'%s\\n\' "$((__odt_now * 1000))"',
+            '}'
+        ];
+
+        commands.forEach((command, index) => {
+            const prefix = `[${phase}] ${contextLabel}: [${index + 1}/${commands.length}]`;
+            lines.push(`__odt_cmd=${quoteForSingleQuotedShell(command)}`);
+            lines.push(`__odt_prefix=${quoteForSingleQuotedShell(prefix)}`);
+            lines.push('__odt_start=$(__odt_now_ms)');
+            lines.push('printf \'%s\\n\' "$__odt_prefix START $__odt_cmd"');
+            lines.push('set +e');
+            lines.push('eval "$__odt_cmd"');
+            lines.push('__odt_exit=$?');
+            lines.push('set -e');
+            lines.push('__odt_end=$(__odt_now_ms)');
+            lines.push('printf \'%s\\n\' "$__odt_prefix END exit=$__odt_exit duration_ms=$((__odt_end - __odt_start))"');
+            lines.push('if [ $__odt_exit -ne 0 ]; then');
+            lines.push('  exit $__odt_exit');
+            lines.push('fi');
+        });
+
+        return lines.join('\n');
+    };
+
     const runCheckoutHookCommands = async (
         commands: string[] | undefined,
         phase: 'pre-checkout' | 'post-checkout',
@@ -469,31 +513,43 @@ export async function checkoutBranch(settings: SettingsModel, branch: string): P
             return true;
         }
 
-        checkoutHooksOutput.show(true);
+        progress?.report({ message: `${contextLabel}: ${phase} (${normalizedCommands.length} command(s))` });
         checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: running ${normalizedCommands.length} command(s) in: ${cwd}`);
+        normalizedCommands.forEach((command, index) => {
+            checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: [${index + 1}/${normalizedCommands.length}] $ ${command}`);
+        });
 
-        for (const [index, command] of normalizedCommands.entries()) {
-            progress?.report({ message: `${contextLabel}: ${phase} (${index + 1}/${normalizedCommands.length}): ${command}` });
-            checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: $ ${command}`);
+        const taskName = `Odoo Debugger: ${contextLabel} ${phase}`;
+        const script = buildHookExecutionScript(normalizedCommands, phase, contextLabel);
+        const sanitizedLabel = contextLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'repo';
+        const scriptPath = path.join(
+            os.tmpdir(),
+            `odoo-branch-hooks-${phase}-${sanitizedLabel}-${Date.now()}-${Math.random().toString(16).slice(2)}.sh`
+        );
+        fs.writeFileSync(scriptPath, script, { encoding: 'utf8' });
+        const task = new vscode.Task(
+            { type: 'odooDebugger.branchHooks', phase, contextLabel },
+            vscode.TaskScope.Workspace,
+            taskName,
+            'odooDebugger',
+            new vscode.ShellExecution('/bin/bash', [scriptPath], { cwd }),
+            []
+        );
+        task.presentationOptions = {
+            reveal: vscode.TaskRevealKind.Silent,
+            echo: false,
+            focus: false,
+            panel: vscode.TaskPanelKind.Dedicated,
+            clear: false,
+            showReuseMessage: false,
+            close: true
+        };
 
-            const taskName = `Odoo Debugger: ${phase} (${index + 1}/${normalizedCommands.length})`;
-            const task = new vscode.Task(
-                { type: 'odooDebugger.branchHooks', phase, index },
-                vscode.TaskScope.Workspace,
-                taskName,
-                'odooDebugger',
-                new vscode.ShellExecution(command, { cwd }),
-                []
-            );
-            task.presentationOptions = {
-                reveal: vscode.TaskRevealKind.Always,
-                focus: false,
-                panel: vscode.TaskPanelKind.Shared,
-                clear: false
-            };
-
+        const taskStartedAt = Date.now();
+        let exitCode: number | undefined;
+        try {
             const execution = await vscode.tasks.executeTask(task);
-            const exitCode = await new Promise<number | undefined>((resolve) => {
+            exitCode = await new Promise<number | undefined>((resolve) => {
                 const disposable = vscode.tasks.onDidEndTaskProcess(event => {
                     if (event.execution === execution) {
                         disposable.dispose();
@@ -501,22 +557,30 @@ export async function checkoutBranch(settings: SettingsModel, branch: string): P
                     }
                 });
             });
-
-            if (exitCode !== 0 && exitCode !== undefined) {
-                showError(`${contextLabel}: failed during ${phase} command "${command}" (exit code ${exitCode})`);
-                checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: FAILED (exit ${exitCode})`);
-                return false;
+        } finally {
+            try {
+                fs.rmSync(scriptPath, { force: true });
+            } catch {
+                // Ignore temporary script cleanup failures.
             }
+        }
+        const durationMs = Date.now() - taskStartedAt;
 
-            if (exitCode === undefined) {
-                showError(`${contextLabel}: failed during ${phase} command "${command}" (no exit code)`);
-                checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: FAILED (no exit code)`);
-                return false;
-            }
-
-            checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: OK`);
+        if (exitCode !== 0 && exitCode !== undefined) {
+            showError(`${contextLabel}: failed during ${phase} command batch (exit code ${exitCode})`);
+            checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: FAILED (exit ${exitCode}, duration=${durationMs}ms)`);
+            checkoutHooksOutput.show(true);
+            return false;
         }
 
+        if (exitCode === undefined) {
+            showError(`${contextLabel}: failed during ${phase} command batch (no exit code)`);
+            checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: FAILED (no exit code, duration=${durationMs}ms)`);
+            checkoutHooksOutput.show(true);
+            return false;
+        }
+
+        checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: OK (duration=${durationMs}ms)`);
         return true;
     };
 
@@ -536,43 +600,36 @@ export async function checkoutBranch(settings: SettingsModel, branch: string): P
         title: `Switching to branch: ${branch}`,
         cancellable: false
     }, async (progress) => {
-        const results: { name: string; success: boolean; message: string }[] = [];
+        const operationStartedAt = Date.now();
         const totalRepos = repos.length;
+        let completedRepos = 0;
 
-        // Process each repository
-        for (const repo of repos) {
-
-            progress.report({
-                message: `Processing ${repo.name}...`,
-                increment: totalRepos > 0 ? (100 / totalRepos) : 0
-            });
+        const processRepository = async (repo: { name: string; path: string }): Promise<{ name: string; success: boolean; message: string }> => {
+            progress.report({ message: `${repo.name}: processing` });
 
             if (!repo.path || repo.path.trim() === '') {
-                results.push({
+                return {
                     name: repo.name,
                     success: false,
                     message: 'Path not configured'
-                });
-                continue;
+                };
             }
 
             if (!fs.existsSync(repo.path)) {
-                results.push({
+                return {
                     name: repo.name,
                     success: false,
                     message: `Repository path does not exist: ${repo.path}`
-                });
-                continue;
+                };
             }
 
             const preOk = await runCheckoutHookCommands(preCheckoutCommands, 'pre-checkout', repo.path, repo.name, progress);
             if (!preOk) {
-                results.push({
+                return {
                     name: repo.name,
                     success: false,
                     message: `Pre-checkout hook(s) failed`
-                });
-                continue;
+                };
             }
 
             const apiCheckoutSucceeded = await checkoutBranchViaSourceControl(repo.path, branch);
@@ -604,12 +661,11 @@ export async function checkoutBranch(settings: SettingsModel, branch: string): P
                         });
                     });
                 } catch (error) {
-                    results.push({
+                    return {
                         name: repo.name,
                         success: false,
                         message: checkoutMessage || 'Failed to checkout branch'
-                    });
-                    continue;
+                    };
                 }
             } else {
                 checkoutSucceededForRepo = true;
@@ -617,24 +673,37 @@ export async function checkoutBranch(settings: SettingsModel, branch: string): P
             }
 
             if (checkoutSucceededForRepo) {
+                invalidateGitBranchCache(repo.path);
                 const postOk = await runCheckoutHookCommands(postCheckoutCommands, 'post-checkout', repo.path, repo.name, progress);
-                results.push({
+                return {
                     name: repo.name,
                     success: postOk,
                     message: postOk ? checkoutMessage : `${checkoutMessage} (but post-checkout hook(s) failed)`
-                });
-            } else {
-                results.push({
-                    name: repo.name,
-                    success: false,
-                    message: checkoutMessage || 'Failed to checkout branch'
-                });
+                };
             }
-        }
+
+            return {
+                name: repo.name,
+                success: false,
+                message: checkoutMessage || 'Failed to checkout branch'
+            };
+        };
+
+        const results = await Promise.all(repos.map(async repo => {
+            const result = await processRepository(repo);
+            completedRepos += 1;
+            progress.report({
+                message: `${repo.name}: completed (${completedRepos}/${totalRepos})`,
+                increment: totalRepos > 0 ? (100 / totalRepos) : 0
+            });
+            checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: ${result.success ? 'SUCCESS' : 'FAILED'} - ${result.message}`);
+            return result;
+        }));
 
         // Check results and provide feedback
         const successful = results.filter(r => r.success);
         const failed = results.filter(r => !r.success);
+        const totalDurationMs = Date.now() - operationStartedAt;
 
         if (failed.length === 0) {
             showInfo(`All repositories switched to branch: ${branch}`);
@@ -656,18 +725,27 @@ export async function checkoutBranch(settings: SettingsModel, branch: string): P
         successful.forEach(s => {
             console.log(`${s.name}: ${s.message}`);
         });
+        checkoutHooksOutput.appendLine(`[checkout] Completed branch switch "${branch}" in ${totalDurationMs}ms (${successful.length}/${results.length} succeeded)`);
     });
 }
 
 interface DumpSelection {
     label: string;
-    kind: 'folder' | 'zip';
+    kind: 'folder' | 'zip' | 'file';
     path: string;
 }
 
 interface PreparedDump {
-    sqlPath: string;
+    kind: 'file' | 'stream';
+    originalPath: string;
+    sqlPath?: string;
+    openStream?: () => OpenedDumpStream;
     cleanup?: () => void;
+}
+
+interface OpenedDumpStream {
+    stream: Readable;
+    dispose: () => void;
 }
 
 function collectDumpSources(root: string, maxDepth = 2): DumpSelection[] {
@@ -706,6 +784,12 @@ function collectDumpSources(root: string, maxDepth = 2): DumpSelection[] {
                     kind: 'zip',
                     path: fullPath
                 });
+            } else if (entry.isFile() && (entry.name.toLowerCase().endsWith('.sql') || entry.name.toLowerCase().endsWith('.gz'))) {
+                results.push({
+                    label: relativeLabel,
+                    kind: 'file',
+                    path: fullPath
+                });
             }
         }
     }
@@ -731,7 +815,7 @@ export async function getDbDumpFolder(dumpsFolder: string, searchFilter?: string
     let foldersToShow = matches.map(item => ({
         label: item.label,
         description: item.path,
-        detail: item.kind === 'zip' ? 'Zip archive' : 'Folder',
+        detail: item.kind === 'zip' ? 'Zip archive' : item.kind === 'file' ? 'SQL dump file' : 'Folder',
         item
     }));
 
@@ -782,15 +866,6 @@ const CREATION_METHOD_ITEMS: Record<CreationMethod, { label: string; description
 };
 
 export async function createDb(projectName:string, repos:RepoModel[], dumpFolderPath:string, _settings: SettingsModel, options: CreateDbOptions = {}): Promise<DatabaseModel | undefined> {
-    const discovery = discoverModulesInRepos(repos);
-    const allModules = discovery.modules.map(module => ({
-        path: module.path,
-        name: module.name,
-        source: module.isPsaeInternal && module.psInternalDirName
-            ? `${module.repoName}/${module.psInternalDirName}`
-            : module.repoName
-    }));
-
     let selectedModules: string[] = [];
     let db: DatabaseModel | undefined;
     let modules: ModuleModel[] = [];
@@ -821,6 +896,14 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
     // Step 2: Handle the specific creation method
     switch (creationMethod) {
         case 'fresh':
+            const allModules = discoverModulesInRepos(repos).modules.map(module => ({
+                path: module.path,
+                name: module.name,
+                source: module.isPsaeInternal && module.psInternalDirName
+                    ? `${module.repoName}/${module.psInternalDirName}`
+                    : module.repoName
+            }));
+
             // Select modules to install
             const moduleChoices = allModules.map(entry => ({
                 label: entry.name,
@@ -1021,14 +1104,13 @@ export async function setupDatabase(dbName: string, dumpPath: string | undefined
 
     let preparedDump: PreparedDump | undefined;
     try {
-        preparedDump = dumpPath ? prepareDumpIfNeeded(dumpPath) : undefined;
+        preparedDump = dumpPath ? await prepareDumpForImport(dumpPath) : undefined;
     } catch (error: any) {
         showError(`Unable to read dump file: ${error.message ?? error}`);
         return;
     }
 
-    const finalDumpPath = preparedDump?.sqlPath;
-    const operation = remove ? 'Removing' : finalDumpPath ? 'Setting up' : 'Creating';
+    const operation = remove ? 'Removing' : preparedDump ? 'Setting up' : 'Creating';
 
     try {
         await vscode.window.withProgress({
@@ -1046,19 +1128,35 @@ export async function setupDatabase(dbName: string, dumpPath: string | undefined
                     console.log(`🗑️ Dropping existing database: ${dbName}`);
                     execSync(`dropdb ${dbName}`, { stdio: 'inherit' });
                 }
+                clearInstalledModuleCache(dbName);
 
                 if (!remove) {
                     progress.report({ message: 'Creating database...', increment: 40 });
                     console.log(`🚀 Creating database: ${dbName}`);
                     execSync(`createdb ${dbName}`, { stdio: 'inherit' });
 
-                    if (finalDumpPath) {
+                    if (preparedDump) {
                         progress.report({ message: 'Importing dump file...', increment: 50 });
                         console.log(`📥 Importing SQL dump into ${dbName}`);
-                        execSync(`psql ${dbName} < "${finalDumpPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
+                        try {
+                            await importPreparedDump(dbName, preparedDump);
+                        } catch (error) {
+                            if (dumpPath && preparedDump.kind === 'stream' && isToolchainUnavailableError(error)) {
+                                console.warn('Streaming import unavailable. Falling back to temporary dump extraction.');
+                                const fallbackDump = prepareDumpViaTempFile(dumpPath);
+                                try {
+                                    await importPreparedDump(dbName, fallbackDump);
+                                } finally {
+                                    fallbackDump.cleanup?.();
+                                }
+                            } else {
+                                throw error;
+                            }
+                        }
+                        clearInstalledModuleCache(dbName);
 
                         progress.report({ message: 'Configuring database...', increment: 70 });
-                        console.log(`� Configuring database for development use`);
+                        console.log(`⚙️ Configuring database for development use`);
 
                         const newUuid = randomUUID();
 
@@ -1480,7 +1578,287 @@ export async function changeDatabaseVersion(event: any) {
     }
 }
 
-function prepareDumpIfNeeded(dumpPath: string): PreparedDump {
+function normalizeErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+        return error.message;
+    }
+    return String(error);
+}
+
+function isToolchainUnavailableError(error: unknown): boolean {
+    const message = normalizeErrorMessage(error).toLowerCase();
+    return message.includes('enoent') || message.includes('not found') || message.includes('failed to start unzip') || message.includes('failed to start gunzip');
+}
+
+function createProcessStream(process: ChildProcess, label: string): OpenedDumpStream {
+    if (!process.stdout || !process.stderr) {
+        throw new Error(`${label} process did not expose readable stdio streams.`);
+    }
+
+    const output = new PassThrough();
+    let stderr = '';
+
+    process.stderr.on('data', chunk => {
+        stderr += chunk.toString();
+    });
+    process.stdout.pipe(output);
+
+    process.on('error', error => {
+        output.destroy(new Error(`Failed to start ${label}: ${normalizeErrorMessage(error)}`));
+    });
+    process.on('close', code => {
+        if (code !== 0) {
+            const details = stderr.trim();
+            output.destroy(new Error(`${label} exited with code ${code}${details ? `: ${details}` : ''}`));
+        }
+    });
+
+    return {
+        stream: output,
+        dispose: () => {
+            if (!process.killed) {
+                process.kill('SIGTERM');
+            }
+            output.destroy();
+        }
+    };
+}
+
+function createCommandStream(command: string, args: string[], label: string): OpenedDumpStream {
+    const process = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    return createProcessStream(process, label);
+}
+
+function createZipGzipStream(dumpPath: string, entry: string): OpenedDumpStream {
+    const unzipProcess = spawn('unzip', ['-p', dumpPath, entry], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const gunzipProcess = spawn('gunzip', ['-c'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const output = new PassThrough();
+
+    let unzipStderr = '';
+    let gunzipStderr = '';
+
+    unzipProcess.stderr.on('data', chunk => {
+        unzipStderr += chunk.toString();
+    });
+    gunzipProcess.stderr.on('data', chunk => {
+        gunzipStderr += chunk.toString();
+    });
+
+    unzipProcess.stdout.pipe(gunzipProcess.stdin);
+    gunzipProcess.stdout.pipe(output);
+
+    unzipProcess.on('error', error => {
+        output.destroy(new Error(`Failed to start unzip: ${normalizeErrorMessage(error)}`));
+    });
+    gunzipProcess.on('error', error => {
+        output.destroy(new Error(`Failed to start gunzip: ${normalizeErrorMessage(error)}`));
+    });
+
+    unzipProcess.on('close', code => {
+        if (code !== 0) {
+            const details = unzipStderr.trim();
+            output.destroy(new Error(`unzip exited with code ${code}${details ? `: ${details}` : ''}`));
+            if (!gunzipProcess.killed) {
+                gunzipProcess.kill('SIGTERM');
+            }
+        }
+    });
+    gunzipProcess.on('close', code => {
+        if (code !== 0) {
+            const details = gunzipStderr.trim();
+            output.destroy(new Error(`gunzip exited with code ${code}${details ? `: ${details}` : ''}`));
+        }
+    });
+
+    return {
+        stream: output,
+        dispose: () => {
+            if (!unzipProcess.killed) {
+                unzipProcess.kill('SIGTERM');
+            }
+            if (!gunzipProcess.killed) {
+                gunzipProcess.kill('SIGTERM');
+            }
+            output.destroy();
+        }
+    };
+}
+
+async function inspectZipEntries(dumpPath: string): Promise<{ firstEntry?: string; sqlEntry?: string; gzEntry?: string; }> {
+    return new Promise((resolve, reject) => {
+        const inspectProcess = spawn('unzip', ['-Z1', dumpPath], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let stderr = '';
+        let lineBuffer = '';
+        let firstEntry: string | undefined;
+        let sqlEntry: string | undefined;
+        let gzEntry: string | undefined;
+        let entriesCount = 0;
+
+        const processLine = (line: string) => {
+            const entry = line.trim();
+            if (!entry) {
+                return;
+            }
+            entriesCount++;
+            if (!firstEntry) {
+                firstEntry = entry;
+            }
+            const lower = entry.toLowerCase();
+            if (!sqlEntry && lower.endsWith('.sql') && !lower.endsWith('.sql.gz')) {
+                sqlEntry = entry;
+            }
+            if (!gzEntry && lower.endsWith('.sql.gz')) {
+                gzEntry = entry;
+            }
+        };
+
+        inspectProcess.stdout.on('data', chunk => {
+            lineBuffer += chunk.toString();
+            let newlineIndex = lineBuffer.indexOf('\n');
+            while (newlineIndex !== -1) {
+                processLine(lineBuffer.slice(0, newlineIndex));
+                lineBuffer = lineBuffer.slice(newlineIndex + 1);
+                newlineIndex = lineBuffer.indexOf('\n');
+            }
+        });
+
+        inspectProcess.stderr.on('data', chunk => {
+            stderr += chunk.toString();
+        });
+
+        inspectProcess.on('error', error => {
+            reject(new Error(`Failed to start unzip: ${normalizeErrorMessage(error)}`));
+        });
+
+        inspectProcess.on('close', code => {
+            if (lineBuffer.trim().length > 0) {
+                processLine(lineBuffer);
+            }
+            if (code !== 0) {
+                const details = stderr.trim();
+                reject(new Error(`unzip exited with code ${code}${details ? `: ${details}` : ''}`));
+                return;
+            }
+            if (entriesCount === 0) {
+                reject(new Error('Archive is empty.'));
+                return;
+            }
+            resolve({ firstEntry, sqlEntry, gzEntry });
+        });
+    });
+}
+
+async function prepareDumpForImport(dumpPath: string): Promise<PreparedDump> {
+    if (dumpPath.endsWith('.zip')) {
+        const inspection = await inspectZipEntries(dumpPath);
+        const selectedEntry = inspection.sqlEntry ?? inspection.gzEntry ?? inspection.firstEntry;
+        if (!selectedEntry) {
+            throw new Error('Archive does not contain any files.');
+        }
+
+        if (selectedEntry.toLowerCase().endsWith('.sql.gz')) {
+            return {
+                kind: 'stream',
+                originalPath: dumpPath,
+                openStream: () => createZipGzipStream(dumpPath, selectedEntry)
+            };
+        }
+
+        return {
+            kind: 'stream',
+            originalPath: dumpPath,
+            openStream: () => createCommandStream('unzip', ['-p', dumpPath, selectedEntry], 'unzip')
+        };
+    }
+
+    if (dumpPath.endsWith('.gz')) {
+        return {
+            kind: 'stream',
+            originalPath: dumpPath,
+            openStream: () => createCommandStream('gunzip', ['-c', dumpPath], 'gunzip')
+        };
+    }
+
+    return {
+        kind: 'file',
+        originalPath: dumpPath,
+        sqlPath: dumpPath
+    };
+}
+
+async function importDumpStream(dbName: string, stream: Readable): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+        const psqlProcess = spawn('psql', ['-d', dbName], { stdio: ['pipe', 'inherit', 'pipe'] });
+        let stderr = '';
+        let settled = false;
+
+        const finish = (error?: unknown) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            if (error) {
+                reject(error);
+                return;
+            }
+            resolve();
+        };
+
+        psqlProcess.stderr.on('data', chunk => {
+            stderr += chunk.toString();
+            process.stderr.write(chunk);
+        });
+        psqlProcess.on('error', error => {
+            finish(new Error(`Failed to start psql: ${normalizeErrorMessage(error)}`));
+        });
+        psqlProcess.on('close', code => {
+            if (code === 0) {
+                finish();
+                return;
+            }
+            const details = stderr.trim();
+            finish(new Error(`psql exited with code ${code}${details ? `: ${details}` : ''}`));
+        });
+
+        stream.on('error', error => {
+            if (!psqlProcess.killed) {
+                psqlProcess.kill('SIGTERM');
+            }
+            finish(error);
+        });
+        psqlProcess.stdin.on('error', error => {
+            const ioError = error as NodeJS.ErrnoException;
+            if (ioError.code !== 'EPIPE') {
+                finish(error);
+            }
+        });
+
+        stream.pipe(psqlProcess.stdin);
+    });
+}
+
+async function importPreparedDump(dbName: string, preparedDump: PreparedDump): Promise<void> {
+    if (preparedDump.kind === 'file') {
+        if (!preparedDump.sqlPath) {
+            throw new Error('No dump path available for file-based import.');
+        }
+        execSync(`psql ${dbName} < "${preparedDump.sqlPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
+        return;
+    }
+
+    if (!preparedDump.openStream) {
+        throw new Error('No stream provider configured for this dump source.');
+    }
+
+    const openedStream = preparedDump.openStream();
+    try {
+        await importDumpStream(dbName, openedStream.stream);
+    } finally {
+        openedStream.dispose();
+    }
+}
+
+function prepareDumpViaTempFile(dumpPath: string): PreparedDump {
     if (dumpPath.endsWith('.zip')) {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odoo-dump-'));
         const tempSqlPath = path.join(tempDir, 'dump.sql');
@@ -1491,7 +1869,7 @@ function prepareDumpIfNeeded(dumpPath: string): PreparedDump {
                 throw new Error('Archive is empty.');
             }
 
-            const sqlEntry = entries.find(entry => entry.toLowerCase().endsWith('.sql'));
+            const sqlEntry = entries.find(entry => entry.toLowerCase().endsWith('.sql') && !entry.toLowerCase().endsWith('.sql.gz'));
             const gzEntry = entries.find(entry => entry.toLowerCase().endsWith('.sql.gz'));
 
             if (sqlEntry) {
@@ -1503,6 +1881,8 @@ function prepareDumpIfNeeded(dumpPath: string): PreparedDump {
             }
 
             return {
+                kind: 'file',
+                originalPath: dumpPath,
                 sqlPath: tempSqlPath,
                 cleanup: () => {
                     try {
@@ -1528,6 +1908,8 @@ function prepareDumpIfNeeded(dumpPath: string): PreparedDump {
         try {
             execSync(`gunzip -c "${dumpPath}" > "${tempSqlPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
             return {
+                kind: 'file',
+                originalPath: dumpPath,
                 sqlPath: tempSqlPath,
                 cleanup: () => {
                     try {
@@ -1547,5 +1929,9 @@ function prepareDumpIfNeeded(dumpPath: string): PreparedDump {
         }
     }
 
-    return { sqlPath: dumpPath };
+    return {
+        kind: 'file',
+        originalPath: dumpPath,
+        sqlPath: dumpPath
+    };
 }

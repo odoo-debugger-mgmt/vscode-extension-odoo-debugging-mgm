@@ -2,14 +2,14 @@ import { ModuleModel, InstalledModuleInfo } from "./models/module";
 import { DatabaseModel } from "./models/db";
 import { ProjectModel } from "./models/project";
 import * as vscode from "vscode";
-import { discoverModulesInRepos, showError, showInfo, showAutoInfo, normalizePath, stripSettings, createInfoTreeItem, ModuleDiscoveryResult, getDatabaseLabel } from './utils';
+import { discoverModulesInRepos, showError, showInfo, showAutoInfo, stripSettings, createInfoTreeItem, ModuleDiscoveryResult, getDatabaseLabel } from './utils';
 
 function collectModuleDiscovery(project: ProjectModel): ModuleDiscoveryResult {
     const manualIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
     return discoverModulesInRepos(project.repos, { manualIncludePaths: manualIncludes });
 }
 import { SettingsStore } from './settingsStore';
-import { getInstalledModules } from './services/database';
+import { getInstalledModuleNames, getInstalledModules } from './services/database';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 
@@ -45,11 +45,26 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
         // Check if testing is enabled
         const isTestingEnabled = project.testingConfig && project.testingConfig.isEnabled;
 
-        // Get modules that are installed or marked for upgrade in the database
-        const installedModules = await getInstalledModules(db.id);
-        const installedModuleNames = new Set(installedModules.map((m: InstalledModuleInfo) => m.name));
-
         const { modules: allModules, psaeDirectories } = collectModuleDiscovery(project);
+        const installedModuleNames = await getInstalledModuleNames(db.id);
+        const dbModulesByName = new Map(modules.map(module => [module.name, module]));
+        const selectedDbModuleNames = new Set(
+            modules
+                .filter(module => module.state === 'install' || module.state === 'upgrade')
+                .map(module => module.name)
+        );
+        const manuallyIncludedPaths = new Set((project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!')));
+        const manuallyExcludedPaths = new Set((project.includedPsaeInternalPaths ?? []).filter(entry => entry.startsWith('!')).map(entry => entry.substring(1)));
+
+        const modulesByPsaeDir = new Map<string, typeof allModules>();
+        for (const module of allModules) {
+            if (!module.isPsaeInternal || !module.psInternalDirPath) {
+                continue;
+            }
+            const existing = modulesByPsaeDir.get(module.psInternalDirPath) ?? [];
+            existing.push(module);
+            modulesByPsaeDir.set(module.psInternalDirPath, existing);
+        }
 
         let treeItems: vscode.TreeItem[] = [];
 
@@ -66,15 +81,11 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
 
         // Add psae-internal directories as special meta-modules
         for (const psaeDir of psaeDirectories) {
-            const psaeInternalModules = allModules.filter(m =>
-                m.isPsaeInternal && m.psInternalDirPath === psaeDir.path
-            );
+            const psaeInternalModules = modulesByPsaeDir.get(psaeDir.path) ?? [];
 
             // Check if any modules from this ps*-internal are selected OR installed in DB
             const hasSelectedModules = psaeInternalModules.some(m =>
-                modules.some(dbModule =>
-                    dbModule.name === m.name && (dbModule.state === 'install' || dbModule.state === 'upgrade')
-                )
+                selectedDbModuleNames.has(m.name)
             );
 
             // Check if any modules from this ps*-internal directory are installed/to upgrade in DB
@@ -82,11 +93,11 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
                 installedModuleNames.has(m.name)
             );
 
-            const isManuallyIncluded = project.includedPsaeInternalPaths?.includes(psaeDir.path) || false;
+            const isManuallyIncluded = manuallyIncludedPaths.has(psaeDir.path);
 
             // Auto-include if has selected OR database modules
             // If not manually set: auto-include if has selected OR database modules
-            const shouldBeIncluded = isManuallyIncluded || (!project.includedPsaeInternalPaths?.includes(`!${psaeDir.path}`) && (hasSelectedModules || hasDbModules));
+            const shouldBeIncluded = isManuallyIncluded || (!manuallyExcludedPaths.has(psaeDir.path) && (hasSelectedModules || hasDbModules));
 
             // Determine icon and tooltip based on status
             let psaeIcon: string;
@@ -108,7 +119,7 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
                 psaeTooltip = `${psaeDir.dirName}: Included (${reasons.join(' + ')})\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to exclude from addons path`;
             } else {
                 psaeIcon = '📋'; // Clipboard icon when not included
-                const reason = project.includedPsaeInternalPaths?.includes(`!${psaeDir.path}`) ? 'manually excluded' : 'no modules';
+                const reason = manuallyExcludedPaths.has(psaeDir.path) ? 'manually excluded' : 'no modules';
                 psaeTooltip = `${psaeDir.dirName}: Not included (${reason})\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to include in addons path`;
             }
 
@@ -138,7 +149,7 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
         // Add regular modules (excluding ps*-internal from the name display since we show them separately)
         for (const module of allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i))) {
             const repoPath = module.isPsaeInternal ? `${module.repoName}/${module.psInternalDirName}` : module.repoName;
-            const existingModule = modules.find(mod => mod.name === module.name);
+            const existingModule = dbModulesByName.get(module.name);
             const isInstalledInDb = installedModuleNames.has(module.name);
 
             if (existingModule) {
@@ -440,11 +451,13 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
         repoName,
         dirName,
         hasSelectedModules,
+        hasDbModules,
         hasInstalledModules,
         isManuallyIncluded,
         shouldBeIncluded,
         modules: psaeModules
     } = event;
+    const hasInstalledOrDbModules = Boolean(hasInstalledModules ?? hasDbModules);
 
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
@@ -480,7 +493,7 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
                 project.includedPsaeInternalPaths.splice(pathIndex, 1);
             }
             // If would still be auto-included, add manual exclusion and remove selected modules
-            if (hasSelectedModules || hasInstalledModules) {
+            if (hasSelectedModules || hasInstalledOrDbModules) {
                 project.includedPsaeInternalPaths.push(excludePath);
                 // Remove selected modules from this psae-internal directory
                 const moduleNamesToRemove = psaeModules.map((m: any) => m.name);
@@ -508,7 +521,7 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
                 project.includedPsaeInternalPaths.splice(pathIndex, 1);
             }
             await SettingsStore.saveWithoutComments(stripSettings(data));
-            if (hasSelectedModules || hasInstalledModules) {
+            if (hasSelectedModules || hasInstalledOrDbModules) {
                 showInfo(`Removed manual exclusion of ${dirName} (${repoName}). Now auto-included due to modules.`);
             } else {
                 showInfo(`Removed manual exclusion of ${dirName} (${repoName})`);

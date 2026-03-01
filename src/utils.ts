@@ -6,6 +6,7 @@ import { SettingsModel } from './models/settings';
 import { ProjectModel } from './models/project';
 import { RepoModel } from './models/repo';
 import { getBranchesViaSourceControl } from './services/gitService';
+import { runtimeCache } from './services/runtimeCache';
 
 import { parse } from 'jsonc-parser';
 
@@ -236,18 +237,35 @@ function shouldExcludePath(fullPath: string, root: string, regexes: RegExp[]): b
 }
 
 function getSearchOptions(kind: DiscoveryKind, overrides: SearchOverrides = {}): SearchOptions {
-    const config = vscode.workspace.getConfiguration('odooDebugger.search');
-    const maxDepth = Math.max(0, overrides.maxDepth ?? config.get<number>('maxDepth', 4));
-    const maxEntries = Math.max(1, overrides.maxEntries ?? config.get<number>('maxEntries', 100000));
-    const patternKey = kind === 'modules' ? 'excludePatterns.modules' : 'excludePatterns.repositories';
-    const defaults = kind === 'modules' ? DEFAULT_MODULE_EXCLUDES : DEFAULT_REPOSITORY_EXCLUDES;
-    const patterns = overrides.excludePatterns ?? config.get<string[]>(patternKey, defaults);
+    const { maxDepth, maxEntries, patterns } = resolveSearchConfig(kind, overrides);
     return {
         maxDepth,
         maxEntries,
         excludeRegexes: compilePatterns(patterns),
         token: overrides.token
     };
+}
+
+function resolveSearchConfig(kind: DiscoveryKind, overrides: SearchOverrides = {}): { maxDepth: number; maxEntries: number; patterns: string[] } {
+    const config = vscode.workspace.getConfiguration('odooDebugger.search');
+    const maxDepth = Math.max(0, overrides.maxDepth ?? config.get<number>('maxDepth', 4));
+    const maxEntries = Math.max(1, overrides.maxEntries ?? config.get<number>('maxEntries', 100000));
+    const patternKey = kind === 'modules' ? 'excludePatterns.modules' : 'excludePatterns.repositories';
+    const defaults = kind === 'modules' ? DEFAULT_MODULE_EXCLUDES : DEFAULT_REPOSITORY_EXCLUDES;
+    const patterns = overrides.excludePatterns ?? config.get<string[]>(patternKey, defaults);
+    return { maxDepth, maxEntries, patterns };
+}
+
+function buildDiscoveryCacheKey(kind: DiscoveryKind, targetPath: string, overrides: SearchOverrides = {}): string {
+    const normalizedRoot = path.resolve(normalizePath(targetPath));
+    const { maxDepth, maxEntries, patterns } = resolveSearchConfig(kind, overrides);
+    return JSON.stringify({
+        kind,
+        normalizedRoot,
+        maxDepth,
+        maxEntries,
+        patterns
+    });
 }
 
 function discoverDirectories(targetPath: string, kind: DiscoveryKind, options: SearchOptions): { path: string; name: string }[] {
@@ -341,8 +359,16 @@ export function findModules(targetPath: string, overrides: SearchOverrides = {})
 }
 
 export function findRepositories(targetPath: string, overrides: SearchOverrides = {}): { path: string; name: string }[] {
-    const options = getSearchOptions('repositories', overrides);
-    return discoverDirectories(targetPath, 'repositories', options);
+    if (overrides.token) {
+        const options = getSearchOptions('repositories', overrides);
+        return discoverDirectories(targetPath, 'repositories', options);
+    }
+
+    const cacheKey = buildDiscoveryCacheKey('repositories', targetPath, overrides);
+    return runtimeCache.getRepositoryDiscovery(cacheKey, () => {
+        const options = getSearchOptions('repositories', overrides);
+        return discoverDirectories(targetPath, 'repositories', options);
+    });
 }
 
 const PSAE_INTERNAL_REGEX = /^ps[a-z]*-internal$/i;
@@ -373,6 +399,23 @@ export interface ModuleDiscoveryResult {
 export interface ModuleDiscoveryOptions {
     search?: SearchOverrides;
     manualIncludePaths?: string[];
+}
+
+function buildModuleDiscoveryCacheKey(repos: RepoModel[], options: ModuleDiscoveryOptions): string {
+    const searchOverrides = options.search ?? {};
+    const searchConfig = resolveSearchConfig('modules', searchOverrides);
+    const repoPaths = repos
+        .map(repo => `${repo.name}:${path.resolve(normalizePath(repo.path))}`)
+        .sort((a, b) => a.localeCompare(b));
+    const manualIncludes = (options.manualIncludePaths ?? [])
+        .map(entry => path.resolve(normalizePath(entry)))
+        .sort((a, b) => a.localeCompare(b));
+
+    return JSON.stringify({
+        repoPaths,
+        manualIncludes,
+        search: searchConfig
+    });
 }
 
 function findRepoContext(repos: RepoModel[], targetPath: string): { repoName: string; repoPath: string } | undefined {
@@ -406,9 +449,19 @@ function toPosixRelative(relativePath: string): string {
 }
 
 export function discoverModulesInRepos(repos: RepoModel[], options: ModuleDiscoveryOptions = {}): ModuleDiscoveryResult {
+    const searchOverrides = options.search ?? {};
+
+    if (searchOverrides.token) {
+        return computeModuleDiscovery(repos, options, searchOverrides);
+    }
+
+    const cacheKey = buildModuleDiscoveryCacheKey(repos, options);
+    return runtimeCache.getModuleDiscovery(cacheKey, () => computeModuleDiscovery(repos, options, searchOverrides));
+}
+
+function computeModuleDiscovery(repos: RepoModel[], options: ModuleDiscoveryOptions, searchOverrides: SearchOverrides): ModuleDiscoveryResult {
     const modulesByPath = new Map<string, RepoModuleInfo>();
     const psaeDirectories = new Map<string, { repoName: string; dirName: string; moduleNames: Set<string> }>();
-    const searchOverrides = options.search ?? {};
 
     const accumulateModule = (entry: { path: string; name: string }, repoName: string, repoRoot: string) => {
         const resolvedRepoRoot = path.resolve(repoRoot);

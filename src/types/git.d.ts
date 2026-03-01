@@ -30,6 +30,11 @@ export interface Branch {
 
 export interface Repository {
     readonly rootUri: vscode.Uri;
+    readonly state?: {
+        readonly HEAD?: {
+            readonly name?: string;
+        };
+    };
     checkout(treeish: string, detached?: boolean): Promise<void>;
     getBranches(query?: BranchQuery): Promise<Branch[]>;
 }
