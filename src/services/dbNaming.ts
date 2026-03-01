@@ -1,6 +1,6 @@
 import * as crypto from 'crypto';
 
-export type DatabaseKind = 'dump' | 'fresh' | 'dev' | 'test' | 'feature' | 'clone' | 'temp' | 'shell' | 'existing';
+export type DatabaseKind = 'dump' | 'fresh' | 'dev' | 'test' | 'feature' | 'clone' | 'temp' | 'shell' | 'existing' | 'template';
 
 export interface DatabaseNamingOptions {
     projectName: string;
@@ -27,7 +27,8 @@ const KIND_LABELS: Record<string, string> = {
     clone: 'Clone',
     temp: 'Temp',
     shell: 'Shell',
-    existing: 'Existing'
+    existing: 'Existing',
+    template: 'Template'
 };
 
 function slugifySegment(value: string | undefined, fallback: string): string {

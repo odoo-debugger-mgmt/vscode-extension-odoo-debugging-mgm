@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { normalizePath, showError, showInfo, showWarning, showAutoInfo, getGitBranches, getGitBranch } from './utils';
 import { ProjectModel } from './models/project';
 import { DatabaseModel } from './models/db';
-import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb, changeDatabaseVersion, changeDatabaseProjectRepoBranches, checkoutBranch } from './dbs';
+import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb, changeDatabaseVersion, changeDatabaseProjectRepoBranches, manageDatabaseTemplates, checkoutBranch } from './dbs';
 import { ProjectTreeProvider, createProject, selectProject, getRepo, getProjectName, deleteProject, editProjectSettings, duplicateProject, exportProject, importProject, quickProjectSearch, manageProjectTickets, openProjectTicket} from './project';
 import { RepoTreeProvider, selectRepo } from './repos';
 import { ProjectReposProvider, revealProjectRepo } from './projectRepos';
@@ -589,7 +589,8 @@ export async function activate(context: vscode.ExtensionContext) {
                 await SettingsStore.saveWithoutComments({
                     projects,
                     versions: data.versions,
-                    activeVersion: data.activeVersion
+                    activeVersion: data.activeVersion,
+                    dbTemplates: data.dbTemplates
                 });
                 await selectDatabase(db);
             }
@@ -647,6 +648,16 @@ export async function activate(context: vscode.ExtensionContext) {
         } catch (err: any) {
             showError(`Failed to update project repo branch mapping: ${err.message}`);
             console.error('Error in database project repo branch mapping update:', err);
+        }
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.manageTemplates', async () => {
+        try {
+            await manageDatabaseTemplates();
+            await refreshAll({ reason: 'ui' });
+        } catch (err: any) {
+            showError(`Failed to manage database templates: ${err.message}`);
+            console.error('Error in database template management:', err);
         }
     }));
 

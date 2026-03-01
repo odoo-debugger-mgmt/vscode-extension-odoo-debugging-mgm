@@ -5,6 +5,7 @@ import * as childProcess from 'child_process';
 import { SettingsModel } from './models/settings';
 import { ProjectModel } from './models/project';
 import { RepoModel } from './models/repo';
+import { DatabaseTemplateModel } from './models/dbTemplate';
 import { getBranchesViaSourceControl } from './services/gitService';
 import { runtimeCache } from './services/runtimeCache';
 
@@ -25,7 +26,8 @@ const debuggerDataFileContent = `{
     "settings": {
         // Add your Odoo settings here
     },
-    "projects": []
+    "projects": [],
+    "dbTemplates": []
 }`;
 
 // ============================================================================
@@ -37,6 +39,7 @@ export interface DebuggerData {
     projects: ProjectModel[];
     versions?: { [id: string]: any };
     activeVersion?: string;
+    dbTemplates?: DatabaseTemplateModel[];
 }
 
 /**
@@ -46,7 +49,8 @@ export function stripSettings(data: DebuggerData): DebuggerData {
     return {
         projects: data.projects,
         versions: data.versions,
-        activeVersion: data.activeVersion
+        activeVersion: data.activeVersion,
+        dbTemplates: data.dbTemplates
     };
 }
 
@@ -609,7 +613,8 @@ async function createOdooDebuggerFile(filePath: string, workspacePath: string, f
         } else {
             data = {
                 settings: new SettingsModel(getDefaultVersionSettings()),
-                projects: []
+                projects: [],
+                dbTemplates: []
             };
             content = debuggerDataFileContent;
         }

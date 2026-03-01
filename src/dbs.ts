@@ -9,6 +9,7 @@ import { execSync, exec, spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { RepoModel } from './models/repo';
+import { DatabaseTemplateModel } from './models/dbTemplate';
 import { randomUUID } from 'crypto';
 import { checkoutBranchViaSourceControl } from './services/gitService';
 import { generateDatabaseIdentifiers, DatabaseKind } from './services/dbNaming';
@@ -560,7 +561,9 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
             tooltipDetails.push(`**Created:** ${formattedDate}`);
 
             // Database type
-            if (db.isItABackup) {
+            if (db.kind === 'template') {
+                tooltipDetails.push(`**Type:** Created from template`);
+            } else if (db.isItABackup) {
                 tooltipDetails.push(`**Type:** Restored from backup`);
                 if (db.sqlFilePath) {
                     tooltipDetails.push(`**Backup Path:** ${db.sqlFilePath}`);
@@ -1218,7 +1221,181 @@ export async function getDbDumpFolder(dumpsFolder: string, searchFilter?: string
     return selected?.item;
 }
 
-type CreationMethod = 'fresh' | 'dump' | 'existing';
+type CreationMethod = 'fresh' | 'dump' | 'existing' | 'template';
+
+const TEMPLATE_DB_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/;
+const RESERVED_DATABASE_NAMES = new Set(['postgres', 'template0', 'template1']);
+
+function sanitizeDatabaseTemplates(source: unknown): DatabaseTemplateModel[] {
+    if (!Array.isArray(source)) {
+        return [];
+    }
+
+    const seenTemplateDbNames = new Set<string>();
+    const normalized: DatabaseTemplateModel[] = [];
+
+    for (const entry of source) {
+        if (!entry || typeof entry !== 'object') {
+            continue;
+        }
+
+        const candidate = entry as Partial<DatabaseTemplateModel> & { [key: string]: unknown };
+        const templateDbName = typeof candidate.templateDbName === 'string'
+            ? candidate.templateDbName.trim()
+            : typeof candidate.name === 'string'
+                ? candidate.name.trim()
+                : '';
+
+        if (!templateDbName) {
+            continue;
+        }
+
+        const dedupeKey = templateDbName.toLowerCase();
+        if (seenTemplateDbNames.has(dedupeKey)) {
+            continue;
+        }
+        seenTemplateDbNames.add(dedupeKey);
+
+        const name = typeof candidate.name === 'string' && candidate.name.trim() !== ''
+            ? candidate.name.trim()
+            : templateDbName;
+        const sourceDbName = typeof candidate.sourceDbName === 'string' && candidate.sourceDbName.trim() !== ''
+            ? candidate.sourceDbName.trim()
+            : undefined;
+        const createdAt = typeof candidate.createdAt === 'string' && candidate.createdAt.trim() !== ''
+            ? candidate.createdAt
+            : new Date().toISOString();
+        const updatedAt = typeof candidate.updatedAt === 'string' && candidate.updatedAt.trim() !== ''
+            ? candidate.updatedAt
+            : undefined;
+
+        normalized.push({
+            name,
+            templateDbName,
+            sourceDbName,
+            createdAt,
+            updatedAt
+        });
+    }
+
+    return normalized.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+}
+
+function validateTemplateDatabaseName(value: string, existingTemplateNames: Set<string>, originalName?: string): string | null {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+        return 'Template name cannot be empty.';
+    }
+
+    if (!TEMPLATE_DB_NAME_PATTERN.test(trimmed)) {
+        return 'Use letters, numbers, "-" or "_" only. The name must not start with "-".';
+    }
+
+    if (RESERVED_DATABASE_NAMES.has(trimmed.toLowerCase())) {
+        return `"${trimmed}" is reserved and cannot be used as a template name.`;
+    }
+
+    const isRenamingSameTemplate = originalName && originalName.toLowerCase() === trimmed.toLowerCase();
+    if (!isRenamingSameTemplate && existingTemplateNames.has(trimmed.toLowerCase())) {
+        return 'A template with this PostgreSQL name already exists.';
+    }
+
+    return null;
+}
+
+function queryPostgresDatabases(): string[] {
+    try {
+        const output = execSync(`psql -d postgres -tAc "SELECT datname FROM pg_database ORDER BY datname;"`, {
+            stdio: ['ignore', 'pipe', 'pipe']
+        }).toString('utf8');
+
+        return output
+            .split('\n')
+            .map(name => name.trim())
+            .filter(name => name.length > 0);
+    } catch (error) {
+        console.warn('Failed to query PostgreSQL database list:', error);
+        return [];
+    }
+}
+
+function quotePgIdentifier(identifier: string): string {
+    return `"${identifier.replace(/"/g, '""')}"`;
+}
+
+function quotePgLiteral(value: string): string {
+    return `'${value.replace(/'/g, "''")}'`;
+}
+
+async function runSpawnCommand(command: string, args: string[], cwd?: string): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+        const child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+        let stderr = '';
+
+        child.stderr?.on('data', chunk => {
+            stderr += chunk.toString();
+        });
+
+        child.on('error', error => {
+            reject(new Error(`Failed to execute "${command}": ${error.message}`));
+        });
+
+        child.on('close', code => {
+            if (code === 0) {
+                resolve();
+                return;
+            }
+
+            const details = stderr.trim();
+            reject(new Error(details || `${command} exited with code ${code ?? 'unknown'}`));
+        });
+    });
+}
+
+async function cloneDatabaseFromTemplate(targetDbName: string, templateDbName: string): Promise<void> {
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Setting up database ${targetDbName}`,
+        cancellable: false
+    }, async (progress) => {
+        progress.report({ message: 'Checking database existence...', increment: 20 });
+        const checkCommand = `psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname=${quotePgLiteral(targetDbName)}"`;
+        const exists = execSync(checkCommand).toString().trim() === '1';
+
+        if (exists) {
+            progress.report({ message: 'Dropping existing database...', increment: 20 });
+            execSync(`dropdb ${targetDbName}`, { stdio: 'inherit' });
+        }
+        clearInstalledModuleCache(targetDbName);
+
+        progress.report({ message: `Cloning from template "${templateDbName}"...`, increment: 50 });
+        await runSpawnCommand('createdb', ['-T', templateDbName, targetDbName]);
+
+        clearInstalledModuleCache(targetDbName);
+        progress.report({ message: 'Complete!', increment: 30 });
+    });
+}
+
+function getTemplateQuickPickItems(templates: DatabaseTemplateModel[]): Array<{ label: string; description: string; detail: string; template: DatabaseTemplateModel; }> {
+    return templates.map(template => ({
+        label: template.name,
+        description: template.templateDbName,
+        detail: template.sourceDbName ? `Source DB: ${template.sourceDbName}` : 'Source DB not recorded',
+        template
+    }));
+}
+
+async function promptTemplateSelection(templates: DatabaseTemplateModel[], placeHolder: string): Promise<DatabaseTemplateModel | undefined> {
+    if (templates.length === 0) {
+        return undefined;
+    }
+
+    const selected = await vscode.window.showQuickPick(getTemplateQuickPickItems(templates), {
+        placeHolder,
+        ignoreFocusOut: true
+    });
+    return selected?.template;
+}
 
 interface CreateDbOptions {
     allowExistingOption?: boolean;
@@ -1243,6 +1420,12 @@ const CREATION_METHOD_ITEMS: Record<CreationMethod, { label: string; description
         description: 'Reference an already existing database',
         detail: 'Use a database that already exists in PostgreSQL',
         method: 'existing'
+    },
+    template: {
+        label: 'From Template',
+        description: 'Create a database by cloning a saved template',
+        detail: 'Fast DB creation using createdb -T <template>',
+        method: 'template'
     }
 };
 
@@ -1273,6 +1456,7 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
     let existingDbName: string | undefined;
     let isExistingDb = false;
     let sqlDumpPath: string | undefined;
+    let selectedTemplate: DatabaseTemplateModel | undefined;
 
     // Step 2: Handle the specific creation method
     switch (creationMethod) {
@@ -1340,6 +1524,24 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
             existingDbName = existingDbName.trim();
             isExistingDb = true;
             break;
+
+        case 'template': {
+            const data = await SettingsStore.get('odoo-debugger-data.json');
+            const templates = sanitizeDatabaseTemplates(data.dbTemplates);
+            if (templates.length === 0) {
+                showInfo('No database templates found. Use "Manage Database Templates" to create one first.');
+                return undefined;
+            }
+
+            selectedTemplate = await promptTemplateSelection(
+                templates,
+                'Select a template to clone into the new database'
+            );
+            if (!selectedTemplate) {
+                return undefined;
+            }
+            break;
+        }
     }
 
     // Step 3: Get database branch name (optional)
@@ -1406,7 +1608,11 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
     const creationTimestamp = new Date();
     const existingIdentifiers = await collectExistingDatabaseIdentifiers();
     const repoSignature = buildRepoSignature(repos);
-    let dbKind: DatabaseKind = creationMethod === 'dump' ? 'dump' : 'fresh';
+    let dbKind: DatabaseKind = creationMethod === 'dump'
+        ? 'dump'
+        : creationMethod === 'template'
+            ? 'template'
+            : 'fresh';
     let internalDbName: string;
     let displayDbName: string;
 
@@ -1459,6 +1665,8 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
     if (sqlDumpPath) {
         db.isItABackup = true;
         await setupDatabase(db.id, sqlDumpPath);
+    } else if (selectedTemplate) {
+        await cloneDatabaseFromTemplate(db.id, selectedTemplate.templateDbName);
     } else if (!isExistingDb) {
         // Create fresh database
         await setupDatabase(db.id, undefined);
@@ -1468,6 +1676,397 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
     // not during creation, to avoid redundant prompts
 
     return db;
+}
+
+async function persistDatabaseTemplates(data: { dbTemplates?: DatabaseTemplateModel[]; projects: any[]; versions?: { [id: string]: any }; activeVersion?: string }, templates: DatabaseTemplateModel[]): Promise<DatabaseTemplateModel[]> {
+    const normalized = sanitizeDatabaseTemplates(templates);
+    data.dbTemplates = normalized;
+    await SettingsStore.saveWithoutComments(stripSettings(data));
+    return normalized;
+}
+
+function collectProjectDatabaseNames(data: { projects?: any[] }): string[] {
+    if (!Array.isArray(data.projects)) {
+        return [];
+    }
+
+    const projectDbNames = data.projects.flatMap(project =>
+        Array.isArray(project?.dbs)
+            ? project.dbs
+                .map((db: any) => typeof db?.id === 'string' ? db.id.trim() : '')
+                .filter((name: string) => name.length > 0)
+            : []
+    );
+
+    return Array.from(new Set(projectDbNames)).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+async function promptTemplateSourceDatabase(data: { projects?: any[] }): Promise<string | undefined> {
+    const projectDbNames = collectProjectDatabaseNames(data);
+    const postgresDbNames = queryPostgresDatabases()
+        .filter(name => !RESERVED_DATABASE_NAMES.has(name.toLowerCase()));
+
+    const mergedNames = Array.from(new Set([
+        ...projectDbNames,
+        ...postgresDbNames
+    ])).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+
+    const choices: Array<{ label: string; description?: string; detail?: string; dbName?: string; action: 'select' | 'manual' }> = [
+        ...mergedNames.map(dbName => ({
+            label: dbName,
+            description: projectDbNames.includes(dbName) ? 'Linked project database' : 'PostgreSQL database',
+            action: 'select' as const,
+            dbName
+        })),
+        {
+            label: '$(pencil) Enter database name manually',
+            detail: 'Use this if the source database is not listed.',
+            action: 'manual' as const
+        }
+    ];
+
+    const selection = await vscode.window.showQuickPick(choices, {
+        placeHolder: 'Select the source database to clone into a template',
+        ignoreFocusOut: true
+    });
+
+    if (!selection) {
+        return undefined;
+    }
+
+    if (selection.action === 'select') {
+        return selection.dbName;
+    }
+
+    const customInput = await vscode.window.showInputBox({
+        prompt: 'Enter source PostgreSQL database name',
+        placeHolder: 'e.g. my_migrated_dump',
+        ignoreFocusOut: true,
+        validateInput: (value) => {
+            if (!value || value.trim().length === 0) {
+                return 'Database name cannot be empty.';
+            }
+            if (value.trim().startsWith('-')) {
+                return 'Database name cannot start with "-".';
+            }
+            return null;
+        }
+    });
+    if (customInput === undefined) {
+        return undefined;
+    }
+
+    return customInput.trim();
+}
+
+export async function manageDatabaseTemplates(): Promise<void> {
+    const data = await SettingsStore.get('odoo-debugger-data.json');
+    let templates = sanitizeDatabaseTemplates(data.dbTemplates);
+
+    while (true) {
+        const templateCount = templates.length;
+        const actions: Array<{ label: string; description?: string; detail?: string; action: 'create' | 'importDb' | 'importFile' | 'exportFile' | 'template' | 'done'; template?: DatabaseTemplateModel }> = [
+            {
+                label: '$(add) Create New Template from Existing DB',
+                description: 'Clone a source DB into a new template database',
+                action: 'create'
+            },
+            {
+                label: '$(cloud-download) Import Existing Template DB',
+                description: 'Register an already-created template database (no cloning)',
+                action: 'importDb'
+            },
+            {
+                label: '$(folder-opened) Import Templates from JSON',
+                description: 'Merge templates from an exported template file',
+                action: 'importFile'
+            },
+            {
+                label: '$(export) Export Templates to JSON',
+                description: templateCount > 0 ? `${templateCount} template(s) will be exported` : 'No templates to export',
+                action: 'exportFile'
+            },
+            ...templates.map(template => ({
+                label: `$(database) ${template.name}`,
+                description: template.templateDbName,
+                detail: template.sourceDbName ? `Source DB: ${template.sourceDbName}` : 'No source DB metadata',
+                action: 'template' as const,
+                template
+            })),
+            {
+                label: '$(check) Done',
+                action: 'done'
+            }
+        ];
+
+        const selectedAction = await vscode.window.showQuickPick(actions, {
+            placeHolder: 'Manage database templates',
+            ignoreFocusOut: true
+        });
+
+        if (!selectedAction || selectedAction.action === 'done') {
+            return;
+        }
+
+        if (selectedAction.action === 'create') {
+            const sourceDbName = await promptTemplateSourceDatabase(data);
+            if (!sourceDbName) {
+                continue;
+            }
+
+            const templateDbNames = new Set(templates.map(template => template.templateDbName.toLowerCase()));
+            const suggestedName = sourceDbName.startsWith('tpl_') ? sourceDbName : `tpl_${sourceDbName}`;
+            const templateNameInput = await vscode.window.showInputBox({
+                prompt: `Enter template database name cloned from "${sourceDbName}"`,
+                placeHolder: 'e.g. tpl_migration_base',
+                value: suggestedName,
+                ignoreFocusOut: true,
+                validateInput: (value) => validateTemplateDatabaseName(value, templateDbNames)
+            });
+            if (templateNameInput === undefined) {
+                continue;
+            }
+
+            const templateDbName = templateNameInput.trim();
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: `Creating template ${templateDbName}`,
+                cancellable: false
+            }, async (progress) => {
+                progress.report({ message: `Cloning "${sourceDbName}"...`, increment: 30 });
+                await runSpawnCommand('createdb', [templateDbName, '-T', sourceDbName]);
+                progress.report({ message: 'Saving template metadata...', increment: 70 });
+            });
+
+            const now = new Date().toISOString();
+            templates = await persistDatabaseTemplates(data, [
+                ...templates,
+                {
+                    name: templateDbName,
+                    templateDbName,
+                    sourceDbName,
+                    createdAt: now,
+                    updatedAt: now
+                }
+            ]);
+            showAutoInfo(`Template "${templateDbName}" created from "${sourceDbName}"`, 3000);
+            continue;
+        }
+
+        if (selectedAction.action === 'importDb') {
+            const postgresDbNames = queryPostgresDatabases()
+                .filter(name => !RESERVED_DATABASE_NAMES.has(name.toLowerCase()));
+            const existingTemplateDbNames = new Set(templates.map(template => template.templateDbName.toLowerCase()));
+            const importCandidates = postgresDbNames.filter(name => !existingTemplateDbNames.has(name.toLowerCase()));
+
+            if (importCandidates.length === 0) {
+                showInfo('No PostgreSQL databases available to import as templates.');
+                continue;
+            }
+
+            const selectedCandidates = await vscode.window.showQuickPick(
+                importCandidates.map(name => ({
+                    label: name,
+                    description: 'PostgreSQL database',
+                    dbName: name
+                })),
+                {
+                    placeHolder: 'Select database(s) to register as templates',
+                    canPickMany: true,
+                    ignoreFocusOut: true
+                }
+            );
+
+            if (selectedCandidates === undefined) {
+                continue;
+            }
+
+            if (selectedCandidates.length === 0) {
+                showInfo('No templates selected for import.');
+                continue;
+            }
+
+            const now = new Date().toISOString();
+            templates = await persistDatabaseTemplates(
+                data,
+                [
+                    ...templates,
+                    ...selectedCandidates.map(candidate => ({
+                        name: candidate.dbName,
+                        templateDbName: candidate.dbName,
+                        createdAt: now,
+                        updatedAt: now
+                    }))
+                ]
+            );
+
+            showAutoInfo(`Imported ${selectedCandidates.length} template(s)`, 2500);
+            continue;
+        }
+
+        if (selectedAction.action === 'importFile') {
+            const selectedFiles = await vscode.window.showOpenDialog({
+                canSelectFiles: true,
+                canSelectFolders: false,
+                canSelectMany: false,
+                filters: {
+                    'JSON Files': ['json'],
+                    'All Files': ['*']
+                },
+                openLabel: 'Import Templates'
+            });
+
+            if (!selectedFiles || selectedFiles.length === 0) {
+                continue;
+            }
+
+            try {
+                const content = await vscode.workspace.fs.readFile(selectedFiles[0]);
+                const parsed = JSON.parse(Buffer.from(content).toString('utf8')) as { templates?: DatabaseTemplateModel[] } | DatabaseTemplateModel[];
+                const imported = Array.isArray(parsed) ? parsed : parsed.templates;
+                const sanitizedImported = sanitizeDatabaseTemplates(imported);
+                if (sanitizedImported.length === 0) {
+                    showInfo('No valid templates found in the selected file.');
+                    continue;
+                }
+
+                const existingTemplateDbNames = new Set(templates.map(template => template.templateDbName.toLowerCase()));
+                const toAdd = sanitizedImported.filter(template => !existingTemplateDbNames.has(template.templateDbName.toLowerCase()));
+                if (toAdd.length === 0) {
+                    showInfo('All templates in the selected file already exist.');
+                    continue;
+                }
+
+                templates = await persistDatabaseTemplates(data, [...templates, ...toAdd]);
+                showAutoInfo(`Imported ${toAdd.length} template(s) from JSON`, 2500);
+            } catch (error: any) {
+                showError(`Failed to import templates: ${error.message}`);
+            }
+            continue;
+        }
+
+        if (selectedAction.action === 'exportFile') {
+            if (templates.length === 0) {
+                showInfo('No templates available to export.');
+                continue;
+            }
+
+            const saveUri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file(path.join(
+                    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(),
+                    'odoo-db-templates.json'
+                )),
+                filters: {
+                    'JSON Files': ['json'],
+                    'All Files': ['*']
+                },
+                saveLabel: 'Export Templates'
+            });
+
+            if (!saveUri) {
+                continue;
+            }
+
+            const payload = {
+                exportedAt: new Date().toISOString(),
+                templates
+            };
+
+            await vscode.workspace.fs.writeFile(saveUri, Buffer.from(JSON.stringify(payload, null, 2), 'utf8'));
+            showAutoInfo(`Exported ${templates.length} template(s)`, 2500);
+            continue;
+        }
+
+        if (selectedAction.action === 'template') {
+            const selectedTemplate = selectedAction.template;
+            if (!selectedTemplate) {
+                continue;
+            }
+
+            const templateAction = await vscode.window.showQuickPick([
+                {
+                    label: '$(edit) Rename Template',
+                    description: `Current DB name: ${selectedTemplate.templateDbName}`,
+                    action: 'rename' as const
+                },
+                {
+                    label: '$(trash) Delete Template',
+                    description: `Remove "${selectedTemplate.name}"`,
+                    action: 'delete' as const
+                },
+                {
+                    label: '$(arrow-left) Back',
+                    action: 'back' as const
+                }
+            ], {
+                placeHolder: `Manage template "${selectedTemplate.name}"`,
+                ignoreFocusOut: true
+            });
+
+            if (!templateAction || templateAction.action === 'back') {
+                continue;
+            }
+
+            if (templateAction.action === 'rename') {
+                const templateDbNames = new Set(templates.map(template => template.templateDbName.toLowerCase()));
+                const newNameInput = await vscode.window.showInputBox({
+                    prompt: `Rename template "${selectedTemplate.templateDbName}"`,
+                    value: selectedTemplate.templateDbName,
+                    ignoreFocusOut: true,
+                    validateInput: (value) => validateTemplateDatabaseName(value, templateDbNames, selectedTemplate.templateDbName)
+                });
+                if (newNameInput === undefined) {
+                    continue;
+                }
+
+                const newTemplateDbName = newNameInput.trim();
+                if (newTemplateDbName.toLowerCase() === selectedTemplate.templateDbName.toLowerCase()) {
+                    continue;
+                }
+
+                const renameSql = `ALTER DATABASE ${quotePgIdentifier(selectedTemplate.templateDbName)} RENAME TO ${quotePgIdentifier(newTemplateDbName)};`;
+                await runSpawnCommand('psql', ['-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-c', renameSql]);
+
+                const now = new Date().toISOString();
+                templates = await persistDatabaseTemplates(
+                    data,
+                    templates.map(template => template.templateDbName.toLowerCase() === selectedTemplate.templateDbName.toLowerCase()
+                        ? {
+                            ...template,
+                            name: template.name === selectedTemplate.templateDbName ? newTemplateDbName : template.name,
+                            templateDbName: newTemplateDbName,
+                            updatedAt: now
+                        }
+                        : template
+                    )
+                );
+                showAutoInfo(`Template renamed to "${newTemplateDbName}"`, 2500);
+                continue;
+            }
+
+            const deleteChoice = await vscode.window.showWarningMessage(
+                `Delete template "${selectedTemplate.name}" (${selectedTemplate.templateDbName})?`,
+                { modal: true },
+                'Delete Template DB + Metadata',
+                'Delete Metadata Only'
+            );
+
+            if (!deleteChoice) {
+                continue;
+            }
+
+            if (deleteChoice === 'Delete Template DB + Metadata') {
+                await runSpawnCommand('dropdb', ['--if-exists', selectedTemplate.templateDbName]);
+            }
+
+            templates = await persistDatabaseTemplates(
+                data,
+                templates.filter(template => template.templateDbName.toLowerCase() !== selectedTemplate.templateDbName.toLowerCase())
+            );
+            showAutoInfo(`Template "${selectedTemplate.name}" deleted`, 2500);
+            continue;
+        }
+    }
 }
 
 export async function restoreDb(event: any): Promise<void> {

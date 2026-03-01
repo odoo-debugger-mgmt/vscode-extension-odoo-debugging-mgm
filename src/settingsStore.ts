@@ -1,6 +1,7 @@
 import { SettingsModel } from './models/settings';
 import { readFromFile, DebuggerData, showError, getWorkspacePath, stripSettings, getDefaultVersionSettings } from './utils';
 import { ProjectModel } from './models/project';
+import { DatabaseTemplateModel } from './models/dbTemplate';
 import { modify, applyEdits, parse } from 'jsonc-parser';
 import fs from 'fs';
 import path from 'path';
@@ -212,7 +213,8 @@ export class SettingsStore {
             settings: data.settings ? Object.assign(new SettingsModel(getDefaultVersionSettings()), data.settings) : undefined,
             projects: data.projects || [],
             versions: data.versions || {},
-            activeVersion: data.activeVersion || ''
+            activeVersion: data.activeVersion || '',
+            dbTemplates: Array.isArray(data.dbTemplates) ? data.dbTemplates as DatabaseTemplateModel[] : []
         };
     }
 
