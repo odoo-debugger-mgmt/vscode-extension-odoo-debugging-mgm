@@ -5,6 +5,7 @@ import { ProjectModel } from './models/project';
 import { RepoModel } from './models/repo';
 import { showError, showInfo } from './utils';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
+import { createFilesExcludeMatcher } from './services/filesExclude';
 
 type NodeKind = 'placeholder' | 'repo' | 'folder' | 'file';
 
@@ -188,14 +189,20 @@ export class ProjectReposExplorerProvider implements vscode.TreeDataProvider<Exp
 
     private async readDirectory(dir: vscode.Uri): Promise<ExplorerNode[]> {
         try {
+            const filesExcludeMatcher = createFilesExcludeMatcher(dir);
             const entries = await vscode.workspace.fs.readDirectory(dir);
-            const nodes: ExplorerNode[] = entries.map(([name, type]) => {
+            const nodes: ExplorerNode[] = [];
+            for (const [name, type] of entries) {
                 const childUri = vscode.Uri.file(path.join(dir.fsPath, name));
-                if (type === vscode.FileType.Directory) {
-                    return { kind: 'folder', label: name, uri: childUri } as FolderNode;
+                if (filesExcludeMatcher.isExcluded(childUri.fsPath, name)) {
+                    continue;
                 }
-                return { kind: 'file', label: name, uri: childUri } as FileNode;
-            });
+                if (type === vscode.FileType.Directory) {
+                    nodes.push({ kind: 'folder', label: name, uri: childUri } as FolderNode);
+                    continue;
+                }
+                nodes.push({ kind: 'file', label: name, uri: childUri } as FileNode);
+            }
             nodes.sort((a, b) => {
                 if (a.kind === b.kind) {
                     return a.label.localeCompare(b.label);

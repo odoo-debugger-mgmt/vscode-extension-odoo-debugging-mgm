@@ -49,20 +49,20 @@ const dbs_1 = __webpack_require__(17);
 const project_1 = __webpack_require__(31);
 const repos_1 = __webpack_require__(35);
 const projectRepos_1 = __webpack_require__(36);
-const module_1 = __webpack_require__(38);
-const testing_1 = __webpack_require__(39);
-const debugger_1 = __webpack_require__(41);
-const odooInstaller_1 = __webpack_require__(42);
+const module_1 = __webpack_require__(39);
+const testing_1 = __webpack_require__(40);
+const debugger_1 = __webpack_require__(42);
+const odooInstaller_1 = __webpack_require__(43);
 const settingsStore_1 = __webpack_require__(22);
-const versionsTreeProvider_1 = __webpack_require__(43);
+const versionsTreeProvider_1 = __webpack_require__(44);
 const versionsService_1 = __webpack_require__(19);
-const context_1 = __webpack_require__(40);
+const context_1 = __webpack_require__(41);
 const settings_1 = __webpack_require__(8);
 const gitService_1 = __webpack_require__(9);
-const sortPreferences_1 = __webpack_require__(44);
+const sortPreferences_1 = __webpack_require__(45);
 const sortOptions_1 = __webpack_require__(26);
-const projectWorkspace_1 = __webpack_require__(45);
-const projectReposExplorer_1 = __webpack_require__(46);
+const projectWorkspace_1 = __webpack_require__(46);
+const projectReposExplorer_1 = __webpack_require__(47);
 const runtimeCache_1 = __webpack_require__(10);
 // Store disposables for proper cleanup
 let extensionDisposables = [];
@@ -10146,6 +10146,7 @@ const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(22);
 const utils_1 = __webpack_require__(4);
 const sortOptions_1 = __webpack_require__(26);
+const filesExclude_1 = __webpack_require__(38);
 class ProjectRepoItem extends vscode.TreeItem {
     metadata;
     constructor(metadata) {
@@ -10262,8 +10263,13 @@ class ProjectReposProvider {
     }
     async getDirectoryEntries(dirPath, repo) {
         try {
+            const filesExcludeMatcher = (0, filesExclude_1.createFilesExcludeMatcher)(vscode.Uri.file(dirPath));
             const dirents = await fs.readdir(dirPath, { withFileTypes: true });
-            const sorted = dirents.sort((a, b) => {
+            const visibleDirents = dirents.filter(dirent => {
+                const childPath = path.join(dirPath, dirent.name);
+                return !filesExcludeMatcher.isExcluded(childPath, dirent.name);
+            });
+            const sorted = visibleDirents.sort((a, b) => {
                 if (a.isDirectory() && !b.isDirectory()) {
                     return -1;
                 }
@@ -10332,6 +10338,149 @@ module.exports = require("node:fs/promises");
 
 /***/ }),
 /* 38 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.createFilesExcludeMatcher = createFilesExcludeMatcher;
+const fs = __importStar(__webpack_require__(2));
+const path = __importStar(__webpack_require__(3));
+const vscode = __importStar(__webpack_require__(1));
+function globToRegExp(pattern) {
+    const normalizedPattern = pattern.split(path.sep).join('/');
+    const placeholders = {
+        doubleStar: '__GLOB_DOUBLE_STAR__',
+        singleStar: '__GLOB_SINGLE_STAR__',
+        question: '__GLOB_QUESTION__'
+    };
+    let working = normalizedPattern
+        .replaceAll('**', placeholders.doubleStar)
+        .replaceAll('*', placeholders.singleStar)
+        .replaceAll('?', placeholders.question);
+    working = working.replaceAll(/[.+^${}()|[\]\\]/g, String.raw `\$&`);
+    working = working
+        .replaceAll(new RegExp(placeholders.doubleStar, 'g'), '.*')
+        .replaceAll(new RegExp(placeholders.singleStar, 'g'), '[^/]*')
+        .replaceAll(new RegExp(placeholders.question, 'g'), '[^/]');
+    return new RegExp(`^${working}$`, 'i');
+}
+function normalizeForMatch(value) {
+    return value.replace(/\\/g, '/').replace(/^\.?\//, '');
+}
+function resolveWorkspaceRoot(scopeUri) {
+    if (scopeUri) {
+        const folder = vscode.workspace.getWorkspaceFolder(scopeUri);
+        if (folder) {
+            return folder.uri.fsPath;
+        }
+    }
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+}
+function resolveFilesExcludeRules(scopeUri) {
+    const config = vscode.workspace.getConfiguration('files', scopeUri);
+    const excludes = config.get('exclude', {});
+    if (!excludes || typeof excludes !== 'object') {
+        return [];
+    }
+    const rules = [];
+    for (const [pattern, rawValue] of Object.entries(excludes)) {
+        if (rawValue === false) {
+            continue;
+        }
+        if (rawValue === true) {
+            rules.push({ regex: globToRegExp(pattern) });
+            continue;
+        }
+        if (!rawValue || typeof rawValue !== 'object') {
+            continue;
+        }
+        rules.push({
+            regex: globToRegExp(pattern),
+            when: typeof rawValue.when === 'string' ? rawValue.when : undefined
+        });
+    }
+    return rules;
+}
+function ruleMatchesPath(rule, relativePath, absolutePath, entryName) {
+    return rule.regex.test(relativePath)
+        || rule.regex.test(`/${relativePath}`)
+        || rule.regex.test(entryName)
+        || rule.regex.test(absolutePath);
+}
+function whenClauseMatches(whenClause, fsPath, entryName) {
+    if (!whenClause || whenClause.trim() === '') {
+        return true;
+    }
+    const basename = path.parse(entryName).name;
+    const siblingName = whenClause.replaceAll('$(basename)', basename);
+    const siblingPath = path.join(path.dirname(fsPath), siblingName);
+    return fs.existsSync(siblingPath);
+}
+function createFilesExcludeMatcher(scopeUri) {
+    const rules = resolveFilesExcludeRules(scopeUri);
+    const workspaceRoot = resolveWorkspaceRoot(scopeUri);
+    return {
+        isExcluded(fsPath, entryName) {
+            if (rules.length === 0) {
+                return false;
+            }
+            const normalizedAbsolute = normalizeForMatch(fsPath);
+            const relativeCandidate = workspaceRoot
+                ? normalizeForMatch(path.relative(workspaceRoot, fsPath))
+                : normalizedAbsolute;
+            const relative = relativeCandidate && relativeCandidate !== '.'
+                ? relativeCandidate
+                : normalizedAbsolute;
+            for (const rule of rules) {
+                if (!ruleMatchesPath(rule, relative, normalizedAbsolute, entryName)) {
+                    continue;
+                }
+                if (!whenClauseMatches(rule.when, fsPath, entryName)) {
+                    continue;
+                }
+                return true;
+            }
+            return false;
+        }
+    };
+}
+
+
+/***/ }),
+/* 39 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11076,7 +11225,7 @@ async function viewInstalledModules() {
 
 
 /***/ }),
-/* 39 */
+/* 40 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11128,8 +11277,8 @@ const settingsStore_1 = __webpack_require__(22);
 const testing_1 = __webpack_require__(33);
 const module_1 = __webpack_require__(23);
 const utils_1 = __webpack_require__(4);
-const context_1 = __webpack_require__(40);
-const debugger_1 = __webpack_require__(41);
+const context_1 = __webpack_require__(41);
+const debugger_1 = __webpack_require__(42);
 const database_1 = __webpack_require__(28);
 class TestingTreeProvider {
     context;
@@ -11761,7 +11910,7 @@ async function setSpecificLogLevel() {
 
 
 /***/ }),
-/* 40 */
+/* 41 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11815,7 +11964,7 @@ function updateActiveContext(isActive) {
 
 
 /***/ }),
-/* 41 */
+/* 42 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12240,7 +12389,7 @@ async function startDebugServer() {
 
 
 /***/ }),
-/* 42 */
+/* 43 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12437,7 +12586,7 @@ Continue?`;
 
 
 /***/ }),
-/* 43 */
+/* 44 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12637,7 +12786,7 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 
 /***/ }),
-/* 44 */
+/* 45 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -12660,7 +12809,7 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 45 */
+/* 46 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12794,7 +12943,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 46 */
+/* 47 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12846,6 +12995,7 @@ const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(22);
 const utils_1 = __webpack_require__(4);
 const runtimeCache_1 = __webpack_require__(10);
+const filesExclude_1 = __webpack_require__(38);
 class ProjectReposExplorerProvider {
     _onDidChangeTreeData = new vscode.EventEmitter();
     onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -12980,14 +13130,20 @@ class ProjectReposExplorerProvider {
     }
     async readDirectory(dir) {
         try {
+            const filesExcludeMatcher = (0, filesExclude_1.createFilesExcludeMatcher)(dir);
             const entries = await vscode.workspace.fs.readDirectory(dir);
-            const nodes = entries.map(([name, type]) => {
+            const nodes = [];
+            for (const [name, type] of entries) {
                 const childUri = vscode.Uri.file(path.join(dir.fsPath, name));
-                if (type === vscode.FileType.Directory) {
-                    return { kind: 'folder', label: name, uri: childUri };
+                if (filesExcludeMatcher.isExcluded(childUri.fsPath, name)) {
+                    continue;
                 }
-                return { kind: 'file', label: name, uri: childUri };
-            });
+                if (type === vscode.FileType.Directory) {
+                    nodes.push({ kind: 'folder', label: name, uri: childUri });
+                    continue;
+                }
+                nodes.push({ kind: 'file', label: name, uri: childUri });
+            }
             nodes.sort((a, b) => {
                 if (a.kind === b.kind) {
                     return a.label.localeCompare(b.label);
