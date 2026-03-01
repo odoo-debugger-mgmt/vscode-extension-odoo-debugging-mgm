@@ -13,6 +13,13 @@ export interface DatabaseOptions {
     displayName?: string;
     internalName?: string;
     kind?: string;
+    projectRepoBranches?: ProjectRepoBranchAssignment[];
+}
+
+export interface ProjectRepoBranchAssignment {
+    repoName: string;
+    repoPath: string;
+    branch: string;
 }
 
 export class DatabaseModel {
@@ -30,6 +37,7 @@ export class DatabaseModel {
     displayName?: string;
     internalName?: string;
     kind?: string;
+    projectRepoBranches: ProjectRepoBranchAssignment[] = [];
 
     constructor(name: string, createdAt: Date, options: DatabaseOptions = {}) {
         this.displayName = options.displayName || name;
@@ -44,6 +52,15 @@ export class DatabaseModel {
         this.odooVersion = options.odooVersion; // Optional - undefined when version is assigned
         this.versionId = options.versionId;
         this.kind = options.kind;
+        this.projectRepoBranches = Array.isArray(options.projectRepoBranches)
+            ? options.projectRepoBranches
+                .filter(entry => !!entry && typeof entry.branch === 'string' && entry.branch.trim() !== '')
+                .map(entry => ({
+                    repoName: entry.repoName || '',
+                    repoPath: entry.repoPath || '',
+                    branch: entry.branch.trim()
+                }))
+            : [];
 
         if (options.internalName) {
             this.internalName = options.internalName;
