@@ -608,7 +608,7 @@ async function createOdooDebuggerFile(filePath: string, workspacePath: string, f
             content = launchJsonFileContent;
         } else {
             data = {
-                settings: new SettingsModel(),
+                settings: new SettingsModel(getDefaultVersionSettings()),
                 projects: []
             };
             content = debuggerDataFileContent;

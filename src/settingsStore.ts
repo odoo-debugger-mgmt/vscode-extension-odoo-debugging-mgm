@@ -1,5 +1,5 @@
 import { SettingsModel } from './models/settings';
-import { readFromFile, DebuggerData, showError, getWorkspacePath, stripSettings } from './utils';
+import { readFromFile, DebuggerData, showError, getWorkspacePath, stripSettings, getDefaultVersionSettings } from './utils';
 import { ProjectModel } from './models/project';
 import { modify, applyEdits, parse } from 'jsonc-parser';
 import fs from 'fs';
@@ -209,7 +209,7 @@ export class SettingsStore {
         });
 
         return {
-            settings: data.settings ? Object.assign(new SettingsModel(), data.settings) : undefined,
+            settings: data.settings ? Object.assign(new SettingsModel(getDefaultVersionSettings()), data.settings) : undefined,
             projects: data.projects || [],
             versions: data.versions || {},
             activeVersion: data.activeVersion || ''
@@ -227,7 +227,7 @@ export class SettingsStore {
      */
     static async updateSettings(partial: Partial<SettingsModel>): Promise<void> {
         const data = await this.load();
-        const updated = Object.assign(new SettingsModel(), data.settings, partial);
+        const updated = Object.assign(new SettingsModel(getDefaultVersionSettings()), data.settings, partial);
         data.settings = updated;
         // Even though this method sets settings, we must strip them to prevent persistence
         await this.saveWithoutComments(stripSettings(data));

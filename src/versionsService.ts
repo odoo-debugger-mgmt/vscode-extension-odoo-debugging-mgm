@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import { VersionModel, VersionSettings } from './models/version';
 import { SettingsStore } from './settingsStore';
-import { SettingsModel } from './models/settings';
 import { getDefaultVersionSettings, stripSettings, getDatabaseLabel } from './utils';
 
 export class VersionsService {
@@ -58,7 +57,8 @@ export class VersionsService {
             if (this.versions.size === 0) {
                 const defaultVersion = new VersionModel(
                     'Default Version',
-                    '17.0' // Odoo version
+                    '17.0', // Odoo version
+                    getDefaultVersionSettings()
                 );
                 defaultVersion.isActive = true;
                 this.versions.set(defaultVersion.id, defaultVersion);
@@ -89,7 +89,7 @@ export class VersionsService {
         } catch (error) {
             console.error('Failed to load versions:', error);
             // Create default version on error
-            const defaultVersion = new VersionModel('Default Version', '17.0');
+            const defaultVersion = new VersionModel('Default Version', '17.0', getDefaultVersionSettings());
             defaultVersion.isActive = true;
             this.versions.set(defaultVersion.id, defaultVersion);
             this.activeVersionId = defaultVersion.id;
@@ -184,7 +184,7 @@ export class VersionsService {
 
         // Create a version with default settings if none exists
         if (this.versions.size === 0) {
-            const defaultVersion = new VersionModel('Default Version', '17.0');
+            const defaultVersion = new VersionModel('Default Version', '17.0', getDefaultVersionSettings());
             defaultVersion.isActive = true;
             this.versions.set(defaultVersion.id, defaultVersion);
             this.activeVersionId = defaultVersion.id;
@@ -192,8 +192,8 @@ export class VersionsService {
             return defaultVersion.settings;
         }
 
-        // Return default settings structure as fallback
-        return new SettingsModel();
+        // Return configuration-backed defaults as fallback
+        return getDefaultVersionSettings();
     }
 
     /**
@@ -243,10 +243,8 @@ export class VersionsService {
         // Get default settings from VS Code configuration
         const defaultSettings = getDefaultVersionSettings();
         const mergedSettings = { ...defaultSettings, ...settingsOverrides };
-        delete mergedSettings.debuggerName;
 
         const version = new VersionModel(name, odooVersion, mergedSettings);
-        version.settings.debuggerName = `odoo:${odooVersion}`;
         this.versions.set(version.id, version);
 
         await this.saveVersions();
@@ -268,18 +266,6 @@ export class VersionsService {
 
         const updatesCopy: Partial<VersionModel> = { ...updates };
         let settingsPatch: Partial<VersionSettings> | undefined = updatesCopy.settings ? { ...updatesCopy.settings } : undefined;
-
-        if (updatesCopy.odooVersion) {
-            const defaultDebuggerForCurrent = `odoo:${version.odooVersion}`;
-            const hasCustomDebugger = version.settings.debuggerName && version.settings.debuggerName !== defaultDebuggerForCurrent;
-            const overrideDebuggerName = !hasCustomDebugger && !(settingsPatch && Object.hasOwn(settingsPatch, 'debuggerName'));
-            if (overrideDebuggerName) {
-                settingsPatch = {
-                    ...(settingsPatch),
-                    debuggerName: `odoo:${updatesCopy.odooVersion}`
-                };
-            }
-        }
 
         if (settingsPatch) {
             Object.assign(version.settings, settingsPatch);
@@ -400,7 +386,7 @@ export class VersionsService {
     public async getActiveSettings(): Promise<any> {
         await this.initialize(); // Ensure initialization
         const activeVersion = this.getActiveVersion();
-        return activeVersion ? activeVersion.settings : {};
+        return activeVersion ? activeVersion.settings : getDefaultVersionSettings();
     }
 
     /**
@@ -444,7 +430,7 @@ export class VersionsService {
         // Ensure we have at least one version
         if (this.versions.size === 0) {
             console.log('No versions found, creating default version');
-            const defaultVersion = new VersionModel('Default Version', '17.0');
+            const defaultVersion = new VersionModel('Default Version', '17.0', getDefaultVersionSettings());
             defaultVersion.isActive = true;
             this.versions.set(defaultVersion.id, defaultVersion);
             this.activeVersionId = defaultVersion.id;
@@ -503,9 +489,11 @@ export class VersionsService {
 
             console.log('Legacy settings found, proceeding with migration...');
 
-            // Try to get existing settings
-            const existingSettings = await SettingsStore.getSettings();
-            if (!existingSettings) {
+            // Read raw legacy settings without model-default inflation so workspace defaults
+            // can still apply for missing keys during migration.
+            const rawData = await SettingsStore.get('odoo-debugger-data.json');
+            const existingSettings = rawData.settings as Partial<VersionSettings> | undefined;
+            if (!existingSettings || Object.keys(existingSettings).length === 0) {
                 console.log('Legacy settings exist but are empty, clearing them');
                 await this.clearLegacySettings();
                 return;
@@ -521,27 +509,34 @@ export class VersionsService {
             }
 
             console.log('Migrating legacy settings to version management...');
+            const defaultSettings = getDefaultVersionSettings();
 
             // Convert SettingsModel to VersionSettings format
             const versionSettings = {
-                debuggerName: existingSettings.debuggerName || 'odoo:17.0',
-                debuggerVersion: existingSettings.debuggerVersion || '1.0.0',
-                portNumber: existingSettings.portNumber || 8017,
-                shellPortNumber: existingSettings.shellPortNumber || 5017,
-                limitTimeReal: existingSettings.limitTimeReal || 0,
-                limitTimeCpu: existingSettings.limitTimeCpu || 0,
-                maxCronThreads: existingSettings.maxCronThreads || 0,
-                extraParams: existingSettings.extraParams || '--log-handler,odoo.addons.base.models.ir_attachment:WARNING',
-                devMode: existingSettings.devMode || '--dev=all',
-                dumpsFolder: existingSettings.dumpsFolder || '/dumps',
-                odooPath: existingSettings.odooPath || './odoo',
-                enterprisePath: existingSettings.enterprisePath || './enterprise',
-                designThemesPath: existingSettings.designThemesPath || './design-themes',
-                customAddonsPath: existingSettings.customAddonsPath || './custom-addons',
-                pythonPath: existingSettings.pythonPath || './venv/bin/python',
-                subModulesPaths: existingSettings.subModulesPaths || '',
-                installApps: existingSettings.installApps || '',
-                upgradeApps: existingSettings.upgradeApps || ''
+                debuggerName: existingSettings.debuggerName ?? defaultSettings.debuggerName,
+                debuggerVersion: existingSettings.debuggerVersion ?? defaultSettings.debuggerVersion,
+                portNumber: existingSettings.portNumber ?? defaultSettings.portNumber,
+                shellPortNumber: existingSettings.shellPortNumber ?? defaultSettings.shellPortNumber,
+                limitTimeReal: existingSettings.limitTimeReal ?? defaultSettings.limitTimeReal,
+                limitTimeCpu: existingSettings.limitTimeCpu ?? defaultSettings.limitTimeCpu,
+                maxCronThreads: existingSettings.maxCronThreads ?? defaultSettings.maxCronThreads,
+                extraParams: existingSettings.extraParams ?? defaultSettings.extraParams,
+                devMode: existingSettings.devMode ?? defaultSettings.devMode,
+                dumpsFolder: existingSettings.dumpsFolder ?? defaultSettings.dumpsFolder,
+                odooPath: existingSettings.odooPath ?? defaultSettings.odooPath,
+                enterprisePath: existingSettings.enterprisePath ?? defaultSettings.enterprisePath,
+                designThemesPath: existingSettings.designThemesPath ?? defaultSettings.designThemesPath,
+                customAddonsPath: existingSettings.customAddonsPath ?? defaultSettings.customAddonsPath,
+                pythonPath: existingSettings.pythonPath ?? defaultSettings.pythonPath,
+                subModulesPaths: existingSettings.subModulesPaths ?? defaultSettings.subModulesPaths,
+                installApps: existingSettings.installApps ?? defaultSettings.installApps,
+                upgradeApps: existingSettings.upgradeApps ?? defaultSettings.upgradeApps,
+                preCheckoutCommands: Array.isArray(existingSettings.preCheckoutCommands)
+                    ? existingSettings.preCheckoutCommands
+                    : defaultSettings.preCheckoutCommands,
+                postCheckoutCommands: Array.isArray(existingSettings.postCheckoutCommands)
+                    ? existingSettings.postCheckoutCommands
+                    : defaultSettings.postCheckoutCommands
             };
 
             // Create a new version with migrated settings
@@ -694,10 +689,6 @@ export class VersionsService {
         try {
             // Get all default settings from VS Code configuration
             const defaultSettings = getDefaultVersionSettings();
-
-            // Only preserve version-specific settings that should be calculated
-            // Port numbers should come from VS Code settings, not calculated
-            defaultSettings.debuggerName = `odoo:${version.odooVersion}`;
 
             version.updateSettings(defaultSettings);
 

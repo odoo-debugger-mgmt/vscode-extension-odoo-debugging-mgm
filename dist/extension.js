@@ -485,6 +485,9 @@ async function activate(context) {
                 placeHolder: 'Set up a database for this project?',
                 ignoreFocusOut: true
             });
+            if (!databaseChoice) {
+                return;
+            }
             let db;
             if (databaseChoice?.value === 'create') {
                 db = await (0, dbs_1.createDb)(name, repos, settings.dumpsFolder, settings, { allowExistingOption: false });
@@ -492,7 +495,15 @@ async function activate(context) {
             else if (databaseChoice?.value === 'connect') {
                 db = await (0, dbs_1.createDb)(name, repos, settings.dumpsFolder, settings, { initialMethod: 'existing' });
             }
+            if (databaseChoice.value !== 'skip' && !db) {
+                // User cancelled within DB creation flow.
+                return;
+            }
             await (0, project_1.createProject)(name, repos, db);
+            if (db) {
+                // Ensure project creation follows the same version/branch switch path as manual DB selection.
+                await (0, dbs_1.selectDatabase)(db);
+            }
             await refreshAll();
         }
         catch (err) {
@@ -1940,7 +1951,7 @@ async function createOdooDebuggerFile(filePath, workspacePath, fileName) {
         }
         else {
             data = {
-                settings: new settings_1.SettingsModel(),
+                settings: new settings_1.SettingsModel(getDefaultVersionSettings()),
                 projects: []
             };
             content = debuggerDataFileContent;
@@ -5313,13 +5324,15 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
                 placeHolder: 'Select modules to install (optional)',
                 canPickMany: true,
                 ignoreFocusOut: true
-            }) || [];
+            });
+            if (selectedModuleObjects === undefined) {
+                return undefined;
+            }
             selectedModules = selectedModuleObjects.map(choice => choice.label);
             break;
         case 'dump': {
             const selection = await getDbDumpFolder(dumpFolderPath, projectName);
             if (!selection) {
-                (0, utils_1.showError)('Select a dump folder or archive to continue.');
                 return undefined;
             }
             if (selection.kind === 'folder') {
@@ -5342,19 +5355,27 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
                 prompt: 'Make sure the database exists in your PostgreSQL instance',
                 ignoreFocusOut: true
             });
-            if (!existingDbName) {
+            if (existingDbName === undefined) {
+                return undefined;
+            }
+            if (!existingDbName.trim()) {
                 (0, utils_1.showError)('Enter a database name to continue.');
                 return undefined;
             }
+            existingDbName = existingDbName.trim();
             isExistingDb = true;
             break;
     }
     // Step 3: Get database branch name (optional)
-    let branchName = await vscode.window.showInputBox({
+    const branchInput = await vscode.window.showInputBox({
         placeHolder: 'Enter a branch/tag name for this database (optional)',
         prompt: 'This helps identify which version/branch this database represents',
         ignoreFocusOut: true
     });
+    if (branchInput === undefined) {
+        return undefined;
+    }
+    const branchName = branchInput.trim() || undefined;
     // Step 4: Select the Odoo version from available versions
     const versionsService = versionsService_1.VersionsService.getInstance();
     await versionsService.initialize();
@@ -5380,11 +5401,12 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
             placeHolder: 'Select a version for this database (optional)',
             ignoreFocusOut: true
         });
-        if (selectedChoice) {
-            selectedVersionId = selectedChoice.versionId;
-            if (selectedVersionId) {
-                selectedVersion = versionsService.getVersion(selectedVersionId);
-            }
+        if (selectedChoice === undefined) {
+            return undefined;
+        }
+        selectedVersionId = selectedChoice.versionId;
+        if (selectedVersionId) {
+            selectedVersion = versionsService.getVersion(selectedVersionId);
         }
     }
     // Step 5: Create the database model
@@ -5500,7 +5522,10 @@ async function setupDatabase(dbName, dumpPath, remove = false) {
                     console.log(`🚀 Creating database: ${dbName}`);
                     (0, child_process_1.execSync)(`createdb ${dbName}`, { stdio: 'inherit' });
                     if (preparedDump) {
-                        progress.report({ message: 'Importing dump file...', increment: 50 });
+                        progress.report({
+                            message: preparedDump.progressMessage ?? 'Importing dump file...',
+                            increment: 50
+                        });
                         console.log(`📥 Importing SQL dump into ${dbName}`);
                         try {
                             await importPreparedDump(dbName, preparedDump);
@@ -5508,8 +5533,14 @@ async function setupDatabase(dbName, dumpPath, remove = false) {
                         catch (error) {
                             if (dumpPath && preparedDump.kind === 'stream' && isToolchainUnavailableError(error)) {
                                 console.warn('Streaming import unavailable. Falling back to temporary dump extraction.');
+                                progress.report({
+                                    message: dumpPath.toLowerCase().endsWith('.zip')
+                                        ? 'Streaming unavailable. Extracting archive to temporary SQL file...'
+                                        : 'Streaming unavailable. Decompressing dump to temporary SQL file...'
+                                });
                                 const fallbackDump = prepareDumpViaTempFile(dumpPath);
                                 try {
+                                    progress.report({ message: 'Importing extracted SQL dump...' });
                                     await importPreparedDump(dbName, fallbackDump);
                                 }
                                 finally {
@@ -6050,12 +6081,14 @@ async function prepareDumpForImport(dumpPath) {
             return {
                 kind: 'stream',
                 originalPath: dumpPath,
+                progressMessage: 'Unzipping, decompressing, and importing dump archive...',
                 openStream: () => createZipGzipStream(dumpPath, selectedEntry)
             };
         }
         return {
             kind: 'stream',
             originalPath: dumpPath,
+            progressMessage: 'Unzipping and importing dump archive...',
             openStream: () => createCommandStream('unzip', ['-p', dumpPath, selectedEntry], 'unzip')
         };
     }
@@ -6063,12 +6096,14 @@ async function prepareDumpForImport(dumpPath) {
         return {
             kind: 'stream',
             originalPath: dumpPath,
+            progressMessage: 'Decompressing and importing dump file...',
             openStream: () => createCommandStream('gunzip', ['-c', dumpPath], 'gunzip')
         };
     }
     return {
         kind: 'file',
         originalPath: dumpPath,
+        progressMessage: 'Importing dump file...',
         sqlPath: dumpPath
     };
 }
@@ -6355,7 +6390,6 @@ exports.VersionsService = void 0;
 const vscode = __importStar(__webpack_require__(1));
 const version_1 = __webpack_require__(20);
 const settingsStore_1 = __webpack_require__(22);
-const settings_1 = __webpack_require__(8);
 const utils_1 = __webpack_require__(4);
 class VersionsService {
     static instance;
@@ -6401,8 +6435,8 @@ class VersionsService {
             const hasLegacySettings = await this.hasLegacySettings();
             // Create default version if none exist
             if (this.versions.size === 0) {
-                const defaultVersion = new version_1.VersionModel('Default Version', '17.0' // Odoo version
-                );
+                const defaultVersion = new version_1.VersionModel('Default Version', '17.0', // Odoo version
+                (0, utils_1.getDefaultVersionSettings)());
                 defaultVersion.isActive = true;
                 this.versions.set(defaultVersion.id, defaultVersion);
                 this.activeVersionId = defaultVersion.id;
@@ -6430,7 +6464,7 @@ class VersionsService {
         catch (error) {
             console.error('Failed to load versions:', error);
             // Create default version on error
-            const defaultVersion = new version_1.VersionModel('Default Version', '17.0');
+            const defaultVersion = new version_1.VersionModel('Default Version', '17.0', (0, utils_1.getDefaultVersionSettings)());
             defaultVersion.isActive = true;
             this.versions.set(defaultVersion.id, defaultVersion);
             this.activeVersionId = defaultVersion.id;
@@ -6513,15 +6547,15 @@ class VersionsService {
         console.warn('No active version or settings found, creating temporary default settings');
         // Create a version with default settings if none exists
         if (this.versions.size === 0) {
-            const defaultVersion = new version_1.VersionModel('Default Version', '17.0');
+            const defaultVersion = new version_1.VersionModel('Default Version', '17.0', (0, utils_1.getDefaultVersionSettings)());
             defaultVersion.isActive = true;
             this.versions.set(defaultVersion.id, defaultVersion);
             this.activeVersionId = defaultVersion.id;
             await this.saveVersions();
             return defaultVersion.settings;
         }
-        // Return default settings structure as fallback
-        return new settings_1.SettingsModel();
+        // Return configuration-backed defaults as fallback
+        return (0, utils_1.getDefaultVersionSettings)();
     }
     /**
      * Set active version
@@ -6563,9 +6597,7 @@ class VersionsService {
         // Get default settings from VS Code configuration
         const defaultSettings = (0, utils_1.getDefaultVersionSettings)();
         const mergedSettings = { ...defaultSettings, ...settingsOverrides };
-        delete mergedSettings.debuggerName;
         const version = new version_1.VersionModel(name, odooVersion, mergedSettings);
-        version.settings.debuggerName = `odoo:${odooVersion}`;
         this.versions.set(version.id, version);
         await this.saveVersions();
         vscode.commands.executeCommand('odoo.versionsChanged');
@@ -6582,17 +6614,6 @@ class VersionsService {
         }
         const updatesCopy = { ...updates };
         let settingsPatch = updatesCopy.settings ? { ...updatesCopy.settings } : undefined;
-        if (updatesCopy.odooVersion) {
-            const defaultDebuggerForCurrent = `odoo:${version.odooVersion}`;
-            const hasCustomDebugger = version.settings.debuggerName && version.settings.debuggerName !== defaultDebuggerForCurrent;
-            const overrideDebuggerName = !hasCustomDebugger && !(settingsPatch && Object.hasOwn(settingsPatch, 'debuggerName'));
-            if (overrideDebuggerName) {
-                settingsPatch = {
-                    ...(settingsPatch),
-                    debuggerName: `odoo:${updatesCopy.odooVersion}`
-                };
-            }
-        }
         if (settingsPatch) {
             Object.assign(version.settings, settingsPatch);
         }
@@ -6692,7 +6713,7 @@ class VersionsService {
     async getActiveSettings() {
         await this.initialize(); // Ensure initialization
         const activeVersion = this.getActiveVersion();
-        return activeVersion ? activeVersion.settings : {};
+        return activeVersion ? activeVersion.settings : (0, utils_1.getDefaultVersionSettings)();
     }
     /**
      * Update settings for active version
@@ -6729,7 +6750,7 @@ class VersionsService {
         // Ensure we have at least one version
         if (this.versions.size === 0) {
             console.log('No versions found, creating default version');
-            const defaultVersion = new version_1.VersionModel('Default Version', '17.0');
+            const defaultVersion = new version_1.VersionModel('Default Version', '17.0', (0, utils_1.getDefaultVersionSettings)());
             defaultVersion.isActive = true;
             this.versions.set(defaultVersion.id, defaultVersion);
             this.activeVersionId = defaultVersion.id;
@@ -6781,9 +6802,11 @@ class VersionsService {
                 return;
             }
             console.log('Legacy settings found, proceeding with migration...');
-            // Try to get existing settings
-            const existingSettings = await settingsStore_1.SettingsStore.getSettings();
-            if (!existingSettings) {
+            // Read raw legacy settings without model-default inflation so workspace defaults
+            // can still apply for missing keys during migration.
+            const rawData = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
+            const existingSettings = rawData.settings;
+            if (!existingSettings || Object.keys(existingSettings).length === 0) {
                 console.log('Legacy settings exist but are empty, clearing them');
                 await this.clearLegacySettings();
                 return;
@@ -6796,26 +6819,33 @@ class VersionsService {
                 return;
             }
             console.log('Migrating legacy settings to version management...');
+            const defaultSettings = (0, utils_1.getDefaultVersionSettings)();
             // Convert SettingsModel to VersionSettings format
             const versionSettings = {
-                debuggerName: existingSettings.debuggerName || 'odoo:17.0',
-                debuggerVersion: existingSettings.debuggerVersion || '1.0.0',
-                portNumber: existingSettings.portNumber || 8017,
-                shellPortNumber: existingSettings.shellPortNumber || 5017,
-                limitTimeReal: existingSettings.limitTimeReal || 0,
-                limitTimeCpu: existingSettings.limitTimeCpu || 0,
-                maxCronThreads: existingSettings.maxCronThreads || 0,
-                extraParams: existingSettings.extraParams || '--log-handler,odoo.addons.base.models.ir_attachment:WARNING',
-                devMode: existingSettings.devMode || '--dev=all',
-                dumpsFolder: existingSettings.dumpsFolder || '/dumps',
-                odooPath: existingSettings.odooPath || './odoo',
-                enterprisePath: existingSettings.enterprisePath || './enterprise',
-                designThemesPath: existingSettings.designThemesPath || './design-themes',
-                customAddonsPath: existingSettings.customAddonsPath || './custom-addons',
-                pythonPath: existingSettings.pythonPath || './venv/bin/python',
-                subModulesPaths: existingSettings.subModulesPaths || '',
-                installApps: existingSettings.installApps || '',
-                upgradeApps: existingSettings.upgradeApps || ''
+                debuggerName: existingSettings.debuggerName ?? defaultSettings.debuggerName,
+                debuggerVersion: existingSettings.debuggerVersion ?? defaultSettings.debuggerVersion,
+                portNumber: existingSettings.portNumber ?? defaultSettings.portNumber,
+                shellPortNumber: existingSettings.shellPortNumber ?? defaultSettings.shellPortNumber,
+                limitTimeReal: existingSettings.limitTimeReal ?? defaultSettings.limitTimeReal,
+                limitTimeCpu: existingSettings.limitTimeCpu ?? defaultSettings.limitTimeCpu,
+                maxCronThreads: existingSettings.maxCronThreads ?? defaultSettings.maxCronThreads,
+                extraParams: existingSettings.extraParams ?? defaultSettings.extraParams,
+                devMode: existingSettings.devMode ?? defaultSettings.devMode,
+                dumpsFolder: existingSettings.dumpsFolder ?? defaultSettings.dumpsFolder,
+                odooPath: existingSettings.odooPath ?? defaultSettings.odooPath,
+                enterprisePath: existingSettings.enterprisePath ?? defaultSettings.enterprisePath,
+                designThemesPath: existingSettings.designThemesPath ?? defaultSettings.designThemesPath,
+                customAddonsPath: existingSettings.customAddonsPath ?? defaultSettings.customAddonsPath,
+                pythonPath: existingSettings.pythonPath ?? defaultSettings.pythonPath,
+                subModulesPaths: existingSettings.subModulesPaths ?? defaultSettings.subModulesPaths,
+                installApps: existingSettings.installApps ?? defaultSettings.installApps,
+                upgradeApps: existingSettings.upgradeApps ?? defaultSettings.upgradeApps,
+                preCheckoutCommands: Array.isArray(existingSettings.preCheckoutCommands)
+                    ? existingSettings.preCheckoutCommands
+                    : defaultSettings.preCheckoutCommands,
+                postCheckoutCommands: Array.isArray(existingSettings.postCheckoutCommands)
+                    ? existingSettings.postCheckoutCommands
+                    : defaultSettings.postCheckoutCommands
             };
             // Create a new version with migrated settings
             const migratedVersion = new version_1.VersionModel('Migrated Settings', '17.0', // Default Odoo version
@@ -6948,9 +6978,6 @@ class VersionsService {
         try {
             // Get all default settings from VS Code configuration
             const defaultSettings = (0, utils_1.getDefaultVersionSettings)();
-            // Only preserve version-specific settings that should be calculated
-            // Port numbers should come from VS Code settings, not calculated
-            defaultSettings.debuggerName = `odoo:${version.odooVersion}`;
             version.updateSettings(defaultSettings);
             await this.saveVersions();
             vscode.commands.executeCommand('odoo.versionsChanged');
@@ -7015,12 +7042,12 @@ class VersionModel {
         this.isActive = isActive;
         this.createdAt = new Date();
         this.updatedAt = new Date();
-        // Default settings with overrides
+        // Baseline settings for partial payloads (full defaults are managed by VersionsService/config).
         this.settings = {
-            debuggerName: `odoo:${odooVersion}`,
+            debuggerName: 'odoo:18.0',
             debuggerVersion: "1.0.0",
-            portNumber: this.getDefaultPort(odooVersion),
-            shellPortNumber: this.getDefaultShellPort(odooVersion),
+            portNumber: 8018,
+            shellPortNumber: 5018,
             limitTimeReal: 0,
             limitTimeCpu: 0,
             maxCronThreads: 0,
@@ -7039,19 +7066,8 @@ class VersionModel {
             postCheckoutCommands: [],
             ...settings
         };
-    }
-    getDefaultPort(odooVersion) {
-        // Extract version number for port calculation
-        const versionRegex = /(\d+)/;
-        const versionMatch = versionRegex.exec(odooVersion);
-        if (versionMatch) {
-            const majorVersion = parseInt(versionMatch[1]);
-            return 8000 + majorVersion; // e.g., 17.0 -> 8017, 16.0 -> 8016
-        }
-        return 8069; // Default Odoo port
-    }
-    getDefaultShellPort(odooVersion) {
-        return this.getDefaultPort(odooVersion) - 3000; // e.g., 8017 -> 5017
+        this.settings.preCheckoutCommands = Array.isArray(this.settings.preCheckoutCommands) ? this.settings.preCheckoutCommands : [];
+        this.settings.postCheckoutCommands = Array.isArray(this.settings.postCheckoutCommands) ? this.settings.postCheckoutCommands : [];
     }
     updateSettings(newSettings) {
         this.settings = { ...this.settings, ...newSettings };
@@ -7266,7 +7282,7 @@ class SettingsStore {
             return fallback;
         });
         return {
-            settings: data.settings ? Object.assign(new settings_1.SettingsModel(), data.settings) : undefined,
+            settings: data.settings ? Object.assign(new settings_1.SettingsModel((0, utils_1.getDefaultVersionSettings)()), data.settings) : undefined,
             projects: data.projects || [],
             versions: data.versions || {},
             activeVersion: data.activeVersion || ''
@@ -7282,7 +7298,7 @@ class SettingsStore {
      */
     static async updateSettings(partial) {
         const data = await this.load();
-        const updated = Object.assign(new settings_1.SettingsModel(), data.settings, partial);
+        const updated = Object.assign(new settings_1.SettingsModel((0, utils_1.getDefaultVersionSettings)()), data.settings, partial);
         data.settings = updated;
         // Even though this method sets settings, we must strip them to prevent persistence
         await this.saveWithoutComments((0, utils_1.stripSettings)(data));
@@ -7906,7 +7922,7 @@ async function createProject(name, repos, db) {
         const settings = await versionsService.getActiveVersionSettings();
         const currentOdooBranch = await (0, utils_1.getGitBranch)(settings.odooPath);
         const currentEnterpriseBranch = await (0, utils_1.getGitBranch)(settings.enterprisePath);
-        const currentDesignThemesBranch = await (0, utils_1.getGitBranch)(settings.designThemesPath || './design-themes');
+        const currentDesignThemesBranch = await (0, utils_1.getGitBranch)(settings.designThemesPath ?? './design-themes');
         const shouldSwitch = await promptBranchSwitch(db.odooVersion, {
             odoo: currentOdooBranch,
             enterprise: currentEnterpriseBranch,
@@ -8023,7 +8039,7 @@ async function handleDatabaseVersionSwitchForProject(database) {
                 const shouldSwitch = await promptBranchSwitch(dbVersion.odooVersion, {
                     odoo: currentOdooBranch,
                     enterprise: await (0, utils_1.getGitBranch)(settings.enterprisePath),
-                    designThemes: await (0, utils_1.getGitBranch)(settings.designThemesPath || './design-themes')
+                    designThemes: await (0, utils_1.getGitBranch)(settings.designThemesPath ?? './design-themes')
                 });
                 if (shouldSwitch) {
                     await (0, dbs_1.checkoutBranch)(settings, dbVersion.odooVersion);
@@ -8036,7 +8052,7 @@ async function handleDatabaseVersionSwitchForProject(database) {
     if (database.odooVersion && database.odooVersion !== '') {
         const currentOdooBranch = await (0, utils_1.getGitBranch)(settings.odooPath);
         const currentEnterpriseBranch = await (0, utils_1.getGitBranch)(settings.enterprisePath);
-        const currentDesignThemesBranch = await (0, utils_1.getGitBranch)(settings.designThemesPath || './design-themes');
+        const currentDesignThemesBranch = await (0, utils_1.getGitBranch)(settings.designThemesPath ?? './design-themes');
         const shouldSwitch = await promptBranchSwitch(database.odooVersion, {
             odoo: currentOdooBranch,
             enterprise: currentEnterpriseBranch,
