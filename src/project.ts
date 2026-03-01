@@ -7,7 +7,7 @@ import { findRepositories, showError, showInfo, getGitBranch, normalizePath, sho
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import { randomUUID } from 'crypto';
-import { checkoutBranch } from './dbs';
+import { checkoutBranch, applyProjectRepoBranchAssignments } from './dbs';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 
@@ -244,7 +244,7 @@ export async function selectProject(projectUid: string) {
         // Check if the project has a selected database with a specific version
         const selectedDb = selectedProject.dbs?.find((db: DatabaseModel) => db.isSelected);
         if (selectedDb) {
-            await handleDatabaseVersionSwitchForProject(selectedDb);
+            await handleDatabaseVersionSwitchForProject(selectedDb, selectedProject.repos ?? []);
         }
 
         showInfo(`Project switched to: ${selectedProject.name}`);
@@ -256,7 +256,7 @@ export async function selectProject(projectUid: string) {
     }
 }
 
-async function handleDatabaseVersionSwitchForProject(database: DatabaseModel): Promise<void> {
+async function handleDatabaseVersionSwitchForProject(database: DatabaseModel, projectRepos: RepoModel[]): Promise<void> {
     const versionsService = VersionsService.getInstance();
     await versionsService.initialize();
     const settings = await versionsService.getActiveVersionSettings();
@@ -282,6 +282,7 @@ async function handleDatabaseVersionSwitchForProject(database: DatabaseModel): P
                     await checkoutBranch(settings, dbVersion.odooVersion);
                 }
             }
+            await applyProjectRepoBranchAssignments(database, projectRepos);
             return;
         }
     }
@@ -302,6 +303,8 @@ async function handleDatabaseVersionSwitchForProject(database: DatabaseModel): P
             await checkoutBranch(settings, database.odooVersion);
         }
     }
+
+    await applyProjectRepoBranchAssignments(database, projectRepos);
 }
 
 export async function getRepo(targetPath:string, searchFilter?: string): Promise<RepoModel[] > {

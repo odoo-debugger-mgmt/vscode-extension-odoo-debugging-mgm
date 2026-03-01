@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
-import { DatabaseModel } from './models/db';
+import { DatabaseModel, ProjectRepoBranchAssignment } from './models/db';
 import { ModuleModel } from './models/module';
 import { VersionModel } from './models/version';
-import { discoverModulesInRepos, normalizePath, getGitBranch, showError, showInfo, showWarning, showAutoInfo, showBriefStatus, addActiveIndicator, stripSettings, getDatabaseLabel } from './utils';
+import { discoverModulesInRepos, normalizePath, getGitBranch, getGitBranches, showError, showInfo, showWarning, showAutoInfo, showBriefStatus, addActiveIndicator, stripSettings, getDatabaseLabel } from './utils';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import { execSync, exec, spawn, ChildProcess } from 'child_process';
@@ -18,6 +18,7 @@ import { getDefaultSortOption } from './sortOptions';
 import { PassThrough, Readable } from 'stream';
 import { clearInstalledModuleCache } from './services/database';
 import { invalidateGitBranchCache } from './services/runtimeCache';
+import { SettingsModel } from './models/settings';
 
 const checkoutHooksOutput = vscode.window.createOutputChannel('Odoo Debugger: Branch Hooks');
 
@@ -120,6 +121,242 @@ function buildRepoSignature(repos: RepoModel[]): string {
         .join('|');
 }
 
+function sanitizeProjectRepoBranchAssignments(source: any): ProjectRepoBranchAssignment[] {
+    if (!Array.isArray(source)) {
+        return [];
+    }
+
+    return source
+        .filter(entry => !!entry && typeof entry.branch === 'string' && entry.branch.trim() !== '')
+        .map(entry => ({
+            repoName: entry.repoName || '',
+            repoPath: entry.repoPath ? normalizePath(entry.repoPath) : '',
+            branch: entry.branch.trim()
+        }));
+}
+
+function resolveProjectRepoBranchAssignments(database: DatabaseModel | any, projectRepos: RepoModel[]): ProjectRepoBranchAssignment[] {
+    const assignments = sanitizeProjectRepoBranchAssignments(database?.projectRepoBranches);
+    if (assignments.length === 0 || projectRepos.length === 0) {
+        return [];
+    }
+
+    const byPath = new Map<string, ProjectRepoBranchAssignment>();
+    const byName = new Map<string, ProjectRepoBranchAssignment>();
+    for (const entry of assignments) {
+        if (entry.repoPath) {
+            byPath.set(normalizePath(entry.repoPath), entry);
+        }
+        if (entry.repoName) {
+            byName.set(entry.repoName.toLowerCase(), entry);
+        }
+    }
+
+    const resolved: ProjectRepoBranchAssignment[] = [];
+    const seenPaths = new Set<string>();
+    for (const repo of projectRepos) {
+        const repoPath = normalizePath(repo.path);
+        const pathMatch = byPath.get(repoPath);
+        const nameMatch = byName.get(repo.name.toLowerCase());
+        const assignment = pathMatch ?? nameMatch;
+        if (!assignment || !assignment.branch) {
+            continue;
+        }
+        if (seenPaths.has(repoPath)) {
+            continue;
+        }
+        seenPaths.add(repoPath);
+        resolved.push({
+            repoName: repo.name,
+            repoPath,
+            branch: assignment.branch
+        });
+    }
+
+    return resolved;
+}
+
+async function promptProjectRepoBranchAssignments(
+    repos: RepoModel[],
+    existingAssignments: ProjectRepoBranchAssignment[] = [],
+    mode: 'create' | 'edit' = 'create'
+): Promise<ProjectRepoBranchAssignment[] | undefined> {
+    if (repos.length === 0) {
+        return [];
+    }
+
+    const normalizedExisting = sanitizeProjectRepoBranchAssignments(existingAssignments);
+    const existingByPath = new Map<string, ProjectRepoBranchAssignment>();
+    const existingByName = new Map<string, ProjectRepoBranchAssignment>();
+    for (const entry of normalizedExisting) {
+        if (entry.repoPath) {
+            existingByPath.set(normalizePath(entry.repoPath), entry);
+        }
+        if (entry.repoName) {
+            existingByName.set(entry.repoName.toLowerCase(), entry);
+        }
+    }
+
+    const setupChoices: Array<{ label: string; description: string; action: 'keep' | 'use-current' | 'choose-per-repo' | 'clear'; }> = [
+        {
+            label: 'Use current branches for all project repos',
+            description: 'Capture each selected repo current branch and attach it to this DB',
+            action: 'use-current'
+        },
+        {
+            label: 'Choose branch per repository',
+            description: 'Select an explicit branch for each selected repo',
+            action: 'choose-per-repo'
+        },
+        {
+            label: mode === 'edit' ? 'Clear project repo branch mapping' : 'Skip project repo branch mapping',
+            description: mode === 'edit'
+                ? 'Remove all project repo branch assignments from this DB'
+                : 'Do not attach project repo branch assignments to this DB',
+            action: 'clear'
+        }
+    ];
+
+    if (mode === 'edit') {
+        setupChoices.unshift({
+            label: 'Keep existing project repo branch mapping',
+            description: `Keep ${normalizedExisting.length} currently mapped repo branch assignment(s)`,
+            action: 'keep'
+        });
+    }
+
+    const setupChoice = await vscode.window.showQuickPick(setupChoices, {
+        placeHolder: mode === 'edit'
+            ? 'Edit project repository branches for this database'
+            : 'Attach project repository branches to this database?',
+        ignoreFocusOut: true
+    });
+
+    if (!setupChoice) {
+        return undefined;
+    }
+
+    if (setupChoice.action === 'keep') {
+        return normalizedExisting;
+    }
+
+    if (setupChoice.action === 'clear') {
+        return [];
+    }
+
+    if (setupChoice.action === 'use-current') {
+        const mapped = await Promise.all(repos.map(async repo => {
+            const repoPath = normalizePath(repo.path);
+            const branch = await getGitBranch(repoPath);
+            if (!branch) {
+                return undefined;
+            }
+            return {
+                repoName: repo.name,
+                repoPath,
+                branch
+            } as ProjectRepoBranchAssignment;
+        }));
+
+        return mapped.filter((entry): entry is ProjectRepoBranchAssignment => !!entry);
+    }
+
+    const assignments: ProjectRepoBranchAssignment[] = [];
+    for (let i = 0; i < repos.length; i++) {
+        const repo = repos[i];
+        const repoPath = normalizePath(repo.path);
+        const existing = existingByPath.get(repoPath) ?? existingByName.get(repo.name.toLowerCase());
+        const existingBranch = existing?.branch;
+        const currentBranch = await getGitBranch(repoPath);
+        const branches = await getGitBranches(repoPath);
+        const uniqueBranches = Array.from(new Set([
+            ...(existingBranch ? [existingBranch] : []),
+            ...(currentBranch ? [currentBranch] : []),
+            ...branches
+        ]));
+        const selectableBranches = uniqueBranches.filter(branch => branch !== currentBranch && branch !== existingBranch);
+
+        const options: Array<{ label: string; description?: string; detail?: string; action: 'use' | 'custom' | 'skip'; branch?: string }> = [
+            ...(existingBranch ? [{
+                label: `$(bookmark) Keep mapped branch (${existingBranch})`,
+                description: repo.name,
+                action: 'use' as const,
+                branch: existingBranch
+            }] : []),
+            ...(currentBranch ? [{
+                label: `$(git-branch) Keep current branch (${currentBranch})`,
+                description: repo.name,
+                action: 'use' as const,
+                branch: currentBranch
+            }] : []),
+            ...selectableBranches.map(branch => ({
+                label: branch,
+                description: repo.name,
+                action: 'use' as const,
+                branch
+            })),
+            {
+                label: '$(pencil) Enter a custom branch',
+                description: repo.name,
+                action: 'custom' as const
+            },
+            {
+                label: mode === 'edit' && existingBranch
+                    ? '$(close) Keep existing mapping for this repository'
+                    : '$(close) Skip this repository',
+                description: repo.name,
+                action: 'skip' as const
+            }
+        ];
+
+        const picked = await vscode.window.showQuickPick(options, {
+            placeHolder: `[${i + 1}/${repos.length}] Select branch for repository "${repo.name}"${existingBranch ? ` (mapped: ${existingBranch})` : ''}`,
+            ignoreFocusOut: true
+        });
+
+        if (!picked) {
+            return undefined;
+        }
+
+        if (picked.action === 'skip') {
+            if (mode === 'edit' && existingBranch) {
+                assignments.push({
+                    repoName: repo.name,
+                    repoPath,
+                    branch: existingBranch
+                });
+            }
+            continue;
+        }
+
+        let branch = picked.branch;
+        if (picked.action === 'custom') {
+            const customBranchInput = await vscode.window.showInputBox({
+                placeHolder: existingBranch ?? currentBranch ?? 'Enter branch name',
+                value: existingBranch ?? currentBranch ?? '',
+                prompt: `Enter the branch to checkout for "${repo.name}" when this DB is selected`,
+                ignoreFocusOut: true
+            });
+            if (customBranchInput === undefined) {
+                return undefined;
+            }
+            branch = customBranchInput.trim();
+        }
+
+        if (!branch) {
+            continue;
+        }
+
+        assignments.push({
+            repoName: repo.name,
+            repoPath,
+            branch
+        });
+    }
+
+    return assignments;
+}
+
 async function promptBranchSwitch(targetVersion: string, currentBranches: {odoo: string | null, enterprise: string | null, designThemes: string | null}): Promise<boolean> {
     const mismatchedRepos = [];
     if (currentBranches.odoo !== targetVersion) {
@@ -147,8 +384,6 @@ async function promptBranchSwitch(targetVersion: string, currentBranches: {odoo:
 
     return choice === 'Switch Branches';
 }
-import { SettingsModel } from './models/settings';
-
 /**
  * Helper function to extract DatabaseModel from various event sources
  * (direct database object, VS Code TreeItem, or command arguments)
@@ -312,6 +547,13 @@ export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
             // Branch information
             if (db.branchName) {
                 tooltipDetails.push(`**Branch:** ${db.branchName}`);
+            }
+            const projectRepoBranches = sanitizeProjectRepoBranchAssignments((db as any).projectRepoBranches);
+            if (projectRepoBranches.length > 0) {
+                const formattedRepoBranches = projectRepoBranches
+                    .map(entry => `- ${entry.repoName || path.basename(entry.repoPath)}: \`${entry.branch}\``)
+                    .join('\n');
+                tooltipDetails.push(`**Project Repo Branches:**\n${formattedRepoBranches}`);
             }
 
             // Database details
@@ -729,6 +971,144 @@ export async function checkoutBranch(settings: SettingsModel, branch: string): P
     });
 }
 
+async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+    if (items.length === 0) {
+        return [];
+    }
+
+    const normalizedLimit = Math.max(1, limit);
+    const results: R[] = new Array(items.length);
+    let cursor = 0;
+
+    const runNext = async (): Promise<void> => {
+        const index = cursor++;
+        if (index >= items.length) {
+            return;
+        }
+        results[index] = await worker(items[index]);
+        await runNext();
+    };
+
+    const workers = Array.from({ length: Math.min(normalizedLimit, items.length) }, () => runNext());
+    await Promise.all(workers);
+    return results;
+}
+
+async function checkoutSingleProjectRepoBranch(repoPath: string, branch: string): Promise<{ ok: boolean; message: string }> {
+    const sourceControlSucceeded = await checkoutBranchViaSourceControl(repoPath, branch);
+    if (sourceControlSucceeded) {
+        invalidateGitBranchCache(repoPath);
+        return { ok: true, message: `Switched to branch "${branch}"` };
+    }
+
+    return new Promise((resolve) => {
+        const process = spawn('git', ['checkout', branch], { cwd: repoPath, stdio: ['ignore', 'ignore', 'pipe'] });
+        let stderr = '';
+
+        process.stderr?.on('data', chunk => {
+            stderr += chunk.toString();
+        });
+
+        process.on('error', error => {
+            resolve({ ok: false, message: error.message });
+        });
+
+        process.on('close', code => {
+            const details = stderr.trim();
+            if (code === 0 || details.includes(`Already on '${branch}'`)) {
+                invalidateGitBranchCache(repoPath);
+                resolve({
+                    ok: true,
+                    message: details.includes(`Already on '${branch}'`)
+                        ? `Already on branch "${branch}"`
+                        : `Switched to branch "${branch}"`
+                });
+                return;
+            }
+
+            resolve({
+                ok: false,
+                message: details || `git checkout exited with code ${code ?? 'unknown'}`
+            });
+        });
+    });
+}
+
+export async function applyProjectRepoBranchAssignments(database: DatabaseModel | any, projectRepos: RepoModel[]): Promise<void> {
+    const assignments = resolveProjectRepoBranchAssignments(database, projectRepos);
+    if (assignments.length === 0) {
+        return;
+    }
+
+    const databaseLabel = getDatabaseLabel(database);
+    const progressTitle = `Switching project repos for ${databaseLabel}`;
+
+    const results = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: progressTitle,
+        cancellable: false
+    }, async (progress) => {
+        const total = assignments.length;
+        let completed = 0;
+
+        return mapWithConcurrency(assignments, 4, async assignment => {
+            completed += 1;
+            progress.report({
+                message: `${assignment.repoName || path.basename(assignment.repoPath)} (${completed}/${total})`,
+                increment: total > 0 ? (100 / total) : 0
+            });
+
+            if (!assignment.repoPath || !fs.existsSync(assignment.repoPath)) {
+                return {
+                    ...assignment,
+                    ok: false,
+                    changed: false,
+                    message: `Repository path not found: ${assignment.repoPath}`
+                };
+            }
+
+            if (!fs.existsSync(path.join(assignment.repoPath, '.git'))) {
+                return {
+                    ...assignment,
+                    ok: false,
+                    changed: false,
+                    message: 'Not a git repository'
+                };
+            }
+
+            const currentBranch = await getGitBranch(assignment.repoPath);
+            if (currentBranch === assignment.branch) {
+                return {
+                    ...assignment,
+                    ok: true,
+                    changed: false,
+                    message: `Already on branch "${assignment.branch}"`
+                };
+            }
+
+            const checkoutResult = await checkoutSingleProjectRepoBranch(assignment.repoPath, assignment.branch);
+            return {
+                ...assignment,
+                ok: checkoutResult.ok,
+                changed: checkoutResult.ok,
+                message: checkoutResult.message
+            };
+        });
+    });
+
+    const failed = results.filter(result => !result.ok);
+    const changed = results.filter(result => result.ok && result.changed);
+
+    if (failed.length > 0) {
+        failed.forEach(result => {
+            console.error(`[project repo switch] ${result.repoName}: ${result.message}`);
+        });
+        showWarning(`Database "${databaseLabel}" switched, but ${failed.length} project repo branch change(s) failed.`);
+    } else if (changed.length > 0) {
+        showAutoInfo(`Switched ${changed.length} project repo branch(es) for database "${databaseLabel}"`, 2500);
+    }
+}
+
 interface DumpSelection {
     label: string;
     kind: 'folder' | 'zip' | 'file';
@@ -1012,7 +1392,13 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
         }
     }
 
-    // Step 5: Create the database model
+    // Step 5: Attach project repository branch mapping for this DB
+    const projectRepoBranches = await promptProjectRepoBranchAssignments(repos);
+    if (projectRepoBranches === undefined) {
+        return undefined;
+    }
+
+    // Step 6: Create the database model
     for (const module of selectedModules) {
         modules.push(new ModuleModel(module, 'install'));
     }
@@ -1064,11 +1450,12 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
             versionId: selectedVersionId,
             displayName: displayDbName,
             internalName: internalDbName,
-            kind: dbKind
+            kind: dbKind,
+            projectRepoBranches
         }
     );
 
-    // Step 6: Set up the database if needed
+    // Step 7: Set up the database if needed
     if (sqlDumpPath) {
         db.isItABackup = true;
         await setupDatabase(db.id, sqlDumpPath);
@@ -1269,6 +1656,7 @@ export async function selectDatabase(event: any) {
     if (newSelectedDbIndex !== -1) {
         project.dbs[newSelectedDbIndex].isSelected = true;
     }
+    const selectedDatabase = newSelectedDbIndex !== -1 ? project.dbs[newSelectedDbIndex] : database;
 
     // Save the updated databases array without settings
     const updatedData = stripSettings(data);
@@ -1276,10 +1664,17 @@ export async function selectDatabase(event: any) {
 
     // Handle version and branch switching with enhanced options
     try {
-        await handleDatabaseVersionSwitch(database);
+        await handleDatabaseVersionSwitch(selectedDatabase);
     } catch (error: any) {
         console.error('Error in database version switching:', error);
         showWarning(`Database selected, but version switching failed: ${error.message}`);
+    }
+
+    try {
+        await applyProjectRepoBranchAssignments(selectedDatabase, project.repos ?? []);
+    } catch (error: any) {
+        console.error('Error while switching project repository branches:', error);
+        showWarning(`Database selected, but project repository branch switching failed: ${error.message}`);
     }
 
     showBriefStatus(`Database switched to: ${databaseLabel}`, 2000);
@@ -1593,11 +1988,72 @@ export async function changeDatabaseVersion(event: any) {
         if (switchChoice === 'Switch Now') {
             // Use the same switching logic as database selection
             await handleDatabaseVersionSwitch(project.dbs[dbIndex]);
+            await applyProjectRepoBranchAssignments(project.dbs[dbIndex], project.repos ?? []);
         }
     }
     } catch (error: any) {
         showError(`Failed to change database version: ${error.message}`);
         console.error('Error in changeDatabaseVersion:', error);
+    }
+}
+
+export async function changeDatabaseProjectRepoBranches(event: any): Promise<void> {
+    try {
+        const db = extractDatabaseFromEvent(event);
+        if (!db) {
+            showError('Could not identify the database whose project repo branches should change.');
+            return;
+        }
+        const dbLabel = getDatabaseLabel(db);
+
+        const result = await SettingsStore.getSelectedProject();
+        if (!result) {
+            return;
+        }
+        const { data, project } = result;
+
+        const projectIndex = data.projects.findIndex((p: any) => p.uid === project.uid);
+        if (projectIndex === -1) {
+            showError('The selected project could not be found.');
+            return;
+        }
+
+        const dbIndex = project.dbs.findIndex((database: DatabaseModel) => database.id === db.id);
+        if (dbIndex === -1) {
+            showError('The selected database could not be found.');
+            return;
+        }
+
+        const existingAssignments = sanitizeProjectRepoBranchAssignments((project.dbs[dbIndex] as any).projectRepoBranches);
+        const updatedAssignments = await promptProjectRepoBranchAssignments(project.repos ?? [], existingAssignments, 'edit');
+        if (updatedAssignments === undefined) {
+            return;
+        }
+
+        project.dbs[dbIndex].projectRepoBranches = updatedAssignments;
+
+        const updatedData = stripSettings(data);
+        await SettingsStore.saveWithoutComments(updatedData);
+
+        if (updatedAssignments.length > 0) {
+            showAutoInfo(`Updated project repo branch mapping for "${dbLabel}" (${updatedAssignments.length} repo(s))`, 3000);
+        } else {
+            showAutoInfo(`Cleared project repo branch mapping for "${dbLabel}"`, 3000);
+        }
+
+        if (project.dbs[dbIndex].isSelected && updatedAssignments.length > 0) {
+            const applyNow = await vscode.window.showInformationMessage(
+                'Apply the updated project repo branch mapping now?',
+                'Apply Now',
+                'Later'
+            );
+            if (applyNow === 'Apply Now') {
+                await applyProjectRepoBranchAssignments(project.dbs[dbIndex], project.repos ?? []);
+            }
+        }
+    } catch (error: any) {
+        showError(`Failed to update project repo branch mapping: ${error.message}`);
+        console.error('Error in changeDatabaseProjectRepoBranches:', error);
     }
 }
 

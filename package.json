@@ -300,6 +300,11 @@
         "icon": "$(versions)"
       },
       {
+        "command": "dbSelector.configureRepoBranches",
+        "title": "Configure Project Repo Branches",
+        "icon": "$(git-branch)"
+      },
+      {
         "command": "dbSelector.getDb",
         "title": "Get Database",
         "icon": "resources/icons/download.svg"
@@ -703,6 +708,11 @@
           "when": "view == dbSelector && viewItem == database",
           "command": "dbSelector.changeVersion",
           "group": "database@3"
+        },
+        {
+          "when": "view == dbSelector && viewItem == database",
+          "command": "dbSelector.configureRepoBranches",
+          "group": "database@4"
         },
         {
           "when": "view == moduleSelector && viewItem == module",
