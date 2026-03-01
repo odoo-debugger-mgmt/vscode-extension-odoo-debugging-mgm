@@ -295,6 +295,11 @@
         "icon": "$(add)"
       },
       {
+        "command": "dbSelector.manageTemplates",
+        "title": "Manage Database Templates",
+        "icon": "$(database)"
+      },
+      {
         "command": "dbSelector.restore",
         "title": "Restore Database",
         "icon": "resources/icons/restore.svg"
@@ -594,6 +599,11 @@
         },
         {
           "command": "dbSelector.create",
+          "when": "view == dbSelector",
+          "group": "navigation"
+        },
+        {
+          "command": "dbSelector.manageTemplates",
           "when": "view == dbSelector",
           "group": "navigation"
         },
