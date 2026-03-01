@@ -238,6 +238,16 @@
         "icon": "$(gear)"
       },
       {
+        "command": "projectSelector.manageTickets",
+        "title": "Manage Project Tickets",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "projectSelector.openTicket",
+        "title": "Open Project Ticket",
+        "icon": "$(link-external)"
+      },
+      {
         "command": "projectSelector.duplicateProject",
         "title": "Duplicate Project",
         "icon": "resources/icons/create.svg"
@@ -553,6 +563,11 @@
           "group": "navigation@4"
         },
         {
+          "command": "projectSelector.openTicket",
+          "when": "view == projectSelector",
+          "group": "navigation@4.5"
+        },
+        {
           "command": "projectSelector.sort",
           "when": "view == projectSelector",
           "group": "navigation@8"
@@ -681,6 +696,16 @@
         },
         {
           "command": "projectSelector.editSettings",
+          "when": "view == projectSelector",
+          "group": "project"
+        },
+        {
+          "command": "projectSelector.manageTickets",
+          "when": "view == projectSelector",
+          "group": "project"
+        },
+        {
+          "command": "projectSelector.openTicket",
           "when": "view == projectSelector",
           "group": "project"
         },
@@ -1038,6 +1063,11 @@
             "type": "string"
           },
           "markdownDescription": "Commands to run after switching branches when using this version. Each entry runs in a shell; use workspace-absolute paths if needed."
+        },
+        "odooDebugger.ticketBaseUrl": {
+          "type": "string",
+          "default": "https://www.odoo.com",
+          "description": "Base URL used when opening project tickets. Ticket links are built as <base>/odoo/all-tasks/<ticket_id>."
         },
         "odooDebugger.databaseSwitchBehavior": {
           "type": "string",

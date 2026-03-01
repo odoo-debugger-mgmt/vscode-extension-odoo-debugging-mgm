@@ -6,7 +6,7 @@ import { normalizePath, showError, showInfo, showWarning, showAutoInfo, getGitBr
 import { ProjectModel } from './models/project';
 import { DatabaseModel } from './models/db';
 import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb, changeDatabaseVersion, changeDatabaseProjectRepoBranches, checkoutBranch } from './dbs';
-import { ProjectTreeProvider, createProject, selectProject, getRepo, getProjectName, deleteProject, editProjectSettings, duplicateProject, exportProject, importProject, quickProjectSearch} from './project';
+import { ProjectTreeProvider, createProject, selectProject, getRepo, getProjectName, deleteProject, editProjectSettings, duplicateProject, exportProject, importProject, quickProjectSearch, manageProjectTickets, openProjectTicket} from './project';
 import { RepoTreeProvider, selectRepo } from './repos';
 import { ProjectReposProvider, revealProjectRepo } from './projectRepos';
 import { ModuleTreeProvider, selectModule, setModuleToInstall, setModuleToUpgrade, clearModuleState, togglePsaeInternalModule, updateAllModules, installAllModules, clearAllModuleSelections, updateInstalledModules, viewInstalledModules } from './module';
@@ -533,6 +533,15 @@ export async function activate(context: vscode.ExtensionContext) {
     extensionDisposables.push(vscode.commands.registerCommand('projectSelector.editSettings', async (event) => {
         await editProjectSettings(event);
         await refreshAll({ reason: 'ui' });
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.manageTickets', async (event) => {
+        await manageProjectTickets(event);
+        await refreshAll({ reason: 'ui' });
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.openTicket', async (event) => {
+        await openProjectTicket(event);
     }));
 
     extensionDisposables.push(vscode.commands.registerCommand('projectSelector.duplicateProject', async (event) => {

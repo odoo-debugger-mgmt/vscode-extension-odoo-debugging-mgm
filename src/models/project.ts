@@ -2,6 +2,12 @@ import { DatabaseModel } from "./db";
 import { RepoModel } from "./repo";
 import { TestingConfigModel } from "./testing";
 import { randomUUID } from "crypto";
+
+export interface ProjectTicketModel {
+    id: string;
+    title?: string;
+}
+
 export class ProjectModel {
     name: string; // project sh name
     createdAt: string | Date;
@@ -11,6 +17,7 @@ export class ProjectModel {
     uid: string; // unique identifier for the project
     includedPsaeInternalPaths: string[] = []; // Manually included psae-internal paths
     testingConfig: TestingConfigModel; // Testing configuration
+    tickets: ProjectTicketModel[] = [];
     constructor(
         name: string,
         createdAt: string | Date,
@@ -19,7 +26,8 @@ export class ProjectModel {
         isSelected: boolean = false,
         uid: string = randomUUID(),
         includedPsaeInternalPaths: string[] = [],
-        testingConfig: TestingConfigModel = new TestingConfigModel()
+        testingConfig: TestingConfigModel = new TestingConfigModel(),
+        tickets: ProjectTicketModel[] = []
     ) {
         this.name = name;
         this.dbs = dbs;
@@ -29,5 +37,6 @@ export class ProjectModel {
         this.uid = uid;
         this.includedPsaeInternalPaths = includedPsaeInternalPaths;
         this.testingConfig = testingConfig;
+        this.tickets = Array.isArray(tickets) ? tickets : [];
     }
 }
