@@ -4,6 +4,7 @@ import { SettingsStore } from './settingsStore';
 import { ProjectModel } from './models/project';
 import { RepoModel } from './models/repo';
 import { showError, showInfo } from './utils';
+import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
 
 type NodeKind = 'placeholder' | 'repo' | 'folder' | 'file';
 
@@ -40,6 +41,8 @@ export class ProjectReposExplorerProvider implements vscode.TreeDataProvider<Exp
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
     private watchers: vscode.FileSystemWatcher[] = [];
+    private watcherKey = '';
+    private refreshDebounceTimer: NodeJS.Timeout | undefined;
 
     constructor() {}
 
@@ -47,9 +50,42 @@ export class ProjectReposExplorerProvider implements vscode.TreeDataProvider<Exp
         this._onDidChangeTreeData.fire();
     }
 
+    private scheduleRefresh(): void {
+        if (this.refreshDebounceTimer) {
+            clearTimeout(this.refreshDebounceTimer);
+        }
+        this.refreshDebounceTimer = setTimeout(() => {
+            this.refreshDebounceTimer = undefined;
+            this.refresh();
+        }, 200);
+    }
+
+    private shouldIgnoreWatcherPath(fsPath: string): boolean {
+        const normalized = fsPath.replace(/\\/g, '/');
+        const ignoredFragments = ['/.git/', '/node_modules/', '/.venv/', '/__pycache__/'];
+        if (ignoredFragments.some(fragment => normalized.includes(fragment))) {
+            return true;
+        }
+        return normalized.endsWith('/.git') || normalized.endsWith('/node_modules') || normalized.endsWith('/.venv') || normalized.endsWith('/__pycache__');
+    }
+
+    private onWatcherEvent(uri: vscode.Uri): void {
+        if (this.shouldIgnoreWatcherPath(uri.fsPath)) {
+            return;
+        }
+        invalidateModuleDiscoveryCache();
+        invalidateRepositoryDiscoveryCache();
+        this.scheduleRefresh();
+    }
+
     private disposeWatchers() {
         this.watchers.forEach(w => w.dispose());
         this.watchers = [];
+        this.watcherKey = '';
+        if (this.refreshDebounceTimer) {
+            clearTimeout(this.refreshDebounceTimer);
+            this.refreshDebounceTimer = undefined;
+        }
     }
 
     getTreeItem(element: ExplorerNode): vscode.TreeItem {
@@ -129,13 +165,23 @@ export class ProjectReposExplorerProvider implements vscode.TreeDataProvider<Exp
     }
 
     private resetWatchers(repos: RepoModel[]) {
+        const nextKey = repos
+            .map(repo => repo.path)
+            .sort((a, b) => a.localeCompare(b))
+            .join('|');
+
+        if (nextKey === this.watcherKey) {
+            return;
+        }
+
         this.disposeWatchers();
+        this.watcherKey = nextKey;
         for (const repo of repos) {
             const pattern = new vscode.RelativePattern(repo.path, '**/*');
             const watcher = vscode.workspace.createFileSystemWatcher(pattern, false, false, false);
-            watcher.onDidCreate(() => this.refresh());
-            watcher.onDidChange(() => this.refresh());
-            watcher.onDidDelete(() => this.refresh());
+            watcher.onDidCreate(uri => this.onWatcherEvent(uri));
+            watcher.onDidChange(uri => this.onWatcherEvent(uri));
+            watcher.onDidDelete(uri => this.onWatcherEvent(uri));
             this.watchers.push(watcher);
         }
     }

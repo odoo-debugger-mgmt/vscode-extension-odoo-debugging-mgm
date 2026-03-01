@@ -3,12 +3,11 @@ import * as fs from 'fs';
 import * as path from 'node:path';
 import { ProjectModel } from "./models/project";
 import { SettingsModel } from "./models/settings";
-import { InstalledModuleInfo } from "./models/module";
 import { getWorkspacePath, normalizePath, showError, showInfo, showAutoInfo, discoverModulesInRepos } from './utils';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import { ensureTestingConfigModel } from './models/testing';
-import { getInstalledModules, databaseHasModuleTable } from './services/database';
+import { getInstalledModuleNames, databaseHasModuleTable } from './services/database';
 import { parse } from 'jsonc-parser';
 
 async function selectPythonInterpreter(pythonPath: string): Promise<void> {
@@ -229,8 +228,7 @@ async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShe
 
     let installedModuleNames: Set<string> = new Set();
     try {
-        const installedModules = await getInstalledModules(db.id);
-        installedModuleNames = new Set(installedModules.map((m: InstalledModuleInfo) => m.name));
+        installedModuleNames = await getInstalledModuleNames(db.id);
     } catch (error) {
         console.warn('Failed to get installed modules from database:', error);
     }

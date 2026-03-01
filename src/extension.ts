@@ -26,6 +26,7 @@ import { SortPreferences } from './sortPreferences';
 import { getSortOptions, getDefaultSortOption, SortableViewId } from './sortOptions';
 import { openProjectWorkspace, rebuildProjectWorkspace, quickSwitchProjectWorkspace } from './projectWorkspace';
 import { ProjectReposExplorerProvider, createNewFile as explorerCreateNewFile, createNewFolder as explorerCreateNewFolder, renameEntry as explorerRenameEntry, deleteEntry as explorerDeleteEntry, openTerminalHere as explorerOpenTerminalHere, selectProjectForExplorer, copyEntries as explorerCopyEntries, pasteEntries as explorerPasteEntries } from './projectReposExplorer';
+import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
 
 // Store disposables for proper cleanup
 let extensionDisposables: vscode.Disposable[] = [];
@@ -250,21 +251,66 @@ export async function activate(context: vscode.ExtensionContext) {
     extensionDisposables.push(vscode.window.registerTreeDataProvider('projectRepos', providers.projectRepos));
     extensionDisposables.push(vscode.window.registerTreeDataProvider('odt.projectReposExplorer', providers.projectReposExplorer));
 
-const refreshAll = async (options: { syncDebugger?: boolean } = {}) => {
-    const { syncDebugger = true } = options;
+    type RefreshReason = 'ui' | 'debugger' | 'all';
 
-    if (syncDebugger) {
-        try {
-            await setupDebugger();
-        } catch (error) {
-            // Keeping this non-blocking so refresh still occurs when launch sync fails
-            console.warn('Failed to synchronize debugger configuration:', error);
+    const refreshViews = async () => {
+        await initializeTestingContext();
+        Object.values(providers).forEach(provider => provider.refresh());
+    };
+
+    let debuggerSyncTimer: NodeJS.Timeout | undefined;
+    let debuggerSyncInFlight: Promise<void> | null = null;
+    let debuggerSyncWaiters: Array<() => void> = [];
+
+    const runDebuggerSync = async (): Promise<void> => {
+        if (debuggerSyncInFlight) {
+            await debuggerSyncInFlight;
+            return;
         }
-    }
 
-    await initializeTestingContext();
-    Object.values(providers).forEach(provider => provider.refresh());
-};
+        debuggerSyncInFlight = (async () => {
+            try {
+                await setupDebugger();
+            } catch (error) {
+                // Keeping this non-blocking so refresh still occurs when launch sync fails
+                console.warn('Failed to synchronize debugger configuration:', error);
+            }
+        })();
+
+        try {
+            await debuggerSyncInFlight;
+        } finally {
+            debuggerSyncInFlight = null;
+        }
+    };
+
+    const syncDebuggerDebounced = (delayMs = 200): Promise<void> => new Promise(resolve => {
+        debuggerSyncWaiters.push(resolve);
+        if (debuggerSyncTimer) {
+            clearTimeout(debuggerSyncTimer);
+        }
+        debuggerSyncTimer = setTimeout(() => {
+            debuggerSyncTimer = undefined;
+            runDebuggerSync()
+                .finally(() => {
+                    const waiters = debuggerSyncWaiters;
+                    debuggerSyncWaiters = [];
+                    waiters.forEach(waiter => waiter());
+                });
+        }, delayMs);
+    });
+
+    const refreshAll = async (options: { reason?: RefreshReason; debounceMs?: number } = {}) => {
+        const { reason = 'all', debounceMs = 200 } = options;
+
+        if (reason === 'all' || reason === 'debugger') {
+            await syncDebuggerDebounced(debounceMs);
+        }
+
+        if (reason === 'all' || reason === 'ui') {
+            await refreshViews();
+        }
+    };
 
     registerViewSortCommand('projectSelector', providers.project);
     registerViewSortCommand('repoSelector', providers.repo);
@@ -274,10 +320,10 @@ const refreshAll = async (options: { syncDebugger?: boolean } = {}) => {
     registerViewSortCommand('projectRepos', providers.projectRepos);
 
     // Register all commands and store disposables
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.refresh', refreshAll));
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.refresh', refreshAll));
-    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.refresh', refreshAll));
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.refresh', refreshAll));
+    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.refresh', async () => refreshAll({ reason: 'ui' })));
     extensionDisposables.push(vscode.commands.registerCommand('projectRepos.reveal', async (arg?: any) => {
         const repo = arg?.metadata?.kind === 'repo' ? arg?.metadata?.repo : undefined;
         if (repo?.path) {
@@ -474,7 +520,7 @@ const refreshAll = async (options: { syncDebugger?: boolean } = {}) => {
 
     extensionDisposables.push(vscode.commands.registerCommand('projectSelector.editSettings', async (event) => {
         await editProjectSettings(event);
-        await refreshAll();
+        await refreshAll({ reason: 'ui' });
     }));
 
     extensionDisposables.push(vscode.commands.registerCommand('projectSelector.duplicateProject', async (event) => {
@@ -484,23 +530,23 @@ const refreshAll = async (options: { syncDebugger?: boolean } = {}) => {
 
     extensionDisposables.push(vscode.commands.registerCommand('projectSelector.exportProject', async (event) => {
         await exportProject(event);
-        await refreshAll();
+        await refreshAll({ reason: 'ui' });
     }));
 
     extensionDisposables.push(vscode.commands.registerCommand('projectSelector.importProject', async () => {
         await importProject();
-        await refreshAll();
+        await refreshAll({ reason: 'ui' });
     }));
 
     extensionDisposables.push(vscode.commands.registerCommand('projectSelector.setup', async () => {
         await setupOdooBranch();
-        await refreshAll();
+        await refreshAll({ reason: 'ui' });
     }));
 
     // Quick Project Search
     extensionDisposables.push(vscode.commands.registerCommand('odoo-debugger.quickProjectSearch', async () => {
         await quickProjectSearch();
-        await refreshAll();
+        await refreshAll({ reason: 'ui' });
     }));
 
     // DBS
@@ -635,17 +681,17 @@ extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.clearA
     // Testing
 extensionDisposables.push(vscode.commands.registerCommand('testingSelector.toggleTesting', async (event) => {
     await toggleTesting(event);
-    await refreshAll({ syncDebugger: false });
+    await refreshAll({ reason: 'ui' });
 }));
 
 extensionDisposables.push(vscode.commands.registerCommand('testingSelector.toggleStopAfterInit', async () => {
     await toggleStopAfterInit();
-    await refreshAll({ syncDebugger: false });
+    await refreshAll({ reason: 'ui' });
 }));
 
 extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTestFile', async () => {
     await setTestFile();
-    await refreshAll({ syncDebugger: false });
+    await refreshAll({ reason: 'ui' });
 }));
 
     extensionDisposables.push(vscode.commands.registerCommand('testingSelector.addTestTag', async () => {
@@ -880,7 +926,7 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
             }
 
             const version = await versionsService.createVersion(name, odooVersion, settingsOverrides);
-            await refreshAll({ syncDebugger: false });
+            await refreshAll({ reason: 'ui' });
 
             const action = await vscode.window.showInformationMessage(
                 `Version "${name}" created on branch "${odooVersion}".`,
@@ -1154,7 +1200,15 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
                 settings: { [key]: newValue }
             } as any);
 
+            if (['customAddonsPath'].includes(key)) {
+                invalidateRepositoryDiscoveryCache();
+                invalidateModuleDiscoveryCache();
+            } else if (['odooPath', 'enterprisePath', 'designThemesPath', 'subModulesPaths'].includes(key)) {
+                invalidateModuleDiscoveryCache();
+            }
+
             showInfo(`Updated ${key} successfully`);
+            await refreshAll();
         } catch (error: any) {
             showError(`Failed to edit setting: ${error.message}`);
         }
