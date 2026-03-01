@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as os from 'os';
-import { ProjectModel } from './models/project';
+import { ProjectModel, ProjectTicketModel } from './models/project';
 import { DatabaseModel } from './models/db';
 import { RepoModel } from './models/repo';
 import { findRepositories, showError, showInfo, getGitBranch, normalizePath, showAutoInfo, addActiveIndicator, stripSettings, getDatabaseLabel } from './utils';
@@ -12,6 +12,53 @@ import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 
 let projectMetadataMigrationCompleted = false;
+
+function sanitizeProjectTickets(rawTickets: any): ProjectTicketModel[] {
+    if (!Array.isArray(rawTickets)) {
+        return [];
+    }
+
+    const result: ProjectTicketModel[] = [];
+    const seen = new Set<string>();
+    for (const rawTicket of rawTickets) {
+        const id = (rawTicket?.id ?? '').toString().trim();
+        if (!id) {
+            continue;
+        }
+        const normalized = id.toLowerCase();
+        if (seen.has(normalized)) {
+            continue;
+        }
+        seen.add(normalized);
+
+        const title = typeof rawTicket?.title === 'string' ? rawTicket.title.trim() : '';
+        result.push({
+            id,
+            title: title || undefined
+        });
+    }
+
+    return result;
+}
+
+function resolveTicketBaseUrl(): string {
+    const configured = vscode.workspace.getConfiguration('odooDebugger').get<string>('ticketBaseUrl', 'https://www.odoo.com') ?? 'https://www.odoo.com';
+    const trimmed = configured.trim();
+    if (!trimmed) {
+        return 'https://www.odoo.com';
+    }
+    const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    return withScheme.replace(/\/+$/, '');
+}
+
+function buildTicketUrl(ticketId: string): string {
+    const baseUrl = resolveTicketBaseUrl();
+    return `${baseUrl}/odoo/all-tasks/${encodeURIComponent(ticketId)}`;
+}
+
+function formatTicketLabel(ticket: ProjectTicketModel): string {
+    return ticket.title ? `${ticket.id} - ${ticket.title}` : ticket.id;
+}
 
 export class ProjectTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
@@ -164,6 +211,12 @@ async function ensureProjectUIDs(data: any): Promise<boolean> {
                 project.includedPsaeInternalPaths = [];
                 needsSave = true;
             }
+            const originalTickets = Array.isArray(project.tickets) ? project.tickets : [];
+            const sanitizedTickets = sanitizeProjectTickets(originalTickets);
+            if (JSON.stringify(originalTickets) !== JSON.stringify(sanitizedTickets)) {
+                needsSave = true;
+            }
+            project.tickets = sanitizedTickets;
             if (!project.createdAt) {
                 project.createdAt = new Date().toISOString();
                 needsSave = true;
@@ -496,7 +549,9 @@ export async function duplicateProject(event: any) {
         [...sourceProject.repos], // Copy repositories array
         true, // Set as selected
         randomUUID(), // New unique ID
-        [...(sourceProject.includedPsaeInternalPaths || [])] // Copy included psae-internal paths
+        [...(sourceProject.includedPsaeInternalPaths || [])], // Copy included psae-internal paths
+        sourceProject.testingConfig,
+        [...sanitizeProjectTickets(sourceProject.tickets)] // Copy project tickets
     );
 
     projects.push(duplicateProject);
@@ -505,11 +560,8 @@ export async function duplicateProject(event: any) {
     showInfo(`Project "${duplicateName}" created as a duplicate of "${sourceProject.name}"`);
 }
 
-export async function editProjectSettings(event: any) {
-    // Get project UID from event
-    let projectUid: string;
-
-    console.log('editProjectSettings called with event:', event);
+async function getProjectContextFromEvent(event: any): Promise<{ data: any; project: ProjectModel; projectIndex: number } | null> {
+    let projectUid: string | undefined;
 
     if (typeof event === 'string') {
         projectUid = event;
@@ -519,26 +571,41 @@ export async function editProjectSettings(event: any) {
         projectUid = event.id;
     } else if (event && event.projectUid) {
         projectUid = event.projectUid;
-    } else {
-        console.error('The project data is invalid for editing settings:', event);
-        showError('The project data is invalid for editing settings. Please try clicking on the project first to select it, then try again.');
-        return;
     }
 
     const data = await SettingsStore.get('odoo-debugger-data.json');
-    const projects: ProjectModel[] = data.projects;
-    if (!projects) {
-        showError('Unable to load projects.');
-        return;
+    const projects: ProjectModel[] = data.projects ?? [];
+    if (projects.length === 0) {
+        showError('No projects are configured.');
+        return null;
+    }
+
+    if (!projectUid) {
+        const selectedProject = projects.find((p: ProjectModel) => p.isSelected);
+        if (!selectedProject) {
+            showError('Select a project first.');
+            return null;
+        }
+        projectUid = selectedProject.uid;
     }
 
     const projectIndex = projects.findIndex((p: ProjectModel) => p.uid === projectUid);
     if (projectIndex === -1) {
         showError('The selected project could not be found.');
-        return;
+        return null;
     }
 
     const project = projects[projectIndex];
+    project.tickets = sanitizeProjectTickets(project.tickets);
+    return { data, project, projectIndex };
+}
+
+export async function editProjectSettings(event: any) {
+    const context = await getProjectContextFromEvent(event);
+    if (!context) {
+        return;
+    }
+    const { project, data } = context;
 
     // Show project settings options
     const settingsOptions = [
@@ -553,6 +620,18 @@ export async function editProjectSettings(event: any) {
             description: `Created: ${new Date(project.createdAt).toLocaleDateString()}`,
             detail: "View detailed project information",
             action: 'viewInfo'
+        },
+        {
+            label: "Manage Tickets",
+            description: `${project.tickets?.length ?? 0} ticket(s) linked`,
+            detail: "Add, edit, and remove project ticket references",
+            action: 'manageTickets'
+        },
+        {
+            label: "Open Ticket",
+            description: `Open a ticket in ${resolveTicketBaseUrl()}`,
+            detail: "Choose and open a linked ticket in your browser",
+            action: 'openTicket'
         }
     ];
 
@@ -572,6 +651,14 @@ export async function editProjectSettings(event: any) {
 
         case 'viewInfo':
             await viewProjectInfo(project);
+            break;
+
+        case 'manageTickets':
+            await manageProjectTicketsForProject(project, data);
+            break;
+
+        case 'openTicket':
+            await openProjectTicket(project.uid);
             break;
     }
 }
@@ -605,9 +692,227 @@ async function editProjectName(project: ProjectModel, data: any) {
     }
 }
 
+async function manageProjectTicketsForProject(project: ProjectModel, data: any): Promise<void> {
+    while (true) {
+        project.tickets = sanitizeProjectTickets(project.tickets);
+        const tickets = project.tickets;
+
+        const ticketOptions: Array<{ label: string; description?: string; detail?: string; action: 'add' | 'edit' | 'remove' | 'open' | 'done'; ticketId?: string }> = [
+            {
+                label: '$(add) Add Ticket',
+                detail: 'Add a ticket ID and optional short title/description',
+                action: 'add'
+            },
+            {
+                label: '$(link-external) Open Ticket',
+                description: tickets.length > 0 ? `${tickets.length} saved ticket(s)` : 'No tickets saved yet',
+                detail: `Open a linked ticket in ${resolveTicketBaseUrl()}`,
+                action: 'open'
+            },
+            {
+                label: '$(edit) Edit Ticket',
+                description: tickets.length > 0 ? `${tickets.length} saved ticket(s)` : 'No tickets to edit',
+                action: 'edit'
+            },
+            {
+                label: '$(trash) Remove Ticket',
+                description: tickets.length > 0 ? `${tickets.length} saved ticket(s)` : 'No tickets to remove',
+                action: 'remove'
+            },
+            {
+                label: '$(check) Done',
+                action: 'done'
+            }
+        ];
+
+        const selectedAction = await vscode.window.showQuickPick(ticketOptions, {
+            placeHolder: `Manage tickets for project "${project.name}"`,
+            ignoreFocusOut: true
+        });
+
+        if (!selectedAction || selectedAction.action === 'done') {
+            return;
+        }
+
+        if (selectedAction.action === 'open') {
+            await openProjectTicket(project.uid);
+            continue;
+        }
+
+        if (selectedAction.action === 'add') {
+            const ticketIdInput = await vscode.window.showInputBox({
+                prompt: 'Enter ticket ID',
+                placeHolder: 'e.g. 123456 or OPW-1234567',
+                ignoreFocusOut: true,
+                validateInput: (value) => {
+                    if (!value || value.trim().length === 0) {
+                        return 'Ticket ID cannot be empty';
+                    }
+                    const exists = tickets.some(ticket => ticket.id.toLowerCase() === value.trim().toLowerCase());
+                    if (exists) {
+                        return 'This ticket ID is already linked to the project';
+                    }
+                    return null;
+                }
+            });
+            if (ticketIdInput === undefined) {
+                continue;
+            }
+
+            const ticketTitleInput = await vscode.window.showInputBox({
+                prompt: 'Enter ticket name/short description (optional)',
+                placeHolder: 'e.g. Fix onboarding flow',
+                ignoreFocusOut: true
+            });
+            if (ticketTitleInput === undefined) {
+                continue;
+            }
+
+            project.tickets = sanitizeProjectTickets([
+                ...tickets,
+                {
+                    id: ticketIdInput.trim(),
+                    title: ticketTitleInput.trim() || undefined
+                }
+            ]);
+            await SettingsStore.saveWithoutComments(stripSettings(data));
+            showAutoInfo(`Ticket "${ticketIdInput.trim()}" added to project "${project.name}"`, 2500);
+            continue;
+        }
+
+        if (tickets.length === 0) {
+            showInfo('No project tickets available. Add one first.');
+            continue;
+        }
+
+        const ticketToModify = await vscode.window.showQuickPick(
+            tickets.map(ticket => ({
+                label: formatTicketLabel(ticket),
+                description: ticket.id,
+                detail: buildTicketUrl(ticket.id),
+                ticket
+            })),
+            {
+                placeHolder: selectedAction.action === 'edit'
+                    ? 'Select a ticket to edit'
+                    : 'Select a ticket to remove',
+                ignoreFocusOut: true
+            }
+        );
+
+        if (!ticketToModify) {
+            continue;
+        }
+
+        if (selectedAction.action === 'remove') {
+            project.tickets = tickets.filter(ticket => ticket.id.toLowerCase() !== ticketToModify.ticket.id.toLowerCase());
+            await SettingsStore.saveWithoutComments(stripSettings(data));
+            showAutoInfo(`Removed ticket "${ticketToModify.ticket.id}" from project "${project.name}"`, 2500);
+            continue;
+        }
+
+        const newIdInput = await vscode.window.showInputBox({
+            prompt: 'Edit ticket ID',
+            value: ticketToModify.ticket.id,
+            ignoreFocusOut: true,
+            validateInput: (value) => {
+                if (!value || value.trim().length === 0) {
+                    return 'Ticket ID cannot be empty';
+                }
+                const exists = tickets.some(ticket =>
+                    ticket.id.toLowerCase() === value.trim().toLowerCase() &&
+                    ticket.id.toLowerCase() !== ticketToModify.ticket.id.toLowerCase()
+                );
+                if (exists) {
+                    return 'Another ticket with this ID already exists';
+                }
+                return null;
+            }
+        });
+        if (newIdInput === undefined) {
+            continue;
+        }
+
+        const newTitleInput = await vscode.window.showInputBox({
+            prompt: 'Edit ticket name/short description (optional)',
+            value: ticketToModify.ticket.title ?? '',
+            ignoreFocusOut: true
+        });
+        if (newTitleInput === undefined) {
+            continue;
+        }
+
+        const updatedTickets = tickets.map(ticket =>
+            ticket.id.toLowerCase() === ticketToModify.ticket.id.toLowerCase()
+                ? { id: newIdInput.trim(), title: newTitleInput.trim() || undefined }
+                : ticket
+        );
+
+        project.tickets = sanitizeProjectTickets(updatedTickets);
+        await SettingsStore.saveWithoutComments(stripSettings(data));
+        showAutoInfo(`Updated ticket "${newIdInput.trim()}" for project "${project.name}"`, 2500);
+    }
+}
+
+export async function manageProjectTickets(event: any): Promise<void> {
+    const context = await getProjectContextFromEvent(event);
+    if (!context) {
+        return;
+    }
+    await manageProjectTicketsForProject(context.project, context.data);
+}
+
+export async function openProjectTicket(event?: any): Promise<void> {
+    const context = await getProjectContextFromEvent(event);
+    if (!context) {
+        return;
+    }
+
+    const { project } = context;
+    project.tickets = sanitizeProjectTickets(project.tickets);
+    const tickets = project.tickets;
+
+    if (tickets.length === 0) {
+        const addNow = await vscode.window.showInformationMessage(
+            `Project "${project.name}" has no linked tickets yet.`,
+            'Add Ticket',
+            'Cancel'
+        );
+        if (addNow === 'Add Ticket') {
+            await manageProjectTicketsForProject(project, context.data);
+        }
+        return;
+    }
+
+    const selectedTicket = await vscode.window.showQuickPick(
+        tickets.map(ticket => ({
+            label: formatTicketLabel(ticket),
+            description: ticket.id,
+            detail: buildTicketUrl(ticket.id),
+            ticket
+        })),
+        {
+            placeHolder: `Select a ticket for project "${project.name}"`,
+            ignoreFocusOut: true
+        }
+    );
+
+    if (!selectedTicket) {
+        return;
+    }
+
+    const ticketUrl = buildTicketUrl(selectedTicket.ticket.id);
+    await vscode.env.openExternal(vscode.Uri.parse(ticketUrl));
+    showAutoInfo(`Opened ticket "${selectedTicket.ticket.id}"`, 2000);
+}
+
 async function viewProjectInfo(project: ProjectModel) {
     const dbCount = project.dbs?.length || 0;
     const selectedDb = project.dbs?.find((db: DatabaseModel) => db.isSelected);
+    const tickets = sanitizeProjectTickets(project.tickets);
+    const ticketLines = tickets.length > 0
+        ? tickets.map(ticket => `  • ${formatTicketLabel(ticket)}`).join('\n')
+        : '  • None';
 
     let infoMessage = `Project Information
 
@@ -616,6 +921,9 @@ Created: ${new Date(project.createdAt).toLocaleString()}
 
 Repositories (${project.repos.length}):
 ${project.repos.map(r => `  • ${r.name}`).join('\n')}
+
+Tickets (${tickets.length}):
+${ticketLines}
 
 Databases: ${dbCount}${selectedDb ? `
 Active Database: ${selectedDb.name}` : `
@@ -676,6 +984,7 @@ export async function exportProject(event: any): Promise<void> {
                 name: repo.name,
                 path: repo.path.replace(os.homedir(), '~') // Use ~ for home directory
             })),
+            tickets: sanitizeProjectTickets(project.tickets),
             exportedAt: new Date().toISOString(),
             exportVersion: '1.0'
         };
@@ -737,6 +1046,7 @@ export async function importProject(): Promise<void> {
             showError('The selected file is not a valid project export.');
             return;
         }
+        const importedTickets = sanitizeProjectTickets(importData.tickets);
 
         // Load existing data
         const data = await SettingsStore.get('odoo-debugger-data.json');
@@ -797,7 +1107,9 @@ export async function importProject(): Promise<void> {
             validRepos,
             false, // Not selected by default
             randomUUID(),
-            [] // No included psae-internal paths on import
+            [], // No included psae-internal paths on import
+            undefined,
+            importedTickets
         );
 
         // Add to projects and save
@@ -838,11 +1150,12 @@ export async function quickProjectSearch(): Promise<void> {
         const quickPickItems = projects.map(project => {
             const selectedDb = project.dbs?.find((db: DatabaseModel) => db.isSelected);
             const repoCount = project.repos.length;
+            const ticketCount = sanitizeProjectTickets(project.tickets).length;
             const dbInfo = selectedDb ? ` | DB: ${selectedDb.name}` : ' | No DB';
 
             return {
                 label: `${project.isSelected ? '$(arrow-right) ' : ''}${project.name}`,
-                description: `${repoCount} repo${repoCount === 1 ? '' : 's'}${dbInfo}`,
+                description: `${repoCount} repo${repoCount === 1 ? '' : 's'} | ${ticketCount} ticket${ticketCount === 1 ? '' : 's'}${dbInfo}`,
                 detail: `Created: ${new Date(project.createdAt).toLocaleDateString()} | Repositories: ${project.repos.map(r => r.name).join(', ')}`,
                 projectUid: project.uid
             };
