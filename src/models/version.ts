@@ -53,12 +53,12 @@ export class VersionModel {
         this.createdAt = new Date();
         this.updatedAt = new Date();
 
-        // Default settings with overrides
+        // Baseline settings for partial payloads (full defaults are managed by VersionsService/config).
         this.settings = {
-            debuggerName: `odoo:${odooVersion}`,
+            debuggerName: 'odoo:18.0',
             debuggerVersion: "1.0.0",
-            portNumber: this.getDefaultPort(odooVersion),
-            shellPortNumber: this.getDefaultShellPort(odooVersion),
+            portNumber: 8018,
+            shellPortNumber: 5018,
             limitTimeReal: 0,
             limitTimeCpu: 0,
             maxCronThreads: 0,
@@ -77,21 +77,8 @@ export class VersionModel {
             postCheckoutCommands: [],
             ...settings
         };
-    }
-
-    private getDefaultPort(odooVersion: string): number {
-        // Extract version number for port calculation
-        const versionRegex = /(\d+)/;
-        const versionMatch = versionRegex.exec(odooVersion);
-        if (versionMatch) {
-            const majorVersion = parseInt(versionMatch[1]);
-            return 8000 + majorVersion; // e.g., 17.0 -> 8017, 16.0 -> 8016
-        }
-        return 8069; // Default Odoo port
-    }
-
-    private getDefaultShellPort(odooVersion: string): number {
-        return this.getDefaultPort(odooVersion) - 3000; // e.g., 8017 -> 5017
+        this.settings.preCheckoutCommands = Array.isArray(this.settings.preCheckoutCommands) ? this.settings.preCheckoutCommands : [];
+        this.settings.postCheckoutCommands = Array.isArray(this.settings.postCheckoutCommands) ? this.settings.postCheckoutCommands : [];
     }
 
     updateSettings(newSettings: Partial<VersionSettings>): void {

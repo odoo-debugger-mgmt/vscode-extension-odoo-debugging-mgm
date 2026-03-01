@@ -493,6 +493,9 @@ export async function activate(context: vscode.ExtensionContext) {
                 placeHolder: 'Set up a database for this project?',
                 ignoreFocusOut: true
             });
+            if (!databaseChoice) {
+                return;
+            }
 
             let db: DatabaseModel | undefined;
             if (databaseChoice?.value === 'create') {
@@ -501,7 +504,16 @@ export async function activate(context: vscode.ExtensionContext) {
                 db = await createDb(name, repos, settings.dumpsFolder, settings, { initialMethod: 'existing' });
             }
 
+            if (databaseChoice.value !== 'skip' && !db) {
+                // User cancelled within DB creation flow.
+                return;
+            }
+
             await createProject(name, repos, db);
+            if (db) {
+                // Ensure project creation follows the same version/branch switch path as manual DB selection.
+                await selectDatabase(db);
+            }
             await refreshAll();
         } catch (err: any) {
             showError(err.message);

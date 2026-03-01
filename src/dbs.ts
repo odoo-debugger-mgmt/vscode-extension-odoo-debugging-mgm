@@ -738,6 +738,7 @@ interface DumpSelection {
 interface PreparedDump {
     kind: 'file' | 'stream';
     originalPath: string;
+    progressMessage?: string;
     sqlPath?: string;
     openStream?: () => OpenedDumpStream;
     cleanup?: () => void;
@@ -915,7 +916,11 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
                 placeHolder: 'Select modules to install (optional)',
                 canPickMany: true,
                 ignoreFocusOut: true
-            }) || [];
+            });
+
+            if (selectedModuleObjects === undefined) {
+                return undefined;
+            }
 
             selectedModules = selectedModuleObjects.map(choice => choice.label);
             break;
@@ -923,7 +928,6 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
         case 'dump': {
             const selection = await getDbDumpFolder(dumpFolderPath, projectName);
             if (!selection) {
-                showError('Select a dump folder or archive to continue.');
                 return undefined;
             }
             if (selection.kind === 'folder') {
@@ -946,20 +950,28 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
                 prompt: 'Make sure the database exists in your PostgreSQL instance',
                 ignoreFocusOut: true
             });
-            if (!existingDbName) {
+            if (existingDbName === undefined) {
+                return undefined;
+            }
+            if (!existingDbName.trim()) {
                 showError('Enter a database name to continue.');
                 return undefined;
             }
+            existingDbName = existingDbName.trim();
             isExistingDb = true;
             break;
     }
 
     // Step 3: Get database branch name (optional)
-    let branchName: string | undefined = await vscode.window.showInputBox({
+    const branchInput = await vscode.window.showInputBox({
         placeHolder: 'Enter a branch/tag name for this database (optional)',
         prompt: 'This helps identify which version/branch this database represents',
         ignoreFocusOut: true
     });
+    if (branchInput === undefined) {
+        return undefined;
+    }
+    const branchName = branchInput.trim() || undefined;
 
     // Step 4: Select the Odoo version from available versions
     const versionsService = VersionsService.getInstance();
@@ -990,11 +1002,13 @@ export async function createDb(projectName:string, repos:RepoModel[], dumpFolder
             ignoreFocusOut: true
         });
 
-        if (selectedChoice) {
-            selectedVersionId = selectedChoice.versionId;
-            if (selectedVersionId) {
-                selectedVersion = versionsService.getVersion(selectedVersionId);
-            }
+        if (selectedChoice === undefined) {
+            return undefined;
+        }
+
+        selectedVersionId = selectedChoice.versionId;
+        if (selectedVersionId) {
+            selectedVersion = versionsService.getVersion(selectedVersionId);
         }
     }
 
@@ -1136,15 +1150,24 @@ export async function setupDatabase(dbName: string, dumpPath: string | undefined
                     execSync(`createdb ${dbName}`, { stdio: 'inherit' });
 
                     if (preparedDump) {
-                        progress.report({ message: 'Importing dump file...', increment: 50 });
+                        progress.report({
+                            message: preparedDump.progressMessage ?? 'Importing dump file...',
+                            increment: 50
+                        });
                         console.log(`📥 Importing SQL dump into ${dbName}`);
                         try {
                             await importPreparedDump(dbName, preparedDump);
                         } catch (error) {
                             if (dumpPath && preparedDump.kind === 'stream' && isToolchainUnavailableError(error)) {
                                 console.warn('Streaming import unavailable. Falling back to temporary dump extraction.');
+                                progress.report({
+                                    message: dumpPath.toLowerCase().endsWith('.zip')
+                                        ? 'Streaming unavailable. Extracting archive to temporary SQL file...'
+                                        : 'Streaming unavailable. Decompressing dump to temporary SQL file...'
+                                });
                                 const fallbackDump = prepareDumpViaTempFile(dumpPath);
                                 try {
+                                    progress.report({ message: 'Importing extracted SQL dump...' });
                                     await importPreparedDump(dbName, fallbackDump);
                                 } finally {
                                     fallbackDump.cleanup?.();
@@ -1760,6 +1783,7 @@ async function prepareDumpForImport(dumpPath: string): Promise<PreparedDump> {
             return {
                 kind: 'stream',
                 originalPath: dumpPath,
+                progressMessage: 'Unzipping, decompressing, and importing dump archive...',
                 openStream: () => createZipGzipStream(dumpPath, selectedEntry)
             };
         }
@@ -1767,6 +1791,7 @@ async function prepareDumpForImport(dumpPath: string): Promise<PreparedDump> {
         return {
             kind: 'stream',
             originalPath: dumpPath,
+            progressMessage: 'Unzipping and importing dump archive...',
             openStream: () => createCommandStream('unzip', ['-p', dumpPath, selectedEntry], 'unzip')
         };
     }
@@ -1775,6 +1800,7 @@ async function prepareDumpForImport(dumpPath: string): Promise<PreparedDump> {
         return {
             kind: 'stream',
             originalPath: dumpPath,
+            progressMessage: 'Decompressing and importing dump file...',
             openStream: () => createCommandStream('gunzip', ['-c', dumpPath], 'gunzip')
         };
     }
@@ -1782,6 +1808,7 @@ async function prepareDumpForImport(dumpPath: string): Promise<PreparedDump> {
     return {
         kind: 'file',
         originalPath: dumpPath,
+        progressMessage: 'Importing dump file...',
         sqlPath: dumpPath
     };
 }

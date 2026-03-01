@@ -133,7 +133,7 @@ export async function createProject(name: string, repos: RepoModel[], db?: Datab
 
         const currentOdooBranch = await getGitBranch(settings.odooPath);
         const currentEnterpriseBranch = await getGitBranch(settings.enterprisePath);
-        const currentDesignThemesBranch = await getGitBranch(settings.designThemesPath || './design-themes');
+        const currentDesignThemesBranch = await getGitBranch(settings.designThemesPath ?? './design-themes');
 
         const shouldSwitch = await promptBranchSwitch(db.odooVersion, {
             odoo: currentOdooBranch,
@@ -275,7 +275,7 @@ async function handleDatabaseVersionSwitchForProject(database: DatabaseModel): P
                 const shouldSwitch = await promptBranchSwitch(dbVersion.odooVersion, {
                     odoo: currentOdooBranch,
                     enterprise: await getGitBranch(settings.enterprisePath),
-                    designThemes: await getGitBranch(settings.designThemesPath || './design-themes')
+                    designThemes: await getGitBranch(settings.designThemesPath ?? './design-themes')
                 });
 
                 if (shouldSwitch) {
@@ -290,7 +290,7 @@ async function handleDatabaseVersionSwitchForProject(database: DatabaseModel): P
     if (database.odooVersion && database.odooVersion !== '') {
         const currentOdooBranch = await getGitBranch(settings.odooPath);
         const currentEnterpriseBranch = await getGitBranch(settings.enterprisePath);
-        const currentDesignThemesBranch = await getGitBranch(settings.designThemesPath || './design-themes');
+        const currentDesignThemesBranch = await getGitBranch(settings.designThemesPath ?? './design-themes');
 
         const shouldSwitch = await promptBranchSwitch(database.odooVersion, {
             odoo: currentOdooBranch,
