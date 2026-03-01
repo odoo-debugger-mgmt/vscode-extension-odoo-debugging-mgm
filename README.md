@@ -217,7 +217,7 @@ Configure terminal commands to run before/after switching branches:
 - `odooDebugger.defaultVersion.preCheckoutCommands`
 - `odooDebugger.defaultVersion.postCheckoutCommands`
 
-Commands run **once per repo being switched**, with the repo folder as the working directory, and are shown via VS Code Tasks/Terminal output.
+Commands run **once per repo being switched**, with the repo folder as the working directory, and are logged in the `Odoo Debugger: Branch Hooks` output channel.
 
 Example:
 

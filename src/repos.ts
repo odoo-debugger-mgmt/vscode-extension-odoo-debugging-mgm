@@ -79,7 +79,7 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
         }
 
         const repos: RepoModel[] = project.repos;
-
+        
         // Get settings from active version
         const versionsService = VersionsService.getInstance();
         const settings = await versionsService.getActiveVersionSettings();
