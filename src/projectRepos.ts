@@ -7,6 +7,7 @@ import { RepoModel } from './models/repo';
 import { showError, showInfo } from './utils';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
+import { createFilesExcludeMatcher } from './services/filesExclude';
 import * as os from 'node:os';
 
 type ProjectRepoItemMetadata =
@@ -145,8 +146,13 @@ export class ProjectReposProvider implements vscode.TreeDataProvider<ProjectRepo
 
     private async getDirectoryEntries(dirPath: string, repo: RepoModel): Promise<ProjectRepoItem[]> {
         try {
+            const filesExcludeMatcher = createFilesExcludeMatcher(vscode.Uri.file(dirPath));
             const dirents = await fs.readdir(dirPath, { withFileTypes: true });
-            const sorted = dirents.sort((a, b) => {
+            const visibleDirents = dirents.filter(dirent => {
+                const childPath = path.join(dirPath, dirent.name);
+                return !filesExcludeMatcher.isExcluded(childPath, dirent.name);
+            });
+            const sorted = visibleDirents.sort((a, b) => {
                 if (a.isDirectory() && !b.isDirectory()) {
                     return -1;
                 }
