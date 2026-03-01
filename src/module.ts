@@ -1,8 +1,12 @@
 import { ModuleModel, InstalledModuleInfo } from "./models/module";
 import { DatabaseModel } from "./models/db";
 import { ProjectModel } from "./models/project";
+import { RepoModel } from "./models/repo";
 import * as vscode from "vscode";
-import { discoverModulesInRepos, showError, showInfo, showAutoInfo, stripSettings, createInfoTreeItem, ModuleDiscoveryResult, getDatabaseLabel } from './utils';
+import { discoverModulesInRepos, showError, showInfo, showAutoInfo, stripSettings, createInfoTreeItem, ModuleDiscoveryResult, getDatabaseLabel, normalizePath } from './utils';
+import { spawn, execFileSync } from 'child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 function collectModuleDiscovery(project: ProjectModel): ModuleDiscoveryResult {
     const manualIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
@@ -12,6 +16,7 @@ import { SettingsStore } from './settingsStore';
 import { getInstalledModuleNames, getInstalledModules } from './services/database';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
+import { VersionsService } from './versionsService';
 
 export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
@@ -345,6 +350,183 @@ export async function selectModule(event: any) {
         }
     }
     await SettingsStore.saveWithoutComments(stripSettings(data));
+}
+
+async function runScaffoldCommand(
+    pythonPath: string,
+    odooBinPath: string,
+    moduleName: string,
+    targetPath: string
+): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+        const child = spawn(
+            pythonPath,
+            [odooBinPath, 'scaffold', moduleName, targetPath],
+            { stdio: ['ignore', 'pipe', 'pipe'] }
+        );
+
+        let stderr = '';
+        let stdout = '';
+
+        child.stderr?.on('data', chunk => {
+            stderr += chunk.toString();
+        });
+        child.stdout?.on('data', chunk => {
+            stdout += chunk.toString();
+        });
+
+        child.on('error', error => {
+            reject(new Error(`Failed to start scaffold command: ${error.message}`));
+        });
+
+        child.on('close', code => {
+            if (code === 0) {
+                resolve();
+                return;
+            }
+
+            const details = stderr.trim() || stdout.trim();
+            reject(new Error(details || `Scaffold command exited with code ${code ?? 'unknown'}`));
+        });
+    });
+}
+
+function resolveRepositoryRoot(repoPath: string): string {
+    try {
+        const resolved = execFileSync(
+            'git',
+            ['-C', repoPath, 'rev-parse', '--show-toplevel'],
+            { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+        ).trim();
+
+        if (resolved && fs.existsSync(resolved)) {
+            return resolved;
+        }
+    } catch {
+        // Fall back to the selected path if git resolution is unavailable.
+    }
+
+    return repoPath;
+}
+
+export async function createModuleFromScaffold(): Promise<void> {
+    const projectResult = await SettingsStore.getSelectedProject();
+    if (!projectResult) {
+        return;
+    }
+
+    const targetProject = projectResult.project;
+
+    const projectRepos = (targetProject.repos ?? []) as RepoModel[];
+    if (projectRepos.length === 0) {
+        showError(`Project "${targetProject.name}" has no selected repositories.`);
+        return;
+    }
+
+    let targetRepo: RepoModel | undefined;
+    if (projectRepos.length === 1) {
+        targetRepo = projectRepos[0];
+    } else {
+        const selectedRepo = await vscode.window.showQuickPick(
+            projectRepos.map(repo => ({
+                label: repo.name,
+                description: repo.path,
+                detail: 'Scaffold destination repository',
+                repo
+            })),
+            {
+                placeHolder: `Select destination repository for "${targetProject.name}"`,
+                ignoreFocusOut: true
+            }
+        );
+        if (!selectedRepo) {
+            return;
+        }
+        targetRepo = selectedRepo.repo;
+    }
+
+    if (!targetRepo) {
+        showError('Select a destination repository.');
+        return;
+    }
+
+    const versionsService = VersionsService.getInstance();
+    const settings = await versionsService.getActiveVersionSettings();
+
+    const normalizedPythonPath = normalizePath(settings.pythonPath);
+    const normalizedOdooPath = normalizePath(settings.odooPath);
+    const destinationPath = normalizePath(targetRepo.path);
+    const repositoryRootPath = resolveRepositoryRoot(destinationPath);
+    const odooBinPath = path.join(normalizedOdooPath, 'odoo-bin');
+
+    if (!normalizedPythonPath || !fs.existsSync(normalizedPythonPath)) {
+        showError(`Python executable not found: ${normalizedPythonPath}`);
+        return;
+    }
+
+    if (!normalizedOdooPath || !fs.existsSync(normalizedOdooPath)) {
+        showError(`Odoo path not found: ${normalizedOdooPath}`);
+        return;
+    }
+
+    if (!fs.existsSync(odooBinPath)) {
+        showError(`odoo-bin not found at: ${odooBinPath}`);
+        return;
+    }
+
+    if (!repositoryRootPath || !fs.existsSync(repositoryRootPath)) {
+        showError(`Destination repository path not found: ${repositoryRootPath}`);
+        return;
+    }
+
+    const moduleName = await vscode.window.showInputBox({
+        placeHolder: 'e.g. my_custom_module',
+        prompt: `Enter module name to scaffold in ${targetRepo.name} (${repositoryRootPath})`,
+        ignoreFocusOut: true,
+        validateInput: (value) => {
+            const trimmed = value.trim();
+            if (!trimmed) {
+                return 'Module name cannot be empty.';
+            }
+            if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) {
+                return 'Use letters, numbers, and underscores only. Must start with a letter or underscore.';
+            }
+            const targetPath = path.join(repositoryRootPath, trimmed);
+            if (fs.existsSync(targetPath)) {
+                return `A folder named "${trimmed}" already exists in destination repo.`;
+            }
+            return null;
+        }
+    });
+
+    if (moduleName === undefined) {
+        return;
+    }
+
+    const sanitizedModuleName = moduleName.trim();
+
+    try {
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: `Creating module ${sanitizedModuleName}`,
+            cancellable: false
+        }, async (progress) => {
+            progress.report({ message: 'Running odoo-bin scaffold...' });
+            await runScaffoldCommand(
+                normalizedPythonPath,
+                odooBinPath,
+                sanitizedModuleName,
+                repositoryRootPath
+            );
+        });
+
+        showAutoInfo(
+            `Module "${sanitizedModuleName}" created in ${repositoryRootPath}`,
+            3500
+        );
+    } catch (error: any) {
+        showError(`Failed to scaffold module "${sanitizedModuleName}": ${error.message}`);
+    }
 }
 
 /**

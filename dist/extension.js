@@ -45,25 +45,25 @@ const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const utils_1 = __webpack_require__(4);
-const dbs_1 = __webpack_require__(16);
-const project_1 = __webpack_require__(26);
-const repos_1 = __webpack_require__(30);
-const projectRepos_1 = __webpack_require__(31);
-const module_1 = __webpack_require__(33);
-const testing_1 = __webpack_require__(37);
-const debugger_1 = __webpack_require__(39);
-const odooInstaller_1 = __webpack_require__(40);
-const settingsStore_1 = __webpack_require__(21);
-const versionsTreeProvider_1 = __webpack_require__(41);
-const versionsService_1 = __webpack_require__(18);
-const context_1 = __webpack_require__(38);
+const dbs_1 = __webpack_require__(17);
+const project_1 = __webpack_require__(31);
+const repos_1 = __webpack_require__(35);
+const projectRepos_1 = __webpack_require__(36);
+const module_1 = __webpack_require__(39);
+const testing_1 = __webpack_require__(40);
+const debugger_1 = __webpack_require__(42);
+const odooInstaller_1 = __webpack_require__(43);
+const settingsStore_1 = __webpack_require__(22);
+const versionsTreeProvider_1 = __webpack_require__(44);
+const versionsService_1 = __webpack_require__(19);
+const context_1 = __webpack_require__(41);
 const settings_1 = __webpack_require__(8);
 const gitService_1 = __webpack_require__(9);
-const sortPreferences_1 = __webpack_require__(42);
-const sortOptions_1 = __webpack_require__(25);
-const projectWorkspace_1 = __webpack_require__(43);
-const projectReposExplorer_1 = __webpack_require__(44);
-const runtimeCache_1 = __webpack_require__(45);
+const sortPreferences_1 = __webpack_require__(45);
+const sortOptions_1 = __webpack_require__(26);
+const projectWorkspace_1 = __webpack_require__(46);
+const projectReposExplorer_1 = __webpack_require__(47);
+const runtimeCache_1 = __webpack_require__(10);
 // Store disposables for proper cleanup
 let extensionDisposables = [];
 function extractUriFromContext(arg) {
@@ -818,6 +818,10 @@ async function activate(context) {
     extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.togglePsaeInternalModule', async (event) => {
         await (0, module_1.togglePsaeInternalModule)(event);
         await refreshAll();
+    }));
+    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.create', async () => {
+        await (0, module_1.createModuleFromScaffold)();
+        await refreshAll({ reason: 'ui' });
     }));
     // Context menu commands for individual modules
     extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.setToInstall', async (event) => {
@@ -1683,8 +1687,8 @@ const path = __importStar(__webpack_require__(6));
 const childProcess = __importStar(__webpack_require__(7));
 const settings_1 = __webpack_require__(8);
 const gitService_1 = __webpack_require__(9);
-const runtimeCache_1 = __webpack_require__(45);
-const jsonc_parser_1 = __webpack_require__(10);
+const runtimeCache_1 = __webpack_require__(10);
+const jsonc_parser_1 = __webpack_require__(11);
 const launchJsonFileContent = `{
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
@@ -2713,6 +2717,121 @@ async function getBranchesViaSourceControl(repoPath) {
 
 /***/ }),
 /* 10 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.runtimeCache = void 0;
+exports.invalidateModuleDiscoveryCache = invalidateModuleDiscoveryCache;
+exports.invalidateRepositoryDiscoveryCache = invalidateRepositoryDiscoveryCache;
+exports.invalidateInstalledModulesCache = invalidateInstalledModulesCache;
+exports.invalidateGitBranchCache = invalidateGitBranchCache;
+exports.invalidateAllRuntimeCaches = invalidateAllRuntimeCaches;
+const DEFAULT_TTLS = {
+    moduleDiscoveryMs: 5000,
+    repositoryDiscoveryMs: 5000,
+    installedModulesMs: 5000,
+    installedModuleNamesMs: 5000,
+    gitBranchMs: 3000
+};
+class RuntimeCacheService {
+    moduleDiscovery = new Map();
+    repositoryDiscovery = new Map();
+    installedModules = new Map();
+    installedModuleNames = new Map();
+    gitBranches = new Map();
+    getOrCompute(store, key, ttlMs, loader) {
+        const now = Date.now();
+        const cached = store.get(key);
+        if (cached && cached.expiresAt > now) {
+            return cached.value;
+        }
+        const value = loader();
+        store.set(key, { value, expiresAt: now + ttlMs });
+        return value;
+    }
+    async getOrComputeAsync(store, key, ttlMs, loader) {
+        const now = Date.now();
+        const cached = store.get(key);
+        if (cached && cached.expiresAt > now) {
+            return cached.value;
+        }
+        const value = await loader();
+        store.set(key, { value, expiresAt: now + ttlMs });
+        return value;
+    }
+    getModuleDiscovery(key, loader, ttlMs = DEFAULT_TTLS.moduleDiscoveryMs) {
+        return this.getOrCompute(this.moduleDiscovery, key, ttlMs, loader);
+    }
+    getRepositoryDiscovery(key, loader, ttlMs = DEFAULT_TTLS.repositoryDiscoveryMs) {
+        return this.getOrCompute(this.repositoryDiscovery, key, ttlMs, loader);
+    }
+    async getInstalledModules(dbName, loader, ttlMs = DEFAULT_TTLS.installedModulesMs) {
+        return this.getOrComputeAsync(this.installedModules, dbName, ttlMs, loader);
+    }
+    async getInstalledModuleNames(dbName, loader, ttlMs = DEFAULT_TTLS.installedModuleNamesMs) {
+        return this.getOrComputeAsync(this.installedModuleNames, dbName, ttlMs, loader);
+    }
+    async getGitBranch(repoPath, loader, ttlMs = DEFAULT_TTLS.gitBranchMs) {
+        return this.getOrComputeAsync(this.gitBranches, repoPath, ttlMs, loader);
+    }
+    invalidateModuleDiscoveryCache(key) {
+        if (key) {
+            this.moduleDiscovery.delete(key);
+            return;
+        }
+        this.moduleDiscovery.clear();
+    }
+    invalidateRepositoryDiscoveryCache(key) {
+        if (key) {
+            this.repositoryDiscovery.delete(key);
+            return;
+        }
+        this.repositoryDiscovery.clear();
+    }
+    invalidateInstalledModulesCache(dbName) {
+        if (dbName) {
+            this.installedModules.delete(dbName);
+            this.installedModuleNames.delete(dbName);
+            return;
+        }
+        this.installedModules.clear();
+        this.installedModuleNames.clear();
+    }
+    invalidateGitBranchCache(repoPath) {
+        if (repoPath) {
+            this.gitBranches.delete(repoPath);
+            return;
+        }
+        this.gitBranches.clear();
+    }
+    invalidateAll() {
+        this.invalidateModuleDiscoveryCache();
+        this.invalidateRepositoryDiscoveryCache();
+        this.invalidateInstalledModulesCache();
+        this.invalidateGitBranchCache();
+    }
+}
+exports.runtimeCache = new RuntimeCacheService();
+function invalidateModuleDiscoveryCache(key) {
+    exports.runtimeCache.invalidateModuleDiscoveryCache(key);
+}
+function invalidateRepositoryDiscoveryCache(key) {
+    exports.runtimeCache.invalidateRepositoryDiscoveryCache(key);
+}
+function invalidateInstalledModulesCache(dbName) {
+    exports.runtimeCache.invalidateInstalledModulesCache(dbName);
+}
+function invalidateGitBranchCache(repoPath) {
+    exports.runtimeCache.invalidateGitBranchCache(repoPath);
+}
+function invalidateAllRuntimeCaches() {
+    exports.runtimeCache.invalidateAll();
+}
+
+
+/***/ }),
+/* 11 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -2735,10 +2854,10 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   stripComments: () => (/* binding */ stripComments),
 /* harmony export */   visit: () => (/* binding */ visit)
 /* harmony export */ });
-/* harmony import */ var _impl_format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(11);
-/* harmony import */ var _impl_edit__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(14);
-/* harmony import */ var _impl_scanner__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(12);
-/* harmony import */ var _impl_parser__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(15);
+/* harmony import */ var _impl_format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(12);
+/* harmony import */ var _impl_edit__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(15);
+/* harmony import */ var _impl_scanner__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(13);
+/* harmony import */ var _impl_parser__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(16);
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -2920,7 +3039,7 @@ function applyEdits(text, edits) {
 
 
 /***/ }),
-/* 11 */
+/* 12 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -2928,8 +3047,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   format: () => (/* binding */ format),
 /* harmony export */   isEOL: () => (/* binding */ isEOL)
 /* harmony export */ });
-/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(12);
-/* harmony import */ var _string_intern__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(13);
+/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(13);
+/* harmony import */ var _string_intern__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(14);
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -3194,7 +3313,7 @@ function isEOL(text, offset) {
 
 
 /***/ }),
-/* 12 */
+/* 13 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -3647,7 +3766,7 @@ var CharacterCodes;
 
 
 /***/ }),
-/* 13 */
+/* 14 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -3688,7 +3807,7 @@ const supportedEols = ['\n', '\r', '\r\n'];
 
 
 /***/ }),
-/* 14 */
+/* 15 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -3698,8 +3817,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   removeProperty: () => (/* binding */ removeProperty),
 /* harmony export */   setProperty: () => (/* binding */ setProperty)
 /* harmony export */ });
-/* harmony import */ var _format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(11);
-/* harmony import */ var _parser__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(15);
+/* harmony import */ var _format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(12);
+/* harmony import */ var _parser__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(16);
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -3888,7 +4007,7 @@ function isWS(text, offset) {
 
 
 /***/ }),
-/* 15 */
+/* 16 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -3905,7 +4024,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   stripComments: () => (/* binding */ stripComments),
 /* harmony export */   visit: () => (/* binding */ visit)
 /* harmony export */ });
-/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(12);
+/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(13);
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -4568,7 +4687,7 @@ function getNodeType(value) {
 
 
 /***/ }),
-/* 16 */
+/* 17 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -4620,22 +4739,22 @@ exports.deleteDb = deleteDb;
 exports.changeDatabaseVersion = changeDatabaseVersion;
 exports.changeDatabaseProjectRepoBranches = changeDatabaseProjectRepoBranches;
 const vscode = __importStar(__webpack_require__(1));
-const db_1 = __webpack_require__(17);
-const module_1 = __webpack_require__(22);
+const db_1 = __webpack_require__(18);
+const module_1 = __webpack_require__(23);
 const utils_1 = __webpack_require__(4);
-const settingsStore_1 = __webpack_require__(21);
-const versionsService_1 = __webpack_require__(18);
+const settingsStore_1 = __webpack_require__(22);
+const versionsService_1 = __webpack_require__(19);
 const child_process_1 = __webpack_require__(7);
 const fs = __importStar(__webpack_require__(5));
 const path = __importStar(__webpack_require__(6));
-const crypto_1 = __webpack_require__(20);
+const crypto_1 = __webpack_require__(21);
 const gitService_1 = __webpack_require__(9);
-const dbNaming_1 = __webpack_require__(23);
-const os = __importStar(__webpack_require__(24));
-const sortOptions_1 = __webpack_require__(25);
-const stream_1 = __webpack_require__(46);
-const database_1 = __webpack_require__(34);
-const runtimeCache_1 = __webpack_require__(45);
+const dbNaming_1 = __webpack_require__(24);
+const os = __importStar(__webpack_require__(25));
+const sortOptions_1 = __webpack_require__(26);
+const stream_1 = __webpack_require__(27);
+const database_1 = __webpack_require__(28);
+const runtimeCache_1 = __webpack_require__(10);
 const checkoutHooksOutput = vscode.window.createOutputChannel('Odoo Debugger: Branch Hooks');
 /**
  * Gets the effective Odoo version for a database object.
@@ -7230,13 +7349,13 @@ function prepareDumpViaTempFile(dumpPath) {
 
 
 /***/ }),
-/* 17 */
+/* 18 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.DatabaseModel = void 0;
-const versionsService_1 = __webpack_require__(18);
+const versionsService_1 = __webpack_require__(19);
 class DatabaseModel {
     name;
     isItABackup;
@@ -7333,7 +7452,7 @@ exports.DatabaseModel = DatabaseModel;
 
 
 /***/ }),
-/* 18 */
+/* 19 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -7373,8 +7492,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VersionsService = void 0;
 const vscode = __importStar(__webpack_require__(1));
-const version_1 = __webpack_require__(19);
-const settingsStore_1 = __webpack_require__(21);
+const version_1 = __webpack_require__(20);
+const settingsStore_1 = __webpack_require__(22);
 const utils_1 = __webpack_require__(4);
 class VersionsService {
     static instance;
@@ -8005,13 +8124,13 @@ exports.VersionsService = VersionsService;
 
 
 /***/ }),
-/* 19 */
+/* 20 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VersionModel = void 0;
-const crypto_1 = __webpack_require__(20);
+const crypto_1 = __webpack_require__(21);
 class VersionModel {
     id;
     name; // User-friendly name like "Odoo 17.0", "Saas 17.4"
@@ -8083,13 +8202,13 @@ exports.VersionModel = VersionModel;
 
 
 /***/ }),
-/* 20 */
+/* 21 */
 /***/ ((module) => {
 
 module.exports = require("crypto");
 
 /***/ }),
-/* 21 */
+/* 22 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -8100,7 +8219,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SettingsStore = void 0;
 const settings_1 = __webpack_require__(8);
 const utils_1 = __webpack_require__(4);
-const jsonc_parser_1 = __webpack_require__(10);
+const jsonc_parser_1 = __webpack_require__(11);
 const fs_1 = __importDefault(__webpack_require__(5));
 const path_1 = __importDefault(__webpack_require__(6));
 const WRITE_DEBOUNCE_MS = 25;
@@ -8324,7 +8443,7 @@ exports.SettingsStore = SettingsStore;
 
 
 /***/ }),
-/* 22 */
+/* 23 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -8344,7 +8463,7 @@ exports.ModuleModel = ModuleModel;
 
 
 /***/ }),
-/* 23 */
+/* 24 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -8383,7 +8502,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.generateDatabaseIdentifiers = generateDatabaseIdentifiers;
-const crypto = __importStar(__webpack_require__(20));
+const crypto = __importStar(__webpack_require__(21));
 const MAX_IDENTIFIER_LENGTH = 63;
 const KIND_LABELS = {
     dump: 'Dump',
@@ -8475,13 +8594,13 @@ function generateDatabaseIdentifiers(options) {
 
 
 /***/ }),
-/* 24 */
+/* 25 */
 /***/ ((module) => {
 
 module.exports = require("os");
 
 /***/ }),
-/* 25 */
+/* 26 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -8542,7 +8661,205 @@ function getSortOptions(viewId) {
 
 
 /***/ }),
-/* 26 */
+/* 27 */
+/***/ ((module) => {
+
+module.exports = require("stream");
+
+/***/ }),
+/* 28 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.databaseHasModuleTable = databaseHasModuleTable;
+exports.getInstalledModules = getInstalledModules;
+exports.getInstalledModuleNames = getInstalledModuleNames;
+exports.clearInstalledModuleCache = clearInstalledModuleCache;
+const node_child_process_1 = __webpack_require__(29);
+const util = __importStar(__webpack_require__(30));
+const runtimeCache_1 = __webpack_require__(10);
+const execFileAsync = util.promisify(node_child_process_1.execFile);
+const INSTALLED_MODULES_QUERY = `
+    SELECT id, name, shortdesc, latest_version, state, application
+    FROM ir_module_module
+    WHERE state IN ('installed', 'to upgrade')
+    ORDER BY name;
+`.trim();
+const INSTALLED_MODULE_NAMES_QUERY = `
+    SELECT name
+    FROM ir_module_module
+    WHERE state IN ('installed', 'to upgrade')
+    ORDER BY name;
+`.trim();
+const TABLE_EXISTS_QUERY = `
+    SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_name = 'ir_module_module'
+    );
+`.trim();
+function validateDatabaseName(dbName) {
+    // Basic sanity check to avoid shell injection when invoking psql
+    if (!/^[\w\-.:]+$/.test(dbName)) {
+        throw new Error(`Invalid database identifier: ${dbName}`);
+    }
+}
+async function runPsqlQuery(dbName, query, fieldSeparator = '|') {
+    validateDatabaseName(dbName);
+    try {
+        const args = [
+            '--no-psqlrc',
+            '--no-align',
+            '--tuples-only',
+            '-F',
+            fieldSeparator,
+            '-d',
+            dbName,
+            '-c',
+            query
+        ];
+        const { stdout } = await execFileAsync('psql', args, {
+            encoding: 'utf-8',
+            maxBuffer: 10 * 1024 * 1024 // Allow reasonably large result sets
+        });
+        return stdout.trim();
+    }
+    catch (error) {
+        console.warn(`psql command failed for database "${dbName}":`, error);
+        throw error;
+    }
+}
+async function databaseHasModuleTable(dbName) {
+    try {
+        const result = await runPsqlQuery(dbName, TABLE_EXISTS_QUERY);
+        return result === 't';
+    }
+    catch {
+        return false;
+    }
+}
+async function getInstalledModules(dbName) {
+    return runtimeCache_1.runtimeCache.getInstalledModules(dbName, async () => {
+        const modules = [];
+        if (!(await databaseHasModuleTable(dbName))) {
+            console.debug(`Database ${dbName} does not contain Odoo tables yet.`);
+            return modules;
+        }
+        let output;
+        try {
+            output = await runPsqlQuery(dbName, INSTALLED_MODULES_QUERY);
+        }
+        catch (error) {
+            console.warn(`Failed to fetch installed modules for database "${dbName}":`, error);
+            return modules;
+        }
+        if (!output) {
+            return modules;
+        }
+        for (const line of output.split('\n').map(entry => entry.trim()).filter(Boolean)) {
+            const [id, name, shortdesc, latestVersion, state, application] = line.split('|');
+            let description = shortdesc || '';
+            if (shortdesc) {
+                try {
+                    const parsed = JSON.parse(shortdesc);
+                    const locales = Object.keys(parsed);
+                    if (locales.length > 0) {
+                        description = parsed.en_US ?? parsed[locales[0]] ?? '';
+                    }
+                }
+                catch {
+                    // Keep original string when JSON parsing fails
+                    description = shortdesc;
+                }
+            }
+            modules.push({
+                id: Number.parseInt(id ?? '', 10),
+                name: name ?? '',
+                shortdesc: description ?? '',
+                installed_version: latestVersion || null,
+                latest_version: latestVersion || null,
+                state: state ?? '',
+                application: application === 't'
+            });
+        }
+        return modules;
+    });
+}
+async function getInstalledModuleNames(dbName) {
+    const names = await runtimeCache_1.runtimeCache.getInstalledModuleNames(dbName, async () => {
+        if (!(await databaseHasModuleTable(dbName))) {
+            return [];
+        }
+        let output;
+        try {
+            output = await runPsqlQuery(dbName, INSTALLED_MODULE_NAMES_QUERY);
+        }
+        catch (error) {
+            console.warn(`Failed to fetch installed module names for database "${dbName}":`, error);
+            return [];
+        }
+        if (!output) {
+            return [];
+        }
+        return output
+            .split('\n')
+            .map(entry => entry.trim())
+            .filter(Boolean);
+    });
+    return new Set(names);
+}
+function clearInstalledModuleCache(dbName) {
+    (0, runtimeCache_1.invalidateInstalledModulesCache)(dbName);
+}
+
+
+/***/ }),
+/* 29 */
+/***/ ((module) => {
+
+module.exports = require("node:child_process");
+
+/***/ }),
+/* 30 */
+/***/ ((module) => {
+
+module.exports = require("node:util");
+
+/***/ }),
+/* 31 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -8594,15 +8911,15 @@ exports.exportProject = exportProject;
 exports.importProject = importProject;
 exports.quickProjectSearch = quickProjectSearch;
 const vscode = __importStar(__webpack_require__(1));
-const os = __importStar(__webpack_require__(24));
-const project_1 = __webpack_require__(27);
-const repo_1 = __webpack_require__(29);
+const os = __importStar(__webpack_require__(25));
+const project_1 = __webpack_require__(32);
+const repo_1 = __webpack_require__(34);
 const utils_1 = __webpack_require__(4);
-const settingsStore_1 = __webpack_require__(21);
-const versionsService_1 = __webpack_require__(18);
-const crypto_1 = __webpack_require__(20);
-const dbs_1 = __webpack_require__(16);
-const sortOptions_1 = __webpack_require__(25);
+const settingsStore_1 = __webpack_require__(22);
+const versionsService_1 = __webpack_require__(19);
+const crypto_1 = __webpack_require__(21);
+const dbs_1 = __webpack_require__(17);
+const sortOptions_1 = __webpack_require__(26);
 let projectMetadataMigrationCompleted = false;
 function sanitizeProjectTickets(rawTickets) {
     if (!Array.isArray(rawTickets)) {
@@ -9595,14 +9912,14 @@ async function quickProjectSearch() {
 
 
 /***/ }),
-/* 27 */
+/* 32 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectModel = void 0;
-const testing_1 = __webpack_require__(28);
-const crypto_1 = __webpack_require__(20);
+const testing_1 = __webpack_require__(33);
+const crypto_1 = __webpack_require__(21);
 class ProjectModel {
     name; // project sh name
     createdAt;
@@ -9629,7 +9946,7 @@ exports.ProjectModel = ProjectModel;
 
 
 /***/ }),
-/* 28 */
+/* 33 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -9711,7 +10028,7 @@ function ensureTestingConfigModel(testingConfig) {
 
 
 /***/ }),
-/* 29 */
+/* 34 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -9733,7 +10050,7 @@ exports.RepoModel = RepoModel;
 
 
 /***/ }),
-/* 30 */
+/* 35 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -9773,16 +10090,16 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.RepoTreeProvider = void 0;
 exports.selectRepo = selectRepo;
-const repo_1 = __webpack_require__(29);
+const repo_1 = __webpack_require__(34);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(4);
-const settingsStore_1 = __webpack_require__(21);
-const versionsService_1 = __webpack_require__(18);
+const settingsStore_1 = __webpack_require__(22);
+const versionsService_1 = __webpack_require__(19);
 const path = __importStar(__webpack_require__(6));
 const fs = __importStar(__webpack_require__(5));
-const sortOptions_1 = __webpack_require__(25);
+const sortOptions_1 = __webpack_require__(26);
 const gitService_1 = __webpack_require__(9);
-const runtimeCache_1 = __webpack_require__(45);
+const runtimeCache_1 = __webpack_require__(10);
 async function mapWithConcurrency(items, limit, worker) {
     if (items.length === 0) {
         return [];
@@ -9951,7 +10268,7 @@ async function selectRepo(event) {
 
 
 /***/ }),
-/* 31 */
+/* 36 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -9992,12 +10309,12 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectReposProvider = void 0;
 exports.revealProjectRepo = revealProjectRepo;
 const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(32));
+const fs = __importStar(__webpack_require__(37));
 const path = __importStar(__webpack_require__(3));
-const settingsStore_1 = __webpack_require__(21);
+const settingsStore_1 = __webpack_require__(22);
 const utils_1 = __webpack_require__(4);
-const sortOptions_1 = __webpack_require__(25);
-const filesExclude_1 = __webpack_require__(47);
+const sortOptions_1 = __webpack_require__(26);
+const filesExclude_1 = __webpack_require__(38);
 class ProjectRepoItem extends vscode.TreeItem {
     metadata;
     constructor(metadata) {
@@ -10182,13 +10499,156 @@ async function revealProjectRepo(repo) {
 
 
 /***/ }),
-/* 32 */
+/* 37 */
 /***/ ((module) => {
 
 module.exports = require("node:fs/promises");
 
 /***/ }),
-/* 33 */
+/* 38 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.createFilesExcludeMatcher = createFilesExcludeMatcher;
+const fs = __importStar(__webpack_require__(2));
+const path = __importStar(__webpack_require__(3));
+const vscode = __importStar(__webpack_require__(1));
+function globToRegExp(pattern) {
+    const normalizedPattern = pattern.split(path.sep).join('/');
+    const placeholders = {
+        doubleStar: '__GLOB_DOUBLE_STAR__',
+        singleStar: '__GLOB_SINGLE_STAR__',
+        question: '__GLOB_QUESTION__'
+    };
+    let working = normalizedPattern
+        .replaceAll('**', placeholders.doubleStar)
+        .replaceAll('*', placeholders.singleStar)
+        .replaceAll('?', placeholders.question);
+    working = working.replaceAll(/[.+^${}()|[\]\\]/g, String.raw `\$&`);
+    working = working
+        .replaceAll(new RegExp(placeholders.doubleStar, 'g'), '.*')
+        .replaceAll(new RegExp(placeholders.singleStar, 'g'), '[^/]*')
+        .replaceAll(new RegExp(placeholders.question, 'g'), '[^/]');
+    return new RegExp(`^${working}$`, 'i');
+}
+function normalizeForMatch(value) {
+    return value.replace(/\\/g, '/').replace(/^\.?\//, '');
+}
+function resolveWorkspaceRoot(scopeUri) {
+    if (scopeUri) {
+        const folder = vscode.workspace.getWorkspaceFolder(scopeUri);
+        if (folder) {
+            return folder.uri.fsPath;
+        }
+    }
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+}
+function resolveFilesExcludeRules(scopeUri) {
+    const config = vscode.workspace.getConfiguration('files', scopeUri);
+    const excludes = config.get('exclude', {});
+    if (!excludes || typeof excludes !== 'object') {
+        return [];
+    }
+    const rules = [];
+    for (const [pattern, rawValue] of Object.entries(excludes)) {
+        if (rawValue === false) {
+            continue;
+        }
+        if (rawValue === true) {
+            rules.push({ regex: globToRegExp(pattern) });
+            continue;
+        }
+        if (!rawValue || typeof rawValue !== 'object') {
+            continue;
+        }
+        rules.push({
+            regex: globToRegExp(pattern),
+            when: typeof rawValue.when === 'string' ? rawValue.when : undefined
+        });
+    }
+    return rules;
+}
+function ruleMatchesPath(rule, relativePath, absolutePath, entryName) {
+    return rule.regex.test(relativePath)
+        || rule.regex.test(`/${relativePath}`)
+        || rule.regex.test(entryName)
+        || rule.regex.test(absolutePath);
+}
+function whenClauseMatches(whenClause, fsPath, entryName) {
+    if (!whenClause || whenClause.trim() === '') {
+        return true;
+    }
+    const basename = path.parse(entryName).name;
+    const siblingName = whenClause.replaceAll('$(basename)', basename);
+    const siblingPath = path.join(path.dirname(fsPath), siblingName);
+    return fs.existsSync(siblingPath);
+}
+function createFilesExcludeMatcher(scopeUri) {
+    const rules = resolveFilesExcludeRules(scopeUri);
+    const workspaceRoot = resolveWorkspaceRoot(scopeUri);
+    return {
+        isExcluded(fsPath, entryName) {
+            if (rules.length === 0) {
+                return false;
+            }
+            const normalizedAbsolute = normalizeForMatch(fsPath);
+            const relativeCandidate = workspaceRoot
+                ? normalizeForMatch(path.relative(workspaceRoot, fsPath))
+                : normalizedAbsolute;
+            const relative = relativeCandidate && relativeCandidate !== '.'
+                ? relativeCandidate
+                : normalizedAbsolute;
+            for (const rule of rules) {
+                if (!ruleMatchesPath(rule, relative, normalizedAbsolute, entryName)) {
+                    continue;
+                }
+                if (!whenClauseMatches(rule.when, fsPath, entryName)) {
+                    continue;
+                }
+                return true;
+            }
+            return false;
+        }
+    };
+}
+
+
+/***/ }),
+/* 39 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10228,6 +10688,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ModuleTreeProvider = void 0;
 exports.selectModule = selectModule;
+exports.createModuleFromScaffold = createModuleFromScaffold;
 exports.setModuleToInstall = setModuleToInstall;
 exports.setModuleToUpgrade = setModuleToUpgrade;
 exports.clearModuleState = clearModuleState;
@@ -10237,16 +10698,20 @@ exports.updateInstalledModules = updateInstalledModules;
 exports.installAllModules = installAllModules;
 exports.clearAllModuleSelections = clearAllModuleSelections;
 exports.viewInstalledModules = viewInstalledModules;
-const module_1 = __webpack_require__(22);
+const module_1 = __webpack_require__(23);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(4);
+const child_process_1 = __webpack_require__(7);
+const fs = __importStar(__webpack_require__(2));
+const path = __importStar(__webpack_require__(3));
 function collectModuleDiscovery(project) {
     const manualIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
     return (0, utils_1.discoverModulesInRepos)(project.repos, { manualIncludePaths: manualIncludes });
 }
-const settingsStore_1 = __webpack_require__(21);
-const database_1 = __webpack_require__(34);
-const sortOptions_1 = __webpack_require__(25);
+const settingsStore_1 = __webpack_require__(22);
+const database_1 = __webpack_require__(28);
+const sortOptions_1 = __webpack_require__(26);
+const versionsService_1 = __webpack_require__(19);
 class ModuleTreeProvider {
     context;
     sortPreferences;
@@ -10547,6 +11012,137 @@ async function selectModule(event) {
         }
     }
     await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+}
+async function runScaffoldCommand(pythonPath, odooBinPath, moduleName, targetPath) {
+    await new Promise((resolve, reject) => {
+        const child = (0, child_process_1.spawn)(pythonPath, [odooBinPath, 'scaffold', moduleName, targetPath], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let stderr = '';
+        let stdout = '';
+        child.stderr?.on('data', chunk => {
+            stderr += chunk.toString();
+        });
+        child.stdout?.on('data', chunk => {
+            stdout += chunk.toString();
+        });
+        child.on('error', error => {
+            reject(new Error(`Failed to start scaffold command: ${error.message}`));
+        });
+        child.on('close', code => {
+            if (code === 0) {
+                resolve();
+                return;
+            }
+            const details = stderr.trim() || stdout.trim();
+            reject(new Error(details || `Scaffold command exited with code ${code ?? 'unknown'}`));
+        });
+    });
+}
+function resolveRepositoryRoot(repoPath) {
+    try {
+        const resolved = (0, child_process_1.execFileSync)('git', ['-C', repoPath, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+        if (resolved && fs.existsSync(resolved)) {
+            return resolved;
+        }
+    }
+    catch {
+        // Fall back to the selected path if git resolution is unavailable.
+    }
+    return repoPath;
+}
+async function createModuleFromScaffold() {
+    const projectResult = await settingsStore_1.SettingsStore.getSelectedProject();
+    if (!projectResult) {
+        return;
+    }
+    const targetProject = projectResult.project;
+    const projectRepos = (targetProject.repos ?? []);
+    if (projectRepos.length === 0) {
+        (0, utils_1.showError)(`Project "${targetProject.name}" has no selected repositories.`);
+        return;
+    }
+    let targetRepo;
+    if (projectRepos.length === 1) {
+        targetRepo = projectRepos[0];
+    }
+    else {
+        const selectedRepo = await vscode.window.showQuickPick(projectRepos.map(repo => ({
+            label: repo.name,
+            description: repo.path,
+            detail: 'Scaffold destination repository',
+            repo
+        })), {
+            placeHolder: `Select destination repository for "${targetProject.name}"`,
+            ignoreFocusOut: true
+        });
+        if (!selectedRepo) {
+            return;
+        }
+        targetRepo = selectedRepo.repo;
+    }
+    if (!targetRepo) {
+        (0, utils_1.showError)('Select a destination repository.');
+        return;
+    }
+    const versionsService = versionsService_1.VersionsService.getInstance();
+    const settings = await versionsService.getActiveVersionSettings();
+    const normalizedPythonPath = (0, utils_1.normalizePath)(settings.pythonPath);
+    const normalizedOdooPath = (0, utils_1.normalizePath)(settings.odooPath);
+    const destinationPath = (0, utils_1.normalizePath)(targetRepo.path);
+    const repositoryRootPath = resolveRepositoryRoot(destinationPath);
+    const odooBinPath = path.join(normalizedOdooPath, 'odoo-bin');
+    if (!normalizedPythonPath || !fs.existsSync(normalizedPythonPath)) {
+        (0, utils_1.showError)(`Python executable not found: ${normalizedPythonPath}`);
+        return;
+    }
+    if (!normalizedOdooPath || !fs.existsSync(normalizedOdooPath)) {
+        (0, utils_1.showError)(`Odoo path not found: ${normalizedOdooPath}`);
+        return;
+    }
+    if (!fs.existsSync(odooBinPath)) {
+        (0, utils_1.showError)(`odoo-bin not found at: ${odooBinPath}`);
+        return;
+    }
+    if (!repositoryRootPath || !fs.existsSync(repositoryRootPath)) {
+        (0, utils_1.showError)(`Destination repository path not found: ${repositoryRootPath}`);
+        return;
+    }
+    const moduleName = await vscode.window.showInputBox({
+        placeHolder: 'e.g. my_custom_module',
+        prompt: `Enter module name to scaffold in ${targetRepo.name} (${repositoryRootPath})`,
+        ignoreFocusOut: true,
+        validateInput: (value) => {
+            const trimmed = value.trim();
+            if (!trimmed) {
+                return 'Module name cannot be empty.';
+            }
+            if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) {
+                return 'Use letters, numbers, and underscores only. Must start with a letter or underscore.';
+            }
+            const targetPath = path.join(repositoryRootPath, trimmed);
+            if (fs.existsSync(targetPath)) {
+                return `A folder named "${trimmed}" already exists in destination repo.`;
+            }
+            return null;
+        }
+    });
+    if (moduleName === undefined) {
+        return;
+    }
+    const sanitizedModuleName = moduleName.trim();
+    try {
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: `Creating module ${sanitizedModuleName}`,
+            cancellable: false
+        }, async (progress) => {
+            progress.report({ message: 'Running odoo-bin scaffold...' });
+            await runScaffoldCommand(normalizedPythonPath, odooBinPath, sanitizedModuleName, repositoryRootPath);
+        });
+        (0, utils_1.showAutoInfo)(`Module "${sanitizedModuleName}" created in ${repositoryRootPath}`, 3500);
+    }
+    catch (error) {
+        (0, utils_1.showError)(`Failed to scaffold module "${sanitizedModuleName}": ${error.message}`);
+    }
 }
 /**
  * Set a module to 'install' state
@@ -10933,199 +11529,7 @@ async function viewInstalledModules() {
 
 
 /***/ }),
-/* 34 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.databaseHasModuleTable = databaseHasModuleTable;
-exports.getInstalledModules = getInstalledModules;
-exports.getInstalledModuleNames = getInstalledModuleNames;
-exports.clearInstalledModuleCache = clearInstalledModuleCache;
-const node_child_process_1 = __webpack_require__(35);
-const util = __importStar(__webpack_require__(36));
-const runtimeCache_1 = __webpack_require__(45);
-const execFileAsync = util.promisify(node_child_process_1.execFile);
-const INSTALLED_MODULES_QUERY = `
-    SELECT id, name, shortdesc, latest_version, state, application
-    FROM ir_module_module
-    WHERE state IN ('installed', 'to upgrade')
-    ORDER BY name;
-`.trim();
-const INSTALLED_MODULE_NAMES_QUERY = `
-    SELECT name
-    FROM ir_module_module
-    WHERE state IN ('installed', 'to upgrade')
-    ORDER BY name;
-`.trim();
-const TABLE_EXISTS_QUERY = `
-    SELECT EXISTS (
-        SELECT FROM information_schema.tables
-        WHERE table_name = 'ir_module_module'
-    );
-`.trim();
-function validateDatabaseName(dbName) {
-    // Basic sanity check to avoid shell injection when invoking psql
-    if (!/^[\w\-.:]+$/.test(dbName)) {
-        throw new Error(`Invalid database identifier: ${dbName}`);
-    }
-}
-async function runPsqlQuery(dbName, query, fieldSeparator = '|') {
-    validateDatabaseName(dbName);
-    try {
-        const args = [
-            '--no-psqlrc',
-            '--no-align',
-            '--tuples-only',
-            '-F',
-            fieldSeparator,
-            '-d',
-            dbName,
-            '-c',
-            query
-        ];
-        const { stdout } = await execFileAsync('psql', args, {
-            encoding: 'utf-8',
-            maxBuffer: 10 * 1024 * 1024 // Allow reasonably large result sets
-        });
-        return stdout.trim();
-    }
-    catch (error) {
-        console.warn(`psql command failed for database "${dbName}":`, error);
-        throw error;
-    }
-}
-async function databaseHasModuleTable(dbName) {
-    try {
-        const result = await runPsqlQuery(dbName, TABLE_EXISTS_QUERY);
-        return result === 't';
-    }
-    catch {
-        return false;
-    }
-}
-async function getInstalledModules(dbName) {
-    return runtimeCache_1.runtimeCache.getInstalledModules(dbName, async () => {
-        const modules = [];
-        if (!(await databaseHasModuleTable(dbName))) {
-            console.debug(`Database ${dbName} does not contain Odoo tables yet.`);
-            return modules;
-        }
-        let output;
-        try {
-            output = await runPsqlQuery(dbName, INSTALLED_MODULES_QUERY);
-        }
-        catch (error) {
-            console.warn(`Failed to fetch installed modules for database "${dbName}":`, error);
-            return modules;
-        }
-        if (!output) {
-            return modules;
-        }
-        for (const line of output.split('\n').map(entry => entry.trim()).filter(Boolean)) {
-            const [id, name, shortdesc, latestVersion, state, application] = line.split('|');
-            let description = shortdesc || '';
-            if (shortdesc) {
-                try {
-                    const parsed = JSON.parse(shortdesc);
-                    const locales = Object.keys(parsed);
-                    if (locales.length > 0) {
-                        description = parsed.en_US ?? parsed[locales[0]] ?? '';
-                    }
-                }
-                catch {
-                    // Keep original string when JSON parsing fails
-                    description = shortdesc;
-                }
-            }
-            modules.push({
-                id: Number.parseInt(id ?? '', 10),
-                name: name ?? '',
-                shortdesc: description ?? '',
-                installed_version: latestVersion || null,
-                latest_version: latestVersion || null,
-                state: state ?? '',
-                application: application === 't'
-            });
-        }
-        return modules;
-    });
-}
-async function getInstalledModuleNames(dbName) {
-    const names = await runtimeCache_1.runtimeCache.getInstalledModuleNames(dbName, async () => {
-        if (!(await databaseHasModuleTable(dbName))) {
-            return [];
-        }
-        let output;
-        try {
-            output = await runPsqlQuery(dbName, INSTALLED_MODULE_NAMES_QUERY);
-        }
-        catch (error) {
-            console.warn(`Failed to fetch installed module names for database "${dbName}":`, error);
-            return [];
-        }
-        if (!output) {
-            return [];
-        }
-        return output
-            .split('\n')
-            .map(entry => entry.trim())
-            .filter(Boolean);
-    });
-    return new Set(names);
-}
-function clearInstalledModuleCache(dbName) {
-    (0, runtimeCache_1.invalidateInstalledModulesCache)(dbName);
-}
-
-
-/***/ }),
-/* 35 */
-/***/ ((module) => {
-
-module.exports = require("node:child_process");
-
-/***/ }),
-/* 36 */
-/***/ ((module) => {
-
-module.exports = require("node:util");
-
-/***/ }),
-/* 37 */
+/* 40 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11173,13 +11577,13 @@ exports.removeTestTag = removeTestTag;
 exports.toggleLogLevel = toggleLogLevel;
 exports.setSpecificLogLevel = setSpecificLogLevel;
 const vscode = __importStar(__webpack_require__(1));
-const settingsStore_1 = __webpack_require__(21);
-const testing_1 = __webpack_require__(28);
-const module_1 = __webpack_require__(22);
+const settingsStore_1 = __webpack_require__(22);
+const testing_1 = __webpack_require__(33);
+const module_1 = __webpack_require__(23);
 const utils_1 = __webpack_require__(4);
-const context_1 = __webpack_require__(38);
-const debugger_1 = __webpack_require__(39);
-const database_1 = __webpack_require__(34);
+const context_1 = __webpack_require__(41);
+const debugger_1 = __webpack_require__(42);
+const database_1 = __webpack_require__(28);
 class TestingTreeProvider {
     context;
     _onDidChangeTreeData = new vscode.EventEmitter();
@@ -11810,7 +12214,7 @@ async function setSpecificLogLevel() {
 
 
 /***/ }),
-/* 38 */
+/* 41 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11864,7 +12268,7 @@ function updateActiveContext(isActive) {
 
 
 /***/ }),
-/* 39 */
+/* 42 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11909,11 +12313,11 @@ const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(5));
 const path = __importStar(__webpack_require__(3));
 const utils_1 = __webpack_require__(4);
-const settingsStore_1 = __webpack_require__(21);
-const versionsService_1 = __webpack_require__(18);
-const testing_1 = __webpack_require__(28);
-const database_1 = __webpack_require__(34);
-const jsonc_parser_1 = __webpack_require__(10);
+const settingsStore_1 = __webpack_require__(22);
+const versionsService_1 = __webpack_require__(19);
+const testing_1 = __webpack_require__(33);
+const database_1 = __webpack_require__(28);
+const jsonc_parser_1 = __webpack_require__(11);
 async function selectPythonInterpreter(pythonPath) {
     if (!pythonPath || pythonPath.trim().length === 0) {
         return;
@@ -12289,7 +12693,7 @@ async function startDebugServer() {
 
 
 /***/ }),
-/* 40 */
+/* 43 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12486,7 +12890,7 @@ Continue?`;
 
 
 /***/ }),
-/* 41 */
+/* 44 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12526,9 +12930,9 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VersionsTreeProvider = exports.VersionSettingTreeItem = exports.VersionTreeItem = void 0;
 const vscode = __importStar(__webpack_require__(1));
-const versionsService_1 = __webpack_require__(18);
+const versionsService_1 = __webpack_require__(19);
 const utils_1 = __webpack_require__(4);
-const sortOptions_1 = __webpack_require__(25);
+const sortOptions_1 = __webpack_require__(26);
 class VersionTreeItem extends vscode.TreeItem {
     version;
     collapsibleState;
@@ -12686,7 +13090,7 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 
 /***/ }),
-/* 42 */
+/* 45 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -12709,7 +13113,7 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 43 */
+/* 46 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12751,7 +13155,7 @@ exports.rebuildProjectWorkspace = rebuildProjectWorkspace;
 exports.openProjectWorkspace = openProjectWorkspace;
 exports.quickSwitchProjectWorkspace = quickSwitchProjectWorkspace;
 const vscode = __importStar(__webpack_require__(1));
-const settingsStore_1 = __webpack_require__(21);
+const settingsStore_1 = __webpack_require__(22);
 const utils_1 = __webpack_require__(4);
 async function getActiveProjectOrPrompt() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
@@ -12843,7 +13247,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 44 */
+/* 47 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12892,10 +13296,10 @@ exports.copyEntries = copyEntries;
 exports.pasteEntries = pasteEntries;
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
-const settingsStore_1 = __webpack_require__(21);
+const settingsStore_1 = __webpack_require__(22);
 const utils_1 = __webpack_require__(4);
-const runtimeCache_1 = __webpack_require__(45);
-const filesExclude_1 = __webpack_require__(47);
+const runtimeCache_1 = __webpack_require__(10);
+const filesExclude_1 = __webpack_require__(38);
 class ProjectReposExplorerProvider {
     _onDidChangeTreeData = new vscode.EventEmitter();
     onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -13204,270 +13608,6 @@ async function pasteEntries(targetUri) {
     if (clipboard.cut) {
         clipboard = null;
     }
-}
-
-
-/***/ }),
-/* 45 */
-/***/ ((__unused_webpack_module, exports) => {
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.runtimeCache = void 0;
-exports.invalidateModuleDiscoveryCache = invalidateModuleDiscoveryCache;
-exports.invalidateRepositoryDiscoveryCache = invalidateRepositoryDiscoveryCache;
-exports.invalidateInstalledModulesCache = invalidateInstalledModulesCache;
-exports.invalidateGitBranchCache = invalidateGitBranchCache;
-exports.invalidateAllRuntimeCaches = invalidateAllRuntimeCaches;
-const DEFAULT_TTLS = {
-    moduleDiscoveryMs: 5000,
-    repositoryDiscoveryMs: 5000,
-    installedModulesMs: 5000,
-    installedModuleNamesMs: 5000,
-    gitBranchMs: 3000
-};
-class RuntimeCacheService {
-    moduleDiscovery = new Map();
-    repositoryDiscovery = new Map();
-    installedModules = new Map();
-    installedModuleNames = new Map();
-    gitBranches = new Map();
-    getOrCompute(store, key, ttlMs, loader) {
-        const now = Date.now();
-        const cached = store.get(key);
-        if (cached && cached.expiresAt > now) {
-            return cached.value;
-        }
-        const value = loader();
-        store.set(key, { value, expiresAt: now + ttlMs });
-        return value;
-    }
-    async getOrComputeAsync(store, key, ttlMs, loader) {
-        const now = Date.now();
-        const cached = store.get(key);
-        if (cached && cached.expiresAt > now) {
-            return cached.value;
-        }
-        const value = await loader();
-        store.set(key, { value, expiresAt: now + ttlMs });
-        return value;
-    }
-    getModuleDiscovery(key, loader, ttlMs = DEFAULT_TTLS.moduleDiscoveryMs) {
-        return this.getOrCompute(this.moduleDiscovery, key, ttlMs, loader);
-    }
-    getRepositoryDiscovery(key, loader, ttlMs = DEFAULT_TTLS.repositoryDiscoveryMs) {
-        return this.getOrCompute(this.repositoryDiscovery, key, ttlMs, loader);
-    }
-    async getInstalledModules(dbName, loader, ttlMs = DEFAULT_TTLS.installedModulesMs) {
-        return this.getOrComputeAsync(this.installedModules, dbName, ttlMs, loader);
-    }
-    async getInstalledModuleNames(dbName, loader, ttlMs = DEFAULT_TTLS.installedModuleNamesMs) {
-        return this.getOrComputeAsync(this.installedModuleNames, dbName, ttlMs, loader);
-    }
-    async getGitBranch(repoPath, loader, ttlMs = DEFAULT_TTLS.gitBranchMs) {
-        return this.getOrComputeAsync(this.gitBranches, repoPath, ttlMs, loader);
-    }
-    invalidateModuleDiscoveryCache(key) {
-        if (key) {
-            this.moduleDiscovery.delete(key);
-            return;
-        }
-        this.moduleDiscovery.clear();
-    }
-    invalidateRepositoryDiscoveryCache(key) {
-        if (key) {
-            this.repositoryDiscovery.delete(key);
-            return;
-        }
-        this.repositoryDiscovery.clear();
-    }
-    invalidateInstalledModulesCache(dbName) {
-        if (dbName) {
-            this.installedModules.delete(dbName);
-            this.installedModuleNames.delete(dbName);
-            return;
-        }
-        this.installedModules.clear();
-        this.installedModuleNames.clear();
-    }
-    invalidateGitBranchCache(repoPath) {
-        if (repoPath) {
-            this.gitBranches.delete(repoPath);
-            return;
-        }
-        this.gitBranches.clear();
-    }
-    invalidateAll() {
-        this.invalidateModuleDiscoveryCache();
-        this.invalidateRepositoryDiscoveryCache();
-        this.invalidateInstalledModulesCache();
-        this.invalidateGitBranchCache();
-    }
-}
-exports.runtimeCache = new RuntimeCacheService();
-function invalidateModuleDiscoveryCache(key) {
-    exports.runtimeCache.invalidateModuleDiscoveryCache(key);
-}
-function invalidateRepositoryDiscoveryCache(key) {
-    exports.runtimeCache.invalidateRepositoryDiscoveryCache(key);
-}
-function invalidateInstalledModulesCache(dbName) {
-    exports.runtimeCache.invalidateInstalledModulesCache(dbName);
-}
-function invalidateGitBranchCache(repoPath) {
-    exports.runtimeCache.invalidateGitBranchCache(repoPath);
-}
-function invalidateAllRuntimeCaches() {
-    exports.runtimeCache.invalidateAll();
-}
-
-
-/***/ }),
-/* 46 */
-/***/ ((module) => {
-
-module.exports = require("stream");
-
-/***/ }),
-/* 47 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.createFilesExcludeMatcher = createFilesExcludeMatcher;
-const fs = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(3));
-const vscode = __importStar(__webpack_require__(1));
-function globToRegExp(pattern) {
-    const normalizedPattern = pattern.split(path.sep).join('/');
-    const placeholders = {
-        doubleStar: '__GLOB_DOUBLE_STAR__',
-        singleStar: '__GLOB_SINGLE_STAR__',
-        question: '__GLOB_QUESTION__'
-    };
-    let working = normalizedPattern
-        .replaceAll('**', placeholders.doubleStar)
-        .replaceAll('*', placeholders.singleStar)
-        .replaceAll('?', placeholders.question);
-    working = working.replaceAll(/[.+^${}()|[\]\\]/g, String.raw `\$&`);
-    working = working
-        .replaceAll(new RegExp(placeholders.doubleStar, 'g'), '.*')
-        .replaceAll(new RegExp(placeholders.singleStar, 'g'), '[^/]*')
-        .replaceAll(new RegExp(placeholders.question, 'g'), '[^/]');
-    return new RegExp(`^${working}$`, 'i');
-}
-function normalizeForMatch(value) {
-    return value.replace(/\\/g, '/').replace(/^\.?\//, '');
-}
-function resolveWorkspaceRoot(scopeUri) {
-    if (scopeUri) {
-        const folder = vscode.workspace.getWorkspaceFolder(scopeUri);
-        if (folder) {
-            return folder.uri.fsPath;
-        }
-    }
-    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-}
-function resolveFilesExcludeRules(scopeUri) {
-    const config = vscode.workspace.getConfiguration('files', scopeUri);
-    const excludes = config.get('exclude', {});
-    if (!excludes || typeof excludes !== 'object') {
-        return [];
-    }
-    const rules = [];
-    for (const [pattern, rawValue] of Object.entries(excludes)) {
-        if (rawValue === false) {
-            continue;
-        }
-        if (rawValue === true) {
-            rules.push({ regex: globToRegExp(pattern) });
-            continue;
-        }
-        if (!rawValue || typeof rawValue !== 'object') {
-            continue;
-        }
-        rules.push({
-            regex: globToRegExp(pattern),
-            when: typeof rawValue.when === 'string' ? rawValue.when : undefined
-        });
-    }
-    return rules;
-}
-function ruleMatchesPath(rule, relativePath, absolutePath, entryName) {
-    return rule.regex.test(relativePath)
-        || rule.regex.test(`/${relativePath}`)
-        || rule.regex.test(entryName)
-        || rule.regex.test(absolutePath);
-}
-function whenClauseMatches(whenClause, fsPath, entryName) {
-    if (!whenClause || whenClause.trim() === '') {
-        return true;
-    }
-    const basename = path.parse(entryName).name;
-    const siblingName = whenClause.replaceAll('$(basename)', basename);
-    const siblingPath = path.join(path.dirname(fsPath), siblingName);
-    return fs.existsSync(siblingPath);
-}
-function createFilesExcludeMatcher(scopeUri) {
-    const rules = resolveFilesExcludeRules(scopeUri);
-    const workspaceRoot = resolveWorkspaceRoot(scopeUri);
-    return {
-        isExcluded(fsPath, entryName) {
-            if (rules.length === 0) {
-                return false;
-            }
-            const normalizedAbsolute = normalizeForMatch(fsPath);
-            const relativeCandidate = workspaceRoot
-                ? normalizeForMatch(path.relative(workspaceRoot, fsPath))
-                : normalizedAbsolute;
-            const relative = relativeCandidate && relativeCandidate !== '.'
-                ? relativeCandidate
-                : normalizedAbsolute;
-            for (const rule of rules) {
-                if (!ruleMatchesPath(rule, relative, normalizedAbsolute, entryName)) {
-                    continue;
-                }
-                if (!whenClauseMatches(rule.when, fsPath, entryName)) {
-                    continue;
-                }
-                return true;
-            }
-            return false;
-        }
-    };
 }
 
 
