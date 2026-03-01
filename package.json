@@ -367,7 +367,7 @@
       {
         "command": "moduleSelector.create",
         "title": "Create Module",
-        "icon": "resources/icons/create.svg"
+        "icon": "$(add)"
       },
       {
         "command": "moduleSelector.select",
@@ -666,6 +666,11 @@
           "command": "repoSelector.quickSearch",
           "when": "view == repoSelector",
           "group": "navigation"
+        },
+        {
+          "command": "moduleSelector.create",
+          "when": "view == moduleSelector",
+          "group": "navigation@0"
         },
         {
           "command": "moduleSelector.installAll",

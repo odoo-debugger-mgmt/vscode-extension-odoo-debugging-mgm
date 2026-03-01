@@ -9,7 +9,7 @@ import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb, changeD
 import { ProjectTreeProvider, createProject, selectProject, getRepo, getProjectName, deleteProject, editProjectSettings, duplicateProject, exportProject, importProject, quickProjectSearch, manageProjectTickets, openProjectTicket} from './project';
 import { RepoTreeProvider, selectRepo } from './repos';
 import { ProjectReposProvider, revealProjectRepo } from './projectRepos';
-import { ModuleTreeProvider, selectModule, setModuleToInstall, setModuleToUpgrade, clearModuleState, togglePsaeInternalModule, updateAllModules, installAllModules, clearAllModuleSelections, updateInstalledModules, viewInstalledModules } from './module';
+import { ModuleTreeProvider, selectModule, setModuleToInstall, setModuleToUpgrade, clearModuleState, togglePsaeInternalModule, updateAllModules, installAllModules, clearAllModuleSelections, updateInstalledModules, viewInstalledModules, createModuleFromScaffold } from './module';
 import { TestingTreeProvider, toggleTesting, toggleStopAfterInit, setTestFile, addTestTag, removeTestTag, cycleTestTagState, toggleLogLevel, setSpecificLogLevel } from './testing';
 import { setupDebugger, startDebugShell, startDebugServer } from './debugger';
 import { setupOdooBranch } from './odooInstaller';
@@ -870,6 +870,11 @@ export async function activate(context: vscode.ExtensionContext) {
     extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.togglePsaeInternalModule', async (event) => {
         await togglePsaeInternalModule(event);
         await refreshAll();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.create', async () => {
+        await createModuleFromScaffold();
+        await refreshAll({ reason: 'ui' });
     }));
 
     // Context menu commands for individual modules
