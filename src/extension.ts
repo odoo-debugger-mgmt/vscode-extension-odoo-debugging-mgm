@@ -91,6 +91,91 @@ async function openUriInIntegratedTerminal(uri: vscode.Uri | undefined): Promise
     terminal.show();
 }
 
+function getTreeItemLabel(item: vscode.TreeItem): string {
+    if (typeof item.label === 'string') {
+        return item.label;
+    }
+    if (item.label && typeof item.label === 'object' && 'label' in item.label) {
+        return item.label.label;
+    }
+    return '';
+}
+
+function getTreeItemDescription(item: vscode.TreeItem): string | undefined {
+    return typeof item.description === 'string' ? item.description : undefined;
+}
+
+function stripMarkdownForQuickPick(value: string): string {
+    return value
+        // Convert markdown links to visible text only.
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        // Remove common markdown tokens.
+        .replace(/[*_`>#~]/g, '')
+        // Normalize line breaks for quick-pick rows.
+        .replace(/\r?\n+/g, ' • ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+}
+
+function getTreeItemDetail(item: vscode.TreeItem): string | undefined {
+    if (typeof item.tooltip === 'string') {
+        return stripMarkdownForQuickPick(item.tooltip);
+    }
+    if (item.tooltip instanceof vscode.MarkdownString) {
+        return stripMarkdownForQuickPick(item.tooltip.value);
+    }
+    return undefined;
+}
+
+async function quickSearchTreeItems(
+    items: vscode.TreeItem[],
+    options: {
+        placeHolder: string;
+        title: string;
+        emptyMessage: string;
+        onPick?: (item: vscode.TreeItem) => Promise<void>;
+    }
+): Promise<void> {
+    if (!items.length) {
+        showInfo(options.emptyMessage);
+        return;
+    }
+
+    const picks = items.map(item => ({
+        label: getTreeItemLabel(item),
+        description: getTreeItemDescription(item),
+        detail: getTreeItemDetail(item),
+        item
+    }));
+
+    const selected = await vscode.window.showQuickPick(picks, {
+        placeHolder: options.placeHolder,
+        title: options.title,
+        ignoreFocusOut: true,
+        matchOnDescription: true,
+        matchOnDetail: true
+    });
+
+    if (!selected) {
+        return;
+    }
+
+    if (options.onPick) {
+        await options.onPick(selected.item);
+        return;
+    }
+
+    if (!selected.item.command) {
+        showInfo('No action is available for the selected item.');
+        return;
+    }
+
+    await vscode.commands.executeCommand(
+        selected.item.command.command,
+        ...(selected.item.command.arguments ?? [])
+    );
+}
+
 // Initialize testing context based on current project state
 async function initializeTestingContext(): Promise<void> {
     try {
@@ -568,6 +653,114 @@ export async function activate(context: vscode.ExtensionContext) {
     extensionDisposables.push(vscode.commands.registerCommand('odoo-debugger.quickProjectSearch', async () => {
         await quickProjectSearch();
         await refreshAll({ reason: 'ui' });
+    }));
+    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.quickSearch', async () => {
+        await quickProjectSearch();
+        await refreshAll({ reason: 'ui' });
+    }));
+    extensionDisposables.push(vscode.commands.registerCommand('repoSelector.quickSearch', async () => {
+        const items = ((await providers.repo.getChildren()) ?? [])
+            .filter(item => !!item.command && getTreeItemLabel(item).trim().length > 0);
+
+        await quickSearchTreeItems(items, {
+            placeHolder: 'Search repositories...',
+            title: 'Repository Search',
+            emptyMessage: 'No repositories available to search.'
+        });
+    }));
+    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.quickSearch', async () => {
+        const items = ((await providers.db.getChildren()) ?? [])
+            .filter(item => (item as any).contextValue === 'database' && !!item.command);
+
+        await quickSearchTreeItems(items, {
+            placeHolder: 'Search databases...',
+            title: 'Database Search',
+            emptyMessage: 'No databases available to search.'
+        });
+    }));
+    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.quickSearch', async () => {
+        const items = ((await providers.module.getChildren()) ?? [])
+            .filter(item => (item as any).contextValue === 'module' && !!item.command);
+
+        await quickSearchTreeItems(items, {
+            placeHolder: 'Search modules...',
+            title: 'Module Search',
+            emptyMessage: 'No searchable modules found for the selected database.',
+            onPick: async (item) => {
+                const moduleData = (item as any).moduleData ?? item.command?.arguments?.[0];
+                if (!moduleData?.name) {
+                    showInfo('Unable to read module details for this selection.');
+                    return;
+                }
+
+                const stateSelection = await vscode.window.showQuickPick([
+                    {
+                        label: 'Set to Install',
+                        description: moduleData.name,
+                        action: 'install' as const
+                    },
+                    {
+                        label: 'Set to Upgrade',
+                        description: moduleData.name,
+                        action: 'upgrade' as const
+                    },
+                    {
+                        label: 'Clear State',
+                        description: moduleData.name,
+                        action: 'none' as const
+                    }
+                ], {
+                    placeHolder: `Set state for module "${moduleData.name}"`,
+                    ignoreFocusOut: true
+                });
+
+                if (!stateSelection) {
+                    return;
+                }
+
+                if (stateSelection.action === 'install') {
+                    await setModuleToInstall(moduleData);
+                } else if (stateSelection.action === 'upgrade') {
+                    await setModuleToUpgrade(moduleData);
+                } else {
+                    await clearModuleState(moduleData);
+                }
+
+                await refreshAll({ reason: 'ui' });
+            }
+        });
+    }));
+    extensionDisposables.push(vscode.commands.registerCommand('versionsManager.quickSearch', async () => {
+        const items = ((await providers.versions.getChildren()) ?? [])
+            .filter(item => {
+                const contextValue = (item as any).contextValue;
+                return (contextValue === 'version' || contextValue === 'activeVersion') && !!item.command;
+            })
+            .map(item => providers.versions.getTreeItem(item));
+
+        await quickSearchTreeItems(items, {
+            placeHolder: 'Search versions...',
+            title: 'Version Search',
+            emptyMessage: 'No versions available to search.'
+        });
+    }));
+    extensionDisposables.push(vscode.commands.registerCommand('projectRepos.quickSearch', async () => {
+        const rootItems = ((await providers.projectRepos.getChildren()) ?? [])
+            .filter(item => (item as any)?.metadata?.kind === 'repo');
+
+        await quickSearchTreeItems(rootItems, {
+            placeHolder: 'Search project repositories...',
+            title: 'Project Repo Search',
+            emptyMessage: 'No project repositories available to search.',
+            onPick: async (item) => {
+                const repo = (item as any)?.metadata?.repo;
+                if (!repo?.path) {
+                    showInfo('Select a repository to reveal.');
+                    return;
+                }
+                await revealProjectRepo(repo);
+            }
+        });
     }));
 
     // DBS

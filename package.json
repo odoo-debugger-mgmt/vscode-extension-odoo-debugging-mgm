@@ -120,9 +120,19 @@
         "icon": "$(sort-precedence)"
       },
       {
+        "command": "projectSelector.quickSearch",
+        "title": "Search Projects",
+        "icon": "$(search)"
+      },
+      {
         "command": "repoSelector.sort",
         "title": "Sort Repositories",
         "icon": "$(sort-precedence)"
+      },
+      {
+        "command": "repoSelector.quickSearch",
+        "title": "Search Repositories",
+        "icon": "$(search)"
       },
       {
         "command": "dbSelector.sort",
@@ -130,9 +140,19 @@
         "icon": "$(sort-precedence)"
       },
       {
+        "command": "dbSelector.quickSearch",
+        "title": "Search Databases",
+        "icon": "$(search)"
+      },
+      {
         "command": "moduleSelector.sort",
         "title": "Sort Modules",
         "icon": "$(sort-precedence)"
+      },
+      {
+        "command": "moduleSelector.quickSearch",
+        "title": "Search Modules",
+        "icon": "$(search)"
       },
       {
         "command": "versionsManager.sort",
@@ -140,9 +160,19 @@
         "icon": "$(sort-precedence)"
       },
       {
+        "command": "versionsManager.quickSearch",
+        "title": "Search Versions",
+        "icon": "$(search)"
+      },
+      {
         "command": "projectRepos.sort",
         "title": "Sort Project Repos",
         "icon": "$(sort-precedence)"
+      },
+      {
+        "command": "projectRepos.quickSearch",
+        "title": "Search Project Repos",
+        "icon": "$(search)"
       },
       {
         "command": "projectRepos.reveal",
@@ -578,6 +608,11 @@
           "group": "navigation@8"
         },
         {
+          "command": "projectSelector.quickSearch",
+          "when": "view == projectSelector",
+          "group": "navigation@7.5"
+        },
+        {
           "command": "odoo.startServer",
           "when": "view == projectSelector",
           "group": "navigation@5"
@@ -613,12 +648,22 @@
           "group": "navigation"
         },
         {
+          "command": "dbSelector.quickSearch",
+          "when": "view == dbSelector",
+          "group": "navigation"
+        },
+        {
           "command": "repoSelector.refresh",
           "when": "view == repoSelector",
           "group": "navigation"
         },
         {
           "command": "repoSelector.sort",
+          "when": "view == repoSelector",
+          "group": "navigation"
+        },
+        {
+          "command": "repoSelector.quickSearch",
           "when": "view == repoSelector",
           "group": "navigation"
         },
@@ -658,6 +703,11 @@
           "group": "navigation@7"
         },
         {
+          "command": "moduleSelector.quickSearch",
+          "when": "view == moduleSelector",
+          "group": "navigation@7.5"
+        },
+        {
           "command": "testingSelector.addTestTag",
           "when": "view == testingSelector",
           "group": "navigation@1"
@@ -688,6 +738,11 @@
           "group": "navigation@2.5"
         },
         {
+          "command": "versionsManager.quickSearch",
+          "when": "view == versionsManager",
+          "group": "navigation@2.6"
+        },
+        {
           "command": "odoo.refreshVersions",
           "when": "view == versionsManager",
           "group": "navigation@3"
@@ -696,6 +751,11 @@
           "command": "projectRepos.sort",
           "when": "view == projectRepos",
           "group": "navigation@1"
+        },
+        {
+          "command": "projectRepos.quickSearch",
+          "when": "view == projectRepos",
+          "group": "navigation@1.1"
         }
       ],
       "view/item/context": [
