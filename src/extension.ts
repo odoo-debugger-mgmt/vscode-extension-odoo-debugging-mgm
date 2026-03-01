@@ -406,6 +406,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Register all commands and store disposables
     extensionDisposables.push(vscode.commands.registerCommand('projectSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    extensionDisposables.push(vscode.commands.registerCommand('repoSelector.refresh', async () => refreshAll({ reason: 'ui' })));
     extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.refresh', async () => refreshAll({ reason: 'ui' })));
     extensionDisposables.push(vscode.commands.registerCommand('testingSelector.refresh', async () => refreshAll({ reason: 'ui' })));
     extensionDisposables.push(vscode.commands.registerCommand('dbSelector.refresh', async () => refreshAll({ reason: 'ui' })));

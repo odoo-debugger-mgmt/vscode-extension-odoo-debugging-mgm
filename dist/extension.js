@@ -379,6 +379,7 @@ async function activate(context) {
     registerViewSortCommand('projectRepos', providers.projectRepos);
     // Register all commands and store disposables
     extensionDisposables.push(vscode.commands.registerCommand('projectSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    extensionDisposables.push(vscode.commands.registerCommand('repoSelector.refresh', async () => refreshAll({ reason: 'ui' })));
     extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.refresh', async () => refreshAll({ reason: 'ui' })));
     extensionDisposables.push(vscode.commands.registerCommand('testingSelector.refresh', async () => refreshAll({ reason: 'ui' })));
     extensionDisposables.push(vscode.commands.registerCommand('dbSelector.refresh', async () => refreshAll({ reason: 'ui' })));
@@ -5373,31 +5374,17 @@ async function showBranchSelector(repoPath) {
 async function checkoutBranch(settings, branch) {
     const quoteForSingleQuotedShell = (value) => `'${value.replace(/'/g, `'\"'\"'`)}'`;
     const buildHookExecutionScript = (commands, phase, contextLabel) => {
-        const lines = [
-            'set -e',
-            '__odt_now_ms() {',
-            '  local __odt_now',
-            '  __odt_now="$(date +%s%3N 2>/dev/null)"',
-            '  if [ -n "$__odt_now" ]; then',
-            '    printf \'%s\\n\' "$__odt_now"',
-            '    return',
-            '  fi',
-            '  __odt_now="$(date +%s)"',
-            '  printf \'%s\\n\' "$((__odt_now * 1000))"',
-            '}'
-        ];
+        const lines = ['set -e'];
         commands.forEach((command, index) => {
             const prefix = `[${phase}] ${contextLabel}: [${index + 1}/${commands.length}]`;
             lines.push(`__odt_cmd=${quoteForSingleQuotedShell(command)}`);
             lines.push(`__odt_prefix=${quoteForSingleQuotedShell(prefix)}`);
-            lines.push('__odt_start=$(__odt_now_ms)');
             lines.push('printf \'%s\\n\' "$__odt_prefix START $__odt_cmd"');
             lines.push('set +e');
             lines.push('eval "$__odt_cmd"');
             lines.push('__odt_exit=$?');
             lines.push('set -e');
-            lines.push('__odt_end=$(__odt_now_ms)');
-            lines.push('printf \'%s\\n\' "$__odt_prefix END exit=$__odt_exit duration_ms=$((__odt_end - __odt_start))"');
+            lines.push('printf \'%s\\n\' "$__odt_prefix END exit=$__odt_exit"');
             lines.push('if [ $__odt_exit -ne 0 ]; then');
             lines.push('  exit $__odt_exit');
             lines.push('fi');
@@ -5417,51 +5404,71 @@ async function checkoutBranch(settings, branch) {
         normalizedCommands.forEach((command, index) => {
             checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: [${index + 1}/${normalizedCommands.length}] $ ${command}`);
         });
-        const taskName = `Odoo Debugger: ${contextLabel} ${phase}`;
         const script = buildHookExecutionScript(normalizedCommands, phase, contextLabel);
-        const sanitizedLabel = contextLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'repo';
-        const scriptPath = path.join(os.tmpdir(), `odoo-branch-hooks-${phase}-${sanitizedLabel}-${Date.now()}-${Math.random().toString(16).slice(2)}.sh`);
-        fs.writeFileSync(scriptPath, script, { encoding: 'utf8' });
-        const task = new vscode.Task({ type: 'odooDebugger.branchHooks', phase, contextLabel }, vscode.TaskScope.Workspace, taskName, 'odooDebugger', new vscode.ShellExecution('/bin/bash', [scriptPath], { cwd }), []);
-        task.presentationOptions = {
-            reveal: vscode.TaskRevealKind.Silent,
-            echo: false,
-            focus: false,
-            panel: vscode.TaskPanelKind.Dedicated,
-            clear: false,
-            showReuseMessage: false,
-            close: true
-        };
         const taskStartedAt = Date.now();
-        let exitCode;
-        try {
-            const execution = await vscode.tasks.executeTask(task);
-            exitCode = await new Promise((resolve) => {
-                const disposable = vscode.tasks.onDidEndTaskProcess(event => {
-                    if (event.execution === execution) {
-                        disposable.dispose();
-                        resolve(event.exitCode);
-                    }
-                });
+        let stderrTail = '';
+        const exitCode = await new Promise((resolve) => {
+            const child = (0, child_process_1.spawn)('/bin/bash', ['-lc', script], {
+                cwd,
+                env: process.env,
+                stdio: ['ignore', 'pipe', 'pipe']
             });
-        }
-        finally {
-            try {
-                fs.rmSync(scriptPath, { force: true });
-            }
-            catch {
-                // Ignore temporary script cleanup failures.
-            }
-        }
+            const stdoutBuffer = { pending: '' };
+            const stderrBuffer = { pending: '' };
+            const appendBufferedLines = (chunk, buffer) => {
+                const text = chunk.toString();
+                if (!text) {
+                    return;
+                }
+                const combined = buffer.pending + text;
+                const lines = combined.split(/\r?\n/);
+                buffer.pending = lines.pop() ?? '';
+                for (const line of lines) {
+                    checkoutHooksOutput.appendLine(line);
+                }
+            };
+            const flushBuffer = (buffer) => {
+                if (!buffer.pending) {
+                    return;
+                }
+                checkoutHooksOutput.appendLine(buffer.pending);
+                buffer.pending = '';
+            };
+            child.stdout?.on('data', chunk => {
+                appendBufferedLines(chunk, stdoutBuffer);
+            });
+            child.stderr?.on('data', chunk => {
+                appendBufferedLines(chunk, stderrBuffer);
+                stderrTail += chunk.toString();
+                if (stderrTail.length > 2000) {
+                    stderrTail = stderrTail.slice(-2000);
+                }
+            });
+            child.on('error', error => {
+                stderrTail = error.message;
+                resolve(undefined);
+            });
+            child.on('close', code => {
+                flushBuffer(stdoutBuffer);
+                flushBuffer(stderrBuffer);
+                resolve(code ?? undefined);
+            });
+        });
         const durationMs = Date.now() - taskStartedAt;
         if (exitCode !== 0 && exitCode !== undefined) {
             (0, utils_1.showError)(`${contextLabel}: failed during ${phase} command batch (exit code ${exitCode})`);
+            if (stderrTail.trim()) {
+                checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: stderr tail:\n${stderrTail.trim()}`);
+            }
             checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: FAILED (exit ${exitCode}, duration=${durationMs}ms)`);
             checkoutHooksOutput.show(true);
             return false;
         }
         if (exitCode === undefined) {
             (0, utils_1.showError)(`${contextLabel}: failed during ${phase} command batch (no exit code)`);
+            if (stderrTail.trim()) {
+                checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: stderr tail:\n${stderrTail.trim()}`);
+            }
             checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: FAILED (no exit code, duration=${durationMs}ms)`);
             checkoutHooksOutput.show(true);
             return false;
@@ -5484,9 +5491,11 @@ async function checkoutBranch(settings, branch) {
         cancellable: false
     }, async (progress) => {
         const operationStartedAt = Date.now();
+        const elapsed = () => `${Date.now() - operationStartedAt}ms`;
         const totalRepos = repos.length;
         let completedRepos = 0;
         const processRepository = async (repo) => {
+            checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline start t+${elapsed()}`);
             progress.report({ message: `${repo.name}: processing` });
             if (!repo.path || repo.path.trim() === '') {
                 return {
@@ -5504,34 +5513,49 @@ async function checkoutBranch(settings, branch) {
             }
             const preOk = await runCheckoutHookCommands(preCheckoutCommands, 'pre-checkout', repo.path, repo.name, progress);
             if (!preOk) {
+                checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline failed in pre-checkout t+${elapsed()}`);
                 return {
                     name: repo.name,
                     success: false,
                     message: `Pre-checkout hook(s) failed`
                 };
             }
+            checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: checkout start t+${elapsed()}`);
             const apiCheckoutSucceeded = await (0, gitService_1.checkoutBranchViaSourceControl)(repo.path, branch);
             let checkoutSucceededForRepo = false;
             let checkoutMessage = '';
+            let usedCliFallback = false;
             if (!apiCheckoutSucceeded) {
+                usedCliFallback = true;
+                checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: git API checkout unavailable, using CLI fallback t+${elapsed()}`);
                 try {
                     await new Promise((resolve, reject) => {
-                        (0, child_process_1.exec)(`git checkout ${branch}`, { cwd: repo.path }, (err, _stdout, stderr) => {
-                            if (stderr && stderr.includes(`Already on '${branch}'`)) {
+                        const child = (0, child_process_1.spawn)('git', ['checkout', branch], {
+                            cwd: repo.path,
+                            stdio: ['ignore', 'ignore', 'pipe']
+                        });
+                        let stderr = '';
+                        child.stderr?.on('data', chunk => {
+                            stderr += chunk.toString();
+                        });
+                        child.on('error', error => {
+                            checkoutSucceededForRepo = false;
+                            checkoutMessage = error.message;
+                            reject(error);
+                        });
+                        child.on('close', code => {
+                            const details = stderr.trim();
+                            if (code === 0 || details.includes(`Already on '${branch}'`)) {
                                 checkoutSucceededForRepo = true;
-                                checkoutMessage = `Already on branch: ${branch}`;
+                                checkoutMessage = details.includes(`Already on '${branch}'`)
+                                    ? `Already on branch: ${branch}`
+                                    : `Switched to branch: ${branch}`;
                                 resolve();
                                 return;
                             }
-                            if (err || (stderr && !stderr.includes('Switched to branch'))) {
-                                checkoutSucceededForRepo = false;
-                                checkoutMessage = stderr || err?.message || 'Unknown error';
-                                reject(new Error(`Failed to checkout branch ${branch} in ${repo.name}`));
-                                return;
-                            }
-                            checkoutSucceededForRepo = true;
-                            checkoutMessage = `Switched to branch: ${branch}`;
-                            resolve();
+                            checkoutSucceededForRepo = false;
+                            checkoutMessage = details || `git checkout exited with code ${code ?? 'unknown'}`;
+                            reject(new Error(checkoutMessage));
                         });
                     });
                 }
@@ -5549,13 +5573,23 @@ async function checkoutBranch(settings, branch) {
             }
             if (checkoutSucceededForRepo) {
                 (0, runtimeCache_1.invalidateGitBranchCache)(repo.path);
+                if (usedCliFallback) {
+                    try {
+                        await vscode.commands.executeCommand('git.refresh');
+                    }
+                    catch {
+                        // Best-effort SCM refresh after external checkout.
+                    }
+                }
                 const postOk = await runCheckoutHookCommands(postCheckoutCommands, 'post-checkout', repo.path, repo.name, progress);
+                checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline ${postOk ? 'complete' : 'complete-with-post-failure'} t+${elapsed()}`);
                 return {
                     name: repo.name,
                     success: postOk,
                     message: postOk ? checkoutMessage : `${checkoutMessage} (but post-checkout hook(s) failed)`
                 };
             }
+            checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline failed during checkout t+${elapsed()}`);
             return {
                 name: repo.name,
                 success: false,
