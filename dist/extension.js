@@ -150,6 +150,19 @@ function getTreeItemDetail(item) {
     }
     return undefined;
 }
+function getDatabaseNameFromContext(arg) {
+    const database = arg?.database ?? arg;
+    if (!database || typeof database !== 'object') {
+        return undefined;
+    }
+    const candidates = [
+        typeof database.id === 'string' ? database.id.trim() : '',
+        typeof database.internalName === 'string' ? database.internalName.trim() : '',
+        typeof database.name === 'string' ? database.name.trim() : '',
+        typeof database.displayName === 'string' ? database.displayName.trim() : ''
+    ].filter(Boolean);
+    return candidates[0];
+}
 async function quickSearchTreeItems(items, options) {
     if (!items.length) {
         (0, utils_1.showInfo)(options.emptyMessage);
@@ -753,6 +766,15 @@ async function activate(context) {
             (0, utils_1.showError)(`Failed to select database: ${err.message}`);
             console.error('Error in database selection:', err);
         }
+    }));
+    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.copyName', async (event) => {
+        const dbName = getDatabaseNameFromContext(event);
+        if (!dbName) {
+            (0, utils_1.showInfo)('Select a database first.');
+            return;
+        }
+        await vscode.env.clipboard.writeText(dbName);
+        vscode.window.setStatusBarMessage('Copied database name', 2000);
     }));
     extensionDisposables.push(vscode.commands.registerCommand('dbSelector.delete', async (event) => {
         try {
@@ -1575,6 +1597,9 @@ async function activate(context) {
     // Start Server and Start Shell commands for versions panel
     extensionDisposables.push(vscode.commands.registerCommand('odoo.startServer', async () => {
         await (0, debugger_1.startDebugServer)();
+    }));
+    extensionDisposables.push(vscode.commands.registerCommand('odoo.copyServerCommand', async () => {
+        await (0, debugger_1.copyDebugServerCommand)();
     }));
     extensionDisposables.push(vscode.commands.registerCommand('odoo.startShell', async () => {
         await (0, debugger_1.startDebugShell)();
@@ -12342,6 +12367,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.setupDebugger = setupDebugger;
 exports.startDebugShell = startDebugShell;
+exports.copyDebugServerCommand = copyDebugServerCommand;
 exports.startDebugServer = startDebugServer;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(5));
@@ -12663,12 +12689,9 @@ async function startDebugShell() {
     // Get settings from active version instead of legacy settings
     const versionsService = versionsService_1.VersionsService.getInstance();
     const workspaceSettings = await versionsService.getActiveVersionSettings();
-    // Normalize paths for terminal commands
-    const normalizedOdooPath = (0, utils_1.normalizePath)(workspaceSettings.odooPath);
-    const normalizedPythonPath = (0, utils_1.normalizePath)(workspaceSettings.pythonPath);
-    let args;
+    let fullCommand;
     try {
-        args = await prepareArgs(project, workspaceSettings, true);
+        fullCommand = await buildDebugCommand(project, workspaceSettings, true);
     }
     catch (error) {
         if (error instanceof Error) {
@@ -12684,12 +12707,6 @@ async function startDebugShell() {
         }
         return undefined;
     }
-    const odooBinPath = `${normalizedOdooPath}/odoo-bin`;
-    const fullCommand = [
-        quoteShellArg(normalizedPythonPath),
-        quoteShellArg(odooBinPath),
-        ...args.map(quoteShellArg)
-    ].join(' ');
     const terminal = vscode.window.createTerminal({
         name: 'Odoo Shell',
         cwd: workspacePath,
@@ -12704,6 +12721,50 @@ function quoteShellArg(value) {
     }
     const escapedValue = value.replaceAll("'", String.raw `'\''`);
     return `'${escapedValue}'`;
+}
+async function buildDebugCommand(project, settings, isShell = false) {
+    const normalizedOdooPath = (0, utils_1.normalizePath)(settings.odooPath);
+    const normalizedPythonPath = (0, utils_1.normalizePath)(settings.pythonPath);
+    const args = await prepareArgs(project, settings, isShell);
+    const odooBinPath = `${normalizedOdooPath}/odoo-bin`;
+    return [
+        quoteShellArg(normalizedPythonPath),
+        quoteShellArg(odooBinPath),
+        ...args.map(quoteShellArg)
+    ].join(' ');
+}
+async function copyDebugServerCommand() {
+    const workspacePath = (0, utils_1.getWorkspacePath)();
+    if (!workspacePath) {
+        return undefined;
+    }
+    const result = await settingsStore_1.SettingsStore.getSelectedProject();
+    if (!result) {
+        return undefined;
+    }
+    const { project } = result;
+    const versionsService = versionsService_1.VersionsService.getInstance();
+    const workspaceSettings = await versionsService.getActiveVersionSettings();
+    let fullCommand;
+    try {
+        fullCommand = await buildDebugCommand(project, workspaceSettings);
+    }
+    catch (error) {
+        if (error instanceof Error) {
+            if (error.message === 'Select a database before running this action.') {
+                (0, utils_1.showInfo)('Select a database before copying the server command.');
+            }
+            else {
+                (0, utils_1.showError)(error.message);
+            }
+        }
+        else {
+            (0, utils_1.showError)('Could not prepare server command.');
+        }
+        return undefined;
+    }
+    await vscode.env.clipboard.writeText(fullCommand);
+    vscode.window.setStatusBarMessage('Copied server command', 2000);
 }
 async function startDebugServer() {
     const workspaceFolders = vscode.workspace.workspaceFolders;

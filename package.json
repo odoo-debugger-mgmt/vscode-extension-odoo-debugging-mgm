@@ -345,6 +345,11 @@
         "icon": "$(versions)"
       },
       {
+        "command": "dbSelector.copyName",
+        "title": "Copy Database Name",
+        "icon": "$(copy)"
+      },
+      {
         "command": "dbSelector.configureRepoBranches",
         "title": "Configure Project Repo Branches",
         "icon": "$(git-branch)"
@@ -520,6 +525,11 @@
         "icon": "resources/icons/debug.svg"
       },
       {
+        "command": "odoo.copyServerCommand",
+        "title": "Copy Server Command",
+        "icon": "$(copy)"
+      },
+      {
         "command": "odoo.startShell",
         "title": "Start Shell",
         "icon": "resources/icons/shell.svg"
@@ -616,6 +626,11 @@
           "command": "odoo.startServer",
           "when": "view == projectSelector",
           "group": "navigation@5"
+        },
+        {
+          "command": "odoo.copyServerCommand",
+          "when": "view == projectSelector",
+          "group": "navigation@5.5"
         },
         {
           "command": "odoo.startShell",
@@ -808,6 +823,11 @@
           "when": "view == dbSelector && viewItem == database",
           "command": "dbSelector.changeVersion",
           "group": "database@3"
+        },
+        {
+          "when": "view == dbSelector && viewItem == database",
+          "command": "dbSelector.copyName",
+          "group": "database@3.5"
         },
         {
           "when": "view == dbSelector && viewItem == database",

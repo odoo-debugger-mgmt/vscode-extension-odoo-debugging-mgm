@@ -371,13 +371,9 @@ export async function startDebugShell(): Promise<void> {
     // Get settings from active version instead of legacy settings
     const versionsService = VersionsService.getInstance();
     const workspaceSettings = await versionsService.getActiveVersionSettings();
-    // Normalize paths for terminal commands
-    const normalizedOdooPath = normalizePath(workspaceSettings.odooPath);
-    const normalizedPythonPath = normalizePath(workspaceSettings.pythonPath);
-
-    let args: string[];
+    let fullCommand: string;
     try {
-        args = await prepareArgs(project, workspaceSettings, true);
+        fullCommand = await buildDebugCommand(project, workspaceSettings, true);
     } catch (error) {
         if (error instanceof Error) {
             if (error.message === 'Select a database before running this action.') {
@@ -390,13 +386,7 @@ export async function startDebugShell(): Promise<void> {
         }
         return undefined;
     }
-    const odooBinPath = `${normalizedOdooPath}/odoo-bin`;
 
-    const fullCommand = [
-        quoteShellArg(normalizedPythonPath),
-        quoteShellArg(odooBinPath),
-        ...args.map(quoteShellArg)
-    ].join(' ');
     const terminal = vscode.window.createTerminal({
         name: 'Odoo Shell',
         cwd: workspacePath,
@@ -412,6 +402,52 @@ function quoteShellArg(value: string): string {
     }
     const escapedValue = value.replaceAll("'", String.raw`'\''`);
     return `'${escapedValue}'`;
+}
+
+async function buildDebugCommand(project: ProjectModel, settings: SettingsModel, isShell = false): Promise<string> {
+    const normalizedOdooPath = normalizePath(settings.odooPath);
+    const normalizedPythonPath = normalizePath(settings.pythonPath);
+    const args = await prepareArgs(project, settings, isShell);
+    const odooBinPath = `${normalizedOdooPath}/odoo-bin`;
+
+    return [
+        quoteShellArg(normalizedPythonPath),
+        quoteShellArg(odooBinPath),
+        ...args.map(quoteShellArg)
+    ].join(' ');
+}
+
+export async function copyDebugServerCommand(): Promise<void> {
+    const workspacePath = getWorkspacePath();
+    if (!workspacePath) {
+        return undefined;
+    }
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
+        return undefined;
+    }
+    const { project } = result;
+    const versionsService = VersionsService.getInstance();
+    const workspaceSettings = await versionsService.getActiveVersionSettings();
+
+    let fullCommand: string;
+    try {
+        fullCommand = await buildDebugCommand(project, workspaceSettings);
+    } catch (error) {
+        if (error instanceof Error) {
+            if (error.message === 'Select a database before running this action.') {
+                showInfo('Select a database before copying the server command.');
+            } else {
+                showError(error.message);
+            }
+        } else {
+            showError('Could not prepare server command.');
+        }
+        return undefined;
+    }
+
+    await vscode.env.clipboard.writeText(fullCommand);
+    vscode.window.setStatusBarMessage('Copied server command', 2000);
 }
 
 export async function startDebugServer(): Promise<void> {

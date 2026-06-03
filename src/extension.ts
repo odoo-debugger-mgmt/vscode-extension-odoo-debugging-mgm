@@ -11,7 +11,7 @@ import { RepoTreeProvider, selectRepo } from './repos';
 import { ProjectReposProvider, revealProjectRepo } from './projectRepos';
 import { ModuleTreeProvider, selectModule, setModuleToInstall, setModuleToUpgrade, clearModuleState, togglePsaeInternalModule, updateAllModules, installAllModules, clearAllModuleSelections, updateInstalledModules, viewInstalledModules, createModuleFromScaffold } from './module';
 import { TestingTreeProvider, toggleTesting, toggleStopAfterInit, setTestFile, addTestTag, removeTestTag, cycleTestTagState, toggleLogLevel, setSpecificLogLevel } from './testing';
-import { setupDebugger, startDebugShell, startDebugServer } from './debugger';
+import { copyDebugServerCommand, setupDebugger, startDebugShell, startDebugServer } from './debugger';
 import { setupOdooBranch } from './odooInstaller';
 import { SettingsStore } from './settingsStore';
 import { VersionsTreeProvider } from './versionsTreeProvider';
@@ -125,6 +125,20 @@ function getTreeItemDetail(item: vscode.TreeItem): string | undefined {
         return stripMarkdownForQuickPick(item.tooltip.value);
     }
     return undefined;
+}
+
+function getDatabaseNameFromContext(arg: any): string | undefined {
+    const database = arg?.database ?? arg;
+    if (!database || typeof database !== 'object') {
+        return undefined;
+    }
+    const candidates = [
+        typeof database.id === 'string' ? database.id.trim() : '',
+        typeof database.internalName === 'string' ? database.internalName.trim() : '',
+        typeof database.name === 'string' ? database.name.trim() : '',
+        typeof database.displayName === 'string' ? database.displayName.trim() : ''
+    ].filter(Boolean);
+    return candidates[0];
 }
 
 async function quickSearchTreeItems(
@@ -802,6 +816,16 @@ export async function activate(context: vscode.ExtensionContext) {
             showError(`Failed to select database: ${err.message}`);
             console.error('Error in database selection:', err);
         }
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.copyName', async (event) => {
+        const dbName = getDatabaseNameFromContext(event);
+        if (!dbName) {
+            showInfo('Select a database first.');
+            return;
+        }
+        await vscode.env.clipboard.writeText(dbName);
+        vscode.window.setStatusBarMessage('Copied database name', 2000);
     }));
 
     extensionDisposables.push(vscode.commands.registerCommand('dbSelector.delete', async (event) => {
@@ -1731,6 +1755,10 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
     // Start Server and Start Shell commands for versions panel
     extensionDisposables.push(vscode.commands.registerCommand('odoo.startServer', async () => {
         await startDebugServer();
+    }));
+
+    extensionDisposables.push(vscode.commands.registerCommand('odoo.copyServerCommand', async () => {
+        await copyDebugServerCommand();
     }));
 
     extensionDisposables.push(vscode.commands.registerCommand('odoo.startShell', async () => {
