@@ -2,10 +2,12 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { normalizePath, showError, showInfo, showWarning, showAutoInfo, getGitBranches, getGitBranch } from './utils';
+import { normalizePath, showError, showInfo, showWarning, getGitBranches } from './utils';
 import { ProjectModel } from './models/project';
 import { DatabaseModel } from './models/db';
-import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb, changeDatabaseVersion, changeDatabaseProjectRepoBranches, manageDatabaseTemplates, checkoutBranch } from './dbs';
+import { DbsTreeProvider, createDb, selectDatabase, deleteDb, restoreDb, changeDatabaseVersion, changeDatabaseProjectRepoBranches, manageDatabaseTemplates } from './dbs';
+import { alignEnvironment, migrateLegacySwitchBehaviorSetting } from './services/environment';
+import { migrateDebuggerData } from './services/dataMigration';
 import { ProjectTreeProvider, createProject, selectProject, getRepo, getProjectName, deleteProject, editProjectSettings, duplicateProject, exportProject, importProject, quickProjectSearch, manageProjectTickets, openProjectTicket} from './project';
 import { RepoTreeProvider, selectRepo } from './repos';
 import { ProjectReposProvider, revealProjectRepo } from './projectRepos';
@@ -17,9 +19,6 @@ import { SettingsStore } from './settingsStore';
 import { VersionsTreeProvider } from './versionsTreeProvider';
 import { VersionsService } from './versionsService';
 import { updateTestingContext, updateActiveContext } from './context';
-import type { VersionSettings } from './models/version';
-import { VersionModel } from './models/version';
-import { SettingsModel } from './models/settings';
 import type { RepoModel } from './models/repo';
 import { getBranchesWithMetadata } from './services/gitService';
 import { SortPreferences } from './sortPreferences';
@@ -176,6 +175,14 @@ async function quickSearchTreeItems(
     );
 }
 
+function extractVersionIdFromArg(arg: any): string | undefined {
+    // Commands receive either a version id (direct call) or a tree item (context menu).
+    if (typeof arg === 'string') {
+        return arg;
+    }
+    return arg?.version?.id;
+}
+
 // Initialize testing context based on current project state
 async function initializeTestingContext(): Promise<void> {
     try {
@@ -189,84 +196,6 @@ async function initializeTestingContext(): Promise<void> {
         // If there's an error, default to testing disabled
         console.warn('Error initializing testing context:', error);
         updateTestingContext(false);
-    }
-}
-
-async function maybeSwitchBranchForActivatedVersion(version: VersionModel | undefined): Promise<void> {
-    if (!version) {
-        return;
-    }
-
-    const targetBranch = version.odooVersion;
-    if (!targetBranch) {
-        return;
-    }
-
-    const switchBehavior = vscode.workspace.getConfiguration('odooDebugger').get('databaseSwitchBehavior', 'ask') as string;
-    if (switchBehavior === 'auto-version-only') {
-        return;
-    }
-
-    const checkoutSettings = new SettingsModel(version.settings);
-    if (!checkoutSettings.odooPath || checkoutSettings.odooPath.trim() === '') {
-        return;
-    }
-
-    let currentBranch = await getGitBranch(checkoutSettings.odooPath);
-
-    const performCheckout = async (branch: string, context: 'auto' | 'manual') => {
-        if (!branch || !branch.trim()) {
-            return;
-        }
-
-        if (currentBranch === branch) {
-            const message = context === 'auto'
-                ? `Branch "${branch}" already active`
-                : `Branch "${branch}" already active`;
-            showAutoInfo(message, 2000);
-            return;
-        }
-
-        await checkoutBranch(checkoutSettings, branch);
-        currentBranch = branch;
-        const message = context === 'auto'
-            ? `Auto-switched to branch "${branch}" for version "${version.name}".`
-            : `Switched to branch "${branch}" for version "${version.name}".`;
-        showAutoInfo(message, 3000);
-    };
-
-    if (switchBehavior === 'auto-both' || switchBehavior === 'auto-branch-only') {
-        await performCheckout(targetBranch, 'auto');
-        return;
-    }
-
-    const metadata = await getBranchesWithMetadata(checkoutSettings.odooPath);
-    const branchRecord = metadata.find(entry => entry.name === targetBranch);
-    const branchTypeDescription = branchRecord
-        ? (branchRecord.type === 'remote' ? 'Remote branch' : 'Local branch')
-        : undefined;
-
-    const options: Array<{ label: string; description?: string; detail?: string; action: 'switch' | 'keep'; }> = [
-        {
-            label: `$(git-branch) Switch to ${targetBranch}`,
-            description: branchTypeDescription ?? 'Checkout the version branch for all repositories',
-            detail: currentBranch ? `Current branch: ${currentBranch}` : undefined,
-            action: 'switch'
-        },
-        {
-            label: '$(circle-slash) Keep current branch',
-            description: currentBranch ? `Stay on ${currentBranch}` : 'Do not change the working branch',
-            action: 'keep'
-        }
-    ];
-
-    const selection = await vscode.window.showQuickPick(options, {
-        placeHolder: `Version "${version.name}" specifies branch "${targetBranch}".`,
-        ignoreFocusOut: true
-    });
-
-    if (selection?.action === 'switch') {
-        await performCheckout(targetBranch, 'manual');
     }
 }
 
@@ -286,6 +215,11 @@ export async function activate(context: vscode.ExtensionContext) {
     await versionsService.migrateFromLegacySettings().catch(error => {
         console.warn('Settings migration failed (this is non-critical):', error);
     });
+
+    // One-time v1.2 migrations: fold legacy per-DB odooVersion into versions,
+    // and map old databaseSwitchBehavior values onto the new auto/ask/never enum.
+    await migrateDebuggerData();
+    void migrateLegacySwitchBehaviorSetting();
 
     const isWorkspaceOpen = !!vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0;
     updateActiveContext(isWorkspaceOpen);
@@ -964,209 +898,66 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
 
     extensionDisposables.push(vscode.commands.registerCommand('odoo.createVersion', async () => {
         try {
-            const name = await vscode.window.showInputBox({
-                placeHolder: 'Enter version name (e.g., "Odoo 19.0")',
-                prompt: 'Version name'
+            // Two prompts: branch, then name. Paths and ports come from the
+            // odooDebugger.defaultVersion.* settings and stay editable in the
+            // Versions tree after creation.
+            const activeSettings = await versionsService.getActiveVersionSettings();
+            const odooPath = activeSettings?.odooPath ? normalizePath(activeSettings.odooPath) : undefined;
+
+            type BranchPickItem = vscode.QuickPickItem & { action: 'branch' | 'manual'; branch?: string };
+            const branchItems: BranchPickItem[] = [];
+            if (odooPath && fs.existsSync(odooPath)) {
+                const metadata = await getBranchesWithMetadata(odooPath);
+                if (metadata.length > 0) {
+                    branchItems.push(...metadata.map(branch => ({
+                        label: branch.name,
+                        description: branch.type === 'remote' ? 'Remote branch' : 'Local branch',
+                        action: 'branch' as const,
+                        branch: branch.name
+                    })));
+                } else {
+                    const branches = await getGitBranches(odooPath);
+                    branchItems.push(...branches.map(branch => ({
+                        label: branch,
+                        action: 'branch' as const,
+                        branch
+                    })));
+                }
+            }
+            branchItems.push({
+                label: '$(pencil) Enter branch manually…',
+                description: 'e.g. "19.0", "saas-18.4", "master"',
+                action: 'manual'
             });
+
+            const branchPick = await vscode.window.showQuickPick(branchItems, {
+                title: 'Create Version',
+                placeHolder: 'Select the Odoo branch for this version',
+                ignoreFocusOut: true
+            });
+            if (!branchPick) { return; }
+
+            let odooVersion = branchPick.branch;
+            if (branchPick.action === 'manual') {
+                odooVersion = (await vscode.window.showInputBox({
+                    title: 'Create Version',
+                    placeHolder: 'Enter Odoo version/branch (e.g. "19.0", "saas-18.4", "master")',
+                    ignoreFocusOut: true,
+                    validateInput: value => value.trim() ? undefined : 'Branch is required.'
+                }))?.trim();
+            }
+            if (!odooVersion) { return; }
+
+            const name = (await vscode.window.showInputBox({
+                title: 'Create Version',
+                prompt: 'Version name',
+                value: `Odoo ${odooVersion}`,
+                ignoreFocusOut: true,
+                validateInput: value => value.trim() ? undefined : 'Name is required.'
+            }))?.trim();
             if (!name) { return; }
 
-            const activeSettings = await versionsService.getActiveVersionSettings();
-
-            const promptRepoPath = async (label: string, currentValue: string | undefined, required: boolean): Promise<string | undefined> => {
-                type RepoPathAction = 'current' | 'browse' | 'manual' | 'empty';
-                interface RepoPathQuickPickItem extends vscode.QuickPickItem {
-                    action: RepoPathAction;
-                    path?: string;
-                }
-
-                let current = currentValue?.trim();
-
-                while (true) {
-                    const items: RepoPathQuickPickItem[] = [];
-
-                    if (current && current.length > 0) {
-                        items.push({
-                            label: current,
-                            description: 'Use the current path',
-                            action: 'current',
-                            path: current
-                        });
-                    }
-
-                    items.push({
-                        label: 'Browse for folder…',
-                        description: `Select the ${label}`,
-                        action: 'browse'
-                    });
-
-                    items.push({
-                        label: 'Enter path manually…',
-                        description: 'Type the repository path',
-                        action: 'manual'
-                    });
-
-                    if (!required) {
-                        items.push({
-                            label: 'Leave empty',
-                            description: 'Skip this repository',
-                            action: 'empty'
-                        });
-                    }
-
-                    const selection = await vscode.window.showQuickPick(items, {
-                        title: 'Create Version',
-                        placeHolder: `How would you like to set the ${label.toLowerCase()}?`,
-                        ignoreFocusOut: true
-                    });
-
-                    if (!selection) {
-                        return undefined;
-                    }
-
-                    switch (selection.action) {
-                        case 'current':
-                            return selection.path;
-                        case 'empty':
-                            return '';
-                        case 'browse': {
-                            const defaultUriCandidates: vscode.Uri[] = [];
-                            if (current) {
-                                try {
-                                    const normalized = normalizePath(current);
-                                    if (fs.existsSync(normalized)) {
-                                        defaultUriCandidates.push(vscode.Uri.file(normalized));
-                                    }
-                                } catch { /* ignore */ }
-                            }
-                            const workspaceUri = vscode.workspace.workspaceFolders?.[0]?.uri;
-                            if (workspaceUri) {
-                                defaultUriCandidates.push(workspaceUri);
-                            }
-
-                            const dialogResult = await vscode.window.showOpenDialog({
-                                title: `Select ${label}`,
-                                canSelectMany: false,
-                                canSelectFiles: false,
-                                canSelectFolders: true,
-                                defaultUri: defaultUriCandidates[0],
-                                openLabel: 'Select'
-                            });
-
-                            if (!dialogResult || dialogResult.length === 0) {
-                                continue;
-                            }
-
-                            const selectedPath = dialogResult[0].fsPath;
-                            current = selectedPath;
-                            return selectedPath;
-                        }
-                        case 'manual': {
-                            const manualValue = await vscode.window.showInputBox({
-                                title: 'Create Version',
-                                prompt: `Enter the path to the ${label}.`,
-                                value: current ?? '',
-                                ignoreFocusOut: true,
-                                validateInput: value => {
-                                    if (!required) {
-                                        return undefined;
-                                    }
-                                    return value && value.trim().length > 0 ? undefined : `${label} is required.`;
-                                }
-                            });
-
-                            if (manualValue === undefined) {
-                                continue;
-                            }
-
-                            const trimmed = manualValue.trim();
-                            if (!required && trimmed.length === 0) {
-                                return '';
-                            }
-
-                            if (trimmed.length === 0) {
-                                continue;
-                            }
-
-                            current = trimmed;
-                            return trimmed;
-                        }
-                    }
-                }
-            };
-
-            const odooPathInput = await promptRepoPath('Odoo repository', activeSettings?.odooPath, true);
-            if (odooPathInput === undefined) { return; }
-            const odooPath = odooPathInput.trim();
-            const normalizedOdooPath = normalizePath(odooPath);
-
-            const enterprisePathInput = await promptRepoPath('Enterprise repository (optional)', activeSettings?.enterprisePath, false);
-            if (enterprisePathInput === undefined) { return; }
-            const enterprisePath = enterprisePathInput.trim();
-
-            const designThemesPathInput = await promptRepoPath('Design Themes repository (optional)', activeSettings?.designThemesPath, false);
-            if (designThemesPathInput === undefined) { return; }
-            const designThemesPath = designThemesPathInput.trim();
-
-            let odooVersion: string | undefined;
-            let branches: string[] = [];
-
-            const branchMetadata = await getBranchesWithMetadata(normalizedOdooPath);
-            if (branchMetadata.length > 0) {
-                branches = branchMetadata.map(branch => branch.name);
-                const branchQuickPickItems = branchMetadata.map(branch => ({
-                    label: branch.name,
-                    description: branch.type === 'remote' ? 'Remote branch' : 'Local branch'
-                }));
-
-                const selectedBranch = await vscode.window.showQuickPick(branchQuickPickItems, {
-                    placeHolder: 'Select Odoo version/branch',
-                    title: 'Choose from available Git branches'
-                });
-                odooVersion = selectedBranch?.label;
-            } else {
-                branches = await getGitBranches(odooPath);
-                if (branches.length > 0) {
-                    const selectedBranch = await vscode.window.showQuickPick(branches, {
-                        placeHolder: 'Select Odoo version/branch',
-                        title: 'Choose from available Git branches'
-                    });
-                    odooVersion = selectedBranch ?? undefined;
-                }
-            }
-
-            if (!odooVersion) {
-                const noBranchMessage = fs.existsSync(normalizedOdooPath)
-                    ? `No Git branches found in Odoo path: ${odooPath}. Enter the branch manually?`
-                    : `The path "${odooPath}" does not exist. Enter the branch manually?`;
-
-                const fallbackAction = await showWarning(
-                    noBranchMessage,
-                    'Enter Manually',
-                    'Cancel'
-                );
-
-                if (fallbackAction !== 'Enter Manually') {
-                    return;
-                }
-
-                odooVersion = await vscode.window.showInputBox({
-                    placeHolder: 'Enter Odoo version/branch (e.g., "19.0", "saas-18.4", "master")',
-                    prompt: 'Odoo version/branch',
-                    value: branches[0] ?? ''
-                }) ?? undefined;
-
-                if (!odooVersion) { return; }
-            }
-
-            const settingsOverrides: Partial<VersionSettings> = { odooPath };
-            if (enterprisePath) {
-                settingsOverrides.enterprisePath = enterprisePath;
-            }
-            if (designThemesPath) {
-                settingsOverrides.designThemesPath = designThemesPath;
-            }
-
-            const version = await versionsService.createVersion(name, odooVersion, settingsOverrides);
+            const version = await versionsService.createVersion(name, odooVersion);
             await refreshAll({ reason: 'ui' });
 
             const action = await vscode.window.showInformationMessage(
@@ -1188,16 +979,8 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
 
     extensionDisposables.push(vscode.commands.registerCommand('odoo.changeBranch', async (versionIdOrTreeItem?: any) => {
         try {
-            let versionId: string;
-
-            // Handle both direct calls and context menu calls
-            if (typeof versionIdOrTreeItem === 'string') {
-                // Direct command call with version ID
-                versionId = versionIdOrTreeItem;
-            } else if (versionIdOrTreeItem?.version?.id) {
-                // Context menu call - extract ID from tree item
-                versionId = versionIdOrTreeItem.version.id;
-            } else {
+            const versionId = extractVersionIdFromArg(versionIdOrTreeItem);
+            if (!versionId) {
                 showError('Select a version before continuing.');
                 return;
             }
@@ -1274,16 +1057,8 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
 
     extensionDisposables.push(vscode.commands.registerCommand('odoo.setActiveVersion', async (versionIdOrTreeItem?: any) => {
         try {
-            let versionId: string;
-
-            // Handle both direct calls and context menu calls
-            if (typeof versionIdOrTreeItem === 'string') {
-                // Direct command call with version ID
-                versionId = versionIdOrTreeItem;
-            } else if (versionIdOrTreeItem?.version?.id) {
-                // Context menu call - extract ID from tree item
-                versionId = versionIdOrTreeItem.version.id;
-            } else {
+            let versionId = extractVersionIdFromArg(versionIdOrTreeItem);
+            if (!versionId) {
                 // No version provided - show version picker
                 const versions = versionsService.getVersions();
                 const items = versions.map(v => ({
@@ -1307,7 +1082,11 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
             if (success) {
                 const version = versionsService.getVersion(versionId);
                 showInfo(`Activated version: ${version?.name}`);
-                await maybeSwitchBranchForActivatedVersion(version);
+                if (version) {
+                    // Align the core repos to the version's branch through the
+                    // shared switch pipeline (honors databaseSwitchBehavior).
+                    await alignEnvironment({ versionId: version.id }, { label: `Version "${version.name}"` });
+                }
                 await refreshAll(); // Refresh all views to reflect new active version
             } else {
                 showError('Unable to activate the selected version.');
@@ -1457,16 +1236,8 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
 
     extensionDisposables.push(vscode.commands.registerCommand('odoo.cloneVersion', async (versionIdOrTreeItem?: any) => {
         try {
-            let versionId: string;
-
-            // Handle both direct calls and context menu calls
-            if (typeof versionIdOrTreeItem === 'string') {
-                // Direct command call with version ID
-                versionId = versionIdOrTreeItem;
-            } else if (versionIdOrTreeItem?.version?.id) {
-                // Context menu call - extract ID from tree item
-                versionId = versionIdOrTreeItem.version.id;
-            } else {
+            let versionId = extractVersionIdFromArg(versionIdOrTreeItem);
+            if (!versionId) {
                 // No version provided - show version picker
                 const versions = versionsService.getVersions();
                 const items = versions.map(v => ({
@@ -1506,16 +1277,8 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
 
     extensionDisposables.push(vscode.commands.registerCommand('odoo.deleteVersion', async (versionIdOrTreeItem?: any) => {
         try {
-            let versionId: string;
-
-            // Handle both direct calls and context menu calls
-            if (typeof versionIdOrTreeItem === 'string') {
-                // Direct command call with version ID
-                versionId = versionIdOrTreeItem;
-            } else if (versionIdOrTreeItem?.version?.id) {
-                // Context menu call - extract ID from tree item
-                versionId = versionIdOrTreeItem.version.id;
-            } else {
+            let versionId = extractVersionIdFromArg(versionIdOrTreeItem);
+            if (!versionId) {
                 // No version provided - show version picker
                 const versions = versionsService.getVersions();
                 const items = versions.filter(v => !v.isActive).map(v => ({
@@ -1618,16 +1381,8 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
 
     extensionDisposables.push(vscode.commands.registerCommand('odoo.setAllSettingsToDefault', async (versionTreeItem?: any) => {
         try {
-            let versionId: string;
-
-            // Handle both direct calls and context menu calls
-            if (typeof versionTreeItem === 'string') {
-                // Direct command call with version ID
-                versionId = versionTreeItem;
-            } else if (versionTreeItem?.version?.id) {
-                // Context menu call - extract ID from tree item
-                versionId = versionTreeItem.version.id;
-            } else {
+            const versionId = extractVersionIdFromArg(versionTreeItem);
+            if (!versionId) {
                 showError('Select a version before continuing.');
                 return;
             }
@@ -1658,16 +1413,8 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
 
     extensionDisposables.push(vscode.commands.registerCommand('odoo.setAllSettingsAsDefault', async (versionTreeItem?: any) => {
         try {
-            let versionId: string;
-
-            // Handle both direct calls and context menu calls
-            if (typeof versionTreeItem === 'string') {
-                // Direct command call with version ID
-                versionId = versionTreeItem;
-            } else if (versionTreeItem?.version?.id) {
-                // Context menu call - extract ID from tree item
-                versionId = versionTreeItem.version.id;
-            } else {
+            const versionId = extractVersionIdFromArg(versionTreeItem);
+            if (!versionId) {
                 showError('Select a version before continuing.');
                 return;
             }

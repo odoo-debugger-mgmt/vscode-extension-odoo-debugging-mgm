@@ -25,7 +25,10 @@ All-in-one VS Code extension for managing and debugging Odoo projects: projects,
       - `odooDebugger.defaultVersion.pythonPath`
       - `odooDebugger.defaultVersion.dumpsFolder`
    2. Database switch behavior (`odooDebugger.databaseSwitchBehavior`)
-      Controls what happens when you select a DB that is linked to a different version/branch.
+      Controls what happens when you select a DB that is linked to a different version/branch:
+      - `auto` (default): silently align the active version and git branches to the database
+      - `ask`: show a notification asking whether to align
+      - `never`: never switch automatically
    3. Pre & Post auto-checkout commands
 
       - `odooDebugger.defaultVersion.preCheckoutCommands`
@@ -79,9 +82,9 @@ All-in-one VS Code extension for managing and debugging Odoo projects: projects,
 
    - Already done in the project creation step
    - A project can have multiple different databases
-   - Choose **Fresh** for a clean DB (optionally install selected modules).
-   - Choose **From Dump** to restore from a `dump.sql` folder or a `.zip` dump archive.
-   - If the DB is linked to a version, selecting it may also switch version/branch depending on `odooDebugger.databaseSwitchBehavior`.'
+   - Choose **Fresh** for a clean DB, **From Dump** to restore from a `dump.sql` folder / `.zip` / `.sql.gz` archive, **From Template** to clone a saved template, or **Connect to Existing** to pick one of your live PostgreSQL databases.
+   - The database's Odoo version is detected automatically (from the restored data) and linked to the matching version profile; the current branch of each project repo is captured as the database's working state.
+   - Selecting a database aligns the active version and git branches to it, depending on `odooDebugger.databaseSwitchBehavior`.
 
     ![Database Creation](resources/assets/database-creation.gif)
 
@@ -155,13 +158,12 @@ This extension contributes views in the Activity Bar and Explorer:
 
 ### Databases
 
-- Create databases (fresh, from dump, or connect to existing).
-- Restore DBs from a dump source (folder or `.zip`).
-- If a DB is linked to a version, selecting it can switch behavior based on `odooDebugger.databaseSwitchBehavior`:
-  - `ask`
-  - `auto-both`
-  - `auto-version-only`
-  - `auto-branch-only`
+- Create databases (fresh, from dump, from template, or connect to existing).
+- Restore DBs from a dump source (folder, `.zip`, `.sql`, or `.sql.gz`).
+- A database carries its full environment: a linked version profile plus per-repo branch assignments. Selecting it aligns your workspace based on `odooDebugger.databaseSwitchBehavior`:
+  - `auto` (default): align silently
+  - `ask`: one notification with Switch / Keep Current
+  - `never`: selection only
 
 ### Modules
 

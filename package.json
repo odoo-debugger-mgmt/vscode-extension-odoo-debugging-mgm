@@ -180,26 +180,6 @@
         "category": "Odoo DevTools"
       },
       {
-        "command": "deleteFile",
-        "title": "Delete",
-        "category": "Explorer"
-      },
-      {
-        "command": "renameFile",
-        "title": "Rename",
-        "category": "Explorer"
-      },
-      {
-        "command": "explorer.newFile",
-        "title": "New File",
-        "category": "Explorer"
-      },
-      {
-        "command": "explorer.newFolder",
-        "title": "New Folder",
-        "category": "Explorer"
-      },
-      {
         "command": "proj.openProjectWorkspace",
         "title": "Open Project Workspace",
         "category": "Odoo DevTools",
@@ -348,11 +328,6 @@
         "command": "dbSelector.configureRepoBranches",
         "title": "Configure Project Repo Branches",
         "icon": "$(git-branch)"
-      },
-      {
-        "command": "dbSelector.getDb",
-        "title": "Get Database",
-        "icon": "resources/icons/download.svg"
       },
       {
         "command": "dbSelector.refresh",
@@ -900,16 +875,6 @@
           "group": "navigation@8"
         },
         {
-          "command": "explorer.newFile",
-          "when": "view == projectRepos && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
-          "group": "navigation@9"
-        },
-        {
-          "command": "explorer.newFolder",
-          "when": "view == projectRepos && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
-          "group": "navigation@10"
-        },
-        {
           "command": "odt.projectReposExplorer.newFile",
           "when": "view == odt.projectReposExplorer && viewItem == projectRepoFolder",
           "group": "inline"
@@ -1146,20 +1111,18 @@
         },
         "odooDebugger.databaseSwitchBehavior": {
           "type": "string",
-          "default": "ask",
+          "default": "auto",
           "enum": [
+            "auto",
             "ask",
-            "auto-both",
-            "auto-version-only",
-            "auto-branch-only"
+            "never"
           ],
           "enumDescriptions": [
-            "Always ask what to do when selecting a database",
-            "Automatically switch both version settings and git branches",
-            "Automatically switch version settings only (no branch switching)",
-            "Automatically switch git branches only (no version switching)"
+            "Automatically align the active version and git branches when selecting a database",
+            "Show a notification asking whether to align when selecting a database",
+            "Never switch versions or branches automatically"
           ],
-          "description": "Controls what happens automatically when selecting a database with a different version"
+          "description": "What happens to the active version and git branches when you select a database. Legacy values (auto-both, auto-version-only, auto-branch-only) are migrated to \"auto\"."
         },
         "odooDebugger.search.maxDepth": {
           "type": "number",
@@ -1237,9 +1200,7 @@
     "webpack-cli": "^6.0.1"
   },
   "dependencies": {
-    "install": "^0.13.0",
-    "jsonc-parser": "^3.3.1",
-    "npm": "^11.5.2"
+    "jsonc-parser": "^3.3.1"
   },
   "files": [
     "dist/extension.js",

@@ -3,11 +3,11 @@ import * as os from 'os';
 import { ProjectModel, ProjectTicketModel } from './models/project';
 import { DatabaseModel } from './models/db';
 import { RepoModel } from './models/repo';
-import { findRepositories, showError, showInfo, getGitBranch, normalizePath, showAutoInfo, addActiveIndicator, stripSettings, getDatabaseLabel } from './utils';
+import { findRepositories, showError, showInfo, normalizePath, showAutoInfo, addActiveIndicator, stripSettings, getDatabaseLabel } from './utils';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import { randomUUID } from 'crypto';
-import { checkoutBranch, applyProjectRepoBranchAssignments } from './dbs';
+import { alignEnvironment, buildDatabaseEnvironmentTarget } from './services/environment';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 
@@ -172,27 +172,8 @@ export async function createProject(name: string, repos: RepoModel[], db?: Datab
     // Save the entire updated data
     await SettingsStore.saveWithoutComments(stripSettings(data));
 
-    // If the project has a database with a version, check if branches need switching
-    if (db && db.odooVersion && db.odooVersion !== '') {
-        // Get settings from active version
-        const versionsService = VersionsService.getInstance();
-        const settings = await versionsService.getActiveVersionSettings();
-
-        const currentOdooBranch = await getGitBranch(settings.odooPath);
-        const currentEnterpriseBranch = await getGitBranch(settings.enterprisePath);
-        const currentDesignThemesBranch = await getGitBranch(settings.designThemesPath ?? './design-themes');
-
-        const shouldSwitch = await promptBranchSwitch(db.odooVersion, {
-            odoo: currentOdooBranch,
-            enterprise: currentEnterpriseBranch,
-            designThemes: currentDesignThemesBranch
-        });
-
-        if (shouldSwitch) {
-            await checkoutBranch(settings, db.odooVersion);
-        }
-    }
-
+    // Environment alignment happens when the database is selected right after
+    // creation, so no branch switching is needed here.
     const databaseMessage = db ? ` and database ${getDatabaseLabel(db)}` : '';
     showAutoInfo(`Created project "${project.name}" with ${repos.length} repositories${databaseMessage}`, 4000);    // Force a small delay to ensure data is persisted before refresh
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -237,34 +218,6 @@ async function ensureProjectUIDs(data: any): Promise<boolean> {
     return needsSave;
 }
 
-async function promptBranchSwitch(targetVersion: string, currentBranches: {odoo: string | null, enterprise: string | null, designThemes: string | null}): Promise<boolean> {
-    const mismatchedRepos = [];
-    if (currentBranches.odoo !== targetVersion) {
-        mismatchedRepos.push(`Odoo (currently: ${currentBranches.odoo || 'unknown'})`);
-    }
-    if (currentBranches.enterprise !== targetVersion) {
-        mismatchedRepos.push(`Enterprise (currently: ${currentBranches.enterprise || 'unknown'})`);
-    }
-    if (currentBranches.designThemes !== targetVersion) {
-        mismatchedRepos.push(`Design Themes (currently: ${currentBranches.designThemes || 'unknown'})`);
-    }
-
-    if (mismatchedRepos.length === 0) {
-        return false; // No switch needed
-    }
-
-    const message = `Database requires Odoo version ${targetVersion}, but the following repositories are on different branches:\n\n${mismatchedRepos.join('\n')}\n\nWould you like to switch all repositories to version ${targetVersion}?`;
-
-    const choice = await vscode.window.showWarningMessage(
-        message,
-        { modal: false },
-        'Switch Branches',
-        'Keep Current Branches'
-    );
-
-    return choice === 'Switch Branches';
-}
-
 export async function selectProject(projectUid: string) {
     const data = await SettingsStore.get('odoo-debugger-data.json');
     const projects: ProjectModel[] = data.projects;
@@ -294,10 +247,13 @@ export async function selectProject(projectUid: string) {
         // Get the newly selected project
         const selectedProject = projects[newSelectedIndex];
 
-        // Check if the project has a selected database with a specific version
+        // Align the workbench to the project's selected database, if any.
         const selectedDb = selectedProject.dbs?.find((db: DatabaseModel) => db.isSelected);
         if (selectedDb) {
-            await handleDatabaseVersionSwitchForProject(selectedDb, selectedProject.repos ?? []);
+            await alignEnvironment(
+                buildDatabaseEnvironmentTarget(selectedDb, selectedProject.repos ?? []),
+                { label: `Project "${selectedProject.name}"` }
+            );
         }
 
         showInfo(`Project switched to: ${selectedProject.name}`);
@@ -307,57 +263,6 @@ export async function selectProject(projectUid: string) {
     } else {
         showError('The selected project could not be found.');
     }
-}
-
-async function handleDatabaseVersionSwitchForProject(database: DatabaseModel, projectRepos: RepoModel[]): Promise<void> {
-    const versionsService = VersionsService.getInstance();
-    await versionsService.initialize();
-    const settings = await versionsService.getActiveVersionSettings();
-
-    // Check if database has a version associated with it
-    if (database.versionId) {
-        const dbVersion = versionsService.getVersion(database.versionId);
-        if (dbVersion) {
-            // Silently activate the version for project switching (no user prompt)
-            await versionsService.setActiveVersion(dbVersion.id);
-
-            const currentOdooBranch = await getGitBranch(settings.odooPath);
-
-            // Check if branch switching is needed
-            if (currentOdooBranch !== dbVersion.odooVersion) {
-                const shouldSwitch = await promptBranchSwitch(dbVersion.odooVersion, {
-                    odoo: currentOdooBranch,
-                    enterprise: await getGitBranch(settings.enterprisePath),
-                    designThemes: await getGitBranch(settings.designThemesPath ?? './design-themes')
-                });
-
-                if (shouldSwitch) {
-                    await checkoutBranch(settings, dbVersion.odooVersion);
-                }
-            }
-            await applyProjectRepoBranchAssignments(database, projectRepos);
-            return;
-        }
-    }
-
-    // Fallback to old behavior for databases without version
-    if (database.odooVersion && database.odooVersion !== '') {
-        const currentOdooBranch = await getGitBranch(settings.odooPath);
-        const currentEnterpriseBranch = await getGitBranch(settings.enterprisePath);
-        const currentDesignThemesBranch = await getGitBranch(settings.designThemesPath ?? './design-themes');
-
-        const shouldSwitch = await promptBranchSwitch(database.odooVersion, {
-            odoo: currentOdooBranch,
-            enterprise: currentEnterpriseBranch,
-            designThemes: currentDesignThemesBranch
-        });
-
-        if (shouldSwitch) {
-            await checkoutBranch(settings, database.odooVersion);
-        }
-    }
-
-    await applyProjectRepoBranchAssignments(database, projectRepos);
 }
 
 export async function getRepo(targetPath:string, searchFilter?: string): Promise<RepoModel[] > {

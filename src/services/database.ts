@@ -26,6 +26,12 @@ const TABLE_EXISTS_QUERY = `
     );
 `.trim();
 
+const BASE_MODULE_VERSION_QUERY = `
+    SELECT latest_version
+    FROM ir_module_module
+    WHERE name = 'base';
+`.trim();
+
 function validateDatabaseName(dbName: string): void {
     // Basic sanity check to avoid shell injection when invoking psql
     if (!/^[\w\-.:]+$/.test(dbName)) {
@@ -150,4 +156,38 @@ export async function getInstalledModuleNames(dbName: string): Promise<Set<strin
 
 export function clearInstalledModuleCache(dbName?: string): void {
     invalidateInstalledModulesCache(dbName);
+}
+
+/**
+ * Extracts the Odoo series (branch name) from a base module version string:
+ * "17.0.1.3" -> "17.0", "saas~17.4.1.2" -> "saas-17.4".
+ */
+export function parseOdooSeries(baseModuleVersion: string | undefined | null): string | undefined {
+    if (!baseModuleVersion) {
+        return undefined;
+    }
+    const match = /^(saas[~-])?(\d+)\.(\d+)/.exec(baseModuleVersion.trim());
+    if (!match) {
+        return undefined;
+    }
+    const series = `${match[2]}.${match[3]}`;
+    return match[1] ? `saas-${series}` : series;
+}
+
+/**
+ * Detects which Odoo series (e.g. "17.0", "saas-17.4") a database runs by
+ * reading the base module's version. Best-effort: returns undefined for
+ * non-Odoo databases or when psql is unavailable.
+ */
+export async function detectOdooSeries(dbName: string): Promise<string | undefined> {
+    try {
+        if (!(await databaseHasModuleTable(dbName))) {
+            return undefined;
+        }
+        const output = await runPsqlQuery(dbName, BASE_MODULE_VERSION_QUERY);
+        return parseOdooSeries(output);
+    } catch (error) {
+        console.warn(`Failed to detect Odoo series for database "${dbName}":`, error);
+        return undefined;
+    }
 }

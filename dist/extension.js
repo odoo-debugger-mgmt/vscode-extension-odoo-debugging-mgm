@@ -46,23 +46,24 @@ const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const utils_1 = __webpack_require__(4);
 const dbs_1 = __webpack_require__(17);
-const project_1 = __webpack_require__(31);
-const repos_1 = __webpack_require__(35);
-const projectRepos_1 = __webpack_require__(36);
-const module_1 = __webpack_require__(39);
-const testing_1 = __webpack_require__(40);
-const debugger_1 = __webpack_require__(42);
-const odooInstaller_1 = __webpack_require__(43);
+const environment_1 = __webpack_require__(30);
+const dataMigration_1 = __webpack_require__(32);
+const project_1 = __webpack_require__(33);
+const repos_1 = __webpack_require__(37);
+const projectRepos_1 = __webpack_require__(38);
+const module_1 = __webpack_require__(41);
+const testing_1 = __webpack_require__(43);
+const debugger_1 = __webpack_require__(45);
+const odooInstaller_1 = __webpack_require__(46);
 const settingsStore_1 = __webpack_require__(22);
-const versionsTreeProvider_1 = __webpack_require__(44);
+const versionsTreeProvider_1 = __webpack_require__(47);
 const versionsService_1 = __webpack_require__(19);
-const context_1 = __webpack_require__(41);
-const settings_1 = __webpack_require__(8);
+const context_1 = __webpack_require__(44);
 const gitService_1 = __webpack_require__(9);
-const sortPreferences_1 = __webpack_require__(45);
-const sortOptions_1 = __webpack_require__(26);
-const projectWorkspace_1 = __webpack_require__(46);
-const projectReposExplorer_1 = __webpack_require__(47);
+const sortPreferences_1 = __webpack_require__(48);
+const sortOptions_1 = __webpack_require__(25);
+const projectWorkspace_1 = __webpack_require__(49);
+const projectReposExplorer_1 = __webpack_require__(50);
 const runtimeCache_1 = __webpack_require__(10);
 // Store disposables for proper cleanup
 let extensionDisposables = [];
@@ -181,6 +182,13 @@ async function quickSearchTreeItems(items, options) {
     }
     await vscode.commands.executeCommand(selected.item.command.command, ...(selected.item.command.arguments ?? []));
 }
+function extractVersionIdFromArg(arg) {
+    // Commands receive either a version id (direct call) or a tree item (context menu).
+    if (typeof arg === 'string') {
+        return arg;
+    }
+    return arg?.version?.id;
+}
 // Initialize testing context based on current project state
 async function initializeTestingContext() {
     try {
@@ -198,71 +206,6 @@ async function initializeTestingContext() {
         (0, context_1.updateTestingContext)(false);
     }
 }
-async function maybeSwitchBranchForActivatedVersion(version) {
-    if (!version) {
-        return;
-    }
-    const targetBranch = version.odooVersion;
-    if (!targetBranch) {
-        return;
-    }
-    const switchBehavior = vscode.workspace.getConfiguration('odooDebugger').get('databaseSwitchBehavior', 'ask');
-    if (switchBehavior === 'auto-version-only') {
-        return;
-    }
-    const checkoutSettings = new settings_1.SettingsModel(version.settings);
-    if (!checkoutSettings.odooPath || checkoutSettings.odooPath.trim() === '') {
-        return;
-    }
-    let currentBranch = await (0, utils_1.getGitBranch)(checkoutSettings.odooPath);
-    const performCheckout = async (branch, context) => {
-        if (!branch || !branch.trim()) {
-            return;
-        }
-        if (currentBranch === branch) {
-            const message = context === 'auto'
-                ? `Branch "${branch}" already active`
-                : `Branch "${branch}" already active`;
-            (0, utils_1.showAutoInfo)(message, 2000);
-            return;
-        }
-        await (0, dbs_1.checkoutBranch)(checkoutSettings, branch);
-        currentBranch = branch;
-        const message = context === 'auto'
-            ? `Auto-switched to branch "${branch}" for version "${version.name}".`
-            : `Switched to branch "${branch}" for version "${version.name}".`;
-        (0, utils_1.showAutoInfo)(message, 3000);
-    };
-    if (switchBehavior === 'auto-both' || switchBehavior === 'auto-branch-only') {
-        await performCheckout(targetBranch, 'auto');
-        return;
-    }
-    const metadata = await (0, gitService_1.getBranchesWithMetadata)(checkoutSettings.odooPath);
-    const branchRecord = metadata.find(entry => entry.name === targetBranch);
-    const branchTypeDescription = branchRecord
-        ? (branchRecord.type === 'remote' ? 'Remote branch' : 'Local branch')
-        : undefined;
-    const options = [
-        {
-            label: `$(git-branch) Switch to ${targetBranch}`,
-            description: branchTypeDescription ?? 'Checkout the version branch for all repositories',
-            detail: currentBranch ? `Current branch: ${currentBranch}` : undefined,
-            action: 'switch'
-        },
-        {
-            label: '$(circle-slash) Keep current branch',
-            description: currentBranch ? `Stay on ${currentBranch}` : 'Do not change the working branch',
-            action: 'keep'
-        }
-    ];
-    const selection = await vscode.window.showQuickPick(options, {
-        placeHolder: `Version "${version.name}" specifies branch "${targetBranch}".`,
-        ignoreFocusOut: true
-    });
-    if (selection?.action === 'switch') {
-        await performCheckout(targetBranch, 'manual');
-    }
-}
 async function activate(context) {
     // Clear any existing disposables
     extensionDisposables.forEach(d => d.dispose());
@@ -276,6 +219,10 @@ async function activate(context) {
     await versionsService.migrateFromLegacySettings().catch(error => {
         console.warn('Settings migration failed (this is non-critical):', error);
     });
+    // One-time v1.2 migrations: fold legacy per-DB odooVersion into versions,
+    // and map old databaseSwitchBehavior values onto the new auto/ask/never enum.
+    await (0, dataMigration_1.migrateDebuggerData)();
+    void (0, environment_1.migrateLegacySwitchBehaviorSetting)();
     const isWorkspaceOpen = !!vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0;
     (0, context_1.updateActiveContext)(isWorkspaceOpen);
     // Initialize testing context
@@ -893,181 +840,67 @@ async function activate(context) {
     // Version management commands
     extensionDisposables.push(vscode.commands.registerCommand('odoo.createVersion', async () => {
         try {
-            const name = await vscode.window.showInputBox({
-                placeHolder: 'Enter version name (e.g., "Odoo 19.0")',
-                prompt: 'Version name'
+            // Two prompts: branch, then name. Paths and ports come from the
+            // odooDebugger.defaultVersion.* settings and stay editable in the
+            // Versions tree after creation.
+            const activeSettings = await versionsService.getActiveVersionSettings();
+            const odooPath = activeSettings?.odooPath ? (0, utils_1.normalizePath)(activeSettings.odooPath) : undefined;
+            const branchItems = [];
+            if (odooPath && fs.existsSync(odooPath)) {
+                const metadata = await (0, gitService_1.getBranchesWithMetadata)(odooPath);
+                if (metadata.length > 0) {
+                    branchItems.push(...metadata.map(branch => ({
+                        label: branch.name,
+                        description: branch.type === 'remote' ? 'Remote branch' : 'Local branch',
+                        action: 'branch',
+                        branch: branch.name
+                    })));
+                }
+                else {
+                    const branches = await (0, utils_1.getGitBranches)(odooPath);
+                    branchItems.push(...branches.map(branch => ({
+                        label: branch,
+                        action: 'branch',
+                        branch
+                    })));
+                }
+            }
+            branchItems.push({
+                label: '$(pencil) Enter branch manually…',
+                description: 'e.g. "19.0", "saas-18.4", "master"',
+                action: 'manual'
             });
+            const branchPick = await vscode.window.showQuickPick(branchItems, {
+                title: 'Create Version',
+                placeHolder: 'Select the Odoo branch for this version',
+                ignoreFocusOut: true
+            });
+            if (!branchPick) {
+                return;
+            }
+            let odooVersion = branchPick.branch;
+            if (branchPick.action === 'manual') {
+                odooVersion = (await vscode.window.showInputBox({
+                    title: 'Create Version',
+                    placeHolder: 'Enter Odoo version/branch (e.g. "19.0", "saas-18.4", "master")',
+                    ignoreFocusOut: true,
+                    validateInput: value => value.trim() ? undefined : 'Branch is required.'
+                }))?.trim();
+            }
+            if (!odooVersion) {
+                return;
+            }
+            const name = (await vscode.window.showInputBox({
+                title: 'Create Version',
+                prompt: 'Version name',
+                value: `Odoo ${odooVersion}`,
+                ignoreFocusOut: true,
+                validateInput: value => value.trim() ? undefined : 'Name is required.'
+            }))?.trim();
             if (!name) {
                 return;
             }
-            const activeSettings = await versionsService.getActiveVersionSettings();
-            const promptRepoPath = async (label, currentValue, required) => {
-                let current = currentValue?.trim();
-                while (true) {
-                    const items = [];
-                    if (current && current.length > 0) {
-                        items.push({
-                            label: current,
-                            description: 'Use the current path',
-                            action: 'current',
-                            path: current
-                        });
-                    }
-                    items.push({
-                        label: 'Browse for folder…',
-                        description: `Select the ${label}`,
-                        action: 'browse'
-                    });
-                    items.push({
-                        label: 'Enter path manually…',
-                        description: 'Type the repository path',
-                        action: 'manual'
-                    });
-                    if (!required) {
-                        items.push({
-                            label: 'Leave empty',
-                            description: 'Skip this repository',
-                            action: 'empty'
-                        });
-                    }
-                    const selection = await vscode.window.showQuickPick(items, {
-                        title: 'Create Version',
-                        placeHolder: `How would you like to set the ${label.toLowerCase()}?`,
-                        ignoreFocusOut: true
-                    });
-                    if (!selection) {
-                        return undefined;
-                    }
-                    switch (selection.action) {
-                        case 'current':
-                            return selection.path;
-                        case 'empty':
-                            return '';
-                        case 'browse': {
-                            const defaultUriCandidates = [];
-                            if (current) {
-                                try {
-                                    const normalized = (0, utils_1.normalizePath)(current);
-                                    if (fs.existsSync(normalized)) {
-                                        defaultUriCandidates.push(vscode.Uri.file(normalized));
-                                    }
-                                }
-                                catch { /* ignore */ }
-                            }
-                            const workspaceUri = vscode.workspace.workspaceFolders?.[0]?.uri;
-                            if (workspaceUri) {
-                                defaultUriCandidates.push(workspaceUri);
-                            }
-                            const dialogResult = await vscode.window.showOpenDialog({
-                                title: `Select ${label}`,
-                                canSelectMany: false,
-                                canSelectFiles: false,
-                                canSelectFolders: true,
-                                defaultUri: defaultUriCandidates[0],
-                                openLabel: 'Select'
-                            });
-                            if (!dialogResult || dialogResult.length === 0) {
-                                continue;
-                            }
-                            const selectedPath = dialogResult[0].fsPath;
-                            current = selectedPath;
-                            return selectedPath;
-                        }
-                        case 'manual': {
-                            const manualValue = await vscode.window.showInputBox({
-                                title: 'Create Version',
-                                prompt: `Enter the path to the ${label}.`,
-                                value: current ?? '',
-                                ignoreFocusOut: true,
-                                validateInput: value => {
-                                    if (!required) {
-                                        return undefined;
-                                    }
-                                    return value && value.trim().length > 0 ? undefined : `${label} is required.`;
-                                }
-                            });
-                            if (manualValue === undefined) {
-                                continue;
-                            }
-                            const trimmed = manualValue.trim();
-                            if (!required && trimmed.length === 0) {
-                                return '';
-                            }
-                            if (trimmed.length === 0) {
-                                continue;
-                            }
-                            current = trimmed;
-                            return trimmed;
-                        }
-                    }
-                }
-            };
-            const odooPathInput = await promptRepoPath('Odoo repository', activeSettings?.odooPath, true);
-            if (odooPathInput === undefined) {
-                return;
-            }
-            const odooPath = odooPathInput.trim();
-            const normalizedOdooPath = (0, utils_1.normalizePath)(odooPath);
-            const enterprisePathInput = await promptRepoPath('Enterprise repository (optional)', activeSettings?.enterprisePath, false);
-            if (enterprisePathInput === undefined) {
-                return;
-            }
-            const enterprisePath = enterprisePathInput.trim();
-            const designThemesPathInput = await promptRepoPath('Design Themes repository (optional)', activeSettings?.designThemesPath, false);
-            if (designThemesPathInput === undefined) {
-                return;
-            }
-            const designThemesPath = designThemesPathInput.trim();
-            let odooVersion;
-            let branches = [];
-            const branchMetadata = await (0, gitService_1.getBranchesWithMetadata)(normalizedOdooPath);
-            if (branchMetadata.length > 0) {
-                branches = branchMetadata.map(branch => branch.name);
-                const branchQuickPickItems = branchMetadata.map(branch => ({
-                    label: branch.name,
-                    description: branch.type === 'remote' ? 'Remote branch' : 'Local branch'
-                }));
-                const selectedBranch = await vscode.window.showQuickPick(branchQuickPickItems, {
-                    placeHolder: 'Select Odoo version/branch',
-                    title: 'Choose from available Git branches'
-                });
-                odooVersion = selectedBranch?.label;
-            }
-            else {
-                branches = await (0, utils_1.getGitBranches)(odooPath);
-                if (branches.length > 0) {
-                    const selectedBranch = await vscode.window.showQuickPick(branches, {
-                        placeHolder: 'Select Odoo version/branch',
-                        title: 'Choose from available Git branches'
-                    });
-                    odooVersion = selectedBranch ?? undefined;
-                }
-            }
-            if (!odooVersion) {
-                const noBranchMessage = fs.existsSync(normalizedOdooPath)
-                    ? `No Git branches found in Odoo path: ${odooPath}. Enter the branch manually?`
-                    : `The path "${odooPath}" does not exist. Enter the branch manually?`;
-                const fallbackAction = await (0, utils_1.showWarning)(noBranchMessage, 'Enter Manually', 'Cancel');
-                if (fallbackAction !== 'Enter Manually') {
-                    return;
-                }
-                odooVersion = await vscode.window.showInputBox({
-                    placeHolder: 'Enter Odoo version/branch (e.g., "19.0", "saas-18.4", "master")',
-                    prompt: 'Odoo version/branch',
-                    value: branches[0] ?? ''
-                }) ?? undefined;
-                if (!odooVersion) {
-                    return;
-                }
-            }
-            const settingsOverrides = { odooPath };
-            if (enterprisePath) {
-                settingsOverrides.enterprisePath = enterprisePath;
-            }
-            if (designThemesPath) {
-                settingsOverrides.designThemesPath = designThemesPath;
-            }
-            const version = await versionsService.createVersion(name, odooVersion, settingsOverrides);
+            const version = await versionsService.createVersion(name, odooVersion);
             await refreshAll({ reason: 'ui' });
             const action = await vscode.window.showInformationMessage(`Version "${name}" created on branch "${odooVersion}".`, 'Activate Now');
             if (action === 'Activate Now') {
@@ -1083,17 +916,8 @@ async function activate(context) {
     }));
     extensionDisposables.push(vscode.commands.registerCommand('odoo.changeBranch', async (versionIdOrTreeItem) => {
         try {
-            let versionId;
-            // Handle both direct calls and context menu calls
-            if (typeof versionIdOrTreeItem === 'string') {
-                // Direct command call with version ID
-                versionId = versionIdOrTreeItem;
-            }
-            else if (versionIdOrTreeItem?.version?.id) {
-                // Context menu call - extract ID from tree item
-                versionId = versionIdOrTreeItem.version.id;
-            }
-            else {
+            const versionId = extractVersionIdFromArg(versionIdOrTreeItem);
+            if (!versionId) {
                 (0, utils_1.showError)('Select a version before continuing.');
                 return;
             }
@@ -1155,17 +979,8 @@ async function activate(context) {
     }));
     extensionDisposables.push(vscode.commands.registerCommand('odoo.setActiveVersion', async (versionIdOrTreeItem) => {
         try {
-            let versionId;
-            // Handle both direct calls and context menu calls
-            if (typeof versionIdOrTreeItem === 'string') {
-                // Direct command call with version ID
-                versionId = versionIdOrTreeItem;
-            }
-            else if (versionIdOrTreeItem?.version?.id) {
-                // Context menu call - extract ID from tree item
-                versionId = versionIdOrTreeItem.version.id;
-            }
-            else {
+            let versionId = extractVersionIdFromArg(versionIdOrTreeItem);
+            if (!versionId) {
                 // No version provided - show version picker
                 const versions = versionsService.getVersions();
                 const items = versions.map(v => ({
@@ -1186,7 +1001,11 @@ async function activate(context) {
             if (success) {
                 const version = versionsService.getVersion(versionId);
                 (0, utils_1.showInfo)(`Activated version: ${version?.name}`);
-                await maybeSwitchBranchForActivatedVersion(version);
+                if (version) {
+                    // Align the core repos to the version's branch through the
+                    // shared switch pipeline (honors databaseSwitchBehavior).
+                    await (0, environment_1.alignEnvironment)({ versionId: version.id }, { label: `Version "${version.name}"` });
+                }
                 await refreshAll(); // Refresh all views to reflect new active version
             }
             else {
@@ -1333,17 +1152,8 @@ async function activate(context) {
     }));
     extensionDisposables.push(vscode.commands.registerCommand('odoo.cloneVersion', async (versionIdOrTreeItem) => {
         try {
-            let versionId;
-            // Handle both direct calls and context menu calls
-            if (typeof versionIdOrTreeItem === 'string') {
-                // Direct command call with version ID
-                versionId = versionIdOrTreeItem;
-            }
-            else if (versionIdOrTreeItem?.version?.id) {
-                // Context menu call - extract ID from tree item
-                versionId = versionIdOrTreeItem.version.id;
-            }
-            else {
+            let versionId = extractVersionIdFromArg(versionIdOrTreeItem);
+            if (!versionId) {
                 // No version provided - show version picker
                 const versions = versionsService.getVersions();
                 const items = versions.map(v => ({
@@ -1380,17 +1190,8 @@ async function activate(context) {
     }));
     extensionDisposables.push(vscode.commands.registerCommand('odoo.deleteVersion', async (versionIdOrTreeItem) => {
         try {
-            let versionId;
-            // Handle both direct calls and context menu calls
-            if (typeof versionIdOrTreeItem === 'string') {
-                // Direct command call with version ID
-                versionId = versionIdOrTreeItem;
-            }
-            else if (versionIdOrTreeItem?.version?.id) {
-                // Context menu call - extract ID from tree item
-                versionId = versionIdOrTreeItem.version.id;
-            }
-            else {
+            let versionId = extractVersionIdFromArg(versionIdOrTreeItem);
+            if (!versionId) {
                 // No version provided - show version picker
                 const versions = versionsService.getVersions();
                 const items = versions.filter(v => !v.isActive).map(v => ({
@@ -1478,17 +1279,8 @@ async function activate(context) {
     }));
     extensionDisposables.push(vscode.commands.registerCommand('odoo.setAllSettingsToDefault', async (versionTreeItem) => {
         try {
-            let versionId;
-            // Handle both direct calls and context menu calls
-            if (typeof versionTreeItem === 'string') {
-                // Direct command call with version ID
-                versionId = versionTreeItem;
-            }
-            else if (versionTreeItem?.version?.id) {
-                // Context menu call - extract ID from tree item
-                versionId = versionTreeItem.version.id;
-            }
-            else {
+            const versionId = extractVersionIdFromArg(versionTreeItem);
+            if (!versionId) {
                 (0, utils_1.showError)('Select a version before continuing.');
                 return;
             }
@@ -1512,17 +1304,8 @@ async function activate(context) {
     }));
     extensionDisposables.push(vscode.commands.registerCommand('odoo.setAllSettingsAsDefault', async (versionTreeItem) => {
         try {
-            let versionId;
-            // Handle both direct calls and context menu calls
-            if (typeof versionTreeItem === 'string') {
-                // Direct command call with version ID
-                versionId = versionTreeItem;
-            }
-            else if (versionTreeItem?.version?.id) {
-                // Context menu call - extract ID from tree item
-                versionId = versionTreeItem.version.id;
-            }
-            else {
+            const versionId = extractVersionIdFromArg(versionTreeItem);
+            if (!versionId) {
                 (0, utils_1.showError)('Select a version before continuing.');
                 return;
             }
@@ -4727,9 +4510,6 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.DbsTreeProvider = void 0;
-exports.showBranchSelector = showBranchSelector;
-exports.checkoutBranch = checkoutBranch;
-exports.applyProjectRepoBranchAssignments = applyProjectRepoBranchAssignments;
 exports.getDbDumpFolder = getDbDumpFolder;
 exports.createDb = createDb;
 exports.manageDatabaseTemplates = manageDatabaseTemplates;
@@ -4741,7 +4521,6 @@ exports.changeDatabaseVersion = changeDatabaseVersion;
 exports.changeDatabaseProjectRepoBranches = changeDatabaseProjectRepoBranches;
 const vscode = __importStar(__webpack_require__(1));
 const db_1 = __webpack_require__(18);
-const module_1 = __webpack_require__(23);
 const utils_1 = __webpack_require__(4);
 const settingsStore_1 = __webpack_require__(22);
 const versionsService_1 = __webpack_require__(19);
@@ -4749,14 +4528,12 @@ const child_process_1 = __webpack_require__(7);
 const fs = __importStar(__webpack_require__(5));
 const path = __importStar(__webpack_require__(6));
 const crypto_1 = __webpack_require__(21);
-const gitService_1 = __webpack_require__(9);
-const dbNaming_1 = __webpack_require__(24);
-const os = __importStar(__webpack_require__(25));
-const sortOptions_1 = __webpack_require__(26);
-const stream_1 = __webpack_require__(27);
-const database_1 = __webpack_require__(28);
-const runtimeCache_1 = __webpack_require__(10);
-const checkoutHooksOutput = vscode.window.createOutputChannel('Odoo Debugger: Branch Hooks');
+const dbNaming_1 = __webpack_require__(23);
+const os = __importStar(__webpack_require__(24));
+const sortOptions_1 = __webpack_require__(25);
+const stream_1 = __webpack_require__(26);
+const database_1 = __webpack_require__(27);
+const environment_1 = __webpack_require__(30);
 /**
  * Gets the effective Odoo version for a database object.
  * Works with both DatabaseModel instances and plain database objects.
@@ -4782,29 +4559,6 @@ function getEffectiveOdooVersion(db) {
     // Fall back to legacy odooVersion property
     return db?.odooVersion || undefined;
 }
-/**
- * Gets the version name for a database object if it has a version assigned.
- * Works with both DatabaseModel instances and plain database objects.
- */
-function getVersionName(db) {
-    // If it's a DatabaseModel instance, use its method
-    if (db && typeof db.getVersionName === 'function') {
-        return db.getVersionName();
-    }
-    // For plain objects, implement the same logic
-    if (db && db.versionId) {
-        try {
-            const versionsService = versionsService_1.VersionsService.getInstance();
-            const version = versionsService.getVersion(db.versionId);
-            return version?.name;
-        }
-        catch (error) {
-            console.warn(`Failed to get version name for database ${(0, utils_1.getDatabaseLabel)(db)}:`, error);
-            return undefined;
-        }
-    }
-    return undefined;
-}
 async function collectExistingDatabaseIdentifiers() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     const identifiers = new Set();
@@ -4817,92 +4571,11 @@ async function collectExistingDatabaseIdentifiers() {
     }
     return identifiers;
 }
-function buildDumpDeterministicSeed(sqlDumpPath, projectName, repoSignature) {
-    try {
-        const stats = fs.statSync(sqlDumpPath);
-        return [
-            path.resolve(sqlDumpPath),
-            projectName,
-            repoSignature,
-            stats.size,
-            Math.floor(stats.mtimeMs)
-        ].join('|');
-    }
-    catch (error) {
-        console.warn(`Failed to read dump metadata from ${sqlDumpPath}:`, error);
-        return [path.resolve(sqlDumpPath), projectName, repoSignature].join('|');
-    }
-}
-function buildStandardDeterministicSeed(projectName, kind, timestamp, branchName, versionId, repoSignature) {
-    return [
-        projectName,
-        kind,
-        branchName ?? '',
-        versionId ?? '',
-        repoSignature,
-        timestamp.toISOString()
-    ].join('|');
-}
-function buildRepoSignature(repos) {
-    return repos
-        .map(repo => (0, utils_1.normalizePath)(repo.path))
-        .sort((a, b) => a.localeCompare(b))
-        .join('|');
-}
-function sanitizeProjectRepoBranchAssignments(source) {
-    if (!Array.isArray(source)) {
-        return [];
-    }
-    return source
-        .filter(entry => !!entry && typeof entry.branch === 'string' && entry.branch.trim() !== '')
-        .map(entry => ({
-        repoName: entry.repoName || '',
-        repoPath: entry.repoPath ? (0, utils_1.normalizePath)(entry.repoPath) : '',
-        branch: entry.branch.trim()
-    }));
-}
-function resolveProjectRepoBranchAssignments(database, projectRepos) {
-    const assignments = sanitizeProjectRepoBranchAssignments(database?.projectRepoBranches);
-    if (assignments.length === 0 || projectRepos.length === 0) {
-        return [];
-    }
-    const byPath = new Map();
-    const byName = new Map();
-    for (const entry of assignments) {
-        if (entry.repoPath) {
-            byPath.set((0, utils_1.normalizePath)(entry.repoPath), entry);
-        }
-        if (entry.repoName) {
-            byName.set(entry.repoName.toLowerCase(), entry);
-        }
-    }
-    const resolved = [];
-    const seenPaths = new Set();
-    for (const repo of projectRepos) {
-        const repoPath = (0, utils_1.normalizePath)(repo.path);
-        const pathMatch = byPath.get(repoPath);
-        const nameMatch = byName.get(repo.name.toLowerCase());
-        const assignment = pathMatch ?? nameMatch;
-        if (!assignment || !assignment.branch) {
-            continue;
-        }
-        if (seenPaths.has(repoPath)) {
-            continue;
-        }
-        seenPaths.add(repoPath);
-        resolved.push({
-            repoName: repo.name,
-            repoPath,
-            branch: assignment.branch
-        });
-    }
-    return resolved;
-}
 async function promptProjectRepoBranchAssignments(repos, existingAssignments = [], mode = 'create') {
     if (repos.length === 0) {
         return [];
     }
-    const normalizedExisting = sanitizeProjectRepoBranchAssignments(existingAssignments);
+    const normalizedExisting = (0, environment_1.sanitizeProjectRepoBranchAssignments)(existingAssignments);
     const existingByPath = new Map();
     const existingByName = new Map();
     for (const entry of normalizedExisting) {
@@ -5055,24 +4728,6 @@ async function promptProjectRepoBranchAssignments(repos, existingAssignments = [
         });
     }
     return assignments;
-}
-async function promptBranchSwitch(targetVersion, currentBranches) {
-    const mismatchedRepos = [];
-    if (currentBranches.odoo !== targetVersion) {
-        mismatchedRepos.push(`Odoo (currently: ${currentBranches.odoo || 'unknown'})`);
-    }
-    if (currentBranches.enterprise !== targetVersion) {
-        mismatchedRepos.push(`Enterprise (currently: ${currentBranches.enterprise || 'unknown'})`);
-    }
-    if (currentBranches.designThemes !== targetVersion) {
-        mismatchedRepos.push(`Design Themes (currently: ${currentBranches.designThemes || 'unknown'})`);
-    }
-    if (mismatchedRepos.length === 0) {
-        return false; // No switch needed
-    }
-    const message = `Database requires Odoo version ${targetVersion}, but the following repositories are on different branches:\n\n${mismatchedRepos.join('\n')}\n\nWould you like to switch all repositories to version ${targetVersion}?`;
-    const choice = await vscode.window.showWarningMessage(message, { modal: false }, 'Switch Branches', 'Keep Current Branches');
-    return choice === 'Switch Branches';
 }
 /**
  * Helper function to extract DatabaseModel from various event sources
@@ -5235,7 +4890,7 @@ class DbsTreeProvider {
             if (db.branchName) {
                 tooltipDetails.push(`**Branch:** ${db.branchName}`);
             }
-            const projectRepoBranches = sanitizeProjectRepoBranchAssignments(db.projectRepoBranches);
+            const projectRepoBranches = (0, environment_1.sanitizeProjectRepoBranchAssignments)(db.projectRepoBranches);
             if (projectRepoBranches.length > 0) {
                 const formattedRepoBranches = projectRepoBranches
                     .map(entry => `- ${entry.repoName || path.basename(entry.repoPath)}: \`${entry.branch}\``)
@@ -5338,421 +4993,6 @@ class DbsTreeProvider {
     }
 }
 exports.DbsTreeProvider = DbsTreeProvider;
-async function showBranchSelector(repoPath) {
-    repoPath = (0, utils_1.normalizePath)(repoPath);
-    if (!repoPath || !fs.existsSync(repoPath)) {
-        (0, utils_1.showError)(`Repository path does not exist: ${repoPath}`);
-        return undefined;
-    }
-    try {
-        const { stdout } = await new Promise((resolve, reject) => {
-            (0, child_process_1.exec)('git branch --all --format="%(refname:short)"', { cwd: repoPath }, (err, stdout, stderr) => {
-                if (err || stderr) {
-                    reject(new Error(`Failed to fetch branches in ${repoPath}: ${stderr || (err?.message || 'Unknown error')}`));
-                }
-                else {
-                    resolve({ stdout });
-                }
-            });
-        });
-        const branches = stdout
-            .split('\n')
-            .map((b) => b.trim())
-            .filter((b) => b.length && !b.includes('->'));
-        const result = await vscode.window.showQuickPick(branches, {
-            placeHolder: 'Select a branch to switch to',
-            canPickMany: false,
-            ignoreFocusOut: true
-        });
-        return result;
-    }
-    catch (error) {
-        (0, utils_1.showError)(error.message);
-        return undefined;
-    }
-}
-async function checkoutBranch(settings, branch) {
-    const quoteForSingleQuotedShell = (value) => `'${value.replace(/'/g, `'\"'\"'`)}'`;
-    const buildHookExecutionScript = (commands, phase, contextLabel) => {
-        const lines = ['set -e'];
-        commands.forEach((command, index) => {
-            const prefix = `[${phase}] ${contextLabel}: [${index + 1}/${commands.length}]`;
-            lines.push(`__odt_cmd=${quoteForSingleQuotedShell(command)}`);
-            lines.push(`__odt_prefix=${quoteForSingleQuotedShell(prefix)}`);
-            lines.push('printf \'%s\\n\' "$__odt_prefix START $__odt_cmd"');
-            lines.push('set +e');
-            lines.push('eval "$__odt_cmd"');
-            lines.push('__odt_exit=$?');
-            lines.push('set -e');
-            lines.push('printf \'%s\\n\' "$__odt_prefix END exit=$__odt_exit"');
-            lines.push('if [ $__odt_exit -ne 0 ]; then');
-            lines.push('  exit $__odt_exit');
-            lines.push('fi');
-        });
-        return lines.join('\n');
-    };
-    const runCheckoutHookCommands = async (commands, phase, cwd, contextLabel, progress) => {
-        if (!Array.isArray(commands) || commands.length === 0) {
-            return true;
-        }
-        const normalizedCommands = commands.map(cmd => cmd.trim()).filter(Boolean);
-        if (normalizedCommands.length === 0) {
-            return true;
-        }
-        progress?.report({ message: `${contextLabel}: ${phase} (${normalizedCommands.length} command(s))` });
-        checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: running ${normalizedCommands.length} command(s) in: ${cwd}`);
-        normalizedCommands.forEach((command, index) => {
-            checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: [${index + 1}/${normalizedCommands.length}] $ ${command}`);
-        });
-        const script = buildHookExecutionScript(normalizedCommands, phase, contextLabel);
-        const taskStartedAt = Date.now();
-        let stderrTail = '';
-        const exitCode = await new Promise((resolve) => {
-            const child = (0, child_process_1.spawn)('/bin/bash', ['-lc', script], {
-                cwd,
-                env: process.env,
-                stdio: ['ignore', 'pipe', 'pipe']
-            });
-            const stdoutBuffer = { pending: '' };
-            const stderrBuffer = { pending: '' };
-            const appendBufferedLines = (chunk, buffer) => {
-                const text = chunk.toString();
-                if (!text) {
-                    return;
-                }
-                const combined = buffer.pending + text;
-                const lines = combined.split(/\r?\n/);
-                buffer.pending = lines.pop() ?? '';
-                for (const line of lines) {
-                    checkoutHooksOutput.appendLine(line);
-                }
-            };
-            const flushBuffer = (buffer) => {
-                if (!buffer.pending) {
-                    return;
-                }
-                checkoutHooksOutput.appendLine(buffer.pending);
-                buffer.pending = '';
-            };
-            child.stdout?.on('data', chunk => {
-                appendBufferedLines(chunk, stdoutBuffer);
-            });
-            child.stderr?.on('data', chunk => {
-                appendBufferedLines(chunk, stderrBuffer);
-                stderrTail += chunk.toString();
-                if (stderrTail.length > 2000) {
-                    stderrTail = stderrTail.slice(-2000);
-                }
-            });
-            child.on('error', error => {
-                stderrTail = error.message;
-                resolve(undefined);
-            });
-            child.on('close', code => {
-                flushBuffer(stdoutBuffer);
-                flushBuffer(stderrBuffer);
-                resolve(code ?? undefined);
-            });
-        });
-        const durationMs = Date.now() - taskStartedAt;
-        if (exitCode !== 0 && exitCode !== undefined) {
-            (0, utils_1.showError)(`${contextLabel}: failed during ${phase} command batch (exit code ${exitCode})`);
-            if (stderrTail.trim()) {
-                checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: stderr tail:\n${stderrTail.trim()}`);
-            }
-            checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: FAILED (exit ${exitCode}, duration=${durationMs}ms)`);
-            checkoutHooksOutput.show(true);
-            return false;
-        }
-        if (exitCode === undefined) {
-            (0, utils_1.showError)(`${contextLabel}: failed during ${phase} command batch (no exit code)`);
-            if (stderrTail.trim()) {
-                checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: stderr tail:\n${stderrTail.trim()}`);
-            }
-            checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: FAILED (no exit code, duration=${durationMs}ms)`);
-            checkoutHooksOutput.show(true);
-            return false;
-        }
-        checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: OK (duration=${durationMs}ms)`);
-        return true;
-    };
-    const repos = [
-        { name: 'Odoo', path: (0, utils_1.normalizePath)(settings.odooPath) },
-        { name: 'Enterprise', path: (0, utils_1.normalizePath)(settings.enterprisePath) },
-        { name: 'Design Themes', path: (0, utils_1.normalizePath)(settings.designThemesPath) }
-    ];
-    // Pull hook commands directly from VS Code settings (not per-version settings)
-    const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
-    const preCheckoutCommands = config.get('preCheckoutCommands', []);
-    const postCheckoutCommands = config.get('postCheckoutCommands', []);
-    return vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: `Switching to branch: ${branch}`,
-        cancellable: false
-    }, async (progress) => {
-        const operationStartedAt = Date.now();
-        const elapsed = () => `${Date.now() - operationStartedAt}ms`;
-        const totalRepos = repos.length;
-        let completedRepos = 0;
-        const processRepository = async (repo) => {
-            checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline start t+${elapsed()}`);
-            progress.report({ message: `${repo.name}: processing` });
-            if (!repo.path || repo.path.trim() === '') {
-                return {
-                    name: repo.name,
-                    success: false,
-                    message: 'Path not configured'
-                };
-            }
-            if (!fs.existsSync(repo.path)) {
-                return {
-                    name: repo.name,
-                    success: false,
-                    message: `Repository path does not exist: ${repo.path}`
-                };
-            }
-            const preOk = await runCheckoutHookCommands(preCheckoutCommands, 'pre-checkout', repo.path, repo.name, progress);
-            if (!preOk) {
-                checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline failed in pre-checkout t+${elapsed()}`);
-                return {
-                    name: repo.name,
-                    success: false,
-                    message: `Pre-checkout hook(s) failed`
-                };
-            }
-            checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: checkout start t+${elapsed()}`);
-            const apiCheckoutSucceeded = await (0, gitService_1.checkoutBranchViaSourceControl)(repo.path, branch);
-            let checkoutSucceededForRepo = false;
-            let checkoutMessage = '';
-            let usedCliFallback = false;
-            if (!apiCheckoutSucceeded) {
-                usedCliFallback = true;
-                checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: git API checkout unavailable, using CLI fallback t+${elapsed()}`);
-                try {
-                    await new Promise((resolve, reject) => {
-                        const child = (0, child_process_1.spawn)('git', ['checkout', branch], {
-                            cwd: repo.path,
-                            stdio: ['ignore', 'ignore', 'pipe']
-                        });
-                        let stderr = '';
-                        child.stderr?.on('data', chunk => {
-                            stderr += chunk.toString();
-                        });
-                        child.on('error', error => {
-                            checkoutSucceededForRepo = false;
-                            checkoutMessage = error.message;
-                            reject(error);
-                        });
-                        child.on('close', code => {
-                            const details = stderr.trim();
-                            if (code === 0 || details.includes(`Already on '${branch}'`)) {
-                                checkoutSucceededForRepo = true;
-                                checkoutMessage = details.includes(`Already on '${branch}'`)
-                                    ? `Already on branch: ${branch}`
-                                    : `Switched to branch: ${branch}`;
-                                resolve();
-                                return;
-                            }
-                            checkoutSucceededForRepo = false;
-                            checkoutMessage = details || `git checkout exited with code ${code ?? 'unknown'}`;
-                            reject(new Error(checkoutMessage));
-                        });
-                    });
-                }
-                catch (error) {
-                    return {
-                        name: repo.name,
-                        success: false,
-                        message: checkoutMessage || 'Failed to checkout branch'
-                    };
-                }
-            }
-            else {
-                checkoutSucceededForRepo = true;
-                checkoutMessage = `Switched to branch ${branch}`;
-            }
-            if (checkoutSucceededForRepo) {
-                (0, runtimeCache_1.invalidateGitBranchCache)(repo.path);
-                if (usedCliFallback) {
-                    try {
-                        await vscode.commands.executeCommand('git.refresh');
-                    }
-                    catch {
-                        // Best-effort SCM refresh after external checkout.
-                    }
-                }
-                const postOk = await runCheckoutHookCommands(postCheckoutCommands, 'post-checkout', repo.path, repo.name, progress);
-                checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline ${postOk ? 'complete' : 'complete-with-post-failure'} t+${elapsed()}`);
-                return {
-                    name: repo.name,
-                    success: postOk,
-                    message: postOk ? checkoutMessage : `${checkoutMessage} (but post-checkout hook(s) failed)`
-                };
-            }
-            checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline failed during checkout t+${elapsed()}`);
-            return {
-                name: repo.name,
-                success: false,
-                message: checkoutMessage || 'Failed to checkout branch'
-            };
-        };
-        const results = await Promise.all(repos.map(async (repo) => {
-            const result = await processRepository(repo);
-            completedRepos += 1;
-            progress.report({
-                message: `${repo.name}: completed (${completedRepos}/${totalRepos})`,
-                increment: totalRepos > 0 ? (100 / totalRepos) : 0
-            });
-            checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: ${result.success ? 'SUCCESS' : 'FAILED'} - ${result.message}`);
-            return result;
-        }));
-        // Check results and provide feedback
-        const successful = results.filter(r => r.success);
-        const failed = results.filter(r => !r.success);
-        const totalDurationMs = Date.now() - operationStartedAt;
-        if (failed.length === 0) {
-            (0, utils_1.showInfo)(`All repositories switched to branch: ${branch}`);
-        }
-        else if (successful.length > 0) {
-            (0, utils_1.showWarning)(`Partially switched to branch ${branch}. Failed: ${failed.map(f => f.name).join(', ')}`);
-            // Show details of failures
-            failed.forEach(f => {
-                console.error(`${f.name}: ${f.message}`);
-            });
-        }
-        else {
-            (0, utils_1.showError)(`Failed to switch any repository to branch: ${branch}`);
-            // Show details of all failures
-            failed.forEach(f => {
-                console.error(`${f.name}: ${f.message}`);
-            });
-        }
-        // Log successful switches
-        successful.forEach(s => {
-            console.log(`${s.name}: ${s.message}`);
-        });
-        checkoutHooksOutput.appendLine(`[checkout] Completed branch switch "${branch}" in ${totalDurationMs}ms (${successful.length}/${results.length} succeeded)`);
-    });
-}
-async function mapWithConcurrency(items, limit, worker) {
-    if (items.length === 0) {
-        return [];
-    }
-    const normalizedLimit = Math.max(1, limit);
-    const results = new Array(items.length);
-    let cursor = 0;
-    const runNext = async () => {
-        const index = cursor++;
-        if (index >= items.length) {
-            return;
-        }
-        results[index] = await worker(items[index]);
-        await runNext();
-    };
-    const workers = Array.from({ length: Math.min(normalizedLimit, items.length) }, () => runNext());
-    await Promise.all(workers);
-    return results;
-}
-async function checkoutSingleProjectRepoBranch(repoPath, branch) {
-    const sourceControlSucceeded = await (0, gitService_1.checkoutBranchViaSourceControl)(repoPath, branch);
-    if (sourceControlSucceeded) {
-        (0, runtimeCache_1.invalidateGitBranchCache)(repoPath);
-        return { ok: true, message: `Switched to branch "${branch}"` };
-    }
-    return new Promise((resolve) => {
-        const process = (0, child_process_1.spawn)('git', ['checkout', branch], { cwd: repoPath, stdio: ['ignore', 'ignore', 'pipe'] });
-        let stderr = '';
-        process.stderr?.on('data', chunk => {
-            stderr += chunk.toString();
-        });
-        process.on('error', error => {
-            resolve({ ok: false, message: error.message });
-        });
-        process.on('close', code => {
-            const details = stderr.trim();
-            if (code === 0 || details.includes(`Already on '${branch}'`)) {
-                (0, runtimeCache_1.invalidateGitBranchCache)(repoPath);
-                resolve({
-                    ok: true,
-                    message: details.includes(`Already on '${branch}'`)
-                        ? `Already on branch "${branch}"`
-                        : `Switched to branch "${branch}"`
-                });
-                return;
-            }
-            resolve({
-                ok: false,
-                message: details || `git checkout exited with code ${code ?? 'unknown'}`
-            });
-        });
-    });
-}
-async function applyProjectRepoBranchAssignments(database, projectRepos) {
-    const assignments = resolveProjectRepoBranchAssignments(database, projectRepos);
-    if (assignments.length === 0) {
-        return;
-    }
-    const databaseLabel = (0, utils_1.getDatabaseLabel)(database);
-    const progressTitle = `Switching project repos for ${databaseLabel}`;
-    const results = await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: progressTitle,
-        cancellable: false
-    }, async (progress) => {
-        const total = assignments.length;
-        let completed = 0;
-        return mapWithConcurrency(assignments, 4, async (assignment) => {
-            completed += 1;
-            progress.report({
-                message: `${assignment.repoName || path.basename(assignment.repoPath)} (${completed}/${total})`,
-                increment: total > 0 ? (100 / total) : 0
-            });
-            if (!assignment.repoPath || !fs.existsSync(assignment.repoPath)) {
-                return {
-                    ...assignment,
-                    ok: false,
-                    changed: false,
-                    message: `Repository path not found: ${assignment.repoPath}`
-                };
-            }
-            if (!fs.existsSync(path.join(assignment.repoPath, '.git'))) {
-                return {
-                    ...assignment,
-                    ok: false,
-                    changed: false,
-                    message: 'Not a git repository'
-                };
-            }
-            const currentBranch = await (0, utils_1.getGitBranch)(assignment.repoPath);
-            if (currentBranch === assignment.branch) {
-                return {
-                    ...assignment,
-                    ok: true,
-                    changed: false,
-                    message: `Already on branch "${assignment.branch}"`
-                };
-            }
-            const checkoutResult = await checkoutSingleProjectRepoBranch(assignment.repoPath, assignment.branch);
-            return {
-                ...assignment,
-                ok: checkoutResult.ok,
-                changed: checkoutResult.ok,
-                message: checkoutResult.message
-            };
-        });
-    });
-    const failed = results.filter(result => !result.ok);
-    const changed = results.filter(result => result.ok && result.changed);
-    if (failed.length > 0) {
-        failed.forEach(result => {
-            console.error(`[project repo switch] ${result.repoName}: ${result.message}`);
-        });
-        (0, utils_1.showWarning)(`Database "${databaseLabel}" switched, but ${failed.length} project repo branch change(s) failed.`);
-    }
-    else if (changed.length > 0) {
-        (0, utils_1.showAutoInfo)(`Switched ${changed.length} project repo branch(es) for database "${databaseLabel}"`, 2500);
-    }
-}
 function collectDumpSources(root, maxDepth = 2) {
     const results = [];
     const stack = [{ dir: root, depth: 0 }];
@@ -6002,11 +5242,96 @@ const CREATION_METHOD_ITEMS = {
         method: 'template'
     }
 };
+const NEW_DB_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
+async function pickExistingPostgresDatabase() {
+    const linkedIdentifiers = await collectExistingDatabaseIdentifiers();
+    const candidates = queryPostgresDatabases()
+        .filter(name => !RESERVED_DATABASE_NAMES.has(name.toLowerCase()));
+    const choices = [
+        ...candidates.map(name => ({
+            label: name,
+            description: linkedIdentifiers.has(name.toLowerCase()) ? 'Already linked to a project' : undefined,
+            action: 'select',
+            dbName: name
+        })),
+        {
+            label: '$(pencil) Enter database name manually',
+            detail: 'Use this if the database is not listed.',
+            action: 'manual'
+        }
+    ];
+    const selection = await vscode.window.showQuickPick(choices, {
+        placeHolder: 'Select the existing PostgreSQL database to connect',
+        ignoreFocusOut: true
+    });
+    if (!selection) {
+        return undefined;
+    }
+    if (selection.action === 'select') {
+        return selection.dbName;
+    }
+    const manual = await vscode.window.showInputBox({
+        placeHolder: 'Enter the name of the existing PostgreSQL database',
+        prompt: 'Make sure the database exists in your PostgreSQL instance',
+        ignoreFocusOut: true,
+        validateInput: value => value.trim() ? null : 'Enter a database name to continue.'
+    });
+    return manual?.trim() || undefined;
+}
+async function linkDatabaseToVersion(dbId, versionId) {
+    const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
+    let changed = false;
+    for (const project of data.projects ?? []) {
+        for (const db of project.dbs ?? []) {
+            if (db?.id === dbId && !db.versionId) {
+                db.versionId = versionId;
+                changed = true;
+            }
+        }
+    }
+    if (changed) {
+        await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+    }
+}
+/**
+ * Resolves which version profile a new database should use, without prompting:
+ * fresh databases inherit the active version; restored/connected databases are
+ * probed for their Odoo series (base module version) and matched to a version.
+ */
+async function resolveVersionForNewDatabase(dbName, method) {
+    const versionsService = versionsService_1.VersionsService.getInstance();
+    await versionsService.initialize();
+    const activeVersion = versionsService.getActiveVersion();
+    if (method === 'fresh') {
+        return { versionId: activeVersion?.id, branchLabel: activeVersion?.odooVersion };
+    }
+    const series = await (0, database_1.detectOdooSeries)(dbName);
+    if (!series) {
+        return { versionId: activeVersion?.id, branchLabel: activeVersion?.odooVersion };
+    }
+    const match = versionsService.getVersions().find(version => (version.odooVersion ?? '').trim() === series);
+    if (match) {
+        return { versionId: match.id, branchLabel: series };
+    }
+    // Non-blocking offer to create the missing version profile.
+    void vscode.window.showInformationMessage(`Database "${dbName}" runs Odoo ${series}, but no matching version profile exists.`, 'Create Version', 'Ignore').then(async (choice) => {
+        if (choice !== 'Create Version') {
+            return;
+        }
+        try {
+            const created = await versionsService.createVersion(`Odoo ${series}`, series);
+            await linkDatabaseToVersion(dbName, created.id);
+            (0, utils_1.showAutoInfo)(`Created version "Odoo ${series}" and linked it to "${dbName}"`, 3000);
+            await vscode.commands.executeCommand('dbSelector.refresh');
+        }
+        catch (error) {
+            (0, utils_1.showError)(`Failed to create version for Odoo ${series}: ${error.message}`);
+        }
+    });
+    return { versionId: undefined, branchLabel: series };
+}
 async function createDb(projectName, repos, dumpFolderPath, _settings, options = {}) {
-    let selectedModules = [];
-    let db;
-    let modules = [];
-    // Step 1: Choose database creation method
+    // Step 1: creation method — the only decision that cannot be inferred.
     let creationMethod;
     if (options.initialMethod) {
         creationMethod = options.initialMethod;
@@ -6019,40 +5344,15 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
             ignoreFocusOut: true
         });
         if (!selection) {
-            return undefined; // User cancelled
+            return undefined;
         }
         creationMethod = selection.method;
     }
-    let existingDbName;
-    let isExistingDb = false;
+    // Step 2: method-specific source.
     let sqlDumpPath;
     let selectedTemplate;
-    // Step 2: Handle the specific creation method
+    let existingDbName;
     switch (creationMethod) {
-        case 'fresh':
-            const allModules = (0, utils_1.discoverModulesInRepos)(repos).modules.map(module => ({
-                path: module.path,
-                name: module.name,
-                source: module.isPsaeInternal && module.psInternalDirName
-                    ? `${module.repoName}/${module.psInternalDirName}`
-                    : module.repoName
-            }));
-            // Select modules to install
-            const moduleChoices = allModules.map(entry => ({
-                label: entry.name,
-                description: entry.source,
-                detail: entry.path
-            }));
-            const selectedModuleObjects = await vscode.window.showQuickPick(moduleChoices, {
-                placeHolder: 'Select modules to install (optional)',
-                canPickMany: true,
-                ignoreFocusOut: true
-            });
-            if (selectedModuleObjects === undefined) {
-                return undefined;
-            }
-            selectedModules = selectedModuleObjects.map(choice => choice.label);
-            break;
         case 'dump': {
             const selection = await getDbDumpFolder(dumpFolderPath, projectName);
             if (!selection) {
@@ -6071,23 +5371,6 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
             }
             break;
         }
-        case 'existing':
-            // Get existing database name
-            existingDbName = await vscode.window.showInputBox({
-                placeHolder: 'Enter the name of the existing PostgreSQL database',
-                prompt: 'Make sure the database exists in your PostgreSQL instance',
-                ignoreFocusOut: true
-            });
-            if (existingDbName === undefined) {
-                return undefined;
-            }
-            if (!existingDbName.trim()) {
-                (0, utils_1.showError)('Enter a database name to continue.');
-                return undefined;
-            }
-            existingDbName = existingDbName.trim();
-            isExistingDb = true;
-            break;
         case 'template': {
             const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
             const templates = sanitizeDatabaseTemplates(data.dbTemplates);
@@ -6101,122 +5384,84 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
             }
             break;
         }
-    }
-    // Step 3: Get database branch name (optional)
-    const branchInput = await vscode.window.showInputBox({
-        placeHolder: 'Enter a branch/tag name for this database (optional)',
-        prompt: 'This helps identify which version/branch this database represents',
-        ignoreFocusOut: true
-    });
-    if (branchInput === undefined) {
-        return undefined;
-    }
-    const branchName = branchInput.trim() || undefined;
-    // Step 4: Select the Odoo version from available versions
-    const versionsService = versionsService_1.VersionsService.getInstance();
-    await versionsService.initialize();
-    const availableVersions = versionsService.getVersions();
-    let selectedVersion;
-    let selectedVersionId;
-    if (availableVersions.length > 0) {
-        const versionChoices = [
-            {
-                label: "$(close) No Version",
-                description: "Use current branch settings",
-                detail: "Database will use the current repository branches",
-                versionId: undefined
-            },
-            ...availableVersions.map(version => ({
-                label: `$(versions) ${version.name}`,
-                description: `Odoo ${version.odooVersion}`,
-                detail: `Use settings and configuration from ${version.name}`,
-                versionId: version.id
-            }))
-        ];
-        const selectedChoice = await vscode.window.showQuickPick(versionChoices, {
-            placeHolder: 'Select a version for this database (optional)',
-            ignoreFocusOut: true
-        });
-        if (selectedChoice === undefined) {
-            return undefined;
+        case 'existing': {
+            existingDbName = await pickExistingPostgresDatabase();
+            if (!existingDbName) {
+                return undefined;
+            }
+            break;
         }
-        selectedVersionId = selectedChoice.versionId;
-        if (selectedVersionId) {
-            selectedVersion = versionsService.getVersion(selectedVersionId);
-        }
+        case 'fresh':
+            break;
     }
-    // Step 5: Attach project repository branch mapping for this DB
-    const projectRepoBranches = await promptProjectRepoBranchAssignments(repos);
-    if (projectRepoBranches === undefined) {
-        return undefined;
-    }
-    // Step 6: Create the database model
-    for (const module of selectedModules) {
-        modules.push(new module_1.ModuleModel(module, 'install'));
-    }
+    // Step 3: database name — pre-filled suggestion, one Enter to accept.
     const creationTimestamp = new Date();
     const existingIdentifiers = await collectExistingDatabaseIdentifiers();
-    const repoSignature = buildRepoSignature(repos);
-    let dbKind = creationMethod === 'dump'
-        ? 'dump'
-        : creationMethod === 'template'
-            ? 'template'
-            : 'fresh';
-    let internalDbName;
-    let displayDbName;
-    if (isExistingDb) {
-        if (!existingDbName) {
-            throw new Error('Enter a database name to continue.');
-        }
-        internalDbName = existingDbName;
-        displayDbName = existingDbName;
-        dbKind = 'existing';
+    const dbKind = creationMethod;
+    let dbName;
+    if (existingDbName) {
+        dbName = existingDbName;
     }
     else {
-        const deterministicSeed = creationMethod === 'dump' && sqlDumpPath
-            ? buildDumpDeterministicSeed(sqlDumpPath, projectName, repoSignature)
-            : buildStandardDeterministicSeed(projectName, dbKind, creationTimestamp, branchName, selectedVersionId, repoSignature);
-        const identifiers = (0, dbNaming_1.generateDatabaseIdentifiers)({
+        const suggestion = (0, dbNaming_1.generateDatabaseIdentifiers)({
             projectName,
             kind: dbKind,
             timestamp: creationTimestamp,
-            deterministicSeed,
             existingInternalNames: existingIdentifiers
+        }).internalName;
+        const nameInput = await vscode.window.showInputBox({
+            prompt: 'Database name (used as the PostgreSQL identifier)',
+            value: suggestion,
+            ignoreFocusOut: true,
+            validateInput: value => {
+                const trimmed = value.trim();
+                if (!trimmed) {
+                    return 'Database name cannot be empty.';
+                }
+                if (!NEW_DB_NAME_PATTERN.test(trimmed)) {
+                    return 'Use letters, numbers, "-" or "_", starting with a letter or "_".';
+                }
+                if (RESERVED_DATABASE_NAMES.has(trimmed.toLowerCase())) {
+                    return `"${trimmed}" is a reserved database name.`;
+                }
+                if (existingIdentifiers.has(trimmed.toLowerCase())) {
+                    return 'A database with this name is already linked to a project.';
+                }
+                return null;
+            }
         });
-        internalDbName = identifiers.internalName;
-        displayDbName = identifiers.displayName;
-        existingIdentifiers.add(internalDbName.toLowerCase());
+        if (nameInput === undefined) {
+            return undefined;
+        }
+        dbName = nameInput.trim();
     }
-    db = new db_1.DatabaseModel(displayDbName, creationTimestamp, {
-        modules,
-        isItABackup: false, // isSelected (will be set when added to project)
-        isSelected: true, // isActive
+    // Step 4: create/restore the PostgreSQL database.
+    if (creationMethod === 'dump' && sqlDumpPath) {
+        await setupDatabase(dbName, sqlDumpPath);
+    }
+    else if (creationMethod === 'template' && selectedTemplate) {
+        await cloneDatabaseFromTemplate(dbName, selectedTemplate.templateDbName);
+    }
+    else if (creationMethod === 'fresh') {
+        await setupDatabase(dbName, undefined);
+    }
+    // Step 5: infer the environment instead of prompting for it. The version is
+    // auto-detected from the database itself; the current branch of every
+    // project repo is captured as the database's working state.
+    const { versionId, branchLabel } = await resolveVersionForNewDatabase(dbName, creationMethod);
+    const projectRepoBranches = await (0, environment_1.captureCurrentRepoBranches)(repos);
+    return new db_1.DatabaseModel(dbName, creationTimestamp, {
+        isSelected: true,
+        isItABackup: creationMethod === 'dump',
         sqlFilePath: sqlDumpPath,
-        isExisting: isExistingDb,
-        branchName,
-        // Only set odooVersion if no version is selected (legacy compatibility)
-        odooVersion: selectedVersionId ? undefined : (selectedVersion?.odooVersion || ''),
-        versionId: selectedVersionId,
-        displayName: displayDbName,
-        internalName: internalDbName,
+        isExisting: creationMethod === 'existing',
+        branchName: branchLabel ?? '',
+        versionId,
+        displayName: dbName,
+        internalName: dbName,
         kind: dbKind,
         projectRepoBranches
     });
-    // Step 7: Set up the database if needed
-    if (sqlDumpPath) {
-        db.isItABackup = true;
-        await setupDatabase(db.id, sqlDumpPath);
-    }
-    else if (selectedTemplate) {
-        await cloneDatabaseFromTemplate(db.id, selectedTemplate.templateDbName);
-    }
-    else if (!isExistingDb) {
-        // Create fresh database
-        await setupDatabase(db.id, undefined);
-    }
-    // Note: Version switching will be handled when the database is selected or activated,
-    // not during creation, to avoid redundant prompts
-    return db;
 }
 async function persistDatabaseTemplates(data, templates) {
     const normalized = sanitizeDatabaseTemplates(templates);
@@ -6688,7 +5933,6 @@ async function selectDatabase(event) {
         return;
     }
     const { data, project } = result;
-    // Find the project index in the projects array
     const projectIndex = data.projects.findIndex((p) => p.uid === project.uid);
     if (projectIndex === -1) {
         (0, utils_1.showError)('The selected project could not be found.');
@@ -6704,157 +5948,17 @@ async function selectDatabase(event) {
         project.dbs[newSelectedDbIndex].isSelected = true;
     }
     const selectedDatabase = newSelectedDbIndex !== -1 ? project.dbs[newSelectedDbIndex] : database;
-    // Save the updated databases array without settings
-    const updatedData = (0, utils_1.stripSettings)(data);
-    await settingsStore_1.SettingsStore.saveWithoutComments(updatedData);
-    // Handle version and branch switching with enhanced options
+    await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+    // Align the workbench (active version, core branches, project repo
+    // branches) to the database through the single switch pipeline.
     try {
-        await handleDatabaseVersionSwitch(selectedDatabase);
+        await (0, environment_1.alignEnvironment)((0, environment_1.buildDatabaseEnvironmentTarget)(selectedDatabase, project.repos ?? []), { label: `Database "${databaseLabel}"` });
     }
     catch (error) {
-        console.error('Error in database version switching:', error);
-        (0, utils_1.showWarning)(`Database selected, but version switching failed: ${error.message}`);
-    }
-    try {
-        await applyProjectRepoBranchAssignments(selectedDatabase, project.repos ?? []);
-    }
-    catch (error) {
-        console.error('Error while switching project repository branches:', error);
-        (0, utils_1.showWarning)(`Database selected, but project repository branch switching failed: ${error.message}`);
+        console.error('Error while aligning environment for database selection:', error);
+        (0, utils_1.showWarning)(`Database selected, but environment switching failed: ${error.message}`);
     }
     (0, utils_1.showBriefStatus)(`Database switched to: ${databaseLabel}`, 2000);
-}
-async function handleDatabaseVersionSwitch(database) {
-    const versionsService = versionsService_1.VersionsService.getInstance();
-    await versionsService.initialize();
-    const settings = await versionsService.getActiveVersionSettings();
-    const databaseLabel = (0, utils_1.getDatabaseLabel)(database);
-    // Get the database switch behavior setting
-    const switchBehavior = vscode.workspace.getConfiguration('odooDebugger').get('databaseSwitchBehavior', 'ask');
-    // Check if database has a version associated with it
-    if (database.versionId) {
-        const dbVersion = versionsService.getVersion(database.versionId);
-        if (dbVersion) {
-            // Handle automatic behaviors first
-            if (switchBehavior !== 'ask') {
-                switch (switchBehavior) {
-                    case 'auto-both':
-                        // Automatically switch both version and branch
-                        await versionsService.setActiveVersion(dbVersion.id);
-                        const currentOdooBranch = await (0, utils_1.getGitBranch)(settings.odooPath);
-                        if (currentOdooBranch !== dbVersion.odooVersion) {
-                            await checkoutBranch(settings, dbVersion.odooVersion);
-                            (0, utils_1.showAutoInfo)(`Auto-switched to version "${dbVersion.name}" and branch "${dbVersion.odooVersion}"`, 3000);
-                        }
-                        else {
-                            (0, utils_1.showAutoInfo)(`Auto-switched to version "${dbVersion.name}" (branch already correct)`, 3000);
-                        }
-                        return;
-                    case 'auto-version-only':
-                        // Automatically switch version settings only
-                        await versionsService.setActiveVersion(dbVersion.id);
-                        (0, utils_1.showAutoInfo)(`Auto-switched to version "${dbVersion.name}" settings`, 3000);
-                        return;
-                    case 'auto-branch-only':
-                        // Automatically switch branches only (no version change)
-                        const currentOdooBranchOnly = await (0, utils_1.getGitBranch)(settings.odooPath);
-                        if (currentOdooBranchOnly !== dbVersion.odooVersion) {
-                            await checkoutBranch(settings, dbVersion.odooVersion);
-                            (0, utils_1.showAutoInfo)(`Auto-switched to branch "${dbVersion.odooVersion}"`, 3000);
-                        }
-                        else {
-                            (0, utils_1.showAutoInfo)(`Branch "${dbVersion.odooVersion}" already active`, 2000);
-                        }
-                        return;
-                }
-            }
-            // Show enhanced switching options (when switchBehavior is 'ask')
-            const switchOptions = [
-                {
-                    label: "$(rocket) Switch to Version Settings Only",
-                    description: "Use version settings without changing branches",
-                    detail: `Apply settings from ${dbVersion.name} but keep current branches`,
-                    action: 'version-only'
-                },
-                {
-                    label: "$(git-branch) Switch Version + Branch",
-                    description: "Use version settings and switch to matching branch",
-                    detail: `Apply settings from ${dbVersion.name} and switch to ${dbVersion.odooVersion} branch`,
-                    action: 'version-and-branch'
-                },
-                {
-                    label: "$(close) Do Nothing",
-                    description: "Keep current settings and branches",
-                    detail: "No changes will be made",
-                    action: 'nothing'
-                }
-            ];
-            const selectedOption = await vscode.window.showQuickPick(switchOptions, {
-                placeHolder: `Database "${databaseLabel}" uses version "${dbVersion.name}". What would you like to do?`,
-                ignoreFocusOut: true
-            });
-            if (selectedOption) {
-                switch (selectedOption.action) {
-                    case 'version-only':
-                        // Activate the version (which applies its settings)
-                        await versionsService.setActiveVersion(dbVersion.id);
-                        (0, utils_1.showAutoInfo)(`Switched to version "${dbVersion.name}" settings`, 3000);
-                        break;
-                    case 'version-and-branch': {
-                        // Activate the version and switch branches
-                        await versionsService.setActiveVersion(dbVersion.id);
-                        const currentOdooBranch = await (0, utils_1.getGitBranch)(settings.odooPath);
-                        // Check if branch switching is needed
-                        if (currentOdooBranch !== dbVersion.odooVersion) {
-                            await checkoutBranch(settings, dbVersion.odooVersion);
-                            (0, utils_1.showAutoInfo)(`Switched to version "${dbVersion.name}" and branch "${dbVersion.odooVersion}"`, 3000);
-                        }
-                        else {
-                            (0, utils_1.showAutoInfo)(`Switched to version "${dbVersion.name}" (branch already correct)`, 3000);
-                        }
-                        break;
-                    }
-                    case 'nothing':
-                        // Do nothing
-                        break;
-                }
-            }
-            return;
-        }
-    }
-    // Fallback to old behavior for databases without version (only branch switching available)
-    const effectiveOdooVersion = getEffectiveOdooVersion(database);
-    if (effectiveOdooVersion && effectiveOdooVersion !== '') {
-        const currentOdooBranch = await (0, utils_1.getGitBranch)(settings.odooPath);
-        const currentEnterpriseBranch = await (0, utils_1.getGitBranch)(settings.enterprisePath);
-        const currentDesignThemesBranch = await (0, utils_1.getGitBranch)(settings.designThemesPath);
-        // Handle automatic branch switching for databases without version
-        if (switchBehavior === 'auto-both' || switchBehavior === 'auto-branch-only') {
-            // For databases without version, we can only do branch switching
-            if (currentOdooBranch !== effectiveOdooVersion) {
-                await checkoutBranch(settings, effectiveOdooVersion);
-                (0, utils_1.showAutoInfo)(`Auto-switched to branch "${effectiveOdooVersion}"`, 3000);
-            }
-            else {
-                (0, utils_1.showAutoInfo)(`Branch "${effectiveOdooVersion}" already active`, 2000);
-            }
-        }
-        else if (switchBehavior === 'auto-version-only') {
-            // Can't switch version for databases without version - do nothing
-            (0, utils_1.showAutoInfo)(`No version settings to switch to for database "${databaseLabel}"`, 2000);
-        }
-        else {
-            // Ask user (default behavior)
-            const shouldSwitch = await promptBranchSwitch(effectiveOdooVersion, {
-                odoo: currentOdooBranch,
-                enterprise: currentEnterpriseBranch,
-                designThemes: currentDesignThemesBranch
-            });
-            if (shouldSwitch) {
-                await checkoutBranch(settings, effectiveOdooVersion);
-            }
-        }
-    }
 }
 async function deleteDb(event) {
     const db = extractDatabaseFromEvent(event);
@@ -6985,14 +6089,9 @@ async function changeDatabaseVersion(event) {
             ? `version "${availableVersions.find(v => v.id === selectedChoice.versionId)?.name}"`
             : "no version";
         (0, utils_1.showAutoInfo)(`Database "${dbNameForMessage}" updated to use ${newVersionText}`, 3000);
-        // If this is the currently selected database, offer to switch to the new version
+        // If this is the currently selected database, align the workbench to the new version.
         if (db.isSelected && selectedChoice.versionId) {
-            const switchChoice = await vscode.window.showInformationMessage(`Would you like to immediately switch to the new version settings?`, { modal: false }, 'Switch Now', 'Not Now');
-            if (switchChoice === 'Switch Now') {
-                // Use the same switching logic as database selection
-                await handleDatabaseVersionSwitch(project.dbs[dbIndex]);
-                await applyProjectRepoBranchAssignments(project.dbs[dbIndex], project.repos ?? []);
-            }
+            await (0, environment_1.alignEnvironment)((0, environment_1.buildDatabaseEnvironmentTarget)(project.dbs[dbIndex], project.repos ?? []), { label: `Database "${dbNameForMessage}"` });
         }
     }
     catch (error) {
@@ -7023,7 +6122,7 @@ async function changeDatabaseProjectRepoBranches(event) {
             (0, utils_1.showError)('The selected database could not be found.');
             return;
         }
-        const existingAssignments = sanitizeProjectRepoBranchAssignments(project.dbs[dbIndex].projectRepoBranches);
+        const existingAssignments = (0, environment_1.sanitizeProjectRepoBranchAssignments)(project.dbs[dbIndex].projectRepoBranches);
         const updatedAssignments = await promptProjectRepoBranchAssignments(project.repos ?? [], existingAssignments, 'edit');
         if (updatedAssignments === undefined) {
             return;
@@ -7038,10 +6137,8 @@ async function changeDatabaseProjectRepoBranches(event) {
             (0, utils_1.showAutoInfo)(`Cleared project repo branch mapping for "${dbLabel}"`, 3000);
         }
         if (project.dbs[dbIndex].isSelected && updatedAssignments.length > 0) {
-            const applyNow = await vscode.window.showInformationMessage('Apply the updated project repo branch mapping now?', 'Apply Now', 'Later');
-            if (applyNow === 'Apply Now') {
-                await applyProjectRepoBranchAssignments(project.dbs[dbIndex], project.repos ?? []);
-            }
+            // The user explicitly configured this mapping; apply it right away.
+            await (0, environment_1.alignEnvironment)({ repoAssignments: (0, environment_1.resolveProjectRepoBranchAssignments)(project.dbs[dbIndex], project.repos ?? []) }, { label: `Database "${dbLabel}"`, behavior: 'auto' });
         }
     }
     catch (error) {
@@ -8478,26 +7575,6 @@ exports.SettingsStore = SettingsStore;
 
 /***/ }),
 /* 23 */
-/***/ ((__unused_webpack_module, exports) => {
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ModuleModel = void 0;
-class ModuleModel {
-    name;
-    state;
-    isInstalled;
-    constructor(name, state = 'none', isInstalled = false) {
-        this.name = name;
-        this.state = state;
-        this.isInstalled = isInstalled;
-    }
-}
-exports.ModuleModel = ModuleModel;
-
-
-/***/ }),
-/* 24 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -8628,13 +7705,13 @@ function generateDatabaseIdentifiers(options) {
 
 
 /***/ }),
-/* 25 */
+/* 24 */
 /***/ ((module) => {
 
 module.exports = require("os");
 
 /***/ }),
-/* 26 */
+/* 25 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -8695,13 +7772,13 @@ function getSortOptions(viewId) {
 
 
 /***/ }),
-/* 27 */
+/* 26 */
 /***/ ((module) => {
 
 module.exports = require("stream");
 
 /***/ }),
-/* 28 */
+/* 27 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -8743,8 +7820,10 @@ exports.databaseHasModuleTable = databaseHasModuleTable;
 exports.getInstalledModules = getInstalledModules;
 exports.getInstalledModuleNames = getInstalledModuleNames;
 exports.clearInstalledModuleCache = clearInstalledModuleCache;
-const node_child_process_1 = __webpack_require__(29);
-const util = __importStar(__webpack_require__(30));
+exports.parseOdooSeries = parseOdooSeries;
+exports.detectOdooSeries = detectOdooSeries;
+const node_child_process_1 = __webpack_require__(28);
+const util = __importStar(__webpack_require__(29));
 const runtimeCache_1 = __webpack_require__(10);
 const execFileAsync = util.promisify(node_child_process_1.execFile);
 const INSTALLED_MODULES_QUERY = `
@@ -8764,6 +7843,11 @@ const TABLE_EXISTS_QUERY = `
         SELECT FROM information_schema.tables
         WHERE table_name = 'ir_module_module'
     );
+`.trim();
+const BASE_MODULE_VERSION_QUERY = `
+    SELECT latest_version
+    FROM ir_module_module
+    WHERE name = 'base';
 `.trim();
 function validateDatabaseName(dbName) {
     // Basic sanity check to avoid shell injection when invoking psql
@@ -8878,22 +7962,705 @@ async function getInstalledModuleNames(dbName) {
 function clearInstalledModuleCache(dbName) {
     (0, runtimeCache_1.invalidateInstalledModulesCache)(dbName);
 }
+/**
+ * Extracts the Odoo series (branch name) from a base module version string:
+ * "17.0.1.3" -> "17.0", "saas~17.4.1.2" -> "saas-17.4".
+ */
+function parseOdooSeries(baseModuleVersion) {
+    if (!baseModuleVersion) {
+        return undefined;
+    }
+    const match = /^(saas[~-])?(\d+)\.(\d+)/.exec(baseModuleVersion.trim());
+    if (!match) {
+        return undefined;
+    }
+    const series = `${match[2]}.${match[3]}`;
+    return match[1] ? `saas-${series}` : series;
+}
+/**
+ * Detects which Odoo series (e.g. "17.0", "saas-17.4") a database runs by
+ * reading the base module's version. Best-effort: returns undefined for
+ * non-Odoo databases or when psql is unavailable.
+ */
+async function detectOdooSeries(dbName) {
+    try {
+        if (!(await databaseHasModuleTable(dbName))) {
+            return undefined;
+        }
+        const output = await runPsqlQuery(dbName, BASE_MODULE_VERSION_QUERY);
+        return parseOdooSeries(output);
+    }
+    catch (error) {
+        console.warn(`Failed to detect Odoo series for database "${dbName}":`, error);
+        return undefined;
+    }
+}
 
 
 /***/ }),
-/* 29 */
+/* 28 */
 /***/ ((module) => {
 
 module.exports = require("node:child_process");
 
 /***/ }),
-/* 30 */
+/* 29 */
 /***/ ((module) => {
 
 module.exports = require("node:util");
 
 /***/ }),
+/* 30 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getDatabaseSwitchBehavior = getDatabaseSwitchBehavior;
+exports.migrateLegacySwitchBehaviorSetting = migrateLegacySwitchBehaviorSetting;
+exports.sanitizeProjectRepoBranchAssignments = sanitizeProjectRepoBranchAssignments;
+exports.resolveProjectRepoBranchAssignments = resolveProjectRepoBranchAssignments;
+exports.captureCurrentRepoBranches = captureCurrentRepoBranches;
+exports.buildDatabaseEnvironmentTarget = buildDatabaseEnvironmentTarget;
+exports.alignEnvironment = alignEnvironment;
+const vscode = __importStar(__webpack_require__(1));
+const fs = __importStar(__webpack_require__(5));
+const path = __importStar(__webpack_require__(6));
+const settings_1 = __webpack_require__(8);
+const versionsService_1 = __webpack_require__(19);
+const utils_1 = __webpack_require__(4);
+const checkout_1 = __webpack_require__(31);
+const LEGACY_BEHAVIOR_MAP = {
+    'auto-both': 'auto',
+    'auto-version-only': 'auto',
+    'auto-branch-only': 'auto'
+};
+/**
+ * Normalizes the databaseSwitchBehavior setting, mapping pre-1.2 values
+ * (auto-both / auto-version-only / auto-branch-only) onto the new enum.
+ */
+function getDatabaseSwitchBehavior() {
+    const raw = vscode.workspace.getConfiguration('odooDebugger').get('databaseSwitchBehavior', 'auto') ?? 'auto';
+    if (raw === 'auto' || raw === 'ask' || raw === 'never') {
+        return raw;
+    }
+    return LEGACY_BEHAVIOR_MAP[raw] ?? 'auto';
+}
+/**
+ * One-time write-back of legacy databaseSwitchBehavior values in whichever
+ * scope defines them, so users' settings match the new enum.
+ */
+async function migrateLegacySwitchBehaviorSetting() {
+    try {
+        const config = vscode.workspace.getConfiguration('odooDebugger');
+        const inspection = config.inspect('databaseSwitchBehavior');
+        if (!inspection) {
+            return;
+        }
+        const scopes = [
+            [inspection.globalValue, vscode.ConfigurationTarget.Global],
+            [inspection.workspaceValue, vscode.ConfigurationTarget.Workspace],
+            [inspection.workspaceFolderValue, vscode.ConfigurationTarget.WorkspaceFolder]
+        ];
+        for (const [value, target] of scopes) {
+            if (typeof value === 'string' && LEGACY_BEHAVIOR_MAP[value]) {
+                await config.update('databaseSwitchBehavior', LEGACY_BEHAVIOR_MAP[value], target);
+            }
+        }
+    }
+    catch (error) {
+        console.warn('Failed to migrate databaseSwitchBehavior setting:', error);
+    }
+}
+function sanitizeProjectRepoBranchAssignments(source) {
+    if (!Array.isArray(source)) {
+        return [];
+    }
+    return source
+        .filter(entry => !!entry && typeof entry.branch === 'string' && entry.branch.trim() !== '')
+        .map(entry => ({
+        repoName: entry.repoName || '',
+        repoPath: entry.repoPath ? (0, utils_1.normalizePath)(entry.repoPath) : '',
+        branch: entry.branch.trim()
+    }));
+}
+function resolveProjectRepoBranchAssignments(database, projectRepos) {
+    const assignments = sanitizeProjectRepoBranchAssignments(database?.projectRepoBranches);
+    if (assignments.length === 0 || projectRepos.length === 0) {
+        return [];
+    }
+    const byPath = new Map();
+    const byName = new Map();
+    for (const entry of assignments) {
+        if (entry.repoPath) {
+            byPath.set((0, utils_1.normalizePath)(entry.repoPath), entry);
+        }
+        if (entry.repoName) {
+            byName.set(entry.repoName.toLowerCase(), entry);
+        }
+    }
+    const resolved = [];
+    const seenPaths = new Set();
+    for (const repo of projectRepos) {
+        const repoPath = (0, utils_1.normalizePath)(repo.path);
+        const assignment = byPath.get(repoPath) ?? byName.get(repo.name.toLowerCase());
+        if (!assignment || !assignment.branch || seenPaths.has(repoPath)) {
+            continue;
+        }
+        seenPaths.add(repoPath);
+        resolved.push({
+            repoName: repo.name,
+            repoPath,
+            branch: assignment.branch
+        });
+    }
+    return resolved;
+}
+/**
+ * Captures the current branch of each project repository, used to attach the
+ * developer's present working state to a newly created database.
+ */
+async function captureCurrentRepoBranches(projectRepos) {
+    const captured = await Promise.all(projectRepos.map(async (repo) => {
+        const repoPath = (0, utils_1.normalizePath)(repo.path);
+        const branch = await (0, utils_1.getGitBranch)(repoPath);
+        if (!branch) {
+            return undefined;
+        }
+        return { repoName: repo.name, repoPath, branch };
+    }));
+    return captured.filter((entry) => !!entry);
+}
+/**
+ * Builds the environment a database expects: its version, the version's core
+ * branch (or the legacy per-DB branch for unmigrated data), and its project
+ * repo branch mapping.
+ */
+function buildDatabaseEnvironmentTarget(database, projectRepos) {
+    const legacyBranch = typeof database?.odooVersion === 'string' && database.odooVersion.trim() !== ''
+        ? database.odooVersion.trim()
+        : undefined;
+    return {
+        versionId: database?.versionId || undefined,
+        coreBranch: database?.versionId ? undefined : legacyBranch,
+        repoAssignments: resolveProjectRepoBranchAssignments(database, projectRepos)
+    };
+}
+async function computeEnvironmentDiff(target) {
+    const versionsService = versionsService_1.VersionsService.getInstance();
+    await versionsService.initialize();
+    const targetVersion = target.versionId ? versionsService.getVersion(target.versionId) : undefined;
+    const versionToActivate = targetVersion && !targetVersion.isActive ? targetVersion : undefined;
+    const settings = new settings_1.SettingsModel(targetVersion?.settings ?? await versionsService.getActiveVersionSettings());
+    const coreBranchTarget = target.coreBranch?.trim() || targetVersion?.odooVersion?.trim() || undefined;
+    let coreBranch;
+    if (coreBranchTarget) {
+        const corePaths = [settings.odooPath, settings.enterprisePath, settings.designThemesPath]
+            .filter(entry => entry && entry.trim() !== '')
+            .map(entry => (0, utils_1.normalizePath)(entry))
+            .filter(entry => fs.existsSync(entry));
+        for (const repoPath of corePaths) {
+            const current = await (0, utils_1.getGitBranch)(repoPath);
+            if (current !== coreBranchTarget) {
+                coreBranch = coreBranchTarget;
+                break;
+            }
+        }
+    }
+    const repoCheckouts = [];
+    for (const assignment of target.repoAssignments ?? []) {
+        if (!assignment.repoPath) {
+            continue;
+        }
+        if (!fs.existsSync(assignment.repoPath)) {
+            // Keep missing repos so the failure is reported instead of silently skipped.
+            repoCheckouts.push(assignment);
+            continue;
+        }
+        const current = await (0, utils_1.getGitBranch)(assignment.repoPath);
+        if (current !== assignment.branch) {
+            repoCheckouts.push(assignment);
+        }
+    }
+    const descriptions = [];
+    if (versionToActivate) {
+        descriptions.push(`version "${versionToActivate.name}"`);
+    }
+    if (coreBranch) {
+        descriptions.push(`branch "${coreBranch}"`);
+    }
+    if (repoCheckouts.length > 0) {
+        descriptions.push(`${repoCheckouts.length} project repo branch(es)`);
+    }
+    return { versionToActivate, settings, coreBranch, repoCheckouts, descriptions };
+}
+async function applyRepoCheckouts(assignments) {
+    return vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Switching project repository branches',
+        cancellable: false
+    }, async (progress) => {
+        const total = assignments.length;
+        let completed = 0;
+        const results = [];
+        for (const assignment of assignments) {
+            completed += 1;
+            const repoLabel = assignment.repoName || path.basename(assignment.repoPath);
+            progress.report({
+                message: `${repoLabel} (${completed}/${total})`,
+                increment: total > 0 ? (100 / total) : 0
+            });
+            if (!fs.existsSync(assignment.repoPath)) {
+                results.push({ assignment, ok: false, message: `Repository path not found: ${assignment.repoPath}` });
+                continue;
+            }
+            if (!fs.existsSync(path.join(assignment.repoPath, '.git'))) {
+                results.push({ assignment, ok: false, message: 'Not a git repository' });
+                continue;
+            }
+            const checkoutResult = await (0, checkout_1.checkoutRepoBranch)(assignment.repoPath, assignment.branch);
+            results.push({ assignment, ok: checkoutResult.ok, message: checkoutResult.message });
+        }
+        return results;
+    });
+}
+/**
+ * Aligns the workbench (active version, core repo branches, project repo
+ * branches) to the given target. This is the single switch pipeline used by
+ * database selection, project selection, and version activation.
+ *
+ * No-ops silently when everything already matches. Failures never throw; they
+ * are summarized in a single warning.
+ */
+async function alignEnvironment(target, options) {
+    const behavior = options.behavior ?? getDatabaseSwitchBehavior();
+    if (behavior === 'never') {
+        return;
+    }
+    const diff = await computeEnvironmentDiff(target);
+    if (!diff.versionToActivate && !diff.coreBranch && diff.repoCheckouts.length === 0) {
+        return;
+    }
+    if (behavior === 'ask') {
+        const choice = await vscode.window.showInformationMessage(`${options.label} targets ${diff.descriptions.join(', ')}. Align your workspace?`, 'Switch', 'Keep Current');
+        if (choice !== 'Switch') {
+            return;
+        }
+    }
+    const applied = [];
+    const failures = [];
+    if (diff.versionToActivate) {
+        const versionsService = versionsService_1.VersionsService.getInstance();
+        const ok = await versionsService.setActiveVersion(diff.versionToActivate.id);
+        if (ok) {
+            applied.push(`version "${diff.versionToActivate.name}"`);
+        }
+        else {
+            failures.push(`could not activate version "${diff.versionToActivate.name}"`);
+        }
+    }
+    if (diff.coreBranch) {
+        const results = await (0, checkout_1.checkoutCoreRepos)(diff.settings, diff.coreBranch);
+        const failed = results.filter(result => !result.success);
+        if (failed.length === 0) {
+            applied.push(`branch "${diff.coreBranch}"`);
+        }
+        else {
+            if (failed.length < results.length) {
+                applied.push(`branch "${diff.coreBranch}" (partially)`);
+            }
+            failures.push(...failed.map(result => `${result.name}: ${result.message}`));
+        }
+    }
+    if (diff.repoCheckouts.length > 0) {
+        const results = await applyRepoCheckouts(diff.repoCheckouts);
+        const failed = results.filter(result => !result.ok);
+        const succeeded = results.length - failed.length;
+        if (succeeded > 0) {
+            applied.push(`${succeeded} project repo branch(es)`);
+        }
+        failures.push(...failed.map(result => `${result.assignment.repoName || path.basename(result.assignment.repoPath)}: ${result.message}`));
+    }
+    if (failures.length === 0) {
+        (0, utils_1.showAutoInfo)(`${options.label}: switched ${applied.join(', ')}`, 3000);
+    }
+    else {
+        failures.forEach(failure => console.error(`[environment] ${options.label}: ${failure}`));
+        (0, utils_1.showWarning)(`${options.label}: environment switch finished with issues — ${failures.join('; ')}`);
+    }
+}
+
+
+/***/ }),
 /* 31 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.checkoutRepoBranch = checkoutRepoBranch;
+exports.checkoutCoreRepos = checkoutCoreRepos;
+const vscode = __importStar(__webpack_require__(1));
+const fs = __importStar(__webpack_require__(5));
+const child_process_1 = __webpack_require__(7);
+const utils_1 = __webpack_require__(4);
+const gitService_1 = __webpack_require__(9);
+const runtimeCache_1 = __webpack_require__(10);
+const checkoutHooksOutput = vscode.window.createOutputChannel('Odoo Debugger: Branch Hooks');
+function quoteForSingleQuotedShell(value) {
+    return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+function buildHookExecutionScript(commands, phase, contextLabel) {
+    const lines = ['set -e'];
+    commands.forEach((command, index) => {
+        const prefix = `[${phase}] ${contextLabel}: [${index + 1}/${commands.length}]`;
+        lines.push(`__odt_cmd=${quoteForSingleQuotedShell(command)}`);
+        lines.push(`__odt_prefix=${quoteForSingleQuotedShell(prefix)}`);
+        lines.push('printf \'%s\\n\' "$__odt_prefix START $__odt_cmd"');
+        lines.push('set +e');
+        lines.push('eval "$__odt_cmd"');
+        lines.push('__odt_exit=$?');
+        lines.push('set -e');
+        lines.push('printf \'%s\\n\' "$__odt_prefix END exit=$__odt_exit"');
+        lines.push('if [ $__odt_exit -ne 0 ]; then');
+        lines.push('  exit $__odt_exit');
+        lines.push('fi');
+    });
+    return lines.join('\n');
+}
+async function runCheckoutHookCommands(commands, phase, cwd, contextLabel, progress) {
+    if (!Array.isArray(commands) || commands.length === 0) {
+        return true;
+    }
+    const normalizedCommands = commands.map(cmd => cmd.trim()).filter(Boolean);
+    if (normalizedCommands.length === 0) {
+        return true;
+    }
+    progress?.report({ message: `${contextLabel}: ${phase} (${normalizedCommands.length} command(s))` });
+    checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: running ${normalizedCommands.length} command(s) in: ${cwd}`);
+    normalizedCommands.forEach((command, index) => {
+        checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: [${index + 1}/${normalizedCommands.length}] $ ${command}`);
+    });
+    const script = buildHookExecutionScript(normalizedCommands, phase, contextLabel);
+    const taskStartedAt = Date.now();
+    let stderrTail = '';
+    const exitCode = await new Promise((resolve) => {
+        const child = (0, child_process_1.spawn)('/bin/bash', ['-lc', script], {
+            cwd,
+            env: process.env,
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+        const stdoutBuffer = { pending: '' };
+        const stderrBuffer = { pending: '' };
+        const appendBufferedLines = (chunk, buffer) => {
+            const text = chunk.toString();
+            if (!text) {
+                return;
+            }
+            const combined = buffer.pending + text;
+            const lines = combined.split(/\r?\n/);
+            buffer.pending = lines.pop() ?? '';
+            for (const line of lines) {
+                checkoutHooksOutput.appendLine(line);
+            }
+        };
+        const flushBuffer = (buffer) => {
+            if (!buffer.pending) {
+                return;
+            }
+            checkoutHooksOutput.appendLine(buffer.pending);
+            buffer.pending = '';
+        };
+        child.stdout?.on('data', chunk => {
+            appendBufferedLines(chunk, stdoutBuffer);
+        });
+        child.stderr?.on('data', chunk => {
+            appendBufferedLines(chunk, stderrBuffer);
+            stderrTail += chunk.toString();
+            if (stderrTail.length > 2000) {
+                stderrTail = stderrTail.slice(-2000);
+            }
+        });
+        child.on('error', error => {
+            stderrTail = error.message;
+            resolve(undefined);
+        });
+        child.on('close', code => {
+            flushBuffer(stdoutBuffer);
+            flushBuffer(stderrBuffer);
+            resolve(code ?? undefined);
+        });
+    });
+    const durationMs = Date.now() - taskStartedAt;
+    if (exitCode !== 0) {
+        const failureReason = exitCode === undefined ? 'no exit code' : `exit ${exitCode}`;
+        if (stderrTail.trim()) {
+            checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: stderr tail:\n${stderrTail.trim()}`);
+        }
+        checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: FAILED (${failureReason}, duration=${durationMs}ms)`);
+        checkoutHooksOutput.show(true);
+        return false;
+    }
+    checkoutHooksOutput.appendLine(`[${phase}] ${contextLabel}: OK (duration=${durationMs}ms)`);
+    return true;
+}
+async function runGitCheckoutCli(repoPath, branch) {
+    return new Promise((resolve) => {
+        const child = (0, child_process_1.spawn)('git', ['checkout', branch], { cwd: repoPath, stdio: ['ignore', 'ignore', 'pipe'] });
+        let stderr = '';
+        child.stderr?.on('data', chunk => {
+            stderr += chunk.toString();
+        });
+        child.on('error', error => {
+            resolve({ ok: false, message: error.message });
+        });
+        child.on('close', code => {
+            const details = stderr.trim();
+            if (code === 0 || details.includes(`Already on '${branch}'`)) {
+                resolve({
+                    ok: true,
+                    message: details.includes(`Already on '${branch}'`)
+                        ? `Already on branch "${branch}"`
+                        : `Switched to branch "${branch}"`
+                });
+                return;
+            }
+            resolve({
+                ok: false,
+                message: details || `git checkout exited with code ${code ?? 'unknown'}`
+            });
+        });
+    });
+}
+/**
+ * Checks out a branch on a single repository, preferring the VS Code Git API
+ * and falling back to the git CLI.
+ */
+async function checkoutRepoBranch(repoPath, branch) {
+    const sourceControlSucceeded = await (0, gitService_1.checkoutBranchViaSourceControl)(repoPath, branch);
+    if (sourceControlSucceeded) {
+        (0, runtimeCache_1.invalidateGitBranchCache)(repoPath);
+        return { ok: true, message: `Switched to branch "${branch}"` };
+    }
+    const result = await runGitCheckoutCli(repoPath, branch);
+    if (result.ok) {
+        (0, runtimeCache_1.invalidateGitBranchCache)(repoPath);
+        try {
+            await vscode.commands.executeCommand('git.refresh');
+        }
+        catch {
+            // Best-effort SCM refresh after external checkout.
+        }
+    }
+    return result;
+}
+/**
+ * Switches the core Odoo repositories (odoo / enterprise / design-themes) to the
+ * given branch, running the configured pre/post checkout hooks per repository.
+ * Returns per-repo results; callers own the summary messaging.
+ */
+async function checkoutCoreRepos(settings, branch) {
+    const repos = [
+        { name: 'Odoo', path: settings.odooPath },
+        { name: 'Enterprise', path: settings.enterprisePath },
+        { name: 'Design Themes', path: settings.designThemesPath }
+    ]
+        .filter(repo => repo.path && repo.path.trim() !== '')
+        .map(repo => ({ name: repo.name, path: (0, utils_1.normalizePath)(repo.path) }));
+    if (repos.length === 0) {
+        return [{ name: 'Odoo', success: false, message: 'No core repository paths are configured' }];
+    }
+    const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
+    const preCheckoutCommands = config.get('preCheckoutCommands', []);
+    const postCheckoutCommands = config.get('postCheckoutCommands', []);
+    return vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Switching to branch: ${branch}`,
+        cancellable: false
+    }, async (progress) => {
+        const operationStartedAt = Date.now();
+        const elapsed = () => `${Date.now() - operationStartedAt}ms`;
+        const totalRepos = repos.length;
+        let completedRepos = 0;
+        const processRepository = async (repo) => {
+            checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline start t+${elapsed()}`);
+            progress.report({ message: `${repo.name}: processing` });
+            if (!fs.existsSync(repo.path)) {
+                return {
+                    name: repo.name,
+                    success: false,
+                    message: `Repository path does not exist: ${repo.path}`
+                };
+            }
+            const preOk = await runCheckoutHookCommands(preCheckoutCommands, 'pre-checkout', repo.path, repo.name, progress);
+            if (!preOk) {
+                checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline failed in pre-checkout t+${elapsed()}`);
+                return {
+                    name: repo.name,
+                    success: false,
+                    message: 'Pre-checkout hook(s) failed'
+                };
+            }
+            checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: checkout start t+${elapsed()}`);
+            const checkoutResult = await checkoutRepoBranch(repo.path, branch);
+            if (!checkoutResult.ok) {
+                checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline failed during checkout t+${elapsed()}`);
+                return {
+                    name: repo.name,
+                    success: false,
+                    message: checkoutResult.message || 'Failed to checkout branch'
+                };
+            }
+            const postOk = await runCheckoutHookCommands(postCheckoutCommands, 'post-checkout', repo.path, repo.name, progress);
+            checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline ${postOk ? 'complete' : 'complete-with-post-failure'} t+${elapsed()}`);
+            return {
+                name: repo.name,
+                success: postOk,
+                message: postOk ? checkoutResult.message : `${checkoutResult.message} (but post-checkout hook(s) failed)`
+            };
+        };
+        const results = await Promise.all(repos.map(async (repo) => {
+            const result = await processRepository(repo);
+            completedRepos += 1;
+            progress.report({
+                message: `${repo.name}: completed (${completedRepos}/${totalRepos})`,
+                increment: totalRepos > 0 ? (100 / totalRepos) : 0
+            });
+            checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: ${result.success ? 'SUCCESS' : 'FAILED'} - ${result.message}`);
+            return result;
+        }));
+        const successCount = results.filter(r => r.success).length;
+        checkoutHooksOutput.appendLine(`[checkout] Completed branch switch "${branch}" in ${Date.now() - operationStartedAt}ms (${successCount}/${results.length} succeeded)`);
+        return results;
+    });
+}
+
+
+/***/ }),
+/* 32 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.applyDatabaseFieldMigration = applyDatabaseFieldMigration;
+exports.migrateDebuggerData = migrateDebuggerData;
+const settingsStore_1 = __webpack_require__(22);
+/**
+ * Folds the legacy per-database `odooVersion` field into the current model:
+ * link the database to the Version whose branch matches, otherwise keep the
+ * string as the display label. Returns true when anything changed.
+ *
+ * Pure transform so it can be unit-tested without VS Code.
+ */
+function applyDatabaseFieldMigration(data) {
+    let changed = false;
+    const versions = Object.values(data.versions ?? {});
+    for (const project of data.projects ?? []) {
+        for (const db of project.dbs ?? []) {
+            if (!db || typeof db !== 'object' || !('odooVersion' in db)) {
+                continue;
+            }
+            const legacyBranch = typeof db.odooVersion === 'string' ? db.odooVersion.trim() : '';
+            if (legacyBranch && !db.versionId) {
+                const match = versions.find(version => version?.odooVersion === legacyBranch);
+                if (match?.id) {
+                    db.versionId = match.id;
+                }
+                else if (!db.branchName) {
+                    db.branchName = legacyBranch;
+                }
+            }
+            delete db.odooVersion;
+            changed = true;
+        }
+    }
+    return changed;
+}
+/**
+ * One-time, non-fatal migration of odoo-debugger-data.json to the v1.2 shape.
+ * Runs at activation after the legacy-settings migration.
+ */
+async function migrateDebuggerData() {
+    try {
+        const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
+        if (applyDatabaseFieldMigration(data)) {
+            // Save as-is (no settings strip): if the legacy-settings migration
+            // has not run yet, its data must survive this write.
+            await settingsStore_1.SettingsStore.saveWithoutComments(data);
+        }
+    }
+    catch (error) {
+        console.warn('Debugger data migration skipped:', error);
+    }
+}
+
+
+/***/ }),
+/* 33 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -8945,15 +8712,15 @@ exports.exportProject = exportProject;
 exports.importProject = importProject;
 exports.quickProjectSearch = quickProjectSearch;
 const vscode = __importStar(__webpack_require__(1));
-const os = __importStar(__webpack_require__(25));
-const project_1 = __webpack_require__(32);
-const repo_1 = __webpack_require__(34);
+const os = __importStar(__webpack_require__(24));
+const project_1 = __webpack_require__(34);
+const repo_1 = __webpack_require__(36);
 const utils_1 = __webpack_require__(4);
 const settingsStore_1 = __webpack_require__(22);
 const versionsService_1 = __webpack_require__(19);
 const crypto_1 = __webpack_require__(21);
-const dbs_1 = __webpack_require__(17);
-const sortOptions_1 = __webpack_require__(26);
+const environment_1 = __webpack_require__(30);
+const sortOptions_1 = __webpack_require__(25);
 let projectMetadataMigrationCompleted = false;
 function sanitizeProjectTickets(rawTickets) {
     if (!Array.isArray(rawTickets)) {
@@ -9097,23 +8864,8 @@ async function createProject(name, repos, db) {
     data.projects.push(project);
     // Save the entire updated data
     await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-    // If the project has a database with a version, check if branches need switching
-    if (db && db.odooVersion && db.odooVersion !== '') {
-        // Get settings from active version
-        const versionsService = versionsService_1.VersionsService.getInstance();
-        const settings = await versionsService.getActiveVersionSettings();
-        const currentOdooBranch = await (0, utils_1.getGitBranch)(settings.odooPath);
-        const currentEnterpriseBranch = await (0, utils_1.getGitBranch)(settings.enterprisePath);
-        const currentDesignThemesBranch = await (0, utils_1.getGitBranch)(settings.designThemesPath ?? './design-themes');
-        const shouldSwitch = await promptBranchSwitch(db.odooVersion, {
-            odoo: currentOdooBranch,
-            enterprise: currentEnterpriseBranch,
-            designThemes: currentDesignThemesBranch
-        });
-        if (shouldSwitch) {
-            await (0, dbs_1.checkoutBranch)(settings, db.odooVersion);
-        }
-    }
+    // Environment alignment happens when the database is selected right after
+    // creation, so no branch switching is needed here.
     const databaseMessage = db ? ` and database ${(0, utils_1.getDatabaseLabel)(db)}` : '';
     (0, utils_1.showAutoInfo)(`Created project "${project.name}" with ${repos.length} repositories${databaseMessage}`, 4000); // Force a small delay to ensure data is persisted before refresh
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -9157,24 +8909,6 @@ async function ensureProjectUIDs(data) {
     }
     return needsSave;
 }
-async function promptBranchSwitch(targetVersion, currentBranches) {
-    const mismatchedRepos = [];
-    if (currentBranches.odoo !== targetVersion) {
-        mismatchedRepos.push(`Odoo (currently: ${currentBranches.odoo || 'unknown'})`);
-    }
-    if (currentBranches.enterprise !== targetVersion) {
-        mismatchedRepos.push(`Enterprise (currently: ${currentBranches.enterprise || 'unknown'})`);
-    }
-    if (currentBranches.designThemes !== targetVersion) {
-        mismatchedRepos.push(`Design Themes (currently: ${currentBranches.designThemes || 'unknown'})`);
-    }
-    if (mismatchedRepos.length === 0) {
-        return false; // No switch needed
-    }
-    const message = `Database requires Odoo version ${targetVersion}, but the following repositories are on different branches:\n\n${mismatchedRepos.join('\n')}\n\nWould you like to switch all repositories to version ${targetVersion}?`;
-    const choice = await vscode.window.showWarningMessage(message, { modal: false }, 'Switch Branches', 'Keep Current Branches');
-    return choice === 'Switch Branches';
-}
 async function selectProject(projectUid) {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     const projects = data.projects;
@@ -9198,10 +8932,10 @@ async function selectProject(projectUid) {
         await settingsStore_1.SettingsStore.saveWithComments(true, ["projects", newSelectedIndex, "isSelected"], 'odoo-debugger-data.json');
         // Get the newly selected project
         const selectedProject = projects[newSelectedIndex];
-        // Check if the project has a selected database with a specific version
+        // Align the workbench to the project's selected database, if any.
         const selectedDb = selectedProject.dbs?.find((db) => db.isSelected);
         if (selectedDb) {
-            await handleDatabaseVersionSwitchForProject(selectedDb, selectedProject.repos ?? []);
+            await (0, environment_1.alignEnvironment)((0, environment_1.buildDatabaseEnvironmentTarget)(selectedDb, selectedProject.repos ?? []), { label: `Project "${selectedProject.name}"` });
         }
         (0, utils_1.showInfo)(`Project switched to: ${selectedProject.name}`);
         // Force a small delay and refresh to ensure UI is updated
@@ -9210,48 +8944,6 @@ async function selectProject(projectUid) {
     else {
         (0, utils_1.showError)('The selected project could not be found.');
     }
-}
-async function handleDatabaseVersionSwitchForProject(database, projectRepos) {
-    const versionsService = versionsService_1.VersionsService.getInstance();
-    await versionsService.initialize();
-    const settings = await versionsService.getActiveVersionSettings();
-    // Check if database has a version associated with it
-    if (database.versionId) {
-        const dbVersion = versionsService.getVersion(database.versionId);
-        if (dbVersion) {
-            // Silently activate the version for project switching (no user prompt)
-            await versionsService.setActiveVersion(dbVersion.id);
-            const currentOdooBranch = await (0, utils_1.getGitBranch)(settings.odooPath);
-            // Check if branch switching is needed
-            if (currentOdooBranch !== dbVersion.odooVersion) {
-                const shouldSwitch = await promptBranchSwitch(dbVersion.odooVersion, {
-                    odoo: currentOdooBranch,
-                    enterprise: await (0, utils_1.getGitBranch)(settings.enterprisePath),
-                    designThemes: await (0, utils_1.getGitBranch)(settings.designThemesPath ?? './design-themes')
-                });
-                if (shouldSwitch) {
-                    await (0, dbs_1.checkoutBranch)(settings, dbVersion.odooVersion);
-                }
-            }
-            await (0, dbs_1.applyProjectRepoBranchAssignments)(database, projectRepos);
-            return;
-        }
-    }
-    // Fallback to old behavior for databases without version
-    if (database.odooVersion && database.odooVersion !== '') {
-        const currentOdooBranch = await (0, utils_1.getGitBranch)(settings.odooPath);
-        const currentEnterpriseBranch = await (0, utils_1.getGitBranch)(settings.enterprisePath);
-        const currentDesignThemesBranch = await (0, utils_1.getGitBranch)(settings.designThemesPath ?? './design-themes');
-        const shouldSwitch = await promptBranchSwitch(database.odooVersion, {
-            odoo: currentOdooBranch,
-            enterprise: currentEnterpriseBranch,
-            designThemes: currentDesignThemesBranch
-        });
-        if (shouldSwitch) {
-            await (0, dbs_1.checkoutBranch)(settings, database.odooVersion);
-        }
-    }
-    await (0, dbs_1.applyProjectRepoBranchAssignments)(database, projectRepos);
 }
 async function getRepo(targetPath, searchFilter) {
     const devsRepos = (0, utils_1.findRepositories)(targetPath);
@@ -9946,13 +9638,13 @@ async function quickProjectSearch() {
 
 
 /***/ }),
-/* 32 */
+/* 34 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectModel = void 0;
-const testing_1 = __webpack_require__(33);
+const testing_1 = __webpack_require__(35);
 const crypto_1 = __webpack_require__(21);
 class ProjectModel {
     name; // project sh name
@@ -9980,7 +9672,7 @@ exports.ProjectModel = ProjectModel;
 
 
 /***/ }),
-/* 33 */
+/* 35 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -10062,7 +9754,7 @@ function ensureTestingConfigModel(testingConfig) {
 
 
 /***/ }),
-/* 34 */
+/* 36 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -10084,7 +9776,7 @@ exports.RepoModel = RepoModel;
 
 
 /***/ }),
-/* 35 */
+/* 37 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10124,14 +9816,14 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.RepoTreeProvider = void 0;
 exports.selectRepo = selectRepo;
-const repo_1 = __webpack_require__(34);
+const repo_1 = __webpack_require__(36);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(4);
 const settingsStore_1 = __webpack_require__(22);
 const versionsService_1 = __webpack_require__(19);
 const path = __importStar(__webpack_require__(6));
 const fs = __importStar(__webpack_require__(5));
-const sortOptions_1 = __webpack_require__(26);
+const sortOptions_1 = __webpack_require__(25);
 const gitService_1 = __webpack_require__(9);
 const runtimeCache_1 = __webpack_require__(10);
 async function mapWithConcurrency(items, limit, worker) {
@@ -10302,7 +9994,7 @@ async function selectRepo(event) {
 
 
 /***/ }),
-/* 36 */
+/* 38 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10343,12 +10035,12 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectReposProvider = void 0;
 exports.revealProjectRepo = revealProjectRepo;
 const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(37));
+const fs = __importStar(__webpack_require__(39));
 const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(22);
 const utils_1 = __webpack_require__(4);
-const sortOptions_1 = __webpack_require__(26);
-const filesExclude_1 = __webpack_require__(38);
+const sortOptions_1 = __webpack_require__(25);
+const filesExclude_1 = __webpack_require__(40);
 class ProjectRepoItem extends vscode.TreeItem {
     metadata;
     constructor(metadata) {
@@ -10533,13 +10225,13 @@ async function revealProjectRepo(repo) {
 
 
 /***/ }),
-/* 37 */
+/* 39 */
 /***/ ((module) => {
 
 module.exports = require("node:fs/promises");
 
 /***/ }),
-/* 38 */
+/* 40 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10682,7 +10374,7 @@ function createFilesExcludeMatcher(scopeUri) {
 
 
 /***/ }),
-/* 39 */
+/* 41 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10732,7 +10424,7 @@ exports.updateInstalledModules = updateInstalledModules;
 exports.installAllModules = installAllModules;
 exports.clearAllModuleSelections = clearAllModuleSelections;
 exports.viewInstalledModules = viewInstalledModules;
-const module_1 = __webpack_require__(23);
+const module_1 = __webpack_require__(42);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(4);
 const child_process_1 = __webpack_require__(7);
@@ -10743,8 +10435,8 @@ function collectModuleDiscovery(project) {
     return (0, utils_1.discoverModulesInRepos)(project.repos, { manualIncludePaths: manualIncludes });
 }
 const settingsStore_1 = __webpack_require__(22);
-const database_1 = __webpack_require__(28);
-const sortOptions_1 = __webpack_require__(26);
+const database_1 = __webpack_require__(27);
+const sortOptions_1 = __webpack_require__(25);
 const versionsService_1 = __webpack_require__(19);
 class ModuleTreeProvider {
     context;
@@ -11563,7 +11255,27 @@ async function viewInstalledModules() {
 
 
 /***/ }),
-/* 40 */
+/* 42 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ModuleModel = void 0;
+class ModuleModel {
+    name;
+    state;
+    isInstalled;
+    constructor(name, state = 'none', isInstalled = false) {
+        this.name = name;
+        this.state = state;
+        this.isInstalled = isInstalled;
+    }
+}
+exports.ModuleModel = ModuleModel;
+
+
+/***/ }),
+/* 43 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11612,12 +11324,12 @@ exports.toggleLogLevel = toggleLogLevel;
 exports.setSpecificLogLevel = setSpecificLogLevel;
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(22);
-const testing_1 = __webpack_require__(33);
-const module_1 = __webpack_require__(23);
+const testing_1 = __webpack_require__(35);
+const module_1 = __webpack_require__(42);
 const utils_1 = __webpack_require__(4);
-const context_1 = __webpack_require__(41);
-const debugger_1 = __webpack_require__(42);
-const database_1 = __webpack_require__(28);
+const context_1 = __webpack_require__(44);
+const debugger_1 = __webpack_require__(45);
+const database_1 = __webpack_require__(27);
 class TestingTreeProvider {
     context;
     _onDidChangeTreeData = new vscode.EventEmitter();
@@ -12248,7 +11960,7 @@ async function setSpecificLogLevel() {
 
 
 /***/ }),
-/* 41 */
+/* 44 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12302,7 +12014,7 @@ function updateActiveContext(isActive) {
 
 
 /***/ }),
-/* 42 */
+/* 45 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12349,8 +12061,8 @@ const path = __importStar(__webpack_require__(3));
 const utils_1 = __webpack_require__(4);
 const settingsStore_1 = __webpack_require__(22);
 const versionsService_1 = __webpack_require__(19);
-const testing_1 = __webpack_require__(33);
-const database_1 = __webpack_require__(28);
+const testing_1 = __webpack_require__(35);
+const database_1 = __webpack_require__(27);
 const jsonc_parser_1 = __webpack_require__(11);
 async function selectPythonInterpreter(pythonPath) {
     if (!pythonPath || pythonPath.trim().length === 0) {
@@ -12727,7 +12439,7 @@ async function startDebugServer() {
 
 
 /***/ }),
-/* 43 */
+/* 46 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12924,7 +12636,7 @@ Continue?`;
 
 
 /***/ }),
-/* 44 */
+/* 47 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12966,7 +12678,7 @@ exports.VersionsTreeProvider = exports.VersionSettingTreeItem = exports.VersionT
 const vscode = __importStar(__webpack_require__(1));
 const versionsService_1 = __webpack_require__(19);
 const utils_1 = __webpack_require__(4);
-const sortOptions_1 = __webpack_require__(26);
+const sortOptions_1 = __webpack_require__(25);
 class VersionTreeItem extends vscode.TreeItem {
     version;
     collapsibleState;
@@ -13124,7 +12836,7 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 
 /***/ }),
-/* 45 */
+/* 48 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -13147,7 +12859,7 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 46 */
+/* 49 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13281,7 +12993,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 47 */
+/* 50 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13333,7 +13045,7 @@ const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(22);
 const utils_1 = __webpack_require__(4);
 const runtimeCache_1 = __webpack_require__(10);
-const filesExclude_1 = __webpack_require__(38);
+const filesExclude_1 = __webpack_require__(40);
 class ProjectReposExplorerProvider {
     _onDidChangeTreeData = new vscode.EventEmitter();
     onDidChangeTreeData = this._onDidChangeTreeData.event;
