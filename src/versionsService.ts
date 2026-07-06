@@ -381,15 +381,6 @@ export class VersionsService {
     }
 
     /**
-     * Get settings for active version
-     */
-    public async getActiveSettings(): Promise<any> {
-        await this.initialize(); // Ensure initialization
-        const activeVersion = this.getActiveVersion();
-        return activeVersion ? activeVersion.settings : getDefaultVersionSettings();
-    }
-
-    /**
      * Update settings for active version
      */
     public async updateActiveSettings(settings: Partial<any>): Promise<void> {

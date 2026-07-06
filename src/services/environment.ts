@@ -169,16 +169,22 @@ async function computeEnvironmentDiff(target: EnvironmentTarget): Promise<Enviro
     const coreBranchTarget = target.coreBranch?.trim() || targetVersion?.odooVersion?.trim() || undefined;
     let coreBranch: string | undefined;
     if (coreBranchTarget) {
-        const corePaths = [settings.odooPath, settings.enterprisePath, settings.designThemesPath]
+        const configuredPaths = [settings.odooPath, settings.enterprisePath, settings.designThemesPath]
             .filter(entry => entry && entry.trim() !== '')
-            .map(entry => normalizePath(entry))
-            .filter(entry => fs.existsSync(entry));
+            .map(entry => normalizePath(entry));
+        const existingPaths = configuredPaths.filter(entry => fs.existsSync(entry));
 
-        for (const repoPath of corePaths) {
-            const current = await getGitBranch(repoPath);
-            if (current !== coreBranchTarget) {
-                coreBranch = coreBranchTarget;
-                break;
+        if (existingPaths.length === 0) {
+            // Nothing usable to compare against: request the checkout so the
+            // missing/unconfigured paths are reported instead of silently skipped.
+            coreBranch = coreBranchTarget;
+        } else {
+            for (const repoPath of existingPaths) {
+                const current = await getGitBranch(repoPath);
+                if (current !== coreBranchTarget) {
+                    coreBranch = coreBranchTarget;
+                    break;
+                }
             }
         }
     }
@@ -270,21 +276,44 @@ export async function alignEnvironment(target: EnvironmentTarget, options: Align
     }
 
     const diff = await computeEnvironmentDiff(target);
-    if (!diff.versionToActivate && !diff.coreBranch && diff.repoCheckouts.length === 0) {
+    if (isEmptyDiff(diff)) {
         return;
     }
 
     if (behavior === 'ask') {
-        const choice = await vscode.window.showInformationMessage(
+        // Fire-and-forget so the selection itself (and the tree refresh) is not
+        // held hostage by an unanswered notification.
+        void vscode.window.showInformationMessage(
             `${options.label} targets ${diff.descriptions.join(', ')}. Align your workspace?`,
             'Switch',
             'Keep Current'
-        );
-        if (choice !== 'Switch') {
-            return;
-        }
+        ).then(async choice => {
+            if (choice !== 'Switch') {
+                return;
+            }
+            try {
+                // Recompute: the workspace may have changed while the
+                // notification sat unanswered.
+                const freshDiff = await computeEnvironmentDiff(target);
+                if (!isEmptyDiff(freshDiff)) {
+                    await applyEnvironmentDiff(freshDiff, options.label);
+                }
+                await vscode.commands.executeCommand('projectSelector.refresh');
+            } catch (error: any) {
+                showWarning(`${options.label}: environment switch failed: ${error.message}`);
+            }
+        });
+        return;
     }
 
+    await applyEnvironmentDiff(diff, options.label);
+}
+
+function isEmptyDiff(diff: EnvironmentDiff): boolean {
+    return !diff.versionToActivate && !diff.coreBranch && diff.repoCheckouts.length === 0;
+}
+
+async function applyEnvironmentDiff(diff: EnvironmentDiff, label: string): Promise<void> {
     const applied: string[] = [];
     const failures: string[] = [];
 
@@ -322,9 +351,9 @@ export async function alignEnvironment(target: EnvironmentTarget, options: Align
     }
 
     if (failures.length === 0) {
-        showAutoInfo(`${options.label}: switched ${applied.join(', ')}`, 3000);
+        showAutoInfo(`${label}: switched ${applied.join(', ')}`, 3000);
     } else {
-        failures.forEach(failure => console.error(`[environment] ${options.label}: ${failure}`));
-        showWarning(`${options.label}: environment switch finished with issues — ${failures.join('; ')}`);
+        failures.forEach(failure => console.error(`[environment] ${label}: ${failure}`));
+        showWarning(`${label}: environment switch finished with issues — ${failures.join('; ')}`);
     }
 }

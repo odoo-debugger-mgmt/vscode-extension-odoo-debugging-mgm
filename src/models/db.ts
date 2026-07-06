@@ -93,38 +93,4 @@ export class DatabaseModel {
         // Fall back to legacy odooVersion property for backward compatibility
         return this.odooVersion || undefined;
     }
-
-    /**
-     * Gets the version name if this database has a version assigned.
-     */
-    getVersionName(): string | undefined {
-        if (this.versionId) {
-            try {
-                const versionsService = VersionsService.getInstance();
-                const version = versionsService.getVersion(this.versionId);
-                return version?.name;
-            } catch (error) {
-                console.warn(`Failed to get version name for database ${this.name}:`, error);
-                return undefined;
-            }
-        }
-        return undefined;
-    }
-
-    // Legacy constructor for backward compatibility
-    static createLegacy(
-        name: string,
-        createdAt: Date,
-        options?: {
-            modules?: ModuleModel[];
-            isItABackup?: boolean;
-            isSelected?: boolean;
-            sqlFilePath?: string;
-            isExisting?: boolean;
-            branchName?: string;
-            odooVersion?: string;
-        }
-    ): DatabaseModel {
-        return new DatabaseModel(name, createdAt, options);
-    }
 }

@@ -844,7 +844,7 @@ const CREATION_METHOD_ITEMS: Record<CreationMethod, { label: string; description
     }
 };
 
-const NEW_DB_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
+const NEW_DB_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/;
 
 async function pickExistingPostgresDatabase(): Promise<string | undefined> {
     const linkedIdentifiers = await collectExistingDatabaseIdentifiers();
@@ -1039,7 +1039,7 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
                     return 'Database name cannot be empty.';
                 }
                 if (!NEW_DB_NAME_PATTERN.test(trimmed)) {
-                    return 'Use letters, numbers, "-" or "_", starting with a letter or "_".';
+                    return 'Use letters, numbers, "-" or "_" only. The name must not start with "-".';
                 }
                 if (RESERVED_DATABASE_NAMES.has(trimmed.toLowerCase())) {
                     return `"${trimmed}" is a reserved database name.`;

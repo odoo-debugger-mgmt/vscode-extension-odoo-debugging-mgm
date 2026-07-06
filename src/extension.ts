@@ -216,11 +216,6 @@ export async function activate(context: vscode.ExtensionContext) {
         console.warn('Settings migration failed (this is non-critical):', error);
     });
 
-    // One-time v1.2 migrations: fold legacy per-DB odooVersion into versions,
-    // and map old databaseSwitchBehavior values onto the new auto/ask/never enum.
-    await migrateDebuggerData();
-    void migrateLegacySwitchBehaviorSetting();
-
     const isWorkspaceOpen = !!vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0;
     updateActiveContext(isWorkspaceOpen);
 
@@ -237,6 +232,13 @@ export async function activate(context: vscode.ExtensionContext) {
         projectRepos: new ProjectReposProvider(sortPreferences),
         projectReposExplorer: new ProjectReposExplorerProvider()
     };
+
+    // One-time v1.2 migrations: fold legacy per-DB odooVersion into versions,
+    // and map old databaseSwitchBehavior values onto the new auto/ask/never
+    // enum. Runs after provider construction so the versions-changed refresh
+    // command used when new profiles are created is already registered.
+    await migrateDebuggerData();
+    void migrateLegacySwitchBehaviorSetting();
 
     const registerViewSortCommand = (viewId: SortableViewId, provider: { refresh(): void }) => {
         const options = getSortOptions(viewId);
@@ -750,9 +752,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
     extensionDisposables.push(vscode.commands.registerCommand('dbSelector.restore', async (event) => {
         try {
+            // restoreDb shows its own success notification.
             await restoreDb(event);
             await refreshAll();
-            showInfo(`Database ${event.name || event.id} restored successfully!`);
         } catch (err: any) {
             showError(`Failed to restore database: ${err.message}`);
             console.error('Error in database restoration:', err);

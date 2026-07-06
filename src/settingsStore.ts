@@ -218,23 +218,6 @@ export class SettingsStore {
         };
     }
 
-    static async getSettings(): Promise<SettingsModel | null> {
-        const data = await this.load();
-        return data.settings || null;
-    }
-
-    /**
-     * @deprecated Settings should only be managed through VersionsService now.
-     * This method should not be used as it violates the versions-exclusive settings management.
-     */
-    static async updateSettings(partial: Partial<SettingsModel>): Promise<void> {
-        const data = await this.load();
-        const updated = Object.assign(new SettingsModel(getDefaultVersionSettings()), data.settings, partial);
-        data.settings = updated;
-        // Even though this method sets settings, we must strip them to prevent persistence
-        await this.saveWithoutComments(stripSettings(data));
-    }
-
     static async getProjects(): Promise<ProjectModel[]> {
         const data = await this.load();
         return data.projects || [];

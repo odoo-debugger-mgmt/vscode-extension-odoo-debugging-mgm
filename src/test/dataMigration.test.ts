@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { applyDatabaseFieldMigration } from '../services/dataMigration';
+import { applyDatabaseFieldMigration, collectLegacyBranchesNeedingVersions } from '../services/dataMigration';
 
 function buildData(dbs: any[], versions: Record<string, any> = {}) {
     return {
@@ -53,5 +53,22 @@ suite('Debugger data migration', () => {
         const data = buildData([{ id: 'db1', odooVersion: '', branchName: '' }]);
         assert.strictEqual(applyDatabaseFieldMigration(data), true);
         assert.strictEqual('odooVersion' in (data.projects[0] as any).dbs[0], false);
+    });
+
+    test('collects series-like legacy branches that need version profiles', () => {
+        const data = buildData(
+            [
+                { id: 'db1', odooVersion: '16.0' },
+                { id: 'db2', odooVersion: 'saas-17.4' },
+                { id: 'db3', odooVersion: 'master' },
+                { id: 'db4', odooVersion: 'random-label' },
+                { id: 'db5', odooVersion: '17.0' },
+                { id: 'db6', odooVersion: '16.0', versionId: 'v9' }
+            ],
+            { v1: { id: 'v1', odooVersion: '17.0' } }
+        );
+
+        const branches = collectLegacyBranchesNeedingVersions(data).sort();
+        assert.deepStrictEqual(branches, ['16.0', 'master', 'saas-17.4']);
     });
 });

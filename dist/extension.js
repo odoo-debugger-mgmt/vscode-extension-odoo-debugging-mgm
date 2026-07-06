@@ -219,10 +219,6 @@ async function activate(context) {
     await versionsService.migrateFromLegacySettings().catch(error => {
         console.warn('Settings migration failed (this is non-critical):', error);
     });
-    // One-time v1.2 migrations: fold legacy per-DB odooVersion into versions,
-    // and map old databaseSwitchBehavior values onto the new auto/ask/never enum.
-    await (0, dataMigration_1.migrateDebuggerData)();
-    void (0, environment_1.migrateLegacySwitchBehaviorSetting)();
     const isWorkspaceOpen = !!vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0;
     (0, context_1.updateActiveContext)(isWorkspaceOpen);
     // Initialize testing context
@@ -237,6 +233,12 @@ async function activate(context) {
         projectRepos: new projectRepos_1.ProjectReposProvider(sortPreferences),
         projectReposExplorer: new projectReposExplorer_1.ProjectReposExplorerProvider()
     };
+    // One-time v1.2 migrations: fold legacy per-DB odooVersion into versions,
+    // and map old databaseSwitchBehavior values onto the new auto/ask/never
+    // enum. Runs after provider construction so the versions-changed refresh
+    // command used when new profiles are created is already registered.
+    await (0, dataMigration_1.migrateDebuggerData)();
+    void (0, environment_1.migrateLegacySwitchBehaviorSetting)();
     const registerViewSortCommand = (viewId, provider) => {
         const options = (0, sortOptions_1.getSortOptions)(viewId);
         extensionDisposables.push(vscode.commands.registerCommand(`${viewId}.sort`, async () => {
@@ -713,9 +715,9 @@ async function activate(context) {
     }));
     extensionDisposables.push(vscode.commands.registerCommand('dbSelector.restore', async (event) => {
         try {
+            // restoreDb shows its own success notification.
             await (0, dbs_1.restoreDb)(event);
             await refreshAll();
-            (0, utils_1.showInfo)(`Database ${event.name || event.id} restored successfully!`);
         }
         catch (err) {
             (0, utils_1.showError)(`Failed to restore database: ${err.message}`);
@@ -5242,7 +5244,7 @@ const CREATION_METHOD_ITEMS = {
         method: 'template'
     }
 };
-const NEW_DB_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_-]*$/;
+const NEW_DB_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/;
 async function pickExistingPostgresDatabase() {
     const linkedIdentifiers = await collectExistingDatabaseIdentifiers();
     const candidates = queryPostgresDatabases()
@@ -5419,7 +5421,7 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
                     return 'Database name cannot be empty.';
                 }
                 if (!NEW_DB_NAME_PATTERN.test(trimmed)) {
-                    return 'Use letters, numbers, "-" or "_", starting with a letter or "_".';
+                    return 'Use letters, numbers, "-" or "_" only. The name must not start with "-".';
                 }
                 if (RESERVED_DATABASE_NAMES.has(trimmed.toLowerCase())) {
                     return `"${trimmed}" is a reserved database name.`;
@@ -6557,27 +6559,6 @@ class DatabaseModel {
         // Fall back to legacy odooVersion property for backward compatibility
         return this.odooVersion || undefined;
     }
-    /**
-     * Gets the version name if this database has a version assigned.
-     */
-    getVersionName() {
-        if (this.versionId) {
-            try {
-                const versionsService = versionsService_1.VersionsService.getInstance();
-                const version = versionsService.getVersion(this.versionId);
-                return version?.name;
-            }
-            catch (error) {
-                console.warn(`Failed to get version name for database ${this.name}:`, error);
-                return undefined;
-            }
-        }
-        return undefined;
-    }
-    // Legacy constructor for backward compatibility
-    static createLegacy(name, createdAt, options) {
-        return new DatabaseModel(name, createdAt, options);
-    }
 }
 exports.DatabaseModel = DatabaseModel;
 
@@ -6941,14 +6922,6 @@ class VersionsService {
             console.error('Error cloning version:', error);
             return undefined;
         }
-    }
-    /**
-     * Get settings for active version
-     */
-    async getActiveSettings() {
-        await this.initialize(); // Ensure initialization
-        const activeVersion = this.getActiveVersion();
-        return activeVersion ? activeVersion.settings : (0, utils_1.getDefaultVersionSettings)();
     }
     /**
      * Update settings for active version
@@ -7523,21 +7496,6 @@ class SettingsStore {
             activeVersion: data.activeVersion || '',
             dbTemplates: Array.isArray(data.dbTemplates) ? data.dbTemplates : []
         };
-    }
-    static async getSettings() {
-        const data = await this.load();
-        return data.settings || null;
-    }
-    /**
-     * @deprecated Settings should only be managed through VersionsService now.
-     * This method should not be used as it violates the versions-exclusive settings management.
-     */
-    static async updateSettings(partial) {
-        const data = await this.load();
-        const updated = Object.assign(new settings_1.SettingsModel((0, utils_1.getDefaultVersionSettings)()), data.settings, partial);
-        data.settings = updated;
-        // Even though this method sets settings, we must strip them to prevent persistence
-        await this.saveWithoutComments((0, utils_1.stripSettings)(data));
     }
     static async getProjects() {
         const data = await this.load();
@@ -8187,15 +8145,22 @@ async function computeEnvironmentDiff(target) {
     const coreBranchTarget = target.coreBranch?.trim() || targetVersion?.odooVersion?.trim() || undefined;
     let coreBranch;
     if (coreBranchTarget) {
-        const corePaths = [settings.odooPath, settings.enterprisePath, settings.designThemesPath]
+        const configuredPaths = [settings.odooPath, settings.enterprisePath, settings.designThemesPath]
             .filter(entry => entry && entry.trim() !== '')
-            .map(entry => (0, utils_1.normalizePath)(entry))
-            .filter(entry => fs.existsSync(entry));
-        for (const repoPath of corePaths) {
-            const current = await (0, utils_1.getGitBranch)(repoPath);
-            if (current !== coreBranchTarget) {
-                coreBranch = coreBranchTarget;
-                break;
+            .map(entry => (0, utils_1.normalizePath)(entry));
+        const existingPaths = configuredPaths.filter(entry => fs.existsSync(entry));
+        if (existingPaths.length === 0) {
+            // Nothing usable to compare against: request the checkout so the
+            // missing/unconfigured paths are reported instead of silently skipped.
+            coreBranch = coreBranchTarget;
+        }
+        else {
+            for (const repoPath of existingPaths) {
+                const current = await (0, utils_1.getGitBranch)(repoPath);
+                if (current !== coreBranchTarget) {
+                    coreBranch = coreBranchTarget;
+                    break;
+                }
             }
         }
     }
@@ -8270,15 +8235,37 @@ async function alignEnvironment(target, options) {
         return;
     }
     const diff = await computeEnvironmentDiff(target);
-    if (!diff.versionToActivate && !diff.coreBranch && diff.repoCheckouts.length === 0) {
+    if (isEmptyDiff(diff)) {
         return;
     }
     if (behavior === 'ask') {
-        const choice = await vscode.window.showInformationMessage(`${options.label} targets ${diff.descriptions.join(', ')}. Align your workspace?`, 'Switch', 'Keep Current');
-        if (choice !== 'Switch') {
-            return;
-        }
+        // Fire-and-forget so the selection itself (and the tree refresh) is not
+        // held hostage by an unanswered notification.
+        void vscode.window.showInformationMessage(`${options.label} targets ${diff.descriptions.join(', ')}. Align your workspace?`, 'Switch', 'Keep Current').then(async (choice) => {
+            if (choice !== 'Switch') {
+                return;
+            }
+            try {
+                // Recompute: the workspace may have changed while the
+                // notification sat unanswered.
+                const freshDiff = await computeEnvironmentDiff(target);
+                if (!isEmptyDiff(freshDiff)) {
+                    await applyEnvironmentDiff(freshDiff, options.label);
+                }
+                await vscode.commands.executeCommand('projectSelector.refresh');
+            }
+            catch (error) {
+                (0, utils_1.showWarning)(`${options.label}: environment switch failed: ${error.message}`);
+            }
+        });
+        return;
     }
+    await applyEnvironmentDiff(diff, options.label);
+}
+function isEmptyDiff(diff) {
+    return !diff.versionToActivate && !diff.coreBranch && diff.repoCheckouts.length === 0;
+}
+async function applyEnvironmentDiff(diff, label) {
     const applied = [];
     const failures = [];
     if (diff.versionToActivate) {
@@ -8314,11 +8301,11 @@ async function alignEnvironment(target, options) {
         failures.push(...failed.map(result => `${result.assignment.repoName || path.basename(result.assignment.repoPath)}: ${result.message}`));
     }
     if (failures.length === 0) {
-        (0, utils_1.showAutoInfo)(`${options.label}: switched ${applied.join(', ')}`, 3000);
+        (0, utils_1.showAutoInfo)(`${label}: switched ${applied.join(', ')}`, 3000);
     }
     else {
-        failures.forEach(failure => console.error(`[environment] ${options.label}: ${failure}`));
-        (0, utils_1.showWarning)(`${options.label}: environment switch finished with issues — ${failures.join('; ')}`);
+        failures.forEach(failure => console.error(`[environment] ${label}: ${failure}`));
+        (0, utils_1.showWarning)(`${label}: environment switch finished with issues — ${failures.join('; ')}`);
     }
 }
 
@@ -8606,9 +8593,40 @@ async function checkoutCoreRepos(settings, branch) {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.collectLegacyBranchesNeedingVersions = collectLegacyBranchesNeedingVersions;
 exports.applyDatabaseFieldMigration = applyDatabaseFieldMigration;
 exports.migrateDebuggerData = migrateDebuggerData;
 const settingsStore_1 = __webpack_require__(22);
+const versionsService_1 = __webpack_require__(19);
+const version_1 = __webpack_require__(20);
+const utils_1 = __webpack_require__(4);
+/** Branch names that denote a real Odoo series, e.g. "17.0", "saas-17.4", "master". */
+const ODOO_SERIES_PATTERN = /^((saas-)?\d+(\.\d+)?|master)$/i;
+function findMatchingVersionId(versions, branch) {
+    return versions.find(version => version?.odooVersion === branch)?.id;
+}
+/**
+ * Finds legacy per-database branches that still drive branch switching but
+ * have no version profile to carry them. These need a profile created so the
+ * database keeps switching branches after the migration removes the legacy
+ * field. Pure function for unit testing.
+ */
+function collectLegacyBranchesNeedingVersions(data) {
+    const versions = Object.values(data.versions ?? {});
+    const branches = new Set();
+    for (const project of data.projects ?? []) {
+        for (const db of project.dbs ?? []) {
+            if (!db || typeof db !== 'object' || db.versionId) {
+                continue;
+            }
+            const legacyBranch = typeof db.odooVersion === 'string' ? db.odooVersion.trim() : '';
+            if (legacyBranch && ODOO_SERIES_PATTERN.test(legacyBranch) && !findMatchingVersionId(versions, legacyBranch)) {
+                branches.add(legacyBranch);
+            }
+        }
+    }
+    return Array.from(branches);
+}
 /**
  * Folds the legacy per-database `odooVersion` field into the current model:
  * link the database to the Version whose branch matches, otherwise keep the
@@ -8626,9 +8644,9 @@ function applyDatabaseFieldMigration(data) {
             }
             const legacyBranch = typeof db.odooVersion === 'string' ? db.odooVersion.trim() : '';
             if (legacyBranch && !db.versionId) {
-                const match = versions.find(version => version?.odooVersion === legacyBranch);
-                if (match?.id) {
-                    db.versionId = match.id;
+                const matchId = findMatchingVersionId(versions, legacyBranch);
+                if (matchId) {
+                    db.versionId = matchId;
                 }
                 else if (!db.branchName) {
                     db.branchName = legacyBranch;
@@ -8642,15 +8660,31 @@ function applyDatabaseFieldMigration(data) {
 }
 /**
  * One-time, non-fatal migration of odoo-debugger-data.json to the v1.2 shape.
- * Runs at activation after the legacy-settings migration.
+ * Runs at activation after the legacy-settings migration and after the tree
+ * providers are constructed (so the versions-changed refresh command exists).
  */
 async function migrateDebuggerData() {
     try {
         const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
-        if (applyDatabaseFieldMigration(data)) {
+        // Legacy branches with no profile keep driving branch switching only
+        // through a version, so create the missing profiles first.
+        const missingBranches = collectLegacyBranchesNeedingVersions(data);
+        if (missingBranches.length > 0) {
+            data.versions = data.versions ?? {};
+            for (const branch of missingBranches) {
+                const version = new version_1.VersionModel(`Odoo ${branch}`, branch, (0, utils_1.getDefaultVersionSettings)());
+                data.versions[version.id] = version.toJSON();
+            }
+        }
+        const changed = applyDatabaseFieldMigration(data);
+        if (changed || missingBranches.length > 0) {
             // Save as-is (no settings strip): if the legacy-settings migration
             // has not run yet, its data must survive this write.
             await settingsStore_1.SettingsStore.saveWithoutComments(data);
+        }
+        if (missingBranches.length > 0) {
+            // Reload the in-memory versions so the new profiles are usable now.
+            await versionsService_1.VersionsService.getInstance().refresh();
         }
     }
     catch (error) {
