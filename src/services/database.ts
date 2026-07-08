@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import * as util from 'node:util';
 import { InstalledModuleInfo } from '../models/module';
 import { runtimeCache, invalidateInstalledModulesCache } from './runtimeCache';
+import { logger } from './logger';
 
 const execFileAsync = util.promisify(execFile);
 
@@ -60,7 +61,7 @@ async function runPsqlQuery(dbName: string, query: string, fieldSeparator = '|')
         });
         return stdout.trim();
     } catch (error) {
-        console.warn(`psql command failed for database "${dbName}":`, error);
+        logger.warn(`psql command failed for database "${dbName}":`, error);
         throw error;
     }
 }
@@ -79,7 +80,7 @@ export async function getInstalledModules(dbName: string): Promise<InstalledModu
         const modules: InstalledModuleInfo[] = [];
 
         if (!(await databaseHasModuleTable(dbName))) {
-            console.debug(`Database ${dbName} does not contain Odoo tables yet.`);
+            logger.debug(`Database ${dbName} does not contain Odoo tables yet.`);
             return modules;
         }
 
@@ -87,7 +88,7 @@ export async function getInstalledModules(dbName: string): Promise<InstalledModu
         try {
             output = await runPsqlQuery(dbName, INSTALLED_MODULES_QUERY);
         } catch (error) {
-            console.warn(`Failed to fetch installed modules for database "${dbName}":`, error);
+            logger.warn(`Failed to fetch installed modules for database "${dbName}":`, error);
             return modules;
         }
 
@@ -137,7 +138,7 @@ export async function getInstalledModuleNames(dbName: string): Promise<Set<strin
         try {
             output = await runPsqlQuery(dbName, INSTALLED_MODULE_NAMES_QUERY);
         } catch (error) {
-            console.warn(`Failed to fetch installed module names for database "${dbName}":`, error);
+            logger.warn(`Failed to fetch installed module names for database "${dbName}":`, error);
             return [];
         }
 
@@ -187,7 +188,7 @@ export async function detectOdooSeries(dbName: string): Promise<string | undefin
         const output = await runPsqlQuery(dbName, BASE_MODULE_VERSION_QUERY);
         return parseOdooSeries(output);
     } catch (error) {
-        console.warn(`Failed to detect Odoo series for database "${dbName}":`, error);
+        logger.warn(`Failed to detect Odoo series for database "${dbName}":`, error);
         return undefined;
     }
 }

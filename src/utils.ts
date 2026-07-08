@@ -8,8 +8,14 @@ import { RepoModel } from './models/repo';
 import { DatabaseTemplateModel } from './models/dbTemplate';
 import { getBranchesViaSourceControl } from './services/gitService';
 import { runtimeCache } from './services/runtimeCache';
+import { showError, showInfo, showWarning } from './services/notifications';
 
 import { parse } from 'jsonc-parser';
+import { logger } from './services/logger';
+
+// Re-exported so existing `from './utils'` imports keep working; new code
+// should import these from './services/notifications' directly.
+export { MessageType, showMessage, showError, showInfo, showWarning, showModalWarning, showAutoInfo, showBriefStatus } from './services/notifications';
 
 const launchJsonFileContent = `{
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
@@ -311,7 +317,7 @@ function discoverDirectories(targetPath: string, kind: DiscoveryKind, options: S
         try {
             entries = fs.readdirSync(resolved, { withFileTypes: true });
         } catch (error) {
-            console.warn(`Failed to read directory ${resolved}:`, error);
+            logger.warn(`Failed to read directory ${resolved}:`, error);
             continue;
         }
 
@@ -654,180 +660,6 @@ export async function readFromFile(fileName: string): Promise<any> {
     }
 }
 
-// ============================================================================
-// UI & MESSAGING UTILITIES
-// ============================================================================
-
-/**
- * Output channel for logging messages
- */
-let outputChannel: vscode.OutputChannel | null = null;
-
-/**
- * Gets or creates the output channel for logging
- */
-function getOutputChannel(): vscode.OutputChannel {
-    outputChannel ??= vscode.window.createOutputChannel('Odoo Debugger');
-    return outputChannel;
-}
-
-/**
- * Message types for the show message function
- */
-export enum MessageType {
-    Error = 'error',
-    Warning = 'warning',
-    Info = 'info'
-}
-
-/**
- * Shows a message with logging to output channel and console
- * @param message - the message to display
- * @param type - the type of message (error, warning, info)
- * @param actions - optional action buttons
- * @returns the selected action or undefined
- */
-export async function showMessage(
-    message: string,
-    type: MessageType = MessageType.Error,
-    ...actions: string[]
-): Promise<string | undefined> {
-    const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] ${type.toUpperCase()}: ${message}`;
-
-    // Log to output channel
-    const channel = getOutputChannel();
-    channel.appendLine(logMessage);
-
-    // Log to console for debugging
-    switch (type) {
-        case MessageType.Error:
-            console.error(`[Odoo Debugger] ${logMessage}`);
-            break;
-        case MessageType.Warning:
-            console.warn(`[Odoo Debugger] ${logMessage}`);
-            break;
-        case MessageType.Info:
-            console.info(`[Odoo Debugger] ${logMessage}`);
-            break;
-    }
-
-    // Show the appropriate message type
-    let result: string | undefined;
-
-    switch (type) {
-        case MessageType.Error:
-            if (actions.length > 0) {
-                result = await vscode.window.showErrorMessage(message, ...actions);
-            } else {
-                vscode.window.showErrorMessage(message);
-            }
-            break;
-        case MessageType.Warning:
-            if (actions.length > 0) {
-                result = await vscode.window.showWarningMessage(message, ...actions);
-            } else {
-                vscode.window.showWarningMessage(message);
-            }
-            break;
-        case MessageType.Info:
-            if (actions.length > 0) {
-                result = await vscode.window.showInformationMessage(message, ...actions);
-            } else {
-                vscode.window.showInformationMessage(message);
-            }
-            break;
-    }
-
-    return result;
-}
-
-/**
- * Shows an error message with optional actions (backward compatibility)
- * @param message - the error message to display
- * @param actions - optional action buttons
- * @returns the selected action or undefined
- */
-export async function showError(message: string, ...actions: string[]): Promise<string | undefined> {
-    return showMessage(message, MessageType.Error, ...actions);
-}
-
-/**
- * Shows an info message with optional actions
- * @param message - the info message to display
- * @param actions - optional action buttons
- * @returns the selected action or undefined
- */
-export async function showInfo(message: string, ...actions: string[]): Promise<string | undefined> {
-    return showMessage(message, MessageType.Info, ...actions);
-}
-
-/**
- * Shows a warning message with optional actions
- * @param message - the warning message to display
- * @param actions - optional action buttons
- * @returns the selected action or undefined
- */
-export async function showWarning(message: string, ...actions: string[]): Promise<string | undefined> {
-    return showMessage(message, MessageType.Warning, ...actions);
-}
-
-/**
- * Shows an auto-dismissing information message that disappears after a specified time
- * @param message - the info message to display
- * @param timeoutMs - time in milliseconds before auto-dismiss (default: 3000ms = 3 seconds)
- * @returns void
- */
-export function showAutoInfo(message: string, timeoutMs: number = 3000): void {
-    vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: message,
-        cancellable: false
-    }, async (progress) => {
-        // Show progress for visual feedback
-        progress.report({ increment: 0 });
-
-        // Auto-dismiss after timeout
-        return new Promise<void>((resolve) => {
-            setTimeout(() => {
-                resolve();
-            }, timeoutMs);
-        });
-    });
-
-    // Also log to output channel and console
-    const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] INFO (AUTO): ${message}`;
-
-    const channel = getOutputChannel();
-    channel.appendLine(logMessage);
-    console.info(`[Odoo Debugger] ${logMessage}`);
-}
-
-/**
- * Shows a brief status bar message that disappears automatically
- * @param message - the message to display in status bar
- * @param timeoutMs - time in milliseconds before auto-dismiss (default: 2000ms = 2 seconds)
- */
-export function showBriefStatus(message: string, timeoutMs: number = 2000): void {
-    const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    statusBarItem.text = `$(info) ${message}`;
-    statusBarItem.show();
-
-    // Auto-dismiss after timeout
-    setTimeout(() => {
-        statusBarItem.dispose();
-    }, timeoutMs);
-
-    // Also log to output channel and console
-    const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] STATUS: ${message}`;
-
-    const channel = getOutputChannel();
-    channel.appendLine(logMessage);
-    console.info(`[Odoo Debugger] ${logMessage}`);
-}
-
 /**
  * Converts a camelCase string to a human-readable title case
  * @param str - the camelCase string to convert
@@ -885,26 +717,6 @@ export function getSettingDisplayValue(key: string, value: any): string {
 }
 
 /**
- * Gets the current git branch for a given repository path.
- * @param repoPath - The path to the git repository.
- * @returns The current branch name, or null if not found or error occurs.
- */
-export async function getGitBranch(repoPath: string | undefined): Promise<string | null> {
-    if (!repoPath) {return null;}
-    const gitHeadPath = path.join(repoPath, '.git', 'HEAD');
-    try {
-        if (fs.existsSync(gitHeadPath)) {
-            const headContent = fs.readFileSync(gitHeadPath, 'utf-8').trim();
-            const match = /^ref: refs\/heads\/(.+)$/.exec(headContent);
-            return match ? match[1] : headContent;
-        }
-    } catch (err) {
-        console.warn(`Failed to read branch for ${repoPath}: ${err}`);
-    }
-    return null;
-}
-
-/**
  * Gets all available Git branches from a repository path.
  * @param repoPath - The path to the git repository.
  * @returns Array of branch names, or empty array if not found or error occurs.
@@ -925,7 +737,7 @@ export async function getGitBranches(repoPath: string | undefined): Promise<stri
         // Check if it's a git repository
         const gitDir = path.join(normalizedPath, '.git');
         if (!fs.existsSync(gitDir)) {
-            console.warn(`Not a git repository: ${normalizedPath}`);
+            logger.warn(`Not a git repository: ${normalizedPath}`);
             return [];
         }
 
@@ -935,13 +747,13 @@ export async function getGitBranches(repoPath: string | undefined): Promise<stri
                 { cwd: normalizedPath },
                 (error, stdout, stderr) => {
                     if (error) {
-                        console.warn(`Failed to get branches for ${normalizedPath}: ${error.message}`);
+                        logger.warn(`Failed to get branches for ${normalizedPath}: ${error.message}`);
                         resolve([]);
                         return;
                     }
 
                     if (stderr) {
-                        console.warn(`Git branch warning for ${normalizedPath}: ${stderr}`);
+                        logger.warn(`Git branch warning for ${normalizedPath}: ${stderr}`);
                     }
 
                     const branches = stdout
@@ -976,7 +788,7 @@ export async function getGitBranches(repoPath: string | undefined): Promise<stri
             );
         });
     } catch (err) {
-        console.warn(`Failed to get branches for ${normalizedPath}: ${err}`);
+        logger.warn(`Failed to get branches for ${normalizedPath}: ${err}`);
         return [];
     }
 }

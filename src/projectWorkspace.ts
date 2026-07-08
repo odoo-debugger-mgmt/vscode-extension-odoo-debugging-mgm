@@ -87,9 +87,8 @@ export async function openProjectWorkspace(context: vscode.ExtensionContext): Pr
         return;
     }
 
-    const choice = await vscode.window.showInformationMessage(
+    const choice = await showInfo(
         'Open project workspace?',
-        { modal: false },
         'This window',
         'New window'
     );

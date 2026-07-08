@@ -6,8 +6,11 @@ import { RepoModel } from '../models/repo';
 import { SettingsModel } from '../models/settings';
 import { VersionModel } from '../models/version';
 import { VersionsService } from '../versionsService';
-import { normalizePath, getGitBranch, showAutoInfo, showWarning } from '../utils';
+import { normalizePath, showAutoInfo, showWarning } from '../utils';
+import { getRepoBranch } from './branches';
 import { checkoutCoreRepos, checkoutRepoBranch } from './checkout';
+import { logger } from './logger';
+import { showInfo } from './notifications';
 
 export type SwitchBehavior = 'auto' | 'ask' | 'never';
 
@@ -53,7 +56,7 @@ export async function migrateLegacySwitchBehaviorSetting(): Promise<void> {
             }
         }
     } catch (error) {
-        console.warn('Failed to migrate databaseSwitchBehavior setting:', error);
+        logger.warn('Failed to migrate databaseSwitchBehavior setting:', error);
     }
 }
 
@@ -114,7 +117,7 @@ export function resolveProjectRepoBranchAssignments(database: DatabaseModel | an
 export async function captureCurrentRepoBranches(projectRepos: RepoModel[]): Promise<ProjectRepoBranchAssignment[]> {
     const captured = await Promise.all(projectRepos.map(async repo => {
         const repoPath = normalizePath(repo.path);
-        const branch = await getGitBranch(repoPath);
+        const branch = await getRepoBranch(repoPath);
         if (!branch) {
             return undefined;
         }
@@ -180,7 +183,7 @@ async function computeEnvironmentDiff(target: EnvironmentTarget): Promise<Enviro
             coreBranch = coreBranchTarget;
         } else {
             for (const repoPath of existingPaths) {
-                const current = await getGitBranch(repoPath);
+                const current = await getRepoBranch(repoPath);
                 if (current !== coreBranchTarget) {
                     coreBranch = coreBranchTarget;
                     break;
@@ -199,7 +202,7 @@ async function computeEnvironmentDiff(target: EnvironmentTarget): Promise<Enviro
             repoCheckouts.push(assignment);
             continue;
         }
-        const current = await getGitBranch(assignment.repoPath);
+        const current = await getRepoBranch(assignment.repoPath);
         if (current !== assignment.branch) {
             repoCheckouts.push(assignment);
         }
@@ -283,7 +286,7 @@ export async function alignEnvironment(target: EnvironmentTarget, options: Align
     if (behavior === 'ask') {
         // Fire-and-forget so the selection itself (and the tree refresh) is not
         // held hostage by an unanswered notification.
-        void vscode.window.showInformationMessage(
+        void showInfo(
             `${options.label} targets ${diff.descriptions.join(', ')}. Align your workspace?`,
             'Switch',
             'Keep Current'
@@ -353,7 +356,7 @@ async function applyEnvironmentDiff(diff: EnvironmentDiff, label: string): Promi
     if (failures.length === 0) {
         showAutoInfo(`${label}: switched ${applied.join(', ')}`, 3000);
     } else {
-        failures.forEach(failure => console.error(`[environment] ${label}: ${failure}`));
+        failures.forEach(failure => logger.error(`[environment] ${label}: ${failure}`));
         showWarning(`${label}: environment switch finished with issues — ${failures.join('; ')}`);
     }
 }

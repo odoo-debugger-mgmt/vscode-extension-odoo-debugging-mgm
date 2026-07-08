@@ -4,6 +4,9 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { getWorkspacePath, showInfo, showError } from './utils';
 import { execSync } from 'child_process';
+import { logger } from './services/logger';
+import { showWarning } from './services/notifications';
+import { showModalWarning } from './services/notifications';
 
 export async function setupOdooBranch() {
     // Show confirmation dialog with detailed information
@@ -16,9 +19,8 @@ This may take several minutes depending on your internet connection.
 
 Continue?`;
 
-    const confirm = await vscode.window.showWarningMessage(
+    const confirm = await showModalWarning(
         confirmMessage,
-        { modal: true },
         'Continue'
     );
 
@@ -49,9 +51,8 @@ Continue?`;
     }
 
     if (existingPaths.length > 0) {
-        const overwriteConfirm = await vscode.window.showWarningMessage(
+        const overwriteConfirm = await showModalWarning(
             `The following directories already exist: ${existingPaths.join(', ')}\n\nDo you want to continue? This may overwrite existing files.`,
-            { modal: true },
             'Continue Anyway',
             'Cancel'
         );
@@ -114,7 +115,7 @@ Continue?`;
 
             // Clone Odoo repository
             progress.report({ message: 'Cloning Odoo repository…', increment: 15 });
-            console.log(`🔄 Cloning Odoo repository (branch: ${branch})`);
+            logger.debug(`🔄 Cloning Odoo repository (branch: ${branch})`);
 
             terminal.sendText(`echo "🔄 Cloning Odoo repository (branch: ${branch})..."`);
             terminal.sendText(`git clone --depth 1 --branch ${branch} https://github.com/odoo/odoo.git`);
@@ -124,7 +125,7 @@ Continue?`;
 
             // Clone Enterprise repository
             progress.report({ message: 'Cloning Enterprise repository…', increment: 35 });
-            console.log(`🔄 Cloning Enterprise repository (branch: ${branch})`);
+            logger.debug(`🔄 Cloning Enterprise repository (branch: ${branch})`);
 
             terminal.sendText(`echo "🔄 Cloning Enterprise repository (branch: ${branch})..."`);
             terminal.sendText(`git clone --depth 1 --branch ${branch} git@github.com:odoo/enterprise.git || git clone --depth 1 --branch ${branch} https://github.com/odoo/enterprise.git`);
@@ -134,7 +135,7 @@ Continue?`;
 
             // Check Python availability
             progress.report({ message: 'Checking Python installation…', increment: 55 });
-            console.log('🐍 Checking Python installation');
+            logger.debug('🐍 Checking Python installation');
 
             let pythonCmd = 'python3';
             try {
@@ -150,7 +151,7 @@ Continue?`;
 
             // Create virtual environment
             progress.report({ message: 'Creating Python virtual environment…', increment: 75 });
-            console.log('🔧 Creating Python virtual environment');
+            logger.debug('🔧 Creating Python virtual environment');
 
             terminal.sendText(`echo "🔧 Creating Python virtual environment..."`);
             terminal.sendText(`${pythonCmd} -m venv venv`);
@@ -160,7 +161,7 @@ Continue?`;
 
             // Activate venv and install basic requirements
             progress.report({ message: 'Installing basic Python packages…', increment: 85 });
-            console.log('📦 Installing basic Python packages');
+            logger.debug('📦 Installing basic Python packages');
 
             terminal.sendText(`echo "📦 Installing basic Python packages..."`);
 
@@ -189,7 +190,7 @@ Continue?`;
             showInfo(`Odoo ${branch} setup completed successfully!\n\nCheck the terminal for next steps.`);
 
         } catch (error: any) {
-            console.error('Setup failed:', error);
+            logger.error('Setup failed:', error);
             showError(`Setup failed: ${error.message}`);
         }
     });

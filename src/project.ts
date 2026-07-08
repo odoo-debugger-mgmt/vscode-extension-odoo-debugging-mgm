@@ -10,6 +10,9 @@ import { randomUUID } from 'crypto';
 import { alignEnvironment, buildDatabaseEnvironmentTarget } from './services/environment';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
+import { logger } from './services/logger';
+import { showModalInfo, showWarning } from './services/notifications';
+import { showModalWarning } from './services/notifications';
 
 let projectMetadataMigrationCompleted = false;
 
@@ -368,9 +371,8 @@ export async function deleteProject(event: any) {
         const projectToDelete = projects[projectIndex];
 
         // Ask for confirmation
-        const confirm = await vscode.window.showWarningMessage(
+        const confirm = await showModalWarning(
             `Are you sure you want to delete the project "${projectToDelete.name}"?`,
-            { modal: true },
             'Delete'
         );
 
@@ -778,7 +780,7 @@ export async function openProjectTicket(event?: any): Promise<void> {
     const tickets = project.tickets;
 
     if (tickets.length === 0) {
-        const addNow = await vscode.window.showInformationMessage(
+        const addNow = await showInfo(
             `Project "${project.name}" has no linked tickets yet.`,
             'Add Ticket',
             'Cancel'
@@ -834,7 +836,7 @@ Databases: ${dbCount}${selectedDb ? `
 Active Database: ${selectedDb.name}` : `
 No active database`}`;
 
-    await vscode.window.showInformationMessage(infoMessage, { modal: true }, 'OK');
+    await showModalInfo(infoMessage, 'OK');
 }
 
 export async function exportProject(event: any): Promise<void> {
@@ -898,7 +900,7 @@ export async function exportProject(event: any): Promise<void> {
         const content = JSON.stringify(exportData, null, 2);
         await vscode.workspace.fs.writeFile(saveUri, Buffer.from(content, 'utf8'));
 
-        const action = await vscode.window.showInformationMessage(
+        const action = await showInfo(
             `Project "${project.name}" exported successfully!`,
             'Open Export Location',
             'Import Instructions'
@@ -915,12 +917,12 @@ export async function exportProject(event: any): Promise<void> {
 
 Note: Repository paths use ~ for home directory and may need adjustment on different systems.`;
 
-            await vscode.window.showInformationMessage(instructions, { modal: true });
+            await showModalInfo(instructions);
         }
 
     } catch (error) {
-        console.error('Error exporting project:', error);
-        vscode.window.showErrorMessage(`Failed to export project: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        logger.error('Error exporting project:', error);
+        showError(`Failed to export project: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 }
 
@@ -970,7 +972,7 @@ export async function importProject(): Promise<void> {
         }
 
         if (projectName !== importData.name) {
-            const useNewName = await vscode.window.showWarningMessage(
+            const useNewName = await showWarning(
                 `A project named "${importData.name}" already exists. Import as "${projectName}"?`,
                 'Yes, Import with New Name',
                 'Cancel'
@@ -1029,10 +1031,10 @@ export async function importProject(): Promise<void> {
             message += `\n\nYou can manage repositories from the Repositories tab.`;
         }
 
-        await vscode.window.showInformationMessage(message, 'OK');
+        await showInfo(message, 'OK');
 
     } catch (error) {
-        console.error('Error importing project:', error);
+        logger.error('Error importing project:', error);
         if (error instanceof SyntaxError) {
             showError('The selected file is not valid JSON.');
         } else {
@@ -1081,7 +1083,7 @@ export async function quickProjectSearch(): Promise<void> {
         }
 
     } catch (error) {
-        console.error('Error in quick project search:', error);
+        logger.error('Error in quick project search:', error);
         showError('Unable to load projects for search.');
     }
 }

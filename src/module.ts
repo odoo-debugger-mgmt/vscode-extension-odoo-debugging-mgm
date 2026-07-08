@@ -17,6 +17,8 @@ import { getInstalledModuleNames, getInstalledModules } from './services/databas
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { VersionsService } from './versionsService';
+import { showWarning } from './services/notifications';
+import { showModalWarning } from './services/notifications';
 
 export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
@@ -747,9 +749,8 @@ export async function updateAllModules(): Promise<void> {
     }
 
     // Confirm action
-    const confirm = await vscode.window.showWarningMessage(
+    const confirm = await showModalWarning(
         `Are you sure you want to set all ${availableModules.length} available modules to "upgrade" state regardless of their current state?`,
-        { modal: true },
         'Update All'
     );
 
@@ -816,9 +817,8 @@ export async function updateInstalledModules(): Promise<void> {
     }
 
     // Confirm action
-    const confirm = await vscode.window.showWarningMessage(
+    const confirm = await showModalWarning(
         `Are you sure you want to set all ${installedModules.length} modules with "install" state to "upgrade" state?`,
-        { modal: true },
         'Update Installed'
     );
 
@@ -865,9 +865,8 @@ export async function installAllModules(): Promise<void> {
     }
 
     // Confirm action
-    const confirm = await vscode.window.showWarningMessage(
+    const confirm = await showModalWarning(
         `Are you sure you want to set all ${availableModules.length} available modules to "install" state?`,
-        { modal: true },
         'Install All'
     );
 
@@ -927,9 +926,8 @@ export async function clearAllModuleSelections(): Promise<void> {
     }
 
     // Confirm action
-    const confirm = await vscode.window.showWarningMessage(
+    const confirm = await showModalWarning(
         `Are you sure you want to clear all ${db.modules.length} selected modules?`,
-        { modal: true },
         'Clear All'
     );
 

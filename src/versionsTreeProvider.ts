@@ -4,6 +4,7 @@ import { VersionsService } from './versionsService';
 import { addActiveIndicator, getSettingDisplayName, getSettingDisplayValue } from './utils';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
+import { logger } from './services/logger';
 
 export class VersionTreeItem extends vscode.TreeItem {
     constructor(
@@ -83,11 +84,6 @@ export class VersionsTreeProvider implements vscode.TreeDataProvider<VersionTree
 
     constructor(private readonly sortPreferences: SortPreferences) {
         this.versionsService = VersionsService.getInstance();
-
-        // Listen for version changes
-        vscode.commands.registerCommand('odoo.versionsChanged', () => {
-            this.refresh();
-        });
     }
 
     refresh(): void {
@@ -108,7 +104,7 @@ export class VersionsTreeProvider implements vscode.TreeDataProvider<VersionTree
                     new VersionTreeItem(version, vscode.TreeItemCollapsibleState.Collapsed)
                 );
             }).catch(error => {
-                console.error('Failed to load versions for tree view:', error);
+                logger.error('Failed to load versions for tree view:', error);
                 return [];
             });
         } else if (element instanceof VersionTreeItem) {

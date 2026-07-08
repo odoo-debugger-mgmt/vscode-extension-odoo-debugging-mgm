@@ -5,6 +5,7 @@ import { DatabaseTemplateModel } from './models/dbTemplate';
 import { modify, applyEdits, parse } from 'jsonc-parser';
 import fs from 'fs';
 import path from 'path';
+import { logger } from './services/logger';
 
 interface CachedFileEntry {
     mtimeMs: number;
@@ -181,7 +182,7 @@ export class SettingsStore {
                 }
                 existing.timer = setTimeout(() => {
                     this.flushPendingWrite(fileName).catch(error => {
-                        console.warn(`Failed to flush pending write for ${fileName}:`, error);
+                        logger.warn(`Failed to flush pending write for ${fileName}:`, error);
                     });
                 }, WRITE_DEBOUNCE_MS);
                 return;
@@ -196,7 +197,7 @@ export class SettingsStore {
 
             pending.timer = setTimeout(() => {
                 this.flushPendingWrite(fileName).catch(error => {
-                    console.warn(`Failed to flush pending write for ${fileName}:`, error);
+                    logger.warn(`Failed to flush pending write for ${fileName}:`, error);
                 });
             }, WRITE_DEBOUNCE_MS);
             this.pendingWrites.set(fileName, pending);

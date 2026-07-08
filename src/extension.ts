@@ -26,9 +26,8 @@ import { getSortOptions, getDefaultSortOption, SortableViewId } from './sortOpti
 import { openProjectWorkspace, rebuildProjectWorkspace, quickSwitchProjectWorkspace } from './projectWorkspace';
 import { ProjectReposExplorerProvider, createNewFile as explorerCreateNewFile, createNewFolder as explorerCreateNewFolder, renameEntry as explorerRenameEntry, deleteEntry as explorerDeleteEntry, openTerminalHere as explorerOpenTerminalHere, selectProjectForExplorer, copyEntries as explorerCopyEntries, pasteEntries as explorerPasteEntries } from './projectReposExplorer';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
-
-// Store disposables for proper cleanup
-let extensionDisposables: vscode.Disposable[] = [];
+import { logger, registerLogger } from './services/logger';
+import { showModalWarning } from './services/notifications';
 
 function extractUriFromContext(arg: any): vscode.Uri | undefined {
     if (!arg) {
@@ -194,15 +193,13 @@ async function initializeTestingContext(): Promise<void> {
         }
     } catch (error) {
         // If there's an error, default to testing disabled
-        console.warn('Error initializing testing context:', error);
+        logger.warn('Error initializing testing context:', error);
         updateTestingContext(false);
     }
 }
 
 export async function activate(context: vscode.ExtensionContext) {
-    // Clear any existing disposables
-    extensionDisposables.forEach(d => d.dispose());
-    extensionDisposables = [];
+    registerLogger(context);
 
     const sortPreferences = new SortPreferences(context.workspaceState);
 
@@ -213,7 +210,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // Migrate existing settings to version management for backwards compatibility
     // Wait for migration to complete to ensure proper initialization order
     await versionsService.migrateFromLegacySettings().catch(error => {
-        console.warn('Settings migration failed (this is non-critical):', error);
+        logger.warn('Settings migration failed (this is non-critical):', error);
     });
 
     const isWorkspaceOpen = !!vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0;
@@ -233,6 +230,15 @@ export async function activate(context: vscode.ExtensionContext) {
         projectReposExplorer: new ProjectReposExplorerProvider()
     };
 
+    // React to version changes fired by VersionsService.refresh(). Must be
+    // registered before the migrations below, which may fire it, and outside
+    // the provider so re-activation cannot double-register the command.
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.versionsChanged', () => {
+        providers.versions.refresh();
+    }));
+    // The explorer provider owns file-system watchers that need disposal.
+    context.subscriptions.push(providers.projectReposExplorer);
+
     // One-time v1.2 migrations: fold legacy per-DB odooVersion into versions,
     // and map old databaseSwitchBehavior values onto the new auto/ask/never
     // enum. Runs after provider construction so the versions-changed refresh
@@ -243,7 +249,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const registerViewSortCommand = (viewId: SortableViewId, provider: { refresh(): void }) => {
         const options = getSortOptions(viewId);
         type SortPickItem = vscode.QuickPickItem & { optionId: string };
-        extensionDisposables.push(vscode.commands.registerCommand(`${viewId}.sort`, async () => {
+        context.subscriptions.push(vscode.commands.registerCommand(`${viewId}.sort`, async () => {
             const current = sortPreferences.get(viewId, getDefaultSortOption(viewId));
             const picks: SortPickItem[] = options.map(option => ({
                 label: `${option.id === current ? '$(check) ' : ''}${option.label}`,
@@ -263,14 +269,14 @@ export async function activate(context: vscode.ExtensionContext) {
     };
 
     // Register tree data providers and store disposables
-    extensionDisposables.push(vscode.window.registerTreeDataProvider('projectSelector', providers.project));
-    extensionDisposables.push(vscode.window.registerTreeDataProvider('repoSelector', providers.repo));
-    extensionDisposables.push(vscode.window.registerTreeDataProvider('dbSelector', providers.db));
-    extensionDisposables.push(vscode.window.registerTreeDataProvider('moduleSelector', providers.module));
-    extensionDisposables.push(vscode.window.registerTreeDataProvider('testingSelector', providers.testing));
-    extensionDisposables.push(vscode.window.registerTreeDataProvider('versionsManager', providers.versions));
-    extensionDisposables.push(vscode.window.registerTreeDataProvider('projectRepos', providers.projectRepos));
-    extensionDisposables.push(vscode.window.registerTreeDataProvider('odt.projectReposExplorer', providers.projectReposExplorer));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('projectSelector', providers.project));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('repoSelector', providers.repo));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('dbSelector', providers.db));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('moduleSelector', providers.module));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('testingSelector', providers.testing));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('versionsManager', providers.versions));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('projectRepos', providers.projectRepos));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('odt.projectReposExplorer', providers.projectReposExplorer));
 
     type RefreshReason = 'ui' | 'debugger' | 'all';
 
@@ -294,7 +300,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 await setupDebugger();
             } catch (error) {
                 // Keeping this non-blocking so refresh still occurs when launch sync fails
-                console.warn('Failed to synchronize debugger configuration:', error);
+                logger.warn('Failed to synchronize debugger configuration:', error);
             }
         })();
 
@@ -341,12 +347,12 @@ export async function activate(context: vscode.ExtensionContext) {
     registerViewSortCommand('projectRepos', providers.projectRepos);
 
     // Register all commands and store disposables
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    extensionDisposables.push(vscode.commands.registerCommand('repoSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    extensionDisposables.push(vscode.commands.registerCommand('projectRepos.reveal', async (arg?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(vscode.commands.registerCommand('projectRepos.reveal', async (arg?: any) => {
         const repo = arg?.metadata?.kind === 'repo' ? arg?.metadata?.repo : undefined;
         if (repo?.path) {
             await revealProjectRepo(repo);
@@ -360,67 +366,67 @@ export async function activate(context: vscode.ExtensionContext) {
         }
         await vscode.commands.executeCommand('revealInExplorer', uri);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('proj.openProjectWorkspace', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('proj.openProjectWorkspace', async () => {
         await openProjectWorkspace(context);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('proj.rebuildProjectWorkspace', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('proj.rebuildProjectWorkspace', async () => {
         await rebuildProjectWorkspace(context);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('proj.quickSwitchProject', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('proj.quickSwitchProject', async () => {
         await quickSwitchProjectWorkspace(context);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFile', async (uri?: vscode.Uri) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFile', async (uri?: vscode.Uri) => {
         await explorerCreateNewFile(uri);
         providers.projectReposExplorer.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFolder', async (uri?: vscode.Uri) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFolder', async (uri?: vscode.Uri) => {
         await explorerCreateNewFolder(uri);
         providers.projectReposExplorer.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.rename', async (uri?: vscode.Uri) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.rename', async (uri?: vscode.Uri) => {
         await explorerRenameEntry(uri);
         providers.projectReposExplorer.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.delete', async (uri?: vscode.Uri) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.delete', async (uri?: vscode.Uri) => {
         await explorerDeleteEntry(uri);
         providers.projectReposExplorer.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.openTerminalHere', async (uri?: vscode.Uri) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.openTerminalHere', async (uri?: vscode.Uri) => {
         await explorerOpenTerminalHere(uri);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.selectProject', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.selectProject', async () => {
         await selectProjectForExplorer();
         providers.projectReposExplorer.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.copy', async (uri?: vscode.Uri, uris?: vscode.Uri[]) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.copy', async (uri?: vscode.Uri, uris?: vscode.Uri[]) => {
         const list = uris && uris.length ? uris : uri ? [uri] : [];
         if (!list.length) {
             return;
         }
         explorerCopyEntries(list, false);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.cut', async (uri?: vscode.Uri, uris?: vscode.Uri[]) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.cut', async (uri?: vscode.Uri, uris?: vscode.Uri[]) => {
         const list = uris && uris.length ? uris : uri ? [uri] : [];
         if (!list.length) {
             return;
         }
         explorerCopyEntries(list, true);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.paste', async (uri?: vscode.Uri) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.paste', async (uri?: vscode.Uri) => {
         await explorerPasteEntries(uri);
         providers.projectReposExplorer.refresh();
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.copyFilePath', async (arg?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyFilePath', async (arg?: any) => {
         await copyPathToClipboard(extractUriFromContext(arg), false);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.copyRelativePath', async (arg?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyRelativePath', async (arg?: any) => {
         await copyPathToClipboard(extractUriFromContext(arg), true);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.openInIntegratedTerminal', async (arg?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.openInIntegratedTerminal', async (arg?: any) => {
         await openUriInIntegratedTerminal(extractUriFromContext(arg));
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.revealInExplorer', async (arg?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.revealInExplorer', async (arg?: any) => {
         const uri = extractUriFromContext(arg);
         if (!uri) {
             showInfo('Select a file or folder first.');
@@ -428,7 +434,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }
         await vscode.commands.executeCommand('revealInExplorer', uri);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.revealFileInOS', async (arg?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.revealFileInOS', async (arg?: any) => {
         const uri = extractUriFromContext(arg);
         if (!uri) {
             showInfo('Select a file or folder first.');
@@ -436,17 +442,17 @@ export async function activate(context: vscode.ExtensionContext) {
         }
         await vscode.commands.executeCommand('revealFileInOS', uri);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.renameEntry', async (arg?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.renameEntry', async (arg?: any) => {
         await explorerRenameEntry(extractUriFromContext(arg));
         providers.projectRepos.refresh();
         providers.projectReposExplorer.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.deleteEntry', async (arg?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.deleteEntry', async (arg?: any) => {
         await explorerDeleteEntry(extractUriFromContext(arg));
         providers.projectRepos.refresh();
         providers.projectReposExplorer.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.copyEntry', async (arg?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyEntry', async (arg?: any) => {
         const uri = extractUriFromContext(arg);
         if (!uri) {
             showInfo('Select a file or folder first.');
@@ -454,7 +460,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }
         explorerCopyEntries([uri], false);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.cutEntry', async (arg?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.cutEntry', async (arg?: any) => {
         const uri = extractUriFromContext(arg);
         if (!uri) {
             showInfo('Select a file or folder first.');
@@ -462,7 +468,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }
         explorerCopyEntries([uri], true);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.pasteEntry', async (arg?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.pasteEntry', async (arg?: any) => {
         const uri = extractUriFromContext(arg);
         if (!uri) {
             showInfo('Select a folder to paste into.');
@@ -484,7 +490,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }));
 
     // Projects
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.create', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.create', async () => {
         try {
             // Get settings from active version
             const settings = await versionsService.getActiveVersionSettings();
@@ -542,56 +548,56 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.selectProject', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.selectProject', async (event) => {
         await selectProject(event);
         await refreshAll();
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.delete', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.delete', async (event) => {
         await deleteProject(event);
         await refreshAll();
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.editSettings', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.editSettings', async (event) => {
         await editProjectSettings(event);
         await refreshAll({ reason: 'ui' });
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.manageTickets', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.manageTickets', async (event) => {
         await manageProjectTickets(event);
         await refreshAll({ reason: 'ui' });
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.openTicket', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.openTicket', async (event) => {
         await openProjectTicket(event);
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.duplicateProject', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.duplicateProject', async (event) => {
         await duplicateProject(event);
         await refreshAll();
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.exportProject', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.exportProject', async (event) => {
         await exportProject(event);
         await refreshAll({ reason: 'ui' });
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.importProject', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.importProject', async () => {
         await importProject();
         await refreshAll({ reason: 'ui' });
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.setup', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.setup', async () => {
         await setupOdooBranch();
         await refreshAll({ reason: 'ui' });
     }));
 
     // Quick Project Search
-    extensionDisposables.push(vscode.commands.registerCommand('odoo-debugger.quickProjectSearch', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo-debugger.quickProjectSearch', async () => {
         await quickProjectSearch();
         await refreshAll({ reason: 'ui' });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('repoSelector.quickSearch', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.quickSearch', async () => {
         const items = ((await providers.repo.getChildren()) ?? [])
             .filter(item => !!item.command && getTreeItemLabel(item).trim().length > 0);
 
@@ -601,7 +607,7 @@ export async function activate(context: vscode.ExtensionContext) {
             emptyMessage: 'No repositories available to search.'
         });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.quickSearch', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.quickSearch', async () => {
         const items = ((await providers.db.getChildren()) ?? [])
             .filter(item => (item as any).contextValue === 'database' && !!item.command);
 
@@ -611,7 +617,7 @@ export async function activate(context: vscode.ExtensionContext) {
             emptyMessage: 'No databases available to search.'
         });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.quickSearch', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.quickSearch', async () => {
         const items = ((await providers.module.getChildren()) ?? [])
             .filter(item => (item as any).contextValue === 'module' && !!item.command);
 
@@ -663,7 +669,7 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('versionsManager.quickSearch', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('versionsManager.quickSearch', async () => {
         const items = ((await providers.versions.getChildren()) ?? [])
             .filter(item => {
                 const contextValue = (item as any).contextValue;
@@ -677,7 +683,7 @@ export async function activate(context: vscode.ExtensionContext) {
             emptyMessage: 'No versions available to search.'
         });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('projectRepos.quickSearch', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectRepos.quickSearch', async () => {
         const rootItems = ((await providers.projectRepos.getChildren()) ?? [])
             .filter(item => (item as any)?.metadata?.kind === 'repo');
 
@@ -697,7 +703,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }));
 
     // DBS
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.create', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.create', async () => {
         try {
             // Get settings from active version
             const settings = await versionsService.getActiveVersionSettings();
@@ -726,175 +732,175 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.selectDb', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.selectDb', async (event) => {
         try {
             await selectDatabase(event);
             await refreshAll();
         } catch (err: any) {
             showError(`Failed to select database: ${err.message}`);
-            console.error('Error in database selection:', err);
+            logger.error('Error in database selection:', err);
         }
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.delete', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.delete', async (event) => {
         try {
             await deleteDb(event);
             await refreshAll();
         } catch (err: any) {
             showError(`Failed to delete database: ${err.message}`);
-            console.error('Error in database deletion:', err);
+            logger.error('Error in database deletion:', err);
         }
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.restore', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.restore', async (event) => {
         try {
             // restoreDb shows its own success notification.
             await restoreDb(event);
             await refreshAll();
         } catch (err: any) {
             showError(`Failed to restore database: ${err.message}`);
-            console.error('Error in database restoration:', err);
+            logger.error('Error in database restoration:', err);
         }
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.changeVersion', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.changeVersion', async (event) => {
         try {
             await changeDatabaseVersion(event);
             await refreshAll();
         } catch (err: any) {
             showError(`Failed to change database version: ${err.message}`);
-            console.error('Error in database version change:', err);
+            logger.error('Error in database version change:', err);
         }
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.configureRepoBranches', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.configureRepoBranches', async (event) => {
         try {
             await changeDatabaseProjectRepoBranches(event);
             await refreshAll({ reason: 'ui' });
         } catch (err: any) {
             showError(`Failed to update project repo branch mapping: ${err.message}`);
-            console.error('Error in database project repo branch mapping update:', err);
+            logger.error('Error in database project repo branch mapping update:', err);
         }
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.manageTemplates', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.manageTemplates', async () => {
         try {
             await manageDatabaseTemplates();
             await refreshAll({ reason: 'ui' });
         } catch (err: any) {
             showError(`Failed to manage database templates: ${err.message}`);
-            console.error('Error in database template management:', err);
+            logger.error('Error in database template management:', err);
         }
     }));
 
     // Repos
-    extensionDisposables.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
         await selectRepo(event);
         await rebuildProjectWorkspace(context);
         await refreshAll();
     }));
 
     // Modules
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.select', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.select', async (event) => {
         await selectModule(event);
         await refreshAll();
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.togglePsaeInternalModule', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.togglePsaeInternalModule', async (event) => {
         await togglePsaeInternalModule(event);
         await refreshAll();
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.create', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.create', async () => {
         await createModuleFromScaffold();
         await refreshAll({ reason: 'ui' });
     }));
 
     // Context menu commands for individual modules
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.setToInstall', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.setToInstall', async (event) => {
         await setModuleToInstall(event);
         await refreshAll();
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.setToUpgrade', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.setToUpgrade', async (event) => {
         await setModuleToUpgrade(event);
         await refreshAll();
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.clearState', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.clearState', async (event) => {
         await clearModuleState(event);
         await refreshAll();
     }));
 
     // Module Quick Actions
-extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.updateAll', async () => {
+context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.updateAll', async () => {
     await updateAllModules();
     await refreshAll();
 }));
 
-extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.updateInstalled', async () => {
+context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.updateInstalled', async () => {
     await updateInstalledModules();
     await refreshAll();
 }));
 
-extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.installAll', async () => {
+context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.installAll', async () => {
     await installAllModules();
     await refreshAll();
 }));
 
-extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.clearAll', async () => {
+context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.clearAll', async () => {
     await clearAllModuleSelections();
     await refreshAll();
 }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.viewInstalled', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.viewInstalled', async () => {
         await viewInstalledModules();
     }));
 
     // Testing
-extensionDisposables.push(vscode.commands.registerCommand('testingSelector.toggleTesting', async (event) => {
+context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleTesting', async (event) => {
     await toggleTesting(event);
     await refreshAll({ reason: 'ui' });
 }));
 
-extensionDisposables.push(vscode.commands.registerCommand('testingSelector.toggleStopAfterInit', async () => {
+context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleStopAfterInit', async () => {
     await toggleStopAfterInit();
     await refreshAll({ reason: 'ui' });
 }));
 
-extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTestFile', async () => {
+context.subscriptions.push(vscode.commands.registerCommand('testingSelector.setTestFile', async () => {
     await setTestFile();
     await refreshAll({ reason: 'ui' });
 }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.addTestTag', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.addTestTag', async () => {
         await addTestTag();
         providers.testing.refresh();
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.removeTestTag', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.removeTestTag', async (event) => {
         await removeTestTag(event);
         providers.testing.refresh();
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.cycleTestTagState', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.cycleTestTagState', async (event) => {
         await cycleTestTagState(event);
         providers.testing.refresh();
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.toggleLogLevel', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleLogLevel', async () => {
         await toggleLogLevel();
         providers.testing.refresh();
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setSpecificLogLevel', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.setSpecificLogLevel', async () => {
         await setSpecificLogLevel();
         providers.testing.refresh();
     }));
 
     // Version management commands
 
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.createVersion', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.createVersion', async () => {
         try {
             // Two prompts: branch, then name. Paths and ports come from the
             // odooDebugger.defaultVersion.* settings and stay editable in the
@@ -958,7 +964,7 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
             const version = await versionsService.createVersion(name, odooVersion);
             await refreshAll({ reason: 'ui' });
 
-            const action = await vscode.window.showInformationMessage(
+            const action = await showInfo(
                 `Version "${name}" created on branch "${odooVersion}".`,
                 'Activate Now'
             );
@@ -971,11 +977,11 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
         }
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.openVersionDefaults', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.openVersionDefaults', async () => {
         await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:AhmadMansour.odoo-devtools-vscode odooDebugger.defaultVersion');
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.changeBranch', async (versionIdOrTreeItem?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.changeBranch', async (versionIdOrTreeItem?: any) => {
         try {
             const versionId = extractVersionIdFromArg(versionIdOrTreeItem);
             if (!versionId) {
@@ -1053,7 +1059,7 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
         }
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.setActiveVersion', async (versionIdOrTreeItem?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.setActiveVersion', async (versionIdOrTreeItem?: any) => {
         try {
             let versionId = extractVersionIdFromArg(versionIdOrTreeItem);
             if (!versionId) {
@@ -1170,7 +1176,7 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
         }
     };
 
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.editVersionSetting', async (versionIdOrTreeItem?: any, settingKey?: string, currentValue?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.editVersionSetting', async (versionIdOrTreeItem?: any, settingKey?: string, currentValue?: any) => {
         try {
             let versionId: string;
             let key: string;
@@ -1232,7 +1238,7 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
         }
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.cloneVersion', async (versionIdOrTreeItem?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.cloneVersion', async (versionIdOrTreeItem?: any) => {
         try {
             let versionId = extractVersionIdFromArg(versionIdOrTreeItem);
             if (!versionId) {
@@ -1273,7 +1279,7 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
         }
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.deleteVersion', async (versionIdOrTreeItem?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.deleteVersion', async (versionIdOrTreeItem?: any) => {
         try {
             let versionId = extractVersionIdFromArg(versionIdOrTreeItem);
             if (!versionId) {
@@ -1306,9 +1312,8 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
                 return;
             }
 
-            const confirm = await vscode.window.showWarningMessage(
+            const confirm = await showModalWarning(
                 `Are you sure you want to delete version "${version.name}"?`,
-                { modal: true },
                 'Delete'
             );
             if (confirm !== 'Delete') {
@@ -1327,7 +1332,7 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
     }));
 
     // Version settings context menu commands
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.setSettingToDefault', async (settingTreeItem?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.setSettingToDefault', async (settingTreeItem?: any) => {
         try {
             if (!settingTreeItem) {
                 showError('Select a setting before continuing.');
@@ -1352,7 +1357,7 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
         }
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.setSettingAsDefault', async (settingTreeItem?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.setSettingAsDefault', async (settingTreeItem?: any) => {
         try {
             if (!settingTreeItem) {
                 showError('Select a setting before continuing.');
@@ -1377,7 +1382,7 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
         }
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.setAllSettingsToDefault', async (versionTreeItem?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.setAllSettingsToDefault', async (versionTreeItem?: any) => {
         try {
             const versionId = extractVersionIdFromArg(versionTreeItem);
             if (!versionId) {
@@ -1391,7 +1396,7 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
                 return;
             }
 
-            const confirm = await vscode.window.showWarningMessage(
+            const confirm = await showWarning(
                 `Are you sure you want to reset ALL settings for version "${version.name}" to their default values?`,
                 'Reset All',
                 'Cancel'
@@ -1409,7 +1414,7 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
         }
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.setAllSettingsAsDefault', async (versionTreeItem?: any) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.setAllSettingsAsDefault', async (versionTreeItem?: any) => {
         try {
             const versionId = extractVersionIdFromArg(versionTreeItem);
             if (!versionId) {
@@ -1423,7 +1428,7 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
                 return;
             }
 
-            const confirm = await vscode.window.showWarningMessage(
+            const confirm = await showWarning(
                 `Are you sure you want to save ALL settings from version "${version.name}" as new default values?`,
                 'Save All as Default',
                 'Cancel'
@@ -1441,11 +1446,11 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
         }
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.refreshVersions', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.refreshVersions', async () => {
         await versionsService.refresh();
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.manageVersions', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.manageVersions', async () => {
         const actions = [
             'Create New Version',
             'Switch Active Version',
@@ -1474,37 +1479,16 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
     }));
 
     // Start Server and Start Shell commands for versions panel
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.startServer', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.startServer', async () => {
         await startDebugServer();
     }));
 
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.startShell', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.startShell', async () => {
         await startDebugShell();
     }));
 
-    // Add all disposables to the context for automatic cleanup
-    extensionDisposables.forEach(disposable => context.subscriptions.push(disposable));
-
-    return {
-        dispose() {
-            // Clean up all disposables
-            extensionDisposables.forEach(d => d.dispose());
-            extensionDisposables = [];
-
-            // Reset the context
-            updateActiveContext(false);
-        }
-    };
 }
 
-// Proper deactivate function
 export function deactivate() {
-    // Clean up all disposables
-    extensionDisposables.forEach(d => d.dispose());
-    extensionDisposables = [];
-
-    // Reset the context
-    updateActiveContext(false);
-
-    console.log('Odoo Debugger extension deactivated');
+    // All cleanup runs through context.subscriptions.
 }

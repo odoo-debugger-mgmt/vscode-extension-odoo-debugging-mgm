@@ -9,6 +9,7 @@ import { VersionsService } from './versionsService';
 import { ensureTestingConfigModel } from './models/testing';
 import { getInstalledModuleNames, databaseHasModuleTable } from './services/database';
 import { parse } from 'jsonc-parser';
+import { logger } from './services/logger';
 
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
@@ -41,7 +42,7 @@ async function selectPythonInterpreter(pythonPath: string): Promise<void> {
             config.update('pythonPath', pythonPath, vscode.ConfigurationTarget.Workspace)
         ]);
     } catch (error) {
-        console.warn(`Failed to set Python interpreter to "${pythonPath}":`, error);
+        logger.warn(`Failed to set Python interpreter to "${pythonPath}":`, error);
     }
 }
 
@@ -90,7 +91,7 @@ export async function setupDebugger(): Promise<any> {
     try {
         args = await prepareArgs(project, settings);
     } catch (error) {
-        console.warn('Could not prepare debugger launch arguments:', error);
+        logger.warn('Could not prepare debugger launch arguments:', error);
         if (error instanceof Error) {
             if (error.message === 'Select a database before running this action.') {
                 showInfo('Select a database before configuring the debugger.');
@@ -234,7 +235,7 @@ async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShe
     try {
         installedModuleNames = await getInstalledModuleNames(db.id);
     } catch (error) {
-        console.warn('Failed to get installed modules from database:', error);
+        logger.warn('Failed to get installed modules from database:', error);
     }
 
     for (const [psPath, psModules] of foundPsInternalDirs.entries()) {
@@ -288,7 +289,7 @@ async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShe
                 }
             }
         } catch (error) {
-            console.warn('Failed to verify module table state:', error);
+            logger.warn('Failed to verify module table state:', error);
         }
     }
     const args: string[] = [];

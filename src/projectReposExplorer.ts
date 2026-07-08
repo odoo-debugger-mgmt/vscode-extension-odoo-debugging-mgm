@@ -6,6 +6,8 @@ import { RepoModel } from './models/repo';
 import { showError, showInfo } from './utils';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
 import { createFilesExcludeMatcher } from './services/filesExclude';
+import { showWarning } from './services/notifications';
+import { showModalWarning } from './services/notifications';
 
 type NodeKind = 'placeholder' | 'repo' | 'folder' | 'file';
 
@@ -87,6 +89,11 @@ export class ProjectReposExplorerProvider implements vscode.TreeDataProvider<Exp
             clearTimeout(this.refreshDebounceTimer);
             this.refreshDebounceTimer = undefined;
         }
+    }
+
+    dispose(): void {
+        this.disposeWatchers();
+        this._onDidChangeTreeData.dispose();
     }
 
     getTreeItem(element: ExplorerNode): vscode.TreeItem {
@@ -278,9 +285,8 @@ export async function deleteEntry(uri?: vscode.Uri): Promise<void> {
         showInfo('Select a file or folder to delete.');
         return;
     }
-    const choice = await vscode.window.showWarningMessage(
+    const choice = await showModalWarning(
         `Delete "${path.basename(uri.fsPath)}"?`,
-        { modal: true },
         'Delete'
     );
     if (choice !== 'Delete') {
@@ -364,9 +370,8 @@ export async function pasteEntries(targetUri?: vscode.Uri): Promise<void> {
 
         const exists = await pathExists(destination);
         if (exists) {
-            const choice = await vscode.window.showWarningMessage(
+            const choice = await showModalWarning(
                 `"${base}" already exists. Overwrite?`,
-                { modal: true },
                 'Overwrite',
                 'Skip'
             );

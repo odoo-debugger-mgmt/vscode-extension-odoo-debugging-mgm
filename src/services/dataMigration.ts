@@ -3,6 +3,7 @@ import { VersionsService } from '../versionsService';
 import { VersionModel } from '../models/version';
 import { getDefaultVersionSettings } from '../utils';
 import type { DebuggerData } from '../utils';
+import { logger } from './logger';
 
 /** Branch names that denote a real Odoo series, e.g. "17.0", "saas-17.4", "master". */
 const ODOO_SERIES_PATTERN = /^((saas-)?\d+(\.\d+)?|master)$/i;
@@ -103,6 +104,6 @@ export async function migrateDebuggerData(): Promise<void> {
             await VersionsService.getInstance().refresh();
         }
     } catch (error) {
-        console.warn('Debugger data migration skipped:', error);
+        logger.warn('Debugger data migration skipped:', error);
     }
 }

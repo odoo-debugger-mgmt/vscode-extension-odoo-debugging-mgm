@@ -1,14 +1,14 @@
 import { RepoModel } from "./models/repo";
 import * as vscode from "vscode";
-import { findRepositories, getWorkspacePath, normalizePath, showError, showInfo, stripSettings, getGitBranch } from './utils';
+import { findRepositories, getWorkspacePath, normalizePath, showError, showInfo, stripSettings } from './utils';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import * as path from 'path';
 import * as fs from 'fs';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
-import { getCurrentBranchViaSourceControl } from './services/gitService';
-import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache, runtimeCache } from './services/runtimeCache';
+import { getRepoBranch } from './services/branches';
+import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
 
 interface RepoEntry {
     name: string;
@@ -42,15 +42,6 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item
     return results;
 }
 
-async function resolveRepoBranch(repoPath: string): Promise<string | null> {
-    return runtimeCache.getGitBranch(repoPath, async () => {
-        const sourceControlBranch = await getCurrentBranchViaSourceControl(repoPath);
-        if (sourceControlBranch) {
-            return sourceControlBranch;
-        }
-        return getGitBranch(repoPath);
-    });
-}
 
 export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
@@ -108,7 +99,7 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
             const gitPath = path.join(repo.path, '.git');
             if (fs.existsSync(gitPath)) {
                 try {
-                    branch = await resolveRepoBranch(repo.path);
+                    branch = await getRepoBranch(repo.path);
                 } catch {
                     branch = null;
                 }

@@ -45,28 +45,28 @@ const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const utils_1 = __webpack_require__(4);
-const dbs_1 = __webpack_require__(17);
-const environment_1 = __webpack_require__(30);
-const dataMigration_1 = __webpack_require__(32);
-const project_1 = __webpack_require__(33);
-const repos_1 = __webpack_require__(37);
-const projectRepos_1 = __webpack_require__(38);
-const module_1 = __webpack_require__(41);
-const testing_1 = __webpack_require__(43);
-const debugger_1 = __webpack_require__(45);
-const odooInstaller_1 = __webpack_require__(46);
-const settingsStore_1 = __webpack_require__(22);
-const versionsTreeProvider_1 = __webpack_require__(47);
-const versionsService_1 = __webpack_require__(19);
-const context_1 = __webpack_require__(44);
+const dbs_1 = __webpack_require__(19);
+const environment_1 = __webpack_require__(34);
+const dataMigration_1 = __webpack_require__(36);
+const project_1 = __webpack_require__(37);
+const repos_1 = __webpack_require__(41);
+const projectRepos_1 = __webpack_require__(42);
+const module_1 = __webpack_require__(44);
+const testing_1 = __webpack_require__(46);
+const debugger_1 = __webpack_require__(48);
+const odooInstaller_1 = __webpack_require__(49);
+const settingsStore_1 = __webpack_require__(24);
+const versionsTreeProvider_1 = __webpack_require__(50);
+const versionsService_1 = __webpack_require__(21);
+const context_1 = __webpack_require__(47);
 const gitService_1 = __webpack_require__(9);
-const sortPreferences_1 = __webpack_require__(48);
-const sortOptions_1 = __webpack_require__(25);
-const projectWorkspace_1 = __webpack_require__(49);
-const projectReposExplorer_1 = __webpack_require__(50);
-const runtimeCache_1 = __webpack_require__(10);
-// Store disposables for proper cleanup
-let extensionDisposables = [];
+const sortPreferences_1 = __webpack_require__(51);
+const sortOptions_1 = __webpack_require__(29);
+const projectWorkspace_1 = __webpack_require__(52);
+const projectReposExplorer_1 = __webpack_require__(53);
+const runtimeCache_1 = __webpack_require__(11);
+const logger_1 = __webpack_require__(10);
+const notifications_1 = __webpack_require__(12);
 function extractUriFromContext(arg) {
     if (!arg) {
         return undefined;
@@ -202,14 +202,12 @@ async function initializeTestingContext() {
     }
     catch (error) {
         // If there's an error, default to testing disabled
-        console.warn('Error initializing testing context:', error);
+        logger_1.logger.warn('Error initializing testing context:', error);
         (0, context_1.updateTestingContext)(false);
     }
 }
 async function activate(context) {
-    // Clear any existing disposables
-    extensionDisposables.forEach(d => d.dispose());
-    extensionDisposables = [];
+    (0, logger_1.registerLogger)(context);
     const sortPreferences = new sortPreferences_1.SortPreferences(context.workspaceState);
     // Initialize version management service
     const versionsService = versionsService_1.VersionsService.getInstance();
@@ -217,7 +215,7 @@ async function activate(context) {
     // Migrate existing settings to version management for backwards compatibility
     // Wait for migration to complete to ensure proper initialization order
     await versionsService.migrateFromLegacySettings().catch(error => {
-        console.warn('Settings migration failed (this is non-critical):', error);
+        logger_1.logger.warn('Settings migration failed (this is non-critical):', error);
     });
     const isWorkspaceOpen = !!vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0;
     (0, context_1.updateActiveContext)(isWorkspaceOpen);
@@ -233,6 +231,14 @@ async function activate(context) {
         projectRepos: new projectRepos_1.ProjectReposProvider(sortPreferences),
         projectReposExplorer: new projectReposExplorer_1.ProjectReposExplorerProvider()
     };
+    // React to version changes fired by VersionsService.refresh(). Must be
+    // registered before the migrations below, which may fire it, and outside
+    // the provider so re-activation cannot double-register the command.
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.versionsChanged', () => {
+        providers.versions.refresh();
+    }));
+    // The explorer provider owns file-system watchers that need disposal.
+    context.subscriptions.push(providers.projectReposExplorer);
     // One-time v1.2 migrations: fold legacy per-DB odooVersion into versions,
     // and map old databaseSwitchBehavior values onto the new auto/ask/never
     // enum. Runs after provider construction so the versions-changed refresh
@@ -241,7 +247,7 @@ async function activate(context) {
     void (0, environment_1.migrateLegacySwitchBehaviorSetting)();
     const registerViewSortCommand = (viewId, provider) => {
         const options = (0, sortOptions_1.getSortOptions)(viewId);
-        extensionDisposables.push(vscode.commands.registerCommand(`${viewId}.sort`, async () => {
+        context.subscriptions.push(vscode.commands.registerCommand(`${viewId}.sort`, async () => {
             const current = sortPreferences.get(viewId, (0, sortOptions_1.getDefaultSortOption)(viewId));
             const picks = options.map(option => ({
                 label: `${option.id === current ? '$(check) ' : ''}${option.label}`,
@@ -260,14 +266,14 @@ async function activate(context) {
         }));
     };
     // Register tree data providers and store disposables
-    extensionDisposables.push(vscode.window.registerTreeDataProvider('projectSelector', providers.project));
-    extensionDisposables.push(vscode.window.registerTreeDataProvider('repoSelector', providers.repo));
-    extensionDisposables.push(vscode.window.registerTreeDataProvider('dbSelector', providers.db));
-    extensionDisposables.push(vscode.window.registerTreeDataProvider('moduleSelector', providers.module));
-    extensionDisposables.push(vscode.window.registerTreeDataProvider('testingSelector', providers.testing));
-    extensionDisposables.push(vscode.window.registerTreeDataProvider('versionsManager', providers.versions));
-    extensionDisposables.push(vscode.window.registerTreeDataProvider('projectRepos', providers.projectRepos));
-    extensionDisposables.push(vscode.window.registerTreeDataProvider('odt.projectReposExplorer', providers.projectReposExplorer));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('projectSelector', providers.project));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('repoSelector', providers.repo));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('dbSelector', providers.db));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('moduleSelector', providers.module));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('testingSelector', providers.testing));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('versionsManager', providers.versions));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('projectRepos', providers.projectRepos));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('odt.projectReposExplorer', providers.projectReposExplorer));
     const refreshViews = async () => {
         await initializeTestingContext();
         Object.values(providers).forEach(provider => provider.refresh());
@@ -286,7 +292,7 @@ async function activate(context) {
             }
             catch (error) {
                 // Keeping this non-blocking so refresh still occurs when launch sync fails
-                console.warn('Failed to synchronize debugger configuration:', error);
+                logger_1.logger.warn('Failed to synchronize debugger configuration:', error);
             }
         })();
         try {
@@ -327,12 +333,12 @@ async function activate(context) {
     registerViewSortCommand('versionsManager', providers.versions);
     registerViewSortCommand('projectRepos', providers.projectRepos);
     // Register all commands and store disposables
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    extensionDisposables.push(vscode.commands.registerCommand('repoSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    extensionDisposables.push(vscode.commands.registerCommand('projectRepos.reveal', async (arg) => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(vscode.commands.registerCommand('projectRepos.reveal', async (arg) => {
         const repo = arg?.metadata?.kind === 'repo' ? arg?.metadata?.repo : undefined;
         if (repo?.path) {
             await (0, projectRepos_1.revealProjectRepo)(repo);
@@ -345,66 +351,66 @@ async function activate(context) {
         }
         await vscode.commands.executeCommand('revealInExplorer', uri);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('proj.openProjectWorkspace', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('proj.openProjectWorkspace', async () => {
         await (0, projectWorkspace_1.openProjectWorkspace)(context);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('proj.rebuildProjectWorkspace', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('proj.rebuildProjectWorkspace', async () => {
         await (0, projectWorkspace_1.rebuildProjectWorkspace)(context);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('proj.quickSwitchProject', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('proj.quickSwitchProject', async () => {
         await (0, projectWorkspace_1.quickSwitchProjectWorkspace)(context);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFile', async (uri) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFile', async (uri) => {
         await (0, projectReposExplorer_1.createNewFile)(uri);
         providers.projectReposExplorer.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFolder', async (uri) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFolder', async (uri) => {
         await (0, projectReposExplorer_1.createNewFolder)(uri);
         providers.projectReposExplorer.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.rename', async (uri) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.rename', async (uri) => {
         await (0, projectReposExplorer_1.renameEntry)(uri);
         providers.projectReposExplorer.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.delete', async (uri) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.delete', async (uri) => {
         await (0, projectReposExplorer_1.deleteEntry)(uri);
         providers.projectReposExplorer.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.openTerminalHere', async (uri) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.openTerminalHere', async (uri) => {
         await (0, projectReposExplorer_1.openTerminalHere)(uri);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.selectProject', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.selectProject', async () => {
         await (0, projectReposExplorer_1.selectProjectForExplorer)();
         providers.projectReposExplorer.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.copy', async (uri, uris) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.copy', async (uri, uris) => {
         const list = uris && uris.length ? uris : uri ? [uri] : [];
         if (!list.length) {
             return;
         }
         (0, projectReposExplorer_1.copyEntries)(list, false);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.cut', async (uri, uris) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.cut', async (uri, uris) => {
         const list = uris && uris.length ? uris : uri ? [uri] : [];
         if (!list.length) {
             return;
         }
         (0, projectReposExplorer_1.copyEntries)(list, true);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odt.projectReposExplorer.paste', async (uri) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.paste', async (uri) => {
         await (0, projectReposExplorer_1.pasteEntries)(uri);
         providers.projectReposExplorer.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.copyFilePath', async (arg) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyFilePath', async (arg) => {
         await copyPathToClipboard(extractUriFromContext(arg), false);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.copyRelativePath', async (arg) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyRelativePath', async (arg) => {
         await copyPathToClipboard(extractUriFromContext(arg), true);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.openInIntegratedTerminal', async (arg) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.openInIntegratedTerminal', async (arg) => {
         await openUriInIntegratedTerminal(extractUriFromContext(arg));
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.revealInExplorer', async (arg) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.revealInExplorer', async (arg) => {
         const uri = extractUriFromContext(arg);
         if (!uri) {
             (0, utils_1.showInfo)('Select a file or folder first.');
@@ -412,7 +418,7 @@ async function activate(context) {
         }
         await vscode.commands.executeCommand('revealInExplorer', uri);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.revealFileInOS', async (arg) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.revealFileInOS', async (arg) => {
         const uri = extractUriFromContext(arg);
         if (!uri) {
             (0, utils_1.showInfo)('Select a file or folder first.');
@@ -420,17 +426,17 @@ async function activate(context) {
         }
         await vscode.commands.executeCommand('revealFileInOS', uri);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.renameEntry', async (arg) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.renameEntry', async (arg) => {
         await (0, projectReposExplorer_1.renameEntry)(extractUriFromContext(arg));
         providers.projectRepos.refresh();
         providers.projectReposExplorer.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.deleteEntry', async (arg) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.deleteEntry', async (arg) => {
         await (0, projectReposExplorer_1.deleteEntry)(extractUriFromContext(arg));
         providers.projectRepos.refresh();
         providers.projectReposExplorer.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.copyEntry', async (arg) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyEntry', async (arg) => {
         const uri = extractUriFromContext(arg);
         if (!uri) {
             (0, utils_1.showInfo)('Select a file or folder first.');
@@ -438,7 +444,7 @@ async function activate(context) {
         }
         (0, projectReposExplorer_1.copyEntries)([uri], false);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.cutEntry', async (arg) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.cutEntry', async (arg) => {
         const uri = extractUriFromContext(arg);
         if (!uri) {
             (0, utils_1.showInfo)('Select a file or folder first.');
@@ -446,7 +452,7 @@ async function activate(context) {
         }
         (0, projectReposExplorer_1.copyEntries)([uri], true);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odooDebugger.pasteEntry', async (arg) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.pasteEntry', async (arg) => {
         const uri = extractUriFromContext(arg);
         if (!uri) {
             (0, utils_1.showInfo)('Select a folder to paste into.');
@@ -466,7 +472,7 @@ async function activate(context) {
         providers.projectReposExplorer.refresh();
     }));
     // Projects
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.create', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.create', async () => {
         try {
             // Get settings from active version
             const settings = await versionsService.getActiveVersionSettings();
@@ -523,47 +529,47 @@ async function activate(context) {
             (0, utils_1.showError)(err.message);
         }
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.selectProject', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.selectProject', async (event) => {
         await (0, project_1.selectProject)(event);
         await refreshAll();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.delete', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.delete', async (event) => {
         await (0, project_1.deleteProject)(event);
         await refreshAll();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.editSettings', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.editSettings', async (event) => {
         await (0, project_1.editProjectSettings)(event);
         await refreshAll({ reason: 'ui' });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.manageTickets', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.manageTickets', async (event) => {
         await (0, project_1.manageProjectTickets)(event);
         await refreshAll({ reason: 'ui' });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.openTicket', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.openTicket', async (event) => {
         await (0, project_1.openProjectTicket)(event);
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.duplicateProject', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.duplicateProject', async (event) => {
         await (0, project_1.duplicateProject)(event);
         await refreshAll();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.exportProject', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.exportProject', async (event) => {
         await (0, project_1.exportProject)(event);
         await refreshAll({ reason: 'ui' });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.importProject', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.importProject', async () => {
         await (0, project_1.importProject)();
         await refreshAll({ reason: 'ui' });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.setup', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.setup', async () => {
         await (0, odooInstaller_1.setupOdooBranch)();
         await refreshAll({ reason: 'ui' });
     }));
     // Quick Project Search
-    extensionDisposables.push(vscode.commands.registerCommand('odoo-debugger.quickProjectSearch', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo-debugger.quickProjectSearch', async () => {
         await (0, project_1.quickProjectSearch)();
         await refreshAll({ reason: 'ui' });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('repoSelector.quickSearch', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.quickSearch', async () => {
         const items = ((await providers.repo.getChildren()) ?? [])
             .filter(item => !!item.command && getTreeItemLabel(item).trim().length > 0);
         await quickSearchTreeItems(items, {
@@ -572,7 +578,7 @@ async function activate(context) {
             emptyMessage: 'No repositories available to search.'
         });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.quickSearch', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.quickSearch', async () => {
         const items = ((await providers.db.getChildren()) ?? [])
             .filter(item => item.contextValue === 'database' && !!item.command);
         await quickSearchTreeItems(items, {
@@ -581,7 +587,7 @@ async function activate(context) {
             emptyMessage: 'No databases available to search.'
         });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.quickSearch', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.quickSearch', async () => {
         const items = ((await providers.module.getChildren()) ?? [])
             .filter(item => item.contextValue === 'module' && !!item.command);
         await quickSearchTreeItems(items, {
@@ -630,7 +636,7 @@ async function activate(context) {
             }
         });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('versionsManager.quickSearch', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('versionsManager.quickSearch', async () => {
         const items = ((await providers.versions.getChildren()) ?? [])
             .filter(item => {
             const contextValue = item.contextValue;
@@ -643,7 +649,7 @@ async function activate(context) {
             emptyMessage: 'No versions available to search.'
         });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('projectRepos.quickSearch', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('projectRepos.quickSearch', async () => {
         const rootItems = ((await providers.projectRepos.getChildren()) ?? [])
             .filter(item => item?.metadata?.kind === 'repo');
         await quickSearchTreeItems(rootItems, {
@@ -661,7 +667,7 @@ async function activate(context) {
         });
     }));
     // DBS
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.create', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.create', async () => {
         try {
             // Get settings from active version
             const settings = await versionsService.getActiveVersionSettings();
@@ -689,27 +695,27 @@ async function activate(context) {
             (0, utils_1.showError)(err.message);
         }
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.selectDb', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.selectDb', async (event) => {
         try {
             await (0, dbs_1.selectDatabase)(event);
             await refreshAll();
         }
         catch (err) {
             (0, utils_1.showError)(`Failed to select database: ${err.message}`);
-            console.error('Error in database selection:', err);
+            logger_1.logger.error('Error in database selection:', err);
         }
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.delete', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.delete', async (event) => {
         try {
             await (0, dbs_1.deleteDb)(event);
             await refreshAll();
         }
         catch (err) {
             (0, utils_1.showError)(`Failed to delete database: ${err.message}`);
-            console.error('Error in database deletion:', err);
+            logger_1.logger.error('Error in database deletion:', err);
         }
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.restore', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.restore', async (event) => {
         try {
             // restoreDb shows its own success notification.
             await (0, dbs_1.restoreDb)(event);
@@ -717,126 +723,126 @@ async function activate(context) {
         }
         catch (err) {
             (0, utils_1.showError)(`Failed to restore database: ${err.message}`);
-            console.error('Error in database restoration:', err);
+            logger_1.logger.error('Error in database restoration:', err);
         }
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.changeVersion', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.changeVersion', async (event) => {
         try {
             await (0, dbs_1.changeDatabaseVersion)(event);
             await refreshAll();
         }
         catch (err) {
             (0, utils_1.showError)(`Failed to change database version: ${err.message}`);
-            console.error('Error in database version change:', err);
+            logger_1.logger.error('Error in database version change:', err);
         }
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.configureRepoBranches', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.configureRepoBranches', async (event) => {
         try {
             await (0, dbs_1.changeDatabaseProjectRepoBranches)(event);
             await refreshAll({ reason: 'ui' });
         }
         catch (err) {
             (0, utils_1.showError)(`Failed to update project repo branch mapping: ${err.message}`);
-            console.error('Error in database project repo branch mapping update:', err);
+            logger_1.logger.error('Error in database project repo branch mapping update:', err);
         }
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('dbSelector.manageTemplates', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.manageTemplates', async () => {
         try {
             await (0, dbs_1.manageDatabaseTemplates)();
             await refreshAll({ reason: 'ui' });
         }
         catch (err) {
             (0, utils_1.showError)(`Failed to manage database templates: ${err.message}`);
-            console.error('Error in database template management:', err);
+            logger_1.logger.error('Error in database template management:', err);
         }
     }));
     // Repos
-    extensionDisposables.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
         await (0, repos_1.selectRepo)(event);
         await (0, projectWorkspace_1.rebuildProjectWorkspace)(context);
         await refreshAll();
     }));
     // Modules
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.select', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.select', async (event) => {
         await (0, module_1.selectModule)(event);
         await refreshAll();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.togglePsaeInternalModule', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.togglePsaeInternalModule', async (event) => {
         await (0, module_1.togglePsaeInternalModule)(event);
         await refreshAll();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.create', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.create', async () => {
         await (0, module_1.createModuleFromScaffold)();
         await refreshAll({ reason: 'ui' });
     }));
     // Context menu commands for individual modules
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.setToInstall', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.setToInstall', async (event) => {
         await (0, module_1.setModuleToInstall)(event);
         await refreshAll();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.setToUpgrade', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.setToUpgrade', async (event) => {
         await (0, module_1.setModuleToUpgrade)(event);
         await refreshAll();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.clearState', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.clearState', async (event) => {
         await (0, module_1.clearModuleState)(event);
         await refreshAll();
     }));
     // Module Quick Actions
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.updateAll', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.updateAll', async () => {
         await (0, module_1.updateAllModules)();
         await refreshAll();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.updateInstalled', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.updateInstalled', async () => {
         await (0, module_1.updateInstalledModules)();
         await refreshAll();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.installAll', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.installAll', async () => {
         await (0, module_1.installAllModules)();
         await refreshAll();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.clearAll', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.clearAll', async () => {
         await (0, module_1.clearAllModuleSelections)();
         await refreshAll();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('moduleSelector.viewInstalled', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.viewInstalled', async () => {
         await (0, module_1.viewInstalledModules)();
     }));
     // Testing
-    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.toggleTesting', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleTesting', async (event) => {
         await (0, testing_1.toggleTesting)(event);
         await refreshAll({ reason: 'ui' });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.toggleStopAfterInit', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleStopAfterInit', async () => {
         await (0, testing_1.toggleStopAfterInit)();
         await refreshAll({ reason: 'ui' });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTestFile', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.setTestFile', async () => {
         await (0, testing_1.setTestFile)();
         await refreshAll({ reason: 'ui' });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.addTestTag', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.addTestTag', async () => {
         await (0, testing_1.addTestTag)();
         providers.testing.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.removeTestTag', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.removeTestTag', async (event) => {
         await (0, testing_1.removeTestTag)(event);
         providers.testing.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.cycleTestTagState', async (event) => {
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.cycleTestTagState', async (event) => {
         await (0, testing_1.cycleTestTagState)(event);
         providers.testing.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.toggleLogLevel', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleLogLevel', async () => {
         await (0, testing_1.toggleLogLevel)();
         providers.testing.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setSpecificLogLevel', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.setSpecificLogLevel', async () => {
         await (0, testing_1.setSpecificLogLevel)();
         providers.testing.refresh();
     }));
     // Version management commands
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.createVersion', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.createVersion', async () => {
         try {
             // Two prompts: branch, then name. Paths and ports come from the
             // odooDebugger.defaultVersion.* settings and stay editable in the
@@ -900,7 +906,7 @@ async function activate(context) {
             }
             const version = await versionsService.createVersion(name, odooVersion);
             await refreshAll({ reason: 'ui' });
-            const action = await vscode.window.showInformationMessage(`Version "${name}" created on branch "${odooVersion}".`, 'Activate Now');
+            const action = await (0, utils_1.showInfo)(`Version "${name}" created on branch "${odooVersion}".`, 'Activate Now');
             if (action === 'Activate Now') {
                 await vscode.commands.executeCommand('odoo.setActiveVersion', version.id);
             }
@@ -909,10 +915,10 @@ async function activate(context) {
             (0, utils_1.showError)(`Failed to create version: ${error.message}`);
         }
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.openVersionDefaults', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.openVersionDefaults', async () => {
         await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:AhmadMansour.odoo-devtools-vscode odooDebugger.defaultVersion');
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.changeBranch', async (versionIdOrTreeItem) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.changeBranch', async (versionIdOrTreeItem) => {
         try {
             const versionId = extractVersionIdFromArg(versionIdOrTreeItem);
             if (!versionId) {
@@ -975,7 +981,7 @@ async function activate(context) {
             (0, utils_1.showError)(`Failed to change branch: ${error.message}`);
         }
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.setActiveVersion', async (versionIdOrTreeItem) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.setActiveVersion', async (versionIdOrTreeItem) => {
         try {
             let versionId = extractVersionIdFromArg(versionIdOrTreeItem);
             if (!versionId) {
@@ -1087,7 +1093,7 @@ async function activate(context) {
             return `--dev=${devModeOption.label}`;
         }
     };
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.editVersionSetting', async (versionIdOrTreeItem, settingKey, currentValue) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.editVersionSetting', async (versionIdOrTreeItem, settingKey, currentValue) => {
         try {
             let versionId;
             let key;
@@ -1148,7 +1154,7 @@ async function activate(context) {
             (0, utils_1.showError)(`Failed to edit setting: ${error.message}`);
         }
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.cloneVersion', async (versionIdOrTreeItem) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.cloneVersion', async (versionIdOrTreeItem) => {
         try {
             let versionId = extractVersionIdFromArg(versionIdOrTreeItem);
             if (!versionId) {
@@ -1186,7 +1192,7 @@ async function activate(context) {
             (0, utils_1.showError)(`Failed to clone the selected version: ${error.message}`);
         }
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.deleteVersion', async (versionIdOrTreeItem) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.deleteVersion', async (versionIdOrTreeItem) => {
         try {
             let versionId = extractVersionIdFromArg(versionIdOrTreeItem);
             if (!versionId) {
@@ -1214,7 +1220,7 @@ async function activate(context) {
                 (0, utils_1.showError)('The selected version could not be found.');
                 return;
             }
-            const confirm = await vscode.window.showWarningMessage(`Are you sure you want to delete version "${version.name}"?`, { modal: true }, 'Delete');
+            const confirm = await (0, notifications_1.showModalWarning)(`Are you sure you want to delete version "${version.name}"?`, 'Delete');
             if (confirm !== 'Delete') {
                 return;
             }
@@ -1231,7 +1237,7 @@ async function activate(context) {
         }
     }));
     // Version settings context menu commands
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.setSettingToDefault', async (settingTreeItem) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.setSettingToDefault', async (settingTreeItem) => {
         try {
             if (!settingTreeItem) {
                 (0, utils_1.showError)('Select a setting before continuing.');
@@ -1253,7 +1259,7 @@ async function activate(context) {
             (0, utils_1.showError)(`Failed to reset setting to default: ${error.message}`);
         }
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.setSettingAsDefault', async (settingTreeItem) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.setSettingAsDefault', async (settingTreeItem) => {
         try {
             if (!settingTreeItem) {
                 (0, utils_1.showError)('Select a setting before continuing.');
@@ -1275,7 +1281,7 @@ async function activate(context) {
             (0, utils_1.showError)(`Unable to save this setting as the default: ${error.message}`);
         }
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.setAllSettingsToDefault', async (versionTreeItem) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.setAllSettingsToDefault', async (versionTreeItem) => {
         try {
             const versionId = extractVersionIdFromArg(versionTreeItem);
             if (!versionId) {
@@ -1287,7 +1293,7 @@ async function activate(context) {
                 (0, utils_1.showError)('The selected version could not be found.');
                 return;
             }
-            const confirm = await vscode.window.showWarningMessage(`Are you sure you want to reset ALL settings for version "${version.name}" to their default values?`, 'Reset All', 'Cancel');
+            const confirm = await (0, utils_1.showWarning)(`Are you sure you want to reset ALL settings for version "${version.name}" to their default values?`, 'Reset All', 'Cancel');
             if (confirm !== 'Reset All') {
                 return;
             }
@@ -1300,7 +1306,7 @@ async function activate(context) {
             (0, utils_1.showError)(`Failed to reset all settings to default: ${error.message}`);
         }
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.setAllSettingsAsDefault', async (versionTreeItem) => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.setAllSettingsAsDefault', async (versionTreeItem) => {
         try {
             const versionId = extractVersionIdFromArg(versionTreeItem);
             if (!versionId) {
@@ -1312,7 +1318,7 @@ async function activate(context) {
                 (0, utils_1.showError)('The selected version could not be found.');
                 return;
             }
-            const confirm = await vscode.window.showWarningMessage(`Are you sure you want to save ALL settings from version "${version.name}" as new default values?`, 'Save All as Default', 'Cancel');
+            const confirm = await (0, utils_1.showWarning)(`Are you sure you want to save ALL settings from version "${version.name}" as new default values?`, 'Save All as Default', 'Cancel');
             if (confirm !== 'Save All as Default') {
                 return;
             }
@@ -1325,10 +1331,10 @@ async function activate(context) {
             (0, utils_1.showError)(`Unable to save these settings as the new defaults.: ${error.message}`);
         }
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.refreshVersions', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.refreshVersions', async () => {
         await versionsService.refresh();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.manageVersions', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.manageVersions', async () => {
         const actions = [
             'Create New Version',
             'Switch Active Version',
@@ -1354,32 +1360,15 @@ async function activate(context) {
         }
     }));
     // Start Server and Start Shell commands for versions panel
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.startServer', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.startServer', async () => {
         await (0, debugger_1.startDebugServer)();
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('odoo.startShell', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.startShell', async () => {
         await (0, debugger_1.startDebugShell)();
     }));
-    // Add all disposables to the context for automatic cleanup
-    extensionDisposables.forEach(disposable => context.subscriptions.push(disposable));
-    return {
-        dispose() {
-            // Clean up all disposables
-            extensionDisposables.forEach(d => d.dispose());
-            extensionDisposables = [];
-            // Reset the context
-            (0, context_1.updateActiveContext)(false);
-        }
-    };
 }
-// Proper deactivate function
 function deactivate() {
-    // Clean up all disposables
-    extensionDisposables.forEach(d => d.dispose());
-    extensionDisposables = [];
-    // Reset the context
-    (0, context_1.updateActiveContext)(false);
-    console.log('Odoo Debugger extension deactivated');
+    // All cleanup runs through context.subscriptions.
 }
 
 
@@ -1440,7 +1429,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.MessageType = exports.CONFIG = void 0;
+exports.CONFIG = exports.showBriefStatus = exports.showAutoInfo = exports.showModalWarning = exports.showWarning = exports.showInfo = exports.showError = exports.showMessage = exports.MessageType = void 0;
 exports.stripSettings = stripSettings;
 exports.addActiveIndicator = addActiveIndicator;
 exports.getDatabaseLabel = getDatabaseLabel;
@@ -1451,16 +1440,9 @@ exports.findRepositories = findRepositories;
 exports.discoverModulesInRepos = discoverModulesInRepos;
 exports.createInfoTreeItem = createInfoTreeItem;
 exports.readFromFile = readFromFile;
-exports.showMessage = showMessage;
-exports.showError = showError;
-exports.showInfo = showInfo;
-exports.showWarning = showWarning;
-exports.showAutoInfo = showAutoInfo;
-exports.showBriefStatus = showBriefStatus;
 exports.camelCaseToTitleCase = camelCaseToTitleCase;
 exports.getSettingDisplayName = getSettingDisplayName;
 exports.getSettingDisplayValue = getSettingDisplayValue;
-exports.getGitBranch = getGitBranch;
 exports.getGitBranches = getGitBranches;
 exports.getDefaultVersionSettings = getDefaultVersionSettings;
 const vscode = __importStar(__webpack_require__(1));
@@ -1469,8 +1451,21 @@ const path = __importStar(__webpack_require__(6));
 const childProcess = __importStar(__webpack_require__(7));
 const settings_1 = __webpack_require__(8);
 const gitService_1 = __webpack_require__(9);
-const runtimeCache_1 = __webpack_require__(10);
-const jsonc_parser_1 = __webpack_require__(11);
+const runtimeCache_1 = __webpack_require__(11);
+const notifications_1 = __webpack_require__(12);
+const jsonc_parser_1 = __webpack_require__(13);
+const logger_1 = __webpack_require__(10);
+// Re-exported so existing `from './utils'` imports keep working; new code
+// should import these from './services/notifications' directly.
+var notifications_2 = __webpack_require__(12);
+Object.defineProperty(exports, "MessageType", ({ enumerable: true, get: function () { return notifications_2.MessageType; } }));
+Object.defineProperty(exports, "showMessage", ({ enumerable: true, get: function () { return notifications_2.showMessage; } }));
+Object.defineProperty(exports, "showError", ({ enumerable: true, get: function () { return notifications_2.showError; } }));
+Object.defineProperty(exports, "showInfo", ({ enumerable: true, get: function () { return notifications_2.showInfo; } }));
+Object.defineProperty(exports, "showWarning", ({ enumerable: true, get: function () { return notifications_2.showWarning; } }));
+Object.defineProperty(exports, "showModalWarning", ({ enumerable: true, get: function () { return notifications_2.showModalWarning; } }));
+Object.defineProperty(exports, "showAutoInfo", ({ enumerable: true, get: function () { return notifications_2.showAutoInfo; } }));
+Object.defineProperty(exports, "showBriefStatus", ({ enumerable: true, get: function () { return notifications_2.showBriefStatus; } }));
 const launchJsonFileContent = `{
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
@@ -1546,7 +1541,7 @@ function getDatabaseLabel(db) {
 function getWorkspacePath() {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
-        showError("Open a workspace to use this command.");
+        (0, notifications_1.showError)("Open a workspace to use this command.");
         return null;
     }
     return workspaceFolders[0].uri.fsPath;
@@ -1670,12 +1665,12 @@ function buildDiscoveryCacheKey(kind, targetPath, overrides = {}) {
 }
 function discoverDirectories(targetPath, kind, options) {
     if (!targetPath) {
-        showError('Enter a target path to continue.');
+        (0, notifications_1.showError)('Enter a target path to continue.');
         return [];
     }
     const normalizedRoot = normalizePath(targetPath);
     if (!fs.existsSync(normalizedRoot)) {
-        showError(`Path does not exist: ${normalizedRoot}`);
+        (0, notifications_1.showError)(`Path does not exist: ${normalizedRoot}`);
         return [];
     }
     const stack = [{ dir: normalizedRoot, depth: 0 }];
@@ -1702,13 +1697,13 @@ function discoverDirectories(targetPath, kind, options) {
             entries = fs.readdirSync(resolved, { withFileTypes: true });
         }
         catch (error) {
-            console.warn(`Failed to read directory ${resolved}:`, error);
+            logger_1.logger.warn(`Failed to read directory ${resolved}:`, error);
             continue;
         }
         processed++;
         if (processed > options.maxEntries) {
             if (!limitWarningShown) {
-                showWarning(`Search limit reached while scanning ${targetPath}. Some folders may be skipped. Adjust "odooDebugger.search.maxEntries" to increase the limit.`);
+                (0, notifications_1.showWarning)(`Search limit reached while scanning ${targetPath}. Some folders may be skipped. Adjust "odooDebugger.search.maxEntries" to increase the limit.`);
                 limitWarningShown = true;
             }
             break;
@@ -1941,7 +1936,7 @@ async function createOdooDebuggerFile(filePath, workspacePath, fileName) {
         return data;
     }
     catch (error) {
-        showError(`Failed to create ${fileName}: ${error}`);
+        (0, notifications_1.showError)(`Failed to create ${fileName}: ${error}`);
         throw error;
     }
 }
@@ -1958,169 +1953,16 @@ async function readFromFile(fileName) {
     try {
         const filePath = path.join(workspacePath, '.vscode', fileName);
         if (!fs.existsSync(filePath)) {
-            showInfo(`Creating ${fileName} file...`);
+            (0, notifications_1.showInfo)(`Creating ${fileName} file...`);
             return await createOdooDebuggerFile(filePath, workspacePath, fileName);
         }
         const data = fs.readFileSync(filePath, 'utf-8');
         return (0, jsonc_parser_1.parse)(data);
     }
     catch (error) {
-        showError(`Failed to read ${fileName}: ${error}`);
+        (0, notifications_1.showError)(`Failed to read ${fileName}: ${error}`);
         return null;
     }
-}
-// ============================================================================
-// UI & MESSAGING UTILITIES
-// ============================================================================
-/**
- * Output channel for logging messages
- */
-let outputChannel = null;
-/**
- * Gets or creates the output channel for logging
- */
-function getOutputChannel() {
-    outputChannel ??= vscode.window.createOutputChannel('Odoo Debugger');
-    return outputChannel;
-}
-/**
- * Message types for the show message function
- */
-var MessageType;
-(function (MessageType) {
-    MessageType["Error"] = "error";
-    MessageType["Warning"] = "warning";
-    MessageType["Info"] = "info";
-})(MessageType || (exports.MessageType = MessageType = {}));
-/**
- * Shows a message with logging to output channel and console
- * @param message - the message to display
- * @param type - the type of message (error, warning, info)
- * @param actions - optional action buttons
- * @returns the selected action or undefined
- */
-async function showMessage(message, type = MessageType.Error, ...actions) {
-    const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] ${type.toUpperCase()}: ${message}`;
-    // Log to output channel
-    const channel = getOutputChannel();
-    channel.appendLine(logMessage);
-    // Log to console for debugging
-    switch (type) {
-        case MessageType.Error:
-            console.error(`[Odoo Debugger] ${logMessage}`);
-            break;
-        case MessageType.Warning:
-            console.warn(`[Odoo Debugger] ${logMessage}`);
-            break;
-        case MessageType.Info:
-            console.info(`[Odoo Debugger] ${logMessage}`);
-            break;
-    }
-    // Show the appropriate message type
-    let result;
-    switch (type) {
-        case MessageType.Error:
-            if (actions.length > 0) {
-                result = await vscode.window.showErrorMessage(message, ...actions);
-            }
-            else {
-                vscode.window.showErrorMessage(message);
-            }
-            break;
-        case MessageType.Warning:
-            if (actions.length > 0) {
-                result = await vscode.window.showWarningMessage(message, ...actions);
-            }
-            else {
-                vscode.window.showWarningMessage(message);
-            }
-            break;
-        case MessageType.Info:
-            if (actions.length > 0) {
-                result = await vscode.window.showInformationMessage(message, ...actions);
-            }
-            else {
-                vscode.window.showInformationMessage(message);
-            }
-            break;
-    }
-    return result;
-}
-/**
- * Shows an error message with optional actions (backward compatibility)
- * @param message - the error message to display
- * @param actions - optional action buttons
- * @returns the selected action or undefined
- */
-async function showError(message, ...actions) {
-    return showMessage(message, MessageType.Error, ...actions);
-}
-/**
- * Shows an info message with optional actions
- * @param message - the info message to display
- * @param actions - optional action buttons
- * @returns the selected action or undefined
- */
-async function showInfo(message, ...actions) {
-    return showMessage(message, MessageType.Info, ...actions);
-}
-/**
- * Shows a warning message with optional actions
- * @param message - the warning message to display
- * @param actions - optional action buttons
- * @returns the selected action or undefined
- */
-async function showWarning(message, ...actions) {
-    return showMessage(message, MessageType.Warning, ...actions);
-}
-/**
- * Shows an auto-dismissing information message that disappears after a specified time
- * @param message - the info message to display
- * @param timeoutMs - time in milliseconds before auto-dismiss (default: 3000ms = 3 seconds)
- * @returns void
- */
-function showAutoInfo(message, timeoutMs = 3000) {
-    vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: message,
-        cancellable: false
-    }, async (progress) => {
-        // Show progress for visual feedback
-        progress.report({ increment: 0 });
-        // Auto-dismiss after timeout
-        return new Promise((resolve) => {
-            setTimeout(() => {
-                resolve();
-            }, timeoutMs);
-        });
-    });
-    // Also log to output channel and console
-    const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] INFO (AUTO): ${message}`;
-    const channel = getOutputChannel();
-    channel.appendLine(logMessage);
-    console.info(`[Odoo Debugger] ${logMessage}`);
-}
-/**
- * Shows a brief status bar message that disappears automatically
- * @param message - the message to display in status bar
- * @param timeoutMs - time in milliseconds before auto-dismiss (default: 2000ms = 2 seconds)
- */
-function showBriefStatus(message, timeoutMs = 2000) {
-    const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    statusBarItem.text = `$(info) ${message}`;
-    statusBarItem.show();
-    // Auto-dismiss after timeout
-    setTimeout(() => {
-        statusBarItem.dispose();
-    }, timeoutMs);
-    // Also log to output channel and console
-    const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] STATUS: ${message}`;
-    const channel = getOutputChannel();
-    channel.appendLine(logMessage);
-    console.info(`[Odoo Debugger] ${logMessage}`);
 }
 /**
  * Converts a camelCase string to a human-readable title case
@@ -2175,28 +2017,6 @@ function getSettingDisplayValue(key, value) {
     return value?.toString() || '';
 }
 /**
- * Gets the current git branch for a given repository path.
- * @param repoPath - The path to the git repository.
- * @returns The current branch name, or null if not found or error occurs.
- */
-async function getGitBranch(repoPath) {
-    if (!repoPath) {
-        return null;
-    }
-    const gitHeadPath = path.join(repoPath, '.git', 'HEAD');
-    try {
-        if (fs.existsSync(gitHeadPath)) {
-            const headContent = fs.readFileSync(gitHeadPath, 'utf-8').trim();
-            const match = /^ref: refs\/heads\/(.+)$/.exec(headContent);
-            return match ? match[1] : headContent;
-        }
-    }
-    catch (err) {
-        console.warn(`Failed to read branch for ${repoPath}: ${err}`);
-    }
-    return null;
-}
-/**
  * Gets all available Git branches from a repository path.
  * @param repoPath - The path to the git repository.
  * @returns Array of branch names, or empty array if not found or error occurs.
@@ -2214,18 +2034,18 @@ async function getGitBranches(repoPath) {
         // Check if it's a git repository
         const gitDir = path.join(normalizedPath, '.git');
         if (!fs.existsSync(gitDir)) {
-            console.warn(`Not a git repository: ${normalizedPath}`);
+            logger_1.logger.warn(`Not a git repository: ${normalizedPath}`);
             return [];
         }
         return new Promise((resolve) => {
             childProcess.exec('git branch -a --format="%(refname:short)"', { cwd: normalizedPath }, (error, stdout, stderr) => {
                 if (error) {
-                    console.warn(`Failed to get branches for ${normalizedPath}: ${error.message}`);
+                    logger_1.logger.warn(`Failed to get branches for ${normalizedPath}: ${error.message}`);
                     resolve([]);
                     return;
                 }
                 if (stderr) {
-                    console.warn(`Git branch warning for ${normalizedPath}: ${stderr}`);
+                    logger_1.logger.warn(`Git branch warning for ${normalizedPath}: ${stderr}`);
                 }
                 const branches = stdout
                     .split('\n')
@@ -2258,7 +2078,7 @@ async function getGitBranches(repoPath) {
         });
     }
     catch (err) {
-        console.warn(`Failed to get branches for ${normalizedPath}: ${err}`);
+        logger_1.logger.warn(`Failed to get branches for ${normalizedPath}: ${err}`);
         return [];
     }
 }
@@ -2396,6 +2216,7 @@ exports.getBranchesWithMetadata = getBranchesWithMetadata;
 exports.getBranchesViaSourceControl = getBranchesViaSourceControl;
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
+const logger_1 = __webpack_require__(10);
 function resolveRepoPath(repoPath) {
     if (path.isAbsolute(repoPath)) {
         return path.normalize(repoPath);
@@ -2430,7 +2251,7 @@ async function checkoutBranchViaSourceControl(repoPath, branch) {
         return true;
     }
     catch (error) {
-        console.warn(`Git API checkout failed for ${repoPath}:`, error);
+        logger_1.logger.warn(`Git API checkout failed for ${repoPath}:`, error);
         return false;
     }
 }
@@ -2441,7 +2262,7 @@ async function getCurrentBranchViaSourceControl(repoPath) {
         return headName && headName.trim().length > 0 ? headName : null;
     }
     catch (error) {
-        console.warn(`Git API branch lookup failed for ${repoPath}:`, error);
+        logger_1.logger.warn(`Git API branch lookup failed for ${repoPath}:`, error);
         return null;
     }
 }
@@ -2484,7 +2305,7 @@ async function getBranchesWithMetadata(repoPath) {
             .sort((a, b) => a.name.localeCompare(b.name));
     }
     catch (error) {
-        console.warn(`Git API branch listing failed for ${repoPath}:`, error);
+        logger_1.logger.warn(`Git API branch listing failed for ${repoPath}:`, error);
         return [];
     }
 }
@@ -2499,6 +2320,129 @@ async function getBranchesViaSourceControl(repoPath) {
 
 /***/ }),
 /* 10 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.logger = void 0;
+exports.registerLogger = registerLogger;
+exports.showLogOutput = showLogOutput;
+exports.errorMessage = errorMessage;
+const vscode = __importStar(__webpack_require__(1));
+/**
+ * Central logging for the extension. Everything user-relevant that used to go
+ * to the developer console is appended to a single "Odoo DevTools" output
+ * channel so users can actually see it (View -> Output -> Odoo DevTools).
+ */
+let channel;
+function getChannel() {
+    channel ??= vscode.window.createOutputChannel('Odoo DevTools');
+    return channel;
+}
+/**
+ * Registers the output channel for disposal with the extension context.
+ * Safe to call before the channel exists; disposal is lazy.
+ */
+function registerLogger(context) {
+    context.subscriptions.push({
+        dispose: () => {
+            channel?.dispose();
+            channel = undefined;
+        }
+    });
+}
+/** Reveals the output channel in the panel. */
+function showLogOutput() {
+    getChannel().show(true);
+}
+/**
+ * Normalizes an unknown thrown value into a human-readable message,
+ * so raw `${error}` interpolation (which prints stacks/objects) is avoided.
+ */
+function errorMessage(error) {
+    if (error instanceof Error) {
+        return error.message;
+    }
+    if (typeof error === 'string') {
+        return error;
+    }
+    try {
+        return JSON.stringify(error);
+    }
+    catch {
+        return String(error);
+    }
+}
+function formatDetail(detail) {
+    if (detail instanceof Error) {
+        return detail.stack ?? detail.message;
+    }
+    if (typeof detail === 'string') {
+        return detail;
+    }
+    try {
+        return JSON.stringify(detail);
+    }
+    catch {
+        return String(detail);
+    }
+}
+function append(level, message, details) {
+    const timestamp = new Date().toISOString();
+    const suffix = details.length > 0 ? ` ${details.map(formatDetail).join(' ')}` : '';
+    getChannel().appendLine(`[${timestamp}] ${level}: ${message}${suffix}`);
+}
+exports.logger = {
+    debug(message, ...details) {
+        append('DEBUG', message, details);
+    },
+    info(message, ...details) {
+        append('INFO', message, details);
+    },
+    warn(message, ...details) {
+        append('WARN', message, details);
+    },
+    error(message, ...details) {
+        append('ERROR', message, details);
+    }
+};
+
+
+/***/ }),
+/* 11 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -2613,7 +2557,138 @@ function invalidateAllRuntimeCaches() {
 
 
 /***/ }),
-/* 11 */
+/* 12 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.MessageType = void 0;
+exports.showMessage = showMessage;
+exports.showError = showError;
+exports.showInfo = showInfo;
+exports.showWarning = showWarning;
+exports.showModalWarning = showModalWarning;
+exports.showModalInfo = showModalInfo;
+exports.showAutoInfo = showAutoInfo;
+exports.showBriefStatus = showBriefStatus;
+const vscode = __importStar(__webpack_require__(1));
+const logger_1 = __webpack_require__(10);
+/**
+ * User-facing messaging helpers. Every notification shown through these is
+ * also logged to the "Odoo DevTools" output channel, which is why direct
+ * vscode.window.show*Message calls should be avoided elsewhere.
+ */
+var MessageType;
+(function (MessageType) {
+    MessageType["Error"] = "error";
+    MessageType["Warning"] = "warning";
+    MessageType["Info"] = "info";
+})(MessageType || (exports.MessageType = MessageType = {}));
+/**
+ * Shows a message with logging to the output channel.
+ * @param message - the message to display
+ * @param type - the type of message (error, warning, info)
+ * @param actions - optional action buttons
+ * @returns the selected action or undefined
+ */
+async function showMessage(message, type = MessageType.Error, ...actions) {
+    switch (type) {
+        case MessageType.Error:
+            logger_1.logger.error(message);
+            return vscode.window.showErrorMessage(message, ...actions);
+        case MessageType.Warning:
+            logger_1.logger.warn(message);
+            return vscode.window.showWarningMessage(message, ...actions);
+        case MessageType.Info:
+            logger_1.logger.info(message);
+            return vscode.window.showInformationMessage(message, ...actions);
+    }
+}
+/** Shows an error notification with optional action buttons. */
+async function showError(message, ...actions) {
+    return showMessage(message, MessageType.Error, ...actions);
+}
+/** Shows an info notification with optional action buttons. */
+async function showInfo(message, ...actions) {
+    return showMessage(message, MessageType.Info, ...actions);
+}
+/** Shows a warning notification with optional action buttons. */
+async function showWarning(message, ...actions) {
+    return showMessage(message, MessageType.Warning, ...actions);
+}
+/**
+ * Shows a modal warning dialog. Use for destructive confirmations where the
+ * user must answer before anything proceeds.
+ */
+async function showModalWarning(message, ...actions) {
+    logger_1.logger.warn(message);
+    return vscode.window.showWarningMessage(message, { modal: true }, ...actions);
+}
+/** Shows a modal information dialog (blocks until dismissed). */
+async function showModalInfo(message, ...actions) {
+    logger_1.logger.info(message);
+    return vscode.window.showInformationMessage(message, { modal: true }, ...actions);
+}
+/**
+ * Shows an auto-dismissing information message that disappears after a specified time.
+ * @param message - the info message to display
+ * @param timeoutMs - time in milliseconds before auto-dismiss (default: 3000ms)
+ */
+function showAutoInfo(message, timeoutMs = 3000) {
+    logger_1.logger.info(message);
+    void vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: message,
+        cancellable: false
+    }, () => new Promise(resolve => setTimeout(resolve, timeoutMs)));
+}
+/**
+ * Shows a brief status bar message that disappears automatically.
+ * @param message - the message to display in the status bar
+ * @param timeoutMs - time in milliseconds before auto-dismiss (default: 2000ms)
+ */
+function showBriefStatus(message, timeoutMs = 2000) {
+    logger_1.logger.info(message);
+    // setStatusBarMessage owns the disposal; no leaked status bar items.
+    vscode.window.setStatusBarMessage(`$(info) ${message}`, timeoutMs);
+}
+
+
+/***/ }),
+/* 13 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -2636,10 +2711,10 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   stripComments: () => (/* binding */ stripComments),
 /* harmony export */   visit: () => (/* binding */ visit)
 /* harmony export */ });
-/* harmony import */ var _impl_format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(12);
-/* harmony import */ var _impl_edit__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(15);
-/* harmony import */ var _impl_scanner__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(13);
-/* harmony import */ var _impl_parser__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(16);
+/* harmony import */ var _impl_format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(14);
+/* harmony import */ var _impl_edit__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(17);
+/* harmony import */ var _impl_scanner__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(15);
+/* harmony import */ var _impl_parser__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(18);
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -2821,7 +2896,7 @@ function applyEdits(text, edits) {
 
 
 /***/ }),
-/* 12 */
+/* 14 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -2829,8 +2904,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   format: () => (/* binding */ format),
 /* harmony export */   isEOL: () => (/* binding */ isEOL)
 /* harmony export */ });
-/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(13);
-/* harmony import */ var _string_intern__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(14);
+/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(15);
+/* harmony import */ var _string_intern__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(16);
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -3095,7 +3170,7 @@ function isEOL(text, offset) {
 
 
 /***/ }),
-/* 13 */
+/* 15 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -3548,7 +3623,7 @@ var CharacterCodes;
 
 
 /***/ }),
-/* 14 */
+/* 16 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -3589,7 +3664,7 @@ const supportedEols = ['\n', '\r', '\r\n'];
 
 
 /***/ }),
-/* 15 */
+/* 17 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -3599,8 +3674,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   removeProperty: () => (/* binding */ removeProperty),
 /* harmony export */   setProperty: () => (/* binding */ setProperty)
 /* harmony export */ });
-/* harmony import */ var _format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(12);
-/* harmony import */ var _parser__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(16);
+/* harmony import */ var _format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(14);
+/* harmony import */ var _parser__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(18);
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -3789,7 +3864,7 @@ function isWS(text, offset) {
 
 
 /***/ }),
-/* 16 */
+/* 18 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -3806,7 +3881,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   stripComments: () => (/* binding */ stripComments),
 /* harmony export */   visit: () => (/* binding */ visit)
 /* harmony export */ });
-/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(13);
+/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(15);
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -4469,7 +4544,7 @@ function getNodeType(value) {
 
 
 /***/ }),
-/* 17 */
+/* 19 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -4518,20 +4593,23 @@ exports.deleteDb = deleteDb;
 exports.changeDatabaseVersion = changeDatabaseVersion;
 exports.changeDatabaseProjectRepoBranches = changeDatabaseProjectRepoBranches;
 const vscode = __importStar(__webpack_require__(1));
-const db_1 = __webpack_require__(18);
+const db_1 = __webpack_require__(20);
 const utils_1 = __webpack_require__(4);
-const settingsStore_1 = __webpack_require__(22);
-const versionsService_1 = __webpack_require__(19);
+const branches_1 = __webpack_require__(25);
+const settingsStore_1 = __webpack_require__(24);
+const versionsService_1 = __webpack_require__(21);
 const child_process_1 = __webpack_require__(7);
 const fs = __importStar(__webpack_require__(5));
 const path = __importStar(__webpack_require__(6));
-const crypto_1 = __webpack_require__(21);
-const dbNaming_1 = __webpack_require__(23);
-const os = __importStar(__webpack_require__(24));
-const sortOptions_1 = __webpack_require__(25);
-const stream_1 = __webpack_require__(26);
-const database_1 = __webpack_require__(27);
-const environment_1 = __webpack_require__(30);
+const crypto_1 = __webpack_require__(23);
+const dbNaming_1 = __webpack_require__(27);
+const os = __importStar(__webpack_require__(28));
+const sortOptions_1 = __webpack_require__(29);
+const stream_1 = __webpack_require__(30);
+const database_1 = __webpack_require__(31);
+const logger_1 = __webpack_require__(10);
+const notifications_1 = __webpack_require__(12);
+const environment_1 = __webpack_require__(34);
 /**
  * Gets the effective Odoo version for a database object.
  * Works with both DatabaseModel instances and plain database objects.
@@ -4551,7 +4629,7 @@ function getEffectiveOdooVersion(db) {
             }
         }
         catch (error) {
-            console.warn(`Failed to get version for database ${(0, utils_1.getDatabaseLabel)(db)}:`, error);
+            logger_1.logger.warn(`Failed to get version for database ${(0, utils_1.getDatabaseLabel)(db)}:`, error);
         }
     }
     // Fall back to legacy odooVersion property
@@ -4628,7 +4706,7 @@ async function promptProjectRepoBranchAssignments(repos, existingAssignments = [
     if (setupChoice.action === 'use-current') {
         const mapped = await Promise.all(repos.map(async (repo) => {
             const repoPath = (0, utils_1.normalizePath)(repo.path);
-            const branch = await (0, utils_1.getGitBranch)(repoPath);
+            const branch = await (0, branches_1.getRepoBranch)(repoPath);
             if (!branch) {
                 return undefined;
             }
@@ -4646,7 +4724,7 @@ async function promptProjectRepoBranchAssignments(repos, existingAssignments = [
         const repoPath = (0, utils_1.normalizePath)(repo.path);
         const existing = existingByPath.get(repoPath) ?? existingByName.get(repo.name.toLowerCase());
         const existingBranch = existing?.branch;
-        const currentBranch = await (0, utils_1.getGitBranch)(repoPath);
+        const currentBranch = await (0, branches_1.getRepoBranch)(repoPath);
         const branches = await (0, utils_1.getGitBranches)(repoPath);
         const uniqueBranches = Array.from(new Set([
             ...(existingBranch ? [existingBranch] : []),
@@ -5001,7 +5079,7 @@ function collectDumpSources(root, maxDepth = 2) {
             entries = fs.readdirSync(dir, { withFileTypes: true });
         }
         catch (error) {
-            console.warn(`Failed to read dumps directory ${dir}:`, error);
+            logger_1.logger.warn(`Failed to read dumps directory ${dir}:`, error);
             continue;
         }
         for (const entry of entries) {
@@ -5146,7 +5224,7 @@ function queryPostgresDatabases() {
             .filter(name => name.length > 0);
     }
     catch (error) {
-        console.warn('Failed to query PostgreSQL database list:', error);
+        logger_1.logger.warn('Failed to query PostgreSQL database list:', error);
         return [];
     }
 }
@@ -5312,7 +5390,7 @@ async function resolveVersionForNewDatabase(dbName, method) {
         return { versionId: match.id, branchLabel: series };
     }
     // Non-blocking offer to create the missing version profile.
-    void vscode.window.showInformationMessage(`Database "${dbName}" runs Odoo ${series}, but no matching version profile exists.`, 'Create Version', 'Ignore').then(async (choice) => {
+    void (0, utils_1.showInfo)(`Database "${dbName}" runs Odoo ${series}, but no matching version profile exists.`, 'Create Version', 'Ignore').then(async (choice) => {
         if (choice !== 'Create Version') {
             return;
         }
@@ -5769,7 +5847,7 @@ async function manageDatabaseTemplates() {
                 (0, utils_1.showAutoInfo)(`Template renamed to "${newTemplateDbName}"`, 2500);
                 continue;
             }
-            const deleteChoice = await vscode.window.showWarningMessage(`Delete template "${selectedTemplate.name}" (${selectedTemplate.templateDbName})?`, { modal: true }, 'Delete Template DB + Metadata', 'Delete Metadata Only');
+            const deleteChoice = await (0, notifications_1.showModalWarning)(`Delete template "${selectedTemplate.name}" (${selectedTemplate.templateDbName})?`, 'Delete Template DB + Metadata', 'Delete Metadata Only');
             if (!deleteChoice) {
                 continue;
             }
@@ -5793,7 +5871,7 @@ async function restoreDb(event) {
         throw new Error('No backup file path defined for this database');
     }
     // Ask for confirmation
-    const confirm = await vscode.window.showWarningMessage(`Are you sure you want to restore the database "${databaseLabel}"? This will overwrite the existing database.`, { modal: true }, 'Restore');
+    const confirm = await (0, notifications_1.showModalWarning)(`Are you sure you want to restore the database "${databaseLabel}"? This will overwrite the existing database.`, 'Restore');
     if (confirm !== 'Restore') {
         return; // User cancelled
     }
@@ -5802,7 +5880,7 @@ async function restoreDb(event) {
 }
 async function setupDatabase(dbName, dumpPath, remove = false) {
     if (dumpPath && !fs.existsSync(dumpPath)) {
-        console.error(`❌ Dump file not found at: ${dumpPath}`);
+        logger_1.logger.error(`❌ Dump file not found at: ${dumpPath}`);
         return;
     }
     let preparedDump;
@@ -5826,26 +5904,26 @@ async function setupDatabase(dbName, dumpPath, remove = false) {
                 const result = (0, child_process_1.execSync)(checkCommand).toString().trim();
                 if (result === '1') {
                     progress.report({ message: 'Dropping existing database...', increment: 20 });
-                    console.log(`🗑️ Dropping existing database: ${dbName}`);
+                    logger_1.logger.debug(`🗑️ Dropping existing database: ${dbName}`);
                     (0, child_process_1.execSync)(`dropdb ${dbName}`, { stdio: 'inherit' });
                 }
                 (0, database_1.clearInstalledModuleCache)(dbName);
                 if (!remove) {
                     progress.report({ message: 'Creating database...', increment: 40 });
-                    console.log(`🚀 Creating database: ${dbName}`);
+                    logger_1.logger.debug(`🚀 Creating database: ${dbName}`);
                     (0, child_process_1.execSync)(`createdb ${dbName}`, { stdio: 'inherit' });
                     if (preparedDump) {
                         progress.report({
                             message: preparedDump.progressMessage ?? 'Importing dump file...',
                             increment: 50
                         });
-                        console.log(`📥 Importing SQL dump into ${dbName}`);
+                        logger_1.logger.debug(`📥 Importing SQL dump into ${dbName}`);
                         try {
                             await importPreparedDump(dbName, preparedDump);
                         }
                         catch (error) {
                             if (dumpPath && preparedDump.kind === 'stream' && isToolchainUnavailableError(error)) {
-                                console.warn('Streaming import unavailable. Falling back to temporary dump extraction.');
+                                logger_1.logger.warn('Streaming import unavailable. Falling back to temporary dump extraction.');
                                 progress.report({
                                     message: dumpPath.toLowerCase().endsWith('.zip')
                                         ? 'Streaming unavailable. Extracting archive to temporary SQL file...'
@@ -5866,44 +5944,44 @@ async function setupDatabase(dbName, dumpPath, remove = false) {
                         }
                         (0, database_1.clearInstalledModuleCache)(dbName);
                         progress.report({ message: 'Configuring database...', increment: 70 });
-                        console.log(`⚙️ Configuring database for development use`);
+                        logger_1.logger.debug(`⚙️ Configuring database for development use`);
                         const newUuid = (0, crypto_1.randomUUID)();
-                        console.log(`⏸️ Disabling cron jobs`);
+                        logger_1.logger.debug(`⏸️ Disabling cron jobs`);
                         (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE ir_cron SET active='f';"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        console.log(`📧 Disabling mail servers`);
+                        logger_1.logger.debug(`📧 Disabling mail servers`);
                         (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE ir_mail_server SET active=false;"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        console.log(`⏰ Extending database expiry`);
+                        logger_1.logger.debug(`⏰ Extending database expiry`);
                         (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE ir_config_parameter SET value = '2090-09-21 00:00:00' WHERE key = 'database.expiration_date';"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        console.log(`🔑 Updating database UUID`);
+                        logger_1.logger.debug(`🔑 Updating database UUID`);
                         (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE ir_config_parameter SET value = '${newUuid}' WHERE key = 'database.uuid';"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        console.log(`📨 Adding mailcatcher server`);
+                        logger_1.logger.debug(`📨 Adding mailcatcher server`);
                         try {
                             (0, child_process_1.execSync)(`psql ${dbName} -c "INSERT INTO ir_mail_server(active,name,smtp_host,smtp_port,smtp_encryption) VALUES (true,'mailcatcher','localhost',1025,false);"`, { stdio: 'inherit', shell: '/bin/sh' });
                         }
                         catch (error) {
-                            console.warn(`⚠️ Failed to add mailcatcher server (continuing setup): ${error}`);
+                            logger_1.logger.warn(`⚠️ Failed to add mailcatcher server (continuing setup): ${error}`);
                         }
-                        console.log(`👤 Resetting user passwords to login names`);
+                        logger_1.logger.debug(`👤 Resetting user passwords to login names`);
                         (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE res_users SET password=login;"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        console.log(`🔐 Configuring admin user`);
+                        logger_1.logger.debug(`🔐 Configuring admin user`);
                         (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE res_users SET password='admin' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
                         (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE res_users SET login='admin' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
                         (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE res_users SET totp_secret='' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
                         (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE res_users SET active=true WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        console.log(`🏢 Clearing employee PINs`);
+                        logger_1.logger.debug(`🏢 Clearing employee PINs`);
                         (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE hr_employee SET pin = '';"`, { stdio: 'inherit', shell: '/bin/sh' });
                         progress.report({ message: 'Database configured for development', increment: 90 });
                     }
                     else {
                         progress.report({ message: 'Database created (empty)...', increment: 90 });
-                        console.log(`📝 Empty database created: ${dbName}`);
+                        logger_1.logger.debug(`📝 Empty database created: ${dbName}`);
                     }
                 }
                 progress.report({ message: 'Complete!', increment: 100 });
-                console.log(`✅ Database "${dbName}" is ready.`);
+                logger_1.logger.debug(`✅ Database "${dbName}" is ready.`);
             }
             catch (error) {
-                console.error(`❌ Error: ${error.message}`);
+                logger_1.logger.error(`❌ Error: ${error.message}`);
                 (0, utils_1.showError)(`Failed to setup database: ${error.message}`);
             }
         });
@@ -5914,7 +5992,7 @@ async function setupDatabase(dbName, dumpPath, remove = false) {
                 preparedDump.cleanup();
             }
             catch (cleanupError) {
-                console.warn('Failed to cleanup temporary dump files:', cleanupError);
+                logger_1.logger.warn('Failed to cleanup temporary dump files:', cleanupError);
             }
         }
     }
@@ -5953,7 +6031,7 @@ async function selectDatabase(event) {
         await (0, environment_1.alignEnvironment)((0, environment_1.buildDatabaseEnvironmentTarget)(selectedDatabase, project.repos ?? []), { label: `Database "${databaseLabel}"` });
     }
     catch (error) {
-        console.error('Error while aligning environment for database selection:', error);
+        logger_1.logger.error('Error while aligning environment for database selection:', error);
         (0, utils_1.showWarning)(`Database selected, but environment switching failed: ${error.message}`);
     }
     (0, utils_1.showBriefStatus)(`Database switched to: ${databaseLabel}`, 2000);
@@ -5977,7 +6055,7 @@ async function deleteDb(event) {
         return;
     }
     // Ask for confirmation
-    const confirm = await vscode.window.showWarningMessage(`Are you sure you want to delete the database "${dbLabel}"?`, { modal: true }, 'Delete');
+    const confirm = await (0, notifications_1.showModalWarning)(`Are you sure you want to delete the database "${dbLabel}"?`, 'Delete');
     if (confirm !== 'Delete') {
         return; // User cancelled
     }
@@ -6094,7 +6172,7 @@ async function changeDatabaseVersion(event) {
     }
     catch (error) {
         (0, utils_1.showError)(`Failed to change database version: ${error.message}`);
-        console.error('Error in changeDatabaseVersion:', error);
+        logger_1.logger.error('Error in changeDatabaseVersion:', error);
     }
 }
 async function changeDatabaseProjectRepoBranches(event) {
@@ -6141,7 +6219,7 @@ async function changeDatabaseProjectRepoBranches(event) {
     }
     catch (error) {
         (0, utils_1.showError)(`Failed to update project repo branch mapping: ${error.message}`);
-        console.error('Error in changeDatabaseProjectRepoBranches:', error);
+        logger_1.logger.error('Error in changeDatabaseProjectRepoBranches:', error);
     }
 }
 function normalizeErrorMessage(error) {
@@ -6425,7 +6503,7 @@ function prepareDumpViaTempFile(dumpPath) {
                         fs.rmSync(tempDir, { recursive: true, force: true });
                     }
                     catch (cleanupError) {
-                        console.warn('Failed to cleanup temporary unzip folder:', cleanupError);
+                        logger_1.logger.warn('Failed to cleanup temporary unzip folder:', cleanupError);
                     }
                 }
             };
@@ -6454,7 +6532,7 @@ function prepareDumpViaTempFile(dumpPath) {
                         fs.rmSync(tempDir, { recursive: true, force: true });
                     }
                     catch (cleanupError) {
-                        console.warn('Failed to cleanup temporary gunzip folder:', cleanupError);
+                        logger_1.logger.warn('Failed to cleanup temporary gunzip folder:', cleanupError);
                     }
                 }
             };
@@ -6478,13 +6556,14 @@ function prepareDumpViaTempFile(dumpPath) {
 
 
 /***/ }),
-/* 18 */
+/* 20 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.DatabaseModel = void 0;
-const versionsService_1 = __webpack_require__(19);
+const versionsService_1 = __webpack_require__(21);
+const logger_1 = __webpack_require__(10);
 class DatabaseModel {
     name;
     isItABackup;
@@ -6548,7 +6627,7 @@ class DatabaseModel {
                 }
             }
             catch (error) {
-                console.warn(`Failed to get version for database ${this.name}:`, error);
+                logger_1.logger.warn(`Failed to get version for database ${this.name}:`, error);
                 // Fall through to legacy property
             }
         }
@@ -6560,7 +6639,7 @@ exports.DatabaseModel = DatabaseModel;
 
 
 /***/ }),
-/* 19 */
+/* 21 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -6600,9 +6679,11 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VersionsService = void 0;
 const vscode = __importStar(__webpack_require__(1));
-const version_1 = __webpack_require__(20);
-const settingsStore_1 = __webpack_require__(22);
+const version_1 = __webpack_require__(22);
+const settingsStore_1 = __webpack_require__(24);
 const utils_1 = __webpack_require__(4);
+const logger_1 = __webpack_require__(10);
+const notifications_1 = __webpack_require__(12);
 class VersionsService {
     static instance;
     versions = new Map();
@@ -6674,7 +6755,7 @@ class VersionsService {
             }
         }
         catch (error) {
-            console.error('Failed to load versions:', error);
+            logger_1.logger.error('Failed to load versions:', error);
             // Create default version on error
             const defaultVersion = new version_1.VersionModel('Default Version', '17.0', (0, utils_1.getDefaultVersionSettings)());
             defaultVersion.isActive = true;
@@ -6695,10 +6776,10 @@ class VersionsService {
             data.versions = versionsData;
             data.activeVersion = this.activeVersionId;
             await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-            console.log(`Saved ${this.versions.size} versions successfully`);
+            logger_1.logger.debug(`Saved ${this.versions.size} versions successfully`);
         }
         catch (error) {
-            console.error('Failed to save versions:', error);
+            logger_1.logger.error('Failed to save versions:', error);
             throw error; // Re-throw to propagate error up the chain
         }
     }
@@ -6716,10 +6797,10 @@ class VersionsService {
             data.activeVersion = this.activeVersionId;
             // During migration, don't strip settings - they'll be cleared by clearLegacySettings
             await settingsStore_1.SettingsStore.saveWithoutComments(data);
-            console.log(`Saved ${this.versions.size} versions during migration`);
+            logger_1.logger.debug(`Saved ${this.versions.size} versions during migration`);
         }
         catch (error) {
-            console.error('Failed to save versions during migration:', error);
+            logger_1.logger.error('Failed to save versions during migration:', error);
             throw error;
         }
     }
@@ -6752,11 +6833,11 @@ class VersionsService {
         await this.initialize(); // Ensure initialization
         const activeVersion = this.getActiveVersion();
         if (activeVersion?.settings) {
-            console.log(`Using settings from active version: ${activeVersion.name}`);
+            logger_1.logger.debug(`Using settings from active version: ${activeVersion.name}`);
             return activeVersion.settings;
         }
         // Fallback: if no active version or no settings, create a temporary default
-        console.warn('No active version or settings found, creating temporary default settings');
+        logger_1.logger.warn('No active version or settings found, creating temporary default settings');
         // Create a version with default settings if none exists
         if (this.versions.size === 0) {
             const defaultVersion = new version_1.VersionModel('Default Version', '17.0', (0, utils_1.getDefaultVersionSettings)());
@@ -6775,7 +6856,7 @@ class VersionsService {
     async setActiveVersion(id) {
         await this.initialize(); // Ensure initialization
         if (!this.versions.has(id)) {
-            console.error(`Version with id ${id} not found`);
+            logger_1.logger.error(`Version with id ${id} not found`);
             return false;
         }
         const oldActiveVersionId = this.activeVersionId;
@@ -6788,11 +6869,11 @@ class VersionsService {
             await this.saveVersions(); // Save all versions to update isActive flags
             // Fire event for UI updates
             vscode.commands.executeCommand('odoo.versionsChanged');
-            console.log(`Successfully set active version from ${oldActiveVersionId} to ${id}`);
+            logger_1.logger.debug(`Successfully set active version from ${oldActiveVersionId} to ${id}`);
             return true;
         }
         catch (error) {
-            console.error('Error saving active version:', error);
+            logger_1.logger.error('Error saving active version:', error);
             // Revert on error
             this.activeVersionId = oldActiveVersionId;
             this.versions.forEach((version, versionId) => {
@@ -6847,7 +6928,7 @@ class VersionsService {
         }
         // Don't allow deleting the last version
         if (this.versions.size <= 1) {
-            vscode.window.showWarningMessage('Cannot delete the last version. At least one version must exist.');
+            (0, notifications_1.showWarning)('Cannot delete the last version. At least one version must exist.');
             return false;
         }
         // Clean up any database references to this version before deleting
@@ -6877,7 +6958,7 @@ class VersionsService {
                     if (project.dbs && Array.isArray(project.dbs)) {
                         for (const db of project.dbs) {
                             if (db.versionId === deletedVersionId) {
-                                console.log(`Clearing version reference from database "${(0, utils_1.getDatabaseLabel)(db)}" (was using deleted version)`);
+                                logger_1.logger.debug(`Clearing version reference from database "${(0, utils_1.getDatabaseLabel)(db)}" (was using deleted version)`);
                                 db.versionId = undefined;
                                 // Don't touch odooVersion - let it remain as is for backward compatibility
                                 needsSave = true;
@@ -6887,12 +6968,12 @@ class VersionsService {
                 }
             }
             if (needsSave) {
-                console.log('Saving cleaned database references after version deletion');
+                logger_1.logger.debug('Saving cleaned database references after version deletion');
                 await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
             }
         }
         catch (error) {
-            console.warn('Failed to clean up database version references:', error);
+            logger_1.logger.warn('Failed to clean up database version references:', error);
             // Don't throw - this shouldn't prevent version deletion
         }
     }
@@ -6903,7 +6984,7 @@ class VersionsService {
         await this.initialize(); // Ensure initialization
         const sourceVersion = this.versions.get(sourceId);
         if (!sourceVersion) {
-            console.error(`Source version with id ${sourceId} not found`);
+            logger_1.logger.error(`Source version with id ${sourceId} not found`);
             return undefined;
         }
         try {
@@ -6911,11 +6992,11 @@ class VersionsService {
             this.versions.set(clonedVersion.id, clonedVersion);
             await this.saveVersions();
             vscode.commands.executeCommand('odoo.versionsChanged');
-            console.log(`Successfully cloned version ${sourceVersion.name} to ${newName}`);
+            logger_1.logger.debug(`Successfully cloned version ${sourceVersion.name} to ${newName}`);
             return clonedVersion;
         }
         catch (error) {
-            console.error('Error cloning version:', error);
+            logger_1.logger.error('Error cloning version:', error);
             return undefined;
         }
     }
@@ -6926,7 +7007,7 @@ class VersionsService {
         await this.initialize(); // Ensure initialization
         const activeVersion = this.getActiveVersion();
         if (!activeVersion) {
-            console.warn('No active version is configured, cannot update settings');
+            logger_1.logger.warn('No active version is configured, cannot update settings');
             return;
         }
         Object.assign(activeVersion.settings, settings);
@@ -6942,7 +7023,7 @@ class VersionsService {
         await this.validateAndRepairVersions();
         // Also attempt migration in case legacy settings were added externally
         await this.migrateFromLegacySettings().catch(error => {
-            console.warn('Settings migration during refresh failed (this is non-critical):', error);
+            logger_1.logger.warn('Settings migration during refresh failed (this is non-critical):', error);
         });
         vscode.commands.executeCommand('odoo.versionsChanged');
     }
@@ -6953,7 +7034,7 @@ class VersionsService {
         let needsRepair = false;
         // Ensure we have at least one version
         if (this.versions.size === 0) {
-            console.log('No versions found, creating default version');
+            logger_1.logger.debug('No versions found, creating default version');
             const defaultVersion = new version_1.VersionModel('Default Version', '17.0', (0, utils_1.getDefaultVersionSettings)());
             defaultVersion.isActive = true;
             this.versions.set(defaultVersion.id, defaultVersion);
@@ -6962,7 +7043,7 @@ class VersionsService {
         }
         // Ensure we have an active version
         if (!this.activeVersionId || !this.versions.has(this.activeVersionId)) {
-            console.log('Invalid active version, selecting first available version');
+            logger_1.logger.debug('Invalid active version, selecting first available version');
             this.activeVersionId = this.versions.keys().next().value;
             needsRepair = true;
         }
@@ -6990,7 +7071,7 @@ class VersionsService {
         }
         // Save if repairs were needed
         if (needsRepair) {
-            console.log('Version data repaired, saving...');
+            logger_1.logger.debug('Version data repaired, saving...');
             await this.saveVersions();
         }
     }
@@ -6999,30 +7080,30 @@ class VersionsService {
  */
     async migrateFromLegacySettings() {
         try {
-            console.log('Starting migration check...');
+            logger_1.logger.debug('Starting migration check...');
             // Check if legacy settings actually exist in the file
             if (!(await this.hasLegacySettings())) {
-                console.log('No legacy settings found, migration not needed');
+                logger_1.logger.debug('No legacy settings found, migration not needed');
                 return;
             }
-            console.log('Legacy settings found, proceeding with migration...');
+            logger_1.logger.debug('Legacy settings found, proceeding with migration...');
             // Read raw legacy settings without model-default inflation so workspace defaults
             // can still apply for missing keys during migration.
             const rawData = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
             const existingSettings = rawData.settings;
             if (!existingSettings || Object.keys(existingSettings).length === 0) {
-                console.log('Legacy settings exist but are empty, clearing them');
+                logger_1.logger.debug('Legacy settings exist but are empty, clearing them');
                 await this.clearLegacySettings();
                 return;
             }
-            console.log('Retrieved legacy settings:', existingSettings);
+            logger_1.logger.debug('Retrieved legacy settings:', existingSettings);
             // Check if we already have a migrated version (avoid duplicate migration)
             if (this.getVersion('migrated-version')) {
-                console.log('Migration already completed, clearing legacy settings');
+                logger_1.logger.debug('Migration already completed, clearing legacy settings');
                 await this.clearLegacySettings();
                 return;
             }
-            console.log('Migrating legacy settings to version management...');
+            logger_1.logger.debug('Migrating legacy settings to version management...');
             const defaultSettings = (0, utils_1.getDefaultVersionSettings)();
             // Convert SettingsModel to VersionSettings format
             const versionSettings = {
@@ -7066,18 +7147,18 @@ class VersionsService {
             migratedVersion.isActive = true;
             this.versions.set(migratedVersion.id, migratedVersion);
             this.activeVersionId = migratedVersion.id;
-            console.log('Saving migrated version to versions system...');
+            logger_1.logger.debug('Saving migrated version to versions system...');
             await this.saveVersionsDuringMigration();
-            console.log('Clearing legacy settings after successful version save...');
+            logger_1.logger.debug('Clearing legacy settings after successful version save...');
             // Clear the legacy settings to prevent repeated migration
             await this.clearLegacySettings();
             // Now that legacy settings are cleared, save versions normally to ensure proper state
-            console.log('Final save of versions with settings properly cleared...');
+            logger_1.logger.debug('Final save of versions with settings properly cleared...');
             await this.saveVersions();
-            console.log('Successfully migrated legacy settings to version management');
+            logger_1.logger.debug('Successfully migrated legacy settings to version management');
         }
         catch (error) {
-            console.warn('Failed to migrate legacy settings:', error);
+            logger_1.logger.warn('Failed to migrate legacy settings:', error);
             // Don't throw - migration failure shouldn't break the extension
         }
     }
@@ -7091,11 +7172,11 @@ class VersionsService {
             if (data.settings) {
                 delete data.settings;
                 await settingsStore_1.SettingsStore.saveWithoutComments(data);
-                console.log('Legacy settings cleared after successful migration');
+                logger_1.logger.debug('Legacy settings cleared after successful migration');
             }
         }
         catch (error) {
-            console.warn('Failed to clear legacy settings:', error);
+            logger_1.logger.warn('Failed to clear legacy settings:', error);
             // Don't throw - clearing failure shouldn't break anything
         }
     }
@@ -7108,7 +7189,7 @@ class VersionsService {
             return !!(data.settings && Object.keys(data.settings).length > 0);
         }
         catch (error) {
-            console.warn('Failed to check for legacy settings:', error);
+            logger_1.logger.warn('Failed to check for legacy settings:', error);
             return false;
         }
     }
@@ -7118,7 +7199,7 @@ class VersionsService {
     async setSettingToDefault(versionId, settingKey) {
         const version = this.versions.get(versionId);
         if (!version) {
-            vscode.window.showErrorMessage('The selected version could not be found.');
+            (0, notifications_1.showError)('The selected version could not be found.');
             return false;
         }
         try {
@@ -7126,7 +7207,7 @@ class VersionsService {
             const defaultSettings = (0, utils_1.getDefaultVersionSettings)();
             const defaultValue = defaultSettings[settingKey];
             if (defaultValue === undefined) {
-                vscode.window.showErrorMessage('Default value not found for this setting.');
+                (0, notifications_1.showError)('Default value not found for this setting.');
                 return false;
             }
             // Update the setting
@@ -7134,12 +7215,12 @@ class VersionsService {
             version.updateSettings(updatedSettings);
             await this.saveVersions();
             vscode.commands.executeCommand('odoo.versionsChanged');
-            vscode.window.showInformationMessage(`Setting "${settingKey}" reset to default value.`);
+            (0, notifications_1.showInfo)(`Setting "${settingKey}" reset to default value.`);
             return true;
         }
         catch (error) {
-            console.error('Failed to set setting to default:', error);
-            vscode.window.showErrorMessage('Failed to set setting to default value.');
+            logger_1.logger.error('Failed to set setting to default:', error);
+            (0, notifications_1.showError)('Failed to set setting to default value.');
             return false;
         }
     }
@@ -7149,24 +7230,24 @@ class VersionsService {
     async setSettingAsDefault(versionId, settingKey) {
         const version = this.versions.get(versionId);
         if (!version) {
-            vscode.window.showErrorMessage('The selected version could not be found.');
+            (0, notifications_1.showError)('The selected version could not be found.');
             return false;
         }
         try {
             const currentValue = version.settings[settingKey];
             if (currentValue === undefined) {
-                vscode.window.showErrorMessage('Setting value not found.');
+                (0, notifications_1.showError)('Setting value not found.');
                 return false;
             }
             // Update the VS Code configuration
             const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
             await config.update(settingKey, currentValue, vscode.ConfigurationTarget.Workspace);
-            vscode.window.showInformationMessage(`Setting "${settingKey}" value saved as new default.`);
+            (0, notifications_1.showInfo)(`Setting "${settingKey}" value saved as new default.`);
             return true;
         }
         catch (error) {
-            console.error('Unable to save this setting as the default:', error);
-            vscode.window.showErrorMessage('Unable to save this setting as the default.');
+            logger_1.logger.error('Unable to save this setting as the default:', error);
+            (0, notifications_1.showError)('Unable to save this setting as the default.');
             return false;
         }
     }
@@ -7176,7 +7257,7 @@ class VersionsService {
     async setAllSettingsToDefault(versionId) {
         const version = this.versions.get(versionId);
         if (!version) {
-            vscode.window.showErrorMessage('The selected version could not be found.');
+            (0, notifications_1.showError)('The selected version could not be found.');
             return false;
         }
         try {
@@ -7185,12 +7266,12 @@ class VersionsService {
             version.updateSettings(defaultSettings);
             await this.saveVersions();
             vscode.commands.executeCommand('odoo.versionsChanged');
-            vscode.window.showInformationMessage(`All settings reset to default values for version "${version.name}".`);
+            (0, notifications_1.showInfo)(`All settings reset to default values for version "${version.name}".`);
             return true;
         }
         catch (error) {
-            console.error('Failed to set all settings to default:', error);
-            vscode.window.showErrorMessage('Unable to reset all settings to their default values.');
+            logger_1.logger.error('Failed to set all settings to default:', error);
+            (0, notifications_1.showError)('Unable to reset all settings to their default values.');
             return false;
         }
     }
@@ -7200,7 +7281,7 @@ class VersionsService {
     async setAllSettingsAsDefault(versionId) {
         const version = this.versions.get(versionId);
         if (!version) {
-            vscode.window.showErrorMessage('The selected version could not be found.');
+            (0, notifications_1.showError)('The selected version could not be found.');
             return false;
         }
         try {
@@ -7210,12 +7291,12 @@ class VersionsService {
             for (const [key, value] of Object.entries(settings)) {
                 await config.update(key, value, vscode.ConfigurationTarget.Workspace);
             }
-            vscode.window.showInformationMessage(`All settings from version "${version.name}" saved as new defaults.`);
+            (0, notifications_1.showInfo)(`All settings from version "${version.name}" saved as new defaults.`);
             return true;
         }
         catch (error) {
-            console.error('Failed to set all settings as default:', error);
-            vscode.window.showErrorMessage('Unable to save these settings as the new defaults.');
+            logger_1.logger.error('Failed to set all settings as default:', error);
+            (0, notifications_1.showError)('Unable to save these settings as the new defaults.');
             return false;
         }
     }
@@ -7224,13 +7305,13 @@ exports.VersionsService = VersionsService;
 
 
 /***/ }),
-/* 20 */
+/* 22 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VersionModel = void 0;
-const crypto_1 = __webpack_require__(21);
+const crypto_1 = __webpack_require__(23);
 class VersionModel {
     id;
     name; // User-friendly name like "Odoo 17.0", "Saas 17.4"
@@ -7302,13 +7383,13 @@ exports.VersionModel = VersionModel;
 
 
 /***/ }),
-/* 21 */
+/* 23 */
 /***/ ((module) => {
 
 module.exports = require("crypto");
 
 /***/ }),
-/* 22 */
+/* 24 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -7319,9 +7400,10 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SettingsStore = void 0;
 const settings_1 = __webpack_require__(8);
 const utils_1 = __webpack_require__(4);
-const jsonc_parser_1 = __webpack_require__(11);
+const jsonc_parser_1 = __webpack_require__(13);
 const fs_1 = __importDefault(__webpack_require__(5));
 const path_1 = __importDefault(__webpack_require__(6));
+const logger_1 = __webpack_require__(10);
 const WRITE_DEBOUNCE_MS = 25;
 class SettingsStore {
     static cache = new Map();
@@ -7461,7 +7543,7 @@ class SettingsStore {
                 }
                 existing.timer = setTimeout(() => {
                     this.flushPendingWrite(fileName).catch(error => {
-                        console.warn(`Failed to flush pending write for ${fileName}:`, error);
+                        logger_1.logger.warn(`Failed to flush pending write for ${fileName}:`, error);
                     });
                 }, WRITE_DEBOUNCE_MS);
                 return;
@@ -7474,7 +7556,7 @@ class SettingsStore {
             };
             pending.timer = setTimeout(() => {
                 this.flushPendingWrite(fileName).catch(error => {
-                    console.warn(`Failed to flush pending write for ${fileName}:`, error);
+                    logger_1.logger.warn(`Failed to flush pending write for ${fileName}:`, error);
                 });
             }, WRITE_DEBOUNCE_MS);
             this.pendingWrites.set(fileName, pending);
@@ -7528,7 +7610,106 @@ exports.SettingsStore = SettingsStore;
 
 
 /***/ }),
-/* 23 */
+/* 25 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getRepoBranch = getRepoBranch;
+const vscode = __importStar(__webpack_require__(1));
+const path = __importStar(__webpack_require__(3));
+const fs = __importStar(__webpack_require__(26));
+const gitService_1 = __webpack_require__(9);
+const runtimeCache_1 = __webpack_require__(11);
+const logger_1 = __webpack_require__(10);
+/**
+ * The single branch reader for the extension. Prefers the built-in git
+ * extension's API (accurate for worktrees, detached heads, etc.), falls back
+ * to reading .git/HEAD directly, and caches results briefly via runtimeCache.
+ * Checkout flows invalidate the cache through invalidateGitBranchCache.
+ */
+function resolveRepoPath(repoPath) {
+    if (path.isAbsolute(repoPath)) {
+        return path.normalize(repoPath);
+    }
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (workspaceRoot) {
+        return path.normalize(path.join(workspaceRoot, repoPath));
+    }
+    return path.normalize(path.resolve(repoPath));
+}
+async function readBranchFromHeadFile(repoPath) {
+    const gitHeadPath = path.join(repoPath, '.git', 'HEAD');
+    try {
+        const headContent = (await fs.readFile(gitHeadPath, 'utf-8')).trim();
+        const match = /^ref: refs\/heads\/(.+)$/.exec(headContent);
+        return match ? match[1] : headContent;
+    }
+    catch (error) {
+        logger_1.logger.debug(`Failed to read branch for ${repoPath}`, error);
+        return null;
+    }
+}
+/**
+ * Returns the current branch of the repository at `repoPath` (relative paths
+ * resolve against the first workspace folder), or null when unavailable.
+ */
+async function getRepoBranch(repoPath) {
+    if (!repoPath) {
+        return null;
+    }
+    const resolved = resolveRepoPath(repoPath);
+    return runtimeCache_1.runtimeCache.getGitBranch(resolved, async () => {
+        const sourceControlBranch = await (0, gitService_1.getCurrentBranchViaSourceControl)(resolved);
+        if (sourceControlBranch) {
+            return sourceControlBranch;
+        }
+        return readBranchFromHeadFile(resolved);
+    });
+}
+
+
+/***/ }),
+/* 26 */
+/***/ ((module) => {
+
+module.exports = require("node:fs/promises");
+
+/***/ }),
+/* 27 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -7567,7 +7748,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.generateDatabaseIdentifiers = generateDatabaseIdentifiers;
-const crypto = __importStar(__webpack_require__(21));
+const crypto = __importStar(__webpack_require__(23));
 const MAX_IDENTIFIER_LENGTH = 63;
 const KIND_LABELS = {
     dump: 'Dump',
@@ -7659,13 +7840,13 @@ function generateDatabaseIdentifiers(options) {
 
 
 /***/ }),
-/* 24 */
+/* 28 */
 /***/ ((module) => {
 
 module.exports = require("os");
 
 /***/ }),
-/* 25 */
+/* 29 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -7726,13 +7907,13 @@ function getSortOptions(viewId) {
 
 
 /***/ }),
-/* 26 */
+/* 30 */
 /***/ ((module) => {
 
 module.exports = require("stream");
 
 /***/ }),
-/* 27 */
+/* 31 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -7776,9 +7957,10 @@ exports.getInstalledModuleNames = getInstalledModuleNames;
 exports.clearInstalledModuleCache = clearInstalledModuleCache;
 exports.parseOdooSeries = parseOdooSeries;
 exports.detectOdooSeries = detectOdooSeries;
-const node_child_process_1 = __webpack_require__(28);
-const util = __importStar(__webpack_require__(29));
-const runtimeCache_1 = __webpack_require__(10);
+const node_child_process_1 = __webpack_require__(32);
+const util = __importStar(__webpack_require__(33));
+const runtimeCache_1 = __webpack_require__(11);
+const logger_1 = __webpack_require__(10);
 const execFileAsync = util.promisify(node_child_process_1.execFile);
 const INSTALLED_MODULES_QUERY = `
     SELECT id, name, shortdesc, latest_version, state, application
@@ -7830,7 +8012,7 @@ async function runPsqlQuery(dbName, query, fieldSeparator = '|') {
         return stdout.trim();
     }
     catch (error) {
-        console.warn(`psql command failed for database "${dbName}":`, error);
+        logger_1.logger.warn(`psql command failed for database "${dbName}":`, error);
         throw error;
     }
 }
@@ -7847,7 +8029,7 @@ async function getInstalledModules(dbName) {
     return runtimeCache_1.runtimeCache.getInstalledModules(dbName, async () => {
         const modules = [];
         if (!(await databaseHasModuleTable(dbName))) {
-            console.debug(`Database ${dbName} does not contain Odoo tables yet.`);
+            logger_1.logger.debug(`Database ${dbName} does not contain Odoo tables yet.`);
             return modules;
         }
         let output;
@@ -7855,7 +8037,7 @@ async function getInstalledModules(dbName) {
             output = await runPsqlQuery(dbName, INSTALLED_MODULES_QUERY);
         }
         catch (error) {
-            console.warn(`Failed to fetch installed modules for database "${dbName}":`, error);
+            logger_1.logger.warn(`Failed to fetch installed modules for database "${dbName}":`, error);
             return modules;
         }
         if (!output) {
@@ -7900,7 +8082,7 @@ async function getInstalledModuleNames(dbName) {
             output = await runPsqlQuery(dbName, INSTALLED_MODULE_NAMES_QUERY);
         }
         catch (error) {
-            console.warn(`Failed to fetch installed module names for database "${dbName}":`, error);
+            logger_1.logger.warn(`Failed to fetch installed module names for database "${dbName}":`, error);
             return [];
         }
         if (!output) {
@@ -7945,26 +8127,26 @@ async function detectOdooSeries(dbName) {
         return parseOdooSeries(output);
     }
     catch (error) {
-        console.warn(`Failed to detect Odoo series for database "${dbName}":`, error);
+        logger_1.logger.warn(`Failed to detect Odoo series for database "${dbName}":`, error);
         return undefined;
     }
 }
 
 
 /***/ }),
-/* 28 */
+/* 32 */
 /***/ ((module) => {
 
 module.exports = require("node:child_process");
 
 /***/ }),
-/* 29 */
+/* 33 */
 /***/ ((module) => {
 
 module.exports = require("node:util");
 
 /***/ }),
-/* 30 */
+/* 34 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -8013,9 +8195,12 @@ const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(5));
 const path = __importStar(__webpack_require__(6));
 const settings_1 = __webpack_require__(8);
-const versionsService_1 = __webpack_require__(19);
+const versionsService_1 = __webpack_require__(21);
 const utils_1 = __webpack_require__(4);
-const checkout_1 = __webpack_require__(31);
+const branches_1 = __webpack_require__(25);
+const checkout_1 = __webpack_require__(35);
+const logger_1 = __webpack_require__(10);
+const notifications_1 = __webpack_require__(12);
 const LEGACY_BEHAVIOR_MAP = {
     'auto-both': 'auto',
     'auto-version-only': 'auto',
@@ -8055,7 +8240,7 @@ async function migrateLegacySwitchBehaviorSetting() {
         }
     }
     catch (error) {
-        console.warn('Failed to migrate databaseSwitchBehavior setting:', error);
+        logger_1.logger.warn('Failed to migrate databaseSwitchBehavior setting:', error);
     }
 }
 function sanitizeProjectRepoBranchAssignments(source) {
@@ -8109,7 +8294,7 @@ function resolveProjectRepoBranchAssignments(database, projectRepos) {
 async function captureCurrentRepoBranches(projectRepos) {
     const captured = await Promise.all(projectRepos.map(async (repo) => {
         const repoPath = (0, utils_1.normalizePath)(repo.path);
-        const branch = await (0, utils_1.getGitBranch)(repoPath);
+        const branch = await (0, branches_1.getRepoBranch)(repoPath);
         if (!branch) {
             return undefined;
         }
@@ -8152,7 +8337,7 @@ async function computeEnvironmentDiff(target) {
         }
         else {
             for (const repoPath of existingPaths) {
-                const current = await (0, utils_1.getGitBranch)(repoPath);
+                const current = await (0, branches_1.getRepoBranch)(repoPath);
                 if (current !== coreBranchTarget) {
                     coreBranch = coreBranchTarget;
                     break;
@@ -8170,7 +8355,7 @@ async function computeEnvironmentDiff(target) {
             repoCheckouts.push(assignment);
             continue;
         }
-        const current = await (0, utils_1.getGitBranch)(assignment.repoPath);
+        const current = await (0, branches_1.getRepoBranch)(assignment.repoPath);
         if (current !== assignment.branch) {
             repoCheckouts.push(assignment);
         }
@@ -8237,7 +8422,7 @@ async function alignEnvironment(target, options) {
     if (behavior === 'ask') {
         // Fire-and-forget so the selection itself (and the tree refresh) is not
         // held hostage by an unanswered notification.
-        void vscode.window.showInformationMessage(`${options.label} targets ${diff.descriptions.join(', ')}. Align your workspace?`, 'Switch', 'Keep Current').then(async (choice) => {
+        void (0, notifications_1.showInfo)(`${options.label} targets ${diff.descriptions.join(', ')}. Align your workspace?`, 'Switch', 'Keep Current').then(async (choice) => {
             if (choice !== 'Switch') {
                 return;
             }
@@ -8300,14 +8485,14 @@ async function applyEnvironmentDiff(diff, label) {
         (0, utils_1.showAutoInfo)(`${label}: switched ${applied.join(', ')}`, 3000);
     }
     else {
-        failures.forEach(failure => console.error(`[environment] ${label}: ${failure}`));
+        failures.forEach(failure => logger_1.logger.error(`[environment] ${label}: ${failure}`));
         (0, utils_1.showWarning)(`${label}: environment switch finished with issues — ${failures.join('; ')}`);
     }
 }
 
 
 /***/ }),
-/* 31 */
+/* 35 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -8352,7 +8537,7 @@ const fs = __importStar(__webpack_require__(5));
 const child_process_1 = __webpack_require__(7);
 const utils_1 = __webpack_require__(4);
 const gitService_1 = __webpack_require__(9);
-const runtimeCache_1 = __webpack_require__(10);
+const runtimeCache_1 = __webpack_require__(11);
 const checkoutHooksOutput = vscode.window.createOutputChannel('Odoo Debugger: Branch Hooks');
 function quoteForSingleQuotedShell(value) {
     return `'${value.replace(/'/g, `'\"'\"'`)}'`;
@@ -8584,7 +8769,7 @@ async function checkoutCoreRepos(settings, branch) {
 
 
 /***/ }),
-/* 32 */
+/* 36 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -8592,10 +8777,11 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.collectLegacyBranchesNeedingVersions = collectLegacyBranchesNeedingVersions;
 exports.applyDatabaseFieldMigration = applyDatabaseFieldMigration;
 exports.migrateDebuggerData = migrateDebuggerData;
-const settingsStore_1 = __webpack_require__(22);
-const versionsService_1 = __webpack_require__(19);
-const version_1 = __webpack_require__(20);
+const settingsStore_1 = __webpack_require__(24);
+const versionsService_1 = __webpack_require__(21);
+const version_1 = __webpack_require__(22);
 const utils_1 = __webpack_require__(4);
+const logger_1 = __webpack_require__(10);
 /** Branch names that denote a real Odoo series, e.g. "17.0", "saas-17.4", "master". */
 const ODOO_SERIES_PATTERN = /^((saas-)?\d+(\.\d+)?|master)$/i;
 function findMatchingVersionId(versions, branch) {
@@ -8684,13 +8870,13 @@ async function migrateDebuggerData() {
         }
     }
     catch (error) {
-        console.warn('Debugger data migration skipped:', error);
+        logger_1.logger.warn('Debugger data migration skipped:', error);
     }
 }
 
 
 /***/ }),
-/* 33 */
+/* 37 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -8742,15 +8928,18 @@ exports.exportProject = exportProject;
 exports.importProject = importProject;
 exports.quickProjectSearch = quickProjectSearch;
 const vscode = __importStar(__webpack_require__(1));
-const os = __importStar(__webpack_require__(24));
-const project_1 = __webpack_require__(34);
-const repo_1 = __webpack_require__(36);
+const os = __importStar(__webpack_require__(28));
+const project_1 = __webpack_require__(38);
+const repo_1 = __webpack_require__(40);
 const utils_1 = __webpack_require__(4);
-const settingsStore_1 = __webpack_require__(22);
-const versionsService_1 = __webpack_require__(19);
-const crypto_1 = __webpack_require__(21);
-const environment_1 = __webpack_require__(30);
-const sortOptions_1 = __webpack_require__(25);
+const settingsStore_1 = __webpack_require__(24);
+const versionsService_1 = __webpack_require__(21);
+const crypto_1 = __webpack_require__(23);
+const environment_1 = __webpack_require__(34);
+const sortOptions_1 = __webpack_require__(29);
+const logger_1 = __webpack_require__(10);
+const notifications_1 = __webpack_require__(12);
+const notifications_2 = __webpack_require__(12);
 let projectMetadataMigrationCompleted = false;
 function sanitizeProjectTickets(rawTickets) {
     if (!Array.isArray(rawTickets)) {
@@ -9065,7 +9254,7 @@ async function deleteProject(event) {
     if (projectIndex !== -1) {
         const projectToDelete = projects[projectIndex];
         // Ask for confirmation
-        const confirm = await vscode.window.showWarningMessage(`Are you sure you want to delete the project "${projectToDelete.name}"?`, { modal: true }, 'Delete');
+        const confirm = await (0, notifications_2.showModalWarning)(`Are you sure you want to delete the project "${projectToDelete.name}"?`, 'Delete');
         if (confirm !== 'Delete') {
             return; // User cancelled
         }
@@ -9414,7 +9603,7 @@ async function openProjectTicket(event) {
     project.tickets = sanitizeProjectTickets(project.tickets);
     const tickets = project.tickets;
     if (tickets.length === 0) {
-        const addNow = await vscode.window.showInformationMessage(`Project "${project.name}" has no linked tickets yet.`, 'Add Ticket', 'Cancel');
+        const addNow = await (0, utils_1.showInfo)(`Project "${project.name}" has no linked tickets yet.`, 'Add Ticket', 'Cancel');
         if (addNow === 'Add Ticket') {
             await manageProjectTicketsForProject(project, context.data);
         }
@@ -9457,7 +9646,7 @@ ${ticketLines}
 Databases: ${dbCount}${selectedDb ? `
 Active Database: ${selectedDb.name}` : `
 No active database`}`;
-    await vscode.window.showInformationMessage(infoMessage, { modal: true }, 'OK');
+    await (0, notifications_1.showModalInfo)(infoMessage, 'OK');
 }
 async function exportProject(event) {
     try {
@@ -9516,7 +9705,7 @@ async function exportProject(event) {
         // Write to file
         const content = JSON.stringify(exportData, null, 2);
         await vscode.workspace.fs.writeFile(saveUri, Buffer.from(content, 'utf8'));
-        const action = await vscode.window.showInformationMessage(`Project "${project.name}" exported successfully!`, 'Open Export Location', 'Import Instructions');
+        const action = await (0, utils_1.showInfo)(`Project "${project.name}" exported successfully!`, 'Open Export Location', 'Import Instructions');
         if (action === 'Open Export Location') {
             await vscode.commands.executeCommand('revealFileInOS', saveUri);
         }
@@ -9528,12 +9717,12 @@ async function exportProject(event) {
 4. Adjust repository paths as needed
 
 Note: Repository paths use ~ for home directory and may need adjustment on different systems.`;
-            await vscode.window.showInformationMessage(instructions, { modal: true });
+            await (0, notifications_1.showModalInfo)(instructions);
         }
     }
     catch (error) {
-        console.error('Error exporting project:', error);
-        vscode.window.showErrorMessage(`Failed to export project: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        logger_1.logger.error('Error exporting project:', error);
+        (0, utils_1.showError)(`Failed to export project: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 }
 async function importProject() {
@@ -9575,7 +9764,7 @@ async function importProject() {
             counter++;
         }
         if (projectName !== importData.name) {
-            const useNewName = await vscode.window.showWarningMessage(`A project named "${importData.name}" already exists. Import as "${projectName}"?`, 'Yes, Import with New Name', 'Cancel');
+            const useNewName = await (0, notifications_1.showWarning)(`A project named "${importData.name}" already exists. Import as "${projectName}"?`, 'Yes, Import with New Name', 'Cancel');
             if (useNewName !== 'Yes, Import with New Name') {
                 return;
             }
@@ -9614,10 +9803,10 @@ async function importProject() {
             message += `\n\nMissing repositories (not found in current custom-addons):\n${missingRepos.join('\n')}`;
             message += `\n\nYou can manage repositories from the Repositories tab.`;
         }
-        await vscode.window.showInformationMessage(message, 'OK');
+        await (0, utils_1.showInfo)(message, 'OK');
     }
     catch (error) {
-        console.error('Error importing project:', error);
+        logger_1.logger.error('Error importing project:', error);
         if (error instanceof SyntaxError) {
             (0, utils_1.showError)('The selected file is not valid JSON.');
         }
@@ -9661,21 +9850,21 @@ async function quickProjectSearch() {
         }
     }
     catch (error) {
-        console.error('Error in quick project search:', error);
+        logger_1.logger.error('Error in quick project search:', error);
         (0, utils_1.showError)('Unable to load projects for search.');
     }
 }
 
 
 /***/ }),
-/* 34 */
+/* 38 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectModel = void 0;
-const testing_1 = __webpack_require__(35);
-const crypto_1 = __webpack_require__(21);
+const testing_1 = __webpack_require__(39);
+const crypto_1 = __webpack_require__(23);
 class ProjectModel {
     name; // project sh name
     createdAt;
@@ -9702,13 +9891,14 @@ exports.ProjectModel = ProjectModel;
 
 
 /***/ }),
-/* 35 */
-/***/ ((__unused_webpack_module, exports) => {
+/* 39 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.TestingConfigModel = void 0;
 exports.ensureTestingConfigModel = ensureTestingConfigModel;
+const logger_1 = __webpack_require__(10);
 class TestingConfigModel {
     isEnabled;
     testTags;
@@ -9777,14 +9967,14 @@ function ensureTestingConfigModel(testingConfig) {
         return new TestingConfigModel(Boolean(testingConfig.isEnabled), Array.isArray(testingConfig.testTags) ? testingConfig.testTags : [], testingConfig.testFile, Boolean(testingConfig.stopAfterInit), testingConfig.logLevel ?? 'disabled', Array.isArray(testingConfig.savedModuleStates) ? testingConfig.savedModuleStates : undefined);
     }
     catch (error) {
-        console.warn('Error converting testing config, creating new instance:', error);
+        logger_1.logger.warn('Error converting testing config, creating new instance:', error);
         return new TestingConfigModel();
     }
 }
 
 
 /***/ }),
-/* 36 */
+/* 40 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -9806,7 +9996,7 @@ exports.RepoModel = RepoModel;
 
 
 /***/ }),
-/* 37 */
+/* 41 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -9846,16 +10036,16 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.RepoTreeProvider = void 0;
 exports.selectRepo = selectRepo;
-const repo_1 = __webpack_require__(36);
+const repo_1 = __webpack_require__(40);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(4);
-const settingsStore_1 = __webpack_require__(22);
-const versionsService_1 = __webpack_require__(19);
+const settingsStore_1 = __webpack_require__(24);
+const versionsService_1 = __webpack_require__(21);
 const path = __importStar(__webpack_require__(6));
 const fs = __importStar(__webpack_require__(5));
-const sortOptions_1 = __webpack_require__(25);
-const gitService_1 = __webpack_require__(9);
-const runtimeCache_1 = __webpack_require__(10);
+const sortOptions_1 = __webpack_require__(29);
+const branches_1 = __webpack_require__(25);
+const runtimeCache_1 = __webpack_require__(11);
 async function mapWithConcurrency(items, limit, worker) {
     if (items.length === 0) {
         return [];
@@ -9874,15 +10064,6 @@ async function mapWithConcurrency(items, limit, worker) {
     const workers = Array.from({ length: Math.min(normalizedLimit, items.length) }, () => runNext());
     await Promise.all(workers);
     return results;
-}
-async function resolveRepoBranch(repoPath) {
-    return runtimeCache_1.runtimeCache.getGitBranch(repoPath, async () => {
-        const sourceControlBranch = await (0, gitService_1.getCurrentBranchViaSourceControl)(repoPath);
-        if (sourceControlBranch) {
-            return sourceControlBranch;
-        }
-        return (0, utils_1.getGitBranch)(repoPath);
-    });
 }
 class RepoTreeProvider {
     context;
@@ -9935,7 +10116,7 @@ class RepoTreeProvider {
             const gitPath = path.join(repo.path, '.git');
             if (fs.existsSync(gitPath)) {
                 try {
-                    branch = await resolveRepoBranch(repo.path);
+                    branch = await (0, branches_1.getRepoBranch)(repo.path);
                 }
                 catch {
                     branch = null;
@@ -10024,7 +10205,7 @@ async function selectRepo(event) {
 
 
 /***/ }),
-/* 38 */
+/* 42 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10065,12 +10246,12 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectReposProvider = void 0;
 exports.revealProjectRepo = revealProjectRepo;
 const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(39));
+const fs = __importStar(__webpack_require__(26));
 const path = __importStar(__webpack_require__(3));
-const settingsStore_1 = __webpack_require__(22);
+const settingsStore_1 = __webpack_require__(24);
 const utils_1 = __webpack_require__(4);
-const sortOptions_1 = __webpack_require__(25);
-const filesExclude_1 = __webpack_require__(40);
+const sortOptions_1 = __webpack_require__(29);
+const filesExclude_1 = __webpack_require__(43);
 class ProjectRepoItem extends vscode.TreeItem {
     metadata;
     constructor(metadata) {
@@ -10255,13 +10436,7 @@ async function revealProjectRepo(repo) {
 
 
 /***/ }),
-/* 39 */
-/***/ ((module) => {
-
-module.exports = require("node:fs/promises");
-
-/***/ }),
-/* 40 */
+/* 43 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10404,7 +10579,7 @@ function createFilesExcludeMatcher(scopeUri) {
 
 
 /***/ }),
-/* 41 */
+/* 44 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10454,7 +10629,7 @@ exports.updateInstalledModules = updateInstalledModules;
 exports.installAllModules = installAllModules;
 exports.clearAllModuleSelections = clearAllModuleSelections;
 exports.viewInstalledModules = viewInstalledModules;
-const module_1 = __webpack_require__(42);
+const module_1 = __webpack_require__(45);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(4);
 const child_process_1 = __webpack_require__(7);
@@ -10464,10 +10639,11 @@ function collectModuleDiscovery(project) {
     const manualIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
     return (0, utils_1.discoverModulesInRepos)(project.repos, { manualIncludePaths: manualIncludes });
 }
-const settingsStore_1 = __webpack_require__(22);
-const database_1 = __webpack_require__(27);
-const sortOptions_1 = __webpack_require__(25);
-const versionsService_1 = __webpack_require__(19);
+const settingsStore_1 = __webpack_require__(24);
+const database_1 = __webpack_require__(31);
+const sortOptions_1 = __webpack_require__(29);
+const versionsService_1 = __webpack_require__(21);
+const notifications_1 = __webpack_require__(12);
 class ModuleTreeProvider {
     context;
     sortPreferences;
@@ -11094,7 +11270,7 @@ async function updateAllModules() {
         return;
     }
     // Confirm action
-    const confirm = await vscode.window.showWarningMessage(`Are you sure you want to set all ${availableModules.length} available modules to "upgrade" state regardless of their current state?`, { modal: true }, 'Update All');
+    const confirm = await (0, notifications_1.showModalWarning)(`Are you sure you want to set all ${availableModules.length} available modules to "upgrade" state regardless of their current state?`, 'Update All');
     if (confirm !== 'Update All') {
         return;
     }
@@ -11149,7 +11325,7 @@ async function updateInstalledModules() {
         return;
     }
     // Confirm action
-    const confirm = await vscode.window.showWarningMessage(`Are you sure you want to set all ${installedModules.length} modules with "install" state to "upgrade" state?`, { modal: true }, 'Update Installed');
+    const confirm = await (0, notifications_1.showModalWarning)(`Are you sure you want to set all ${installedModules.length} modules with "install" state to "upgrade" state?`, 'Update Installed');
     if (confirm !== 'Update Installed') {
         return;
     }
@@ -11184,7 +11360,7 @@ async function installAllModules() {
         return;
     }
     // Confirm action
-    const confirm = await vscode.window.showWarningMessage(`Are you sure you want to set all ${availableModules.length} available modules to "install" state?`, { modal: true }, 'Install All');
+    const confirm = await (0, notifications_1.showModalWarning)(`Are you sure you want to set all ${availableModules.length} available modules to "install" state?`, 'Install All');
     if (confirm !== 'Install All') {
         return;
     }
@@ -11233,7 +11409,7 @@ async function clearAllModuleSelections() {
         return; // Silently return if no modules to clear
     }
     // Confirm action
-    const confirm = await vscode.window.showWarningMessage(`Are you sure you want to clear all ${db.modules.length} selected modules?`, { modal: true }, 'Clear All');
+    const confirm = await (0, notifications_1.showModalWarning)(`Are you sure you want to clear all ${db.modules.length} selected modules?`, 'Clear All');
     if (confirm !== 'Clear All') {
         return;
     }
@@ -11285,7 +11461,7 @@ async function viewInstalledModules() {
 
 
 /***/ }),
-/* 42 */
+/* 45 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -11305,7 +11481,7 @@ exports.ModuleModel = ModuleModel;
 
 
 /***/ }),
-/* 43 */
+/* 46 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11353,13 +11529,15 @@ exports.removeTestTag = removeTestTag;
 exports.toggleLogLevel = toggleLogLevel;
 exports.setSpecificLogLevel = setSpecificLogLevel;
 const vscode = __importStar(__webpack_require__(1));
-const settingsStore_1 = __webpack_require__(22);
-const testing_1 = __webpack_require__(35);
-const module_1 = __webpack_require__(42);
+const settingsStore_1 = __webpack_require__(24);
+const testing_1 = __webpack_require__(39);
+const module_1 = __webpack_require__(45);
 const utils_1 = __webpack_require__(4);
-const context_1 = __webpack_require__(44);
-const debugger_1 = __webpack_require__(45);
-const database_1 = __webpack_require__(27);
+const context_1 = __webpack_require__(47);
+const debugger_1 = __webpack_require__(48);
+const database_1 = __webpack_require__(31);
+const logger_1 = __webpack_require__(10);
+const notifications_1 = __webpack_require__(12);
 class TestingTreeProvider {
     context;
     _onDidChangeTreeData = new vscode.EventEmitter();
@@ -11389,7 +11567,7 @@ class TestingTreeProvider {
             // Save the converted model back to persist the conversion
             project.testingConfig = testingConfig;
             await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data)).catch(error => {
-                console.warn('Failed to save converted testing config:', error);
+                logger_1.logger.warn('Failed to save converted testing config:', error);
             });
         }
         // Handle test tags section expansion
@@ -11510,7 +11688,7 @@ class TestingTreeProvider {
             case 'method': return '⚙️';
             case 'tag': return '🏷️';
             default:
-                console.warn(`Unknown test tag type: "${type}"`);
+                logger_1.logger.warn(`Unknown test tag type: "${type}"`);
                 return '❓'; // Changed to question mark for debugging unknown types
         }
     }
@@ -11549,7 +11727,7 @@ async function toggleTesting(event) {
         project.testingConfig = (0, testing_1.ensureTestingConfigModel)(project.testingConfig);
         if (isEnabled) {
             // Disable testing - restore module states
-            const confirm = await vscode.window.showWarningMessage('Are you sure you want to disable testing? This will restore the previous module states.', { modal: true }, 'Disable Testing');
+            const confirm = await (0, notifications_1.showModalWarning)('Are you sure you want to disable testing? This will restore the previous module states.', 'Disable Testing');
             if (confirm !== 'Disable Testing') {
                 return;
             }
@@ -11566,7 +11744,7 @@ async function toggleTesting(event) {
         }
         else {
             // Enable testing - save current states and clear modules
-            const confirm = await vscode.window.showWarningMessage('Enabling testing will clear all current module selections (install/upgrade). The current states will be saved and can be restored when testing is disabled. Continue?', { modal: true }, 'Enable Testing');
+            const confirm = await (0, notifications_1.showModalWarning)('Enabling testing will clear all current module selections (install/upgrade). The current states will be saved and can be restored when testing is disabled. Continue?', 'Enable Testing');
             if (confirm !== 'Enable Testing') {
                 return;
             }
@@ -11585,7 +11763,7 @@ async function toggleTesting(event) {
         }
     }
     catch (error) {
-        console.error('Error in toggleTesting:', error);
+        logger_1.logger.error('Error in toggleTesting:', error);
         (0, utils_1.showError)(`Failed to toggle testing: ${error}`);
     }
 }
@@ -11606,7 +11784,7 @@ async function toggleStopAfterInit() {
         await (0, debugger_1.setupDebugger)();
     }
     catch (error) {
-        console.error('Error in toggleStopAfterInit:', error);
+        logger_1.logger.error('Error in toggleStopAfterInit:', error);
         (0, utils_1.showError)(`Failed to toggle stop after init: ${error}`);
     }
 }
@@ -11639,7 +11817,7 @@ async function setTestFile() {
         }
     }
     catch (error) {
-        console.error('Error in setTestFile:', error);
+        logger_1.logger.error('Error in setTestFile:', error);
         (0, utils_1.showError)(`Failed to set test file: ${error}`);
     }
 }
@@ -11769,14 +11947,14 @@ async function addTestTag() {
                             // Class format: just the class name (no module: prefix needed)
                             // Non-blocking check for Test prefix - just log suggestion, don't block
                             if (!trimmed.startsWith('Test') && !trimmed.includes('Test')) {
-                                console.log(`Class names typically start with "Test" (e.g., "TestSalesAccessRights")`);
+                                logger_1.logger.debug(`Class names typically start with "Test" (e.g., "TestSalesAccessRights")`);
                             }
                             break;
                         case 'method':
                             // Method format: just the method name (no module:Class. prefix needed)
                             // Non-blocking check for test_ prefix - just log suggestion, don't block
                             if (!trimmed.startsWith('test_')) {
-                                console.log(`Method names typically start with "test_" (e.g., "test_workflow_invoice")`);
+                                logger_1.logger.debug(`Method names typically start with "test_" (e.g., "test_workflow_invoice")`);
                             }
                             break;
                     }
@@ -11814,7 +11992,7 @@ async function addTestTag() {
         }
     }
     catch (error) {
-        console.error('Error in addTestTag:', error);
+        logger_1.logger.error('Error in addTestTag:', error);
         (0, utils_1.showError)(`Failed to add test tag: ${error}`);
     }
 }
@@ -11851,7 +12029,7 @@ async function cycleTestTagState(tag) {
         }
     }
     catch (error) {
-        console.error('Error in cycleTestTagState:', error);
+        logger_1.logger.error('Error in cycleTestTagState:', error);
         (0, utils_1.showError)(`Failed to cycle test tag state: ${error}`);
     }
 }
@@ -11886,7 +12064,7 @@ async function removeTestTag(tagOrTreeItem) {
             }
         }
         else {
-            console.error('Could not find the referenced test tag:', tagOrTreeItem);
+            logger_1.logger.error('Could not find the referenced test tag:', tagOrTreeItem);
             (0, utils_1.showError)('Could not find the referenced test tag.');
             return;
         }
@@ -11903,7 +12081,7 @@ async function removeTestTag(tagOrTreeItem) {
         }
     }
     catch (error) {
-        console.error('Error in removeTestTag:', error);
+        logger_1.logger.error('Error in removeTestTag:', error);
         (0, utils_1.showError)(`Failed to remove test tag: ${error}`);
     }
 }
@@ -11928,7 +12106,7 @@ async function toggleLogLevel() {
         await (0, debugger_1.setupDebugger)();
     }
     catch (error) {
-        console.error('Error in toggleLogLevel:', error);
+        logger_1.logger.error('Error in toggleLogLevel:', error);
         (0, utils_1.showError)(`Failed to toggle log level: ${error}`);
     }
 }
@@ -11983,14 +12161,14 @@ async function setSpecificLogLevel() {
         }
     }
     catch (error) {
-        console.error('Error in setSpecificLogLevel:', error);
+        logger_1.logger.error('Error in setSpecificLogLevel:', error);
         (0, utils_1.showError)(`Failed to set log level: ${error}`);
     }
 }
 
 
 /***/ }),
-/* 44 */
+/* 47 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12044,7 +12222,7 @@ function updateActiveContext(isActive) {
 
 
 /***/ }),
-/* 45 */
+/* 48 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12089,11 +12267,12 @@ const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(5));
 const path = __importStar(__webpack_require__(3));
 const utils_1 = __webpack_require__(4);
-const settingsStore_1 = __webpack_require__(22);
-const versionsService_1 = __webpack_require__(19);
-const testing_1 = __webpack_require__(35);
-const database_1 = __webpack_require__(27);
-const jsonc_parser_1 = __webpack_require__(11);
+const settingsStore_1 = __webpack_require__(24);
+const versionsService_1 = __webpack_require__(21);
+const testing_1 = __webpack_require__(39);
+const database_1 = __webpack_require__(31);
+const jsonc_parser_1 = __webpack_require__(13);
+const logger_1 = __webpack_require__(10);
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
 const baseInstallNotifiedDbs = new Set();
@@ -12122,7 +12301,7 @@ async function selectPythonInterpreter(pythonPath) {
         ]);
     }
     catch (error) {
-        console.warn(`Failed to set Python interpreter to "${pythonPath}":`, error);
+        logger_1.logger.warn(`Failed to set Python interpreter to "${pythonPath}":`, error);
     }
 }
 function readLaunchData(workspacePath, debuggerName) {
@@ -12166,7 +12345,7 @@ async function setupDebugger() {
         args = await prepareArgs(project, settings);
     }
     catch (error) {
-        console.warn('Could not prepare debugger launch arguments:', error);
+        logger_1.logger.warn('Could not prepare debugger launch arguments:', error);
         if (error instanceof Error) {
             if (error.message === 'Select a database before running this action.') {
                 (0, utils_1.showInfo)('Select a database before configuring the debugger.');
@@ -12291,7 +12470,7 @@ async function prepareArgs(project, settings, isShell = false) {
         installedModuleNames = await (0, database_1.getInstalledModuleNames)(db.id);
     }
     catch (error) {
-        console.warn('Failed to get installed modules from database:', error);
+        logger_1.logger.warn('Failed to get installed modules from database:', error);
     }
     for (const [psPath, psModules] of foundPsInternalDirs.entries()) {
         if (manualExcludes.has(psPath)) {
@@ -12339,7 +12518,7 @@ async function prepareArgs(project, settings, isShell = false) {
             }
         }
         catch (error) {
-            console.warn('Failed to verify module table state:', error);
+            logger_1.logger.warn('Failed to verify module table state:', error);
         }
     }
     const args = [];
@@ -12475,7 +12654,7 @@ async function startDebugServer() {
 
 
 /***/ }),
-/* 46 */
+/* 49 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12520,6 +12699,8 @@ const path = __importStar(__webpack_require__(6));
 const fs = __importStar(__webpack_require__(5));
 const utils_1 = __webpack_require__(4);
 const child_process_1 = __webpack_require__(7);
+const logger_1 = __webpack_require__(10);
+const notifications_1 = __webpack_require__(12);
 async function setupOdooBranch() {
     // Show confirmation dialog with detailed information
     const confirmMessage = `This will:
@@ -12530,7 +12711,7 @@ async function setupOdooBranch() {
 This may take several minutes depending on your internet connection.
 
 Continue?`;
-    const confirm = await vscode.window.showWarningMessage(confirmMessage, { modal: true }, 'Continue');
+    const confirm = await (0, notifications_1.showModalWarning)(confirmMessage, 'Continue');
     if (confirm !== 'Continue') {
         return;
     }
@@ -12554,7 +12735,7 @@ Continue?`;
         existingPaths.push('venv');
     }
     if (existingPaths.length > 0) {
-        const overwriteConfirm = await vscode.window.showWarningMessage(`The following directories already exist: ${existingPaths.join(', ')}\n\nDo you want to continue? This may overwrite existing files.`, { modal: true }, 'Continue Anyway', 'Cancel');
+        const overwriteConfirm = await (0, notifications_1.showModalWarning)(`The following directories already exist: ${existingPaths.join(', ')}\n\nDo you want to continue? This may overwrite existing files.`, 'Continue Anyway', 'Cancel');
         if (overwriteConfirm !== 'Continue Anyway') {
             return;
         }
@@ -12605,21 +12786,21 @@ Continue?`;
             terminal.show();
             // Clone Odoo repository
             progress.report({ message: 'Cloning Odoo repository…', increment: 15 });
-            console.log(`🔄 Cloning Odoo repository (branch: ${branch})`);
+            logger_1.logger.debug(`🔄 Cloning Odoo repository (branch: ${branch})`);
             terminal.sendText(`echo "🔄 Cloning Odoo repository (branch: ${branch})..."`);
             terminal.sendText(`git clone --depth 1 --branch ${branch} https://github.com/odoo/odoo.git`);
             // Wait a bit for the clone to start
             await new Promise(resolve => setTimeout(resolve, 2000));
             // Clone Enterprise repository
             progress.report({ message: 'Cloning Enterprise repository…', increment: 35 });
-            console.log(`🔄 Cloning Enterprise repository (branch: ${branch})`);
+            logger_1.logger.debug(`🔄 Cloning Enterprise repository (branch: ${branch})`);
             terminal.sendText(`echo "🔄 Cloning Enterprise repository (branch: ${branch})..."`);
             terminal.sendText(`git clone --depth 1 --branch ${branch} git@github.com:odoo/enterprise.git || git clone --depth 1 --branch ${branch} https://github.com/odoo/enterprise.git`);
             // Wait for enterprise clone
             await new Promise(resolve => setTimeout(resolve, 2000));
             // Check Python availability
             progress.report({ message: 'Checking Python installation…', increment: 55 });
-            console.log('🐍 Checking Python installation');
+            logger_1.logger.debug('🐍 Checking Python installation');
             let pythonCmd = 'python3';
             try {
                 (0, child_process_1.execSync)('python3 --version', { stdio: 'ignore' });
@@ -12635,14 +12816,14 @@ Continue?`;
             }
             // Create virtual environment
             progress.report({ message: 'Creating Python virtual environment…', increment: 75 });
-            console.log('🔧 Creating Python virtual environment');
+            logger_1.logger.debug('🔧 Creating Python virtual environment');
             terminal.sendText(`echo "🔧 Creating Python virtual environment..."`);
             terminal.sendText(`${pythonCmd} -m venv venv`);
             // Wait for venv creation
             await new Promise(resolve => setTimeout(resolve, 3000));
             // Activate venv and install basic requirements
             progress.report({ message: 'Installing basic Python packages…', increment: 85 });
-            console.log('📦 Installing basic Python packages');
+            logger_1.logger.debug('📦 Installing basic Python packages');
             terminal.sendText(`echo "📦 Installing basic Python packages..."`);
             // Platform-specific activation
             const isWindows = process.platform === 'win32';
@@ -12664,7 +12845,7 @@ Continue?`;
             (0, utils_1.showInfo)(`Odoo ${branch} setup completed successfully!\n\nCheck the terminal for next steps.`);
         }
         catch (error) {
-            console.error('Setup failed:', error);
+            logger_1.logger.error('Setup failed:', error);
             (0, utils_1.showError)(`Setup failed: ${error.message}`);
         }
     });
@@ -12672,7 +12853,7 @@ Continue?`;
 
 
 /***/ }),
-/* 47 */
+/* 50 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12712,9 +12893,10 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VersionsTreeProvider = exports.VersionSettingTreeItem = exports.VersionTreeItem = void 0;
 const vscode = __importStar(__webpack_require__(1));
-const versionsService_1 = __webpack_require__(19);
+const versionsService_1 = __webpack_require__(21);
 const utils_1 = __webpack_require__(4);
-const sortOptions_1 = __webpack_require__(25);
+const sortOptions_1 = __webpack_require__(29);
+const logger_1 = __webpack_require__(10);
 class VersionTreeItem extends vscode.TreeItem {
     version;
     collapsibleState;
@@ -12797,10 +12979,6 @@ class VersionsTreeProvider {
     constructor(sortPreferences) {
         this.sortPreferences = sortPreferences;
         this.versionsService = versionsService_1.VersionsService.getInstance();
-        // Listen for version changes
-        vscode.commands.registerCommand('odoo.versionsChanged', () => {
-            this.refresh();
-        });
     }
     refresh() {
         this._onDidChangeTreeData.fire();
@@ -12816,7 +12994,7 @@ class VersionsTreeProvider {
                 const versions = this.versionsService.getVersions().slice().sort((a, b) => this.compareVersions(a, b, sortId));
                 return versions.map(version => new VersionTreeItem(version, vscode.TreeItemCollapsibleState.Collapsed));
             }).catch(error => {
-                console.error('Failed to load versions for tree view:', error);
+                logger_1.logger.error('Failed to load versions for tree view:', error);
                 return [];
             });
         }
@@ -12872,7 +13050,7 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 
 /***/ }),
-/* 48 */
+/* 51 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -12895,7 +13073,7 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 49 */
+/* 52 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12937,7 +13115,7 @@ exports.rebuildProjectWorkspace = rebuildProjectWorkspace;
 exports.openProjectWorkspace = openProjectWorkspace;
 exports.quickSwitchProjectWorkspace = quickSwitchProjectWorkspace;
 const vscode = __importStar(__webpack_require__(1));
-const settingsStore_1 = __webpack_require__(22);
+const settingsStore_1 = __webpack_require__(24);
 const utils_1 = __webpack_require__(4);
 async function getActiveProjectOrPrompt() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
@@ -13001,7 +13179,7 @@ async function openProjectWorkspace(context) {
     if (!workspaceFile) {
         return;
     }
-    const choice = await vscode.window.showInformationMessage('Open project workspace?', { modal: false }, 'This window', 'New window');
+    const choice = await (0, utils_1.showInfo)('Open project workspace?', 'This window', 'New window');
     if (!choice) {
         return;
     }
@@ -13029,7 +13207,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 50 */
+/* 53 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13078,10 +13256,11 @@ exports.copyEntries = copyEntries;
 exports.pasteEntries = pasteEntries;
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
-const settingsStore_1 = __webpack_require__(22);
+const settingsStore_1 = __webpack_require__(24);
 const utils_1 = __webpack_require__(4);
-const runtimeCache_1 = __webpack_require__(10);
-const filesExclude_1 = __webpack_require__(40);
+const runtimeCache_1 = __webpack_require__(11);
+const filesExclude_1 = __webpack_require__(43);
+const notifications_1 = __webpack_require__(12);
 class ProjectReposExplorerProvider {
     _onDidChangeTreeData = new vscode.EventEmitter();
     onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -13125,6 +13304,10 @@ class ProjectReposExplorerProvider {
             clearTimeout(this.refreshDebounceTimer);
             this.refreshDebounceTimer = undefined;
         }
+    }
+    dispose() {
+        this.disposeWatchers();
+        this._onDidChangeTreeData.dispose();
     }
     getTreeItem(element) {
         switch (element.kind) {
@@ -13302,7 +13485,7 @@ async function deleteEntry(uri) {
         (0, utils_1.showInfo)('Select a file or folder to delete.');
         return;
     }
-    const choice = await vscode.window.showWarningMessage(`Delete "${path.basename(uri.fsPath)}"?`, { modal: true }, 'Delete');
+    const choice = await (0, notifications_1.showModalWarning)(`Delete "${path.basename(uri.fsPath)}"?`, 'Delete');
     if (choice !== 'Delete') {
         return;
     }
@@ -13370,7 +13553,7 @@ async function pasteEntries(targetUri) {
         const destination = vscode.Uri.file(path.join(folderUri.fsPath, base));
         const exists = await pathExists(destination);
         if (exists) {
-            const choice = await vscode.window.showWarningMessage(`"${base}" already exists. Overwrite?`, { modal: true }, 'Overwrite', 'Skip');
+            const choice = await (0, notifications_1.showModalWarning)(`"${base}" already exists. Overwrite?`, 'Overwrite', 'Skip');
             if (choice !== 'Overwrite') {
                 continue;
             }

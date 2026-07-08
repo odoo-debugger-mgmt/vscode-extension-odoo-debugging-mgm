@@ -7,6 +7,8 @@ import { showError, showInfo, showAutoInfo, showWarning, stripSettings, createIn
 import { updateTestingContext } from './context';
 import { setupDebugger } from './debugger';
 import { getInstalledModules } from './services/database';
+import { logger } from './services/logger';
+import { showModalWarning } from './services/notifications';
 
 export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
@@ -41,7 +43,7 @@ export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
             // Save the converted model back to persist the conversion
             project.testingConfig = testingConfig;
             await SettingsStore.saveWithoutComments(stripSettings(data)).catch(error => {
-                console.warn('Failed to save converted testing config:', error);
+                logger.warn('Failed to save converted testing config:', error);
             });
         }
 
@@ -202,7 +204,7 @@ export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
             case 'method': return '⚙️';
             case 'tag': return '🏷️';
             default:
-                console.warn(`Unknown test tag type: "${type}"`);
+                logger.warn(`Unknown test tag type: "${type}"`);
                 return '❓'; // Changed to question mark for debugging unknown types
         }
     }
@@ -249,9 +251,8 @@ export async function toggleTesting(event: any): Promise<void> {
 
         if (isEnabled) {
             // Disable testing - restore module states
-            const confirm = await vscode.window.showWarningMessage(
+            const confirm = await showModalWarning(
                 'Are you sure you want to disable testing? This will restore the previous module states.',
-                { modal: true },
                 'Disable Testing'
             );
 
@@ -276,9 +277,8 @@ export async function toggleTesting(event: any): Promise<void> {
 
         } else {
             // Enable testing - save current states and clear modules
-            const confirm = await vscode.window.showWarningMessage(
+            const confirm = await showModalWarning(
                 'Enabling testing will clear all current module selections (install/upgrade). The current states will be saved and can be restored when testing is disabled. Continue?',
-                { modal: true },
                 'Enable Testing'
             );
 
@@ -302,7 +302,7 @@ export async function toggleTesting(event: any): Promise<void> {
             await setupDebugger();
         }
     } catch (error) {
-        console.error('Error in toggleTesting:', error);
+        logger.error('Error in toggleTesting:', error);
         showError(`Failed to toggle testing: ${error}`);
     }
 }
@@ -327,7 +327,7 @@ export async function toggleStopAfterInit(): Promise<void> {
         // Update launch.json with new test configuration
         await setupDebugger();
     } catch (error) {
-        console.error('Error in toggleStopAfterInit:', error);
+        logger.error('Error in toggleStopAfterInit:', error);
         showError(`Failed to toggle stop after init: ${error}`);
     }
 }
@@ -364,7 +364,7 @@ export async function setTestFile(): Promise<void> {
             await setupDebugger();
         }
     } catch (error) {
-        console.error('Error in setTestFile:', error);
+        logger.error('Error in setTestFile:', error);
         showError(`Failed to set test file: ${error}`);
     }
 }
@@ -508,14 +508,14 @@ export async function addTestTag(): Promise<void> {
                             // Class format: just the class name (no module: prefix needed)
                             // Non-blocking check for Test prefix - just log suggestion, don't block
                             if (!trimmed.startsWith('Test') && !trimmed.includes('Test')) {
-                                console.log(`Class names typically start with "Test" (e.g., "TestSalesAccessRights")`);
+                                logger.debug(`Class names typically start with "Test" (e.g., "TestSalesAccessRights")`);
                             }
                             break;
                         case 'method':
                             // Method format: just the method name (no module:Class. prefix needed)
                             // Non-blocking check for test_ prefix - just log suggestion, don't block
                             if (!trimmed.startsWith('test_')) {
-                                console.log(`Method names typically start with "test_" (e.g., "test_workflow_invoice")`);
+                                logger.debug(`Method names typically start with "test_" (e.g., "test_workflow_invoice")`);
                             }
                             break;
                     }
@@ -558,7 +558,7 @@ export async function addTestTag(): Promise<void> {
             }
         }
     } catch (error) {
-        console.error('Error in addTestTag:', error);
+        logger.error('Error in addTestTag:', error);
         showError(`Failed to add test tag: ${error}`);
     }
 }
@@ -599,7 +599,7 @@ export async function cycleTestTagState(tag: TestTag): Promise<void> {
             showError('Could not find that test tag.');
         }
     } catch (error) {
-        console.error('Error in cycleTestTagState:', error);
+        logger.error('Error in cycleTestTagState:', error);
         showError(`Failed to cycle test tag state: ${error}`);
     }
 }
@@ -636,7 +636,7 @@ export async function removeTestTag(tagOrTreeItem: TestTag | vscode.TreeItem): P
                 tagValue = tag.value;
             }
         } else {
-            console.error('Could not find the referenced test tag:', tagOrTreeItem);
+            logger.error('Could not find the referenced test tag:', tagOrTreeItem);
             showError('Could not find the referenced test tag.');
             return;
         }
@@ -653,7 +653,7 @@ export async function removeTestTag(tagOrTreeItem: TestTag | vscode.TreeItem): P
             showError('Could not find that test tag.');
         }
     } catch (error) {
-        console.error('Error in removeTestTag:', error);
+        logger.error('Error in removeTestTag:', error);
         showError(`Failed to remove test tag: ${error}`);
     }
 }
@@ -683,7 +683,7 @@ export async function toggleLogLevel(): Promise<void> {
         // Update launch.json with new test configuration
         await setupDebugger();
     } catch (error) {
-        console.error('Error in toggleLogLevel:', error);
+        logger.error('Error in toggleLogLevel:', error);
         showError(`Failed to toggle log level: ${error}`);
     }
 }
@@ -744,7 +744,7 @@ export async function setSpecificLogLevel(): Promise<void> {
             await setupDebugger();
         }
     } catch (error) {
-        console.error('Error in setSpecificLogLevel:', error);
+        logger.error('Error in setSpecificLogLevel:', error);
         showError(`Failed to set log level: ${error}`);
     }
 }

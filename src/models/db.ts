@@ -1,5 +1,6 @@
 import { ModuleModel } from "./module";
 import { VersionsService } from "../versionsService";
+import { logger } from '../services/logger';
 
 export interface DatabaseOptions {
     modules?: ModuleModel[];
@@ -86,7 +87,7 @@ export class DatabaseModel {
                     return version.odooVersion;
                 }
             } catch (error) {
-                console.warn(`Failed to get version for database ${this.name}:`, error);
+                logger.warn(`Failed to get version for database ${this.name}:`, error);
                 // Fall through to legacy property
             }
         }

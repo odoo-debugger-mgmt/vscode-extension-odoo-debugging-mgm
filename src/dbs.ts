@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { DatabaseModel, ProjectRepoBranchAssignment } from './models/db';
-import { normalizePath, getGitBranch, getGitBranches, showError, showInfo, showWarning, showAutoInfo, showBriefStatus, addActiveIndicator, stripSettings, getDatabaseLabel } from './utils';
+import { normalizePath, getGitBranches, showError, showInfo, showWarning, showAutoInfo, showBriefStatus, addActiveIndicator, stripSettings, getDatabaseLabel } from './utils';
+import { getRepoBranch } from './services/branches';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import { execSync, spawn, ChildProcess } from 'child_process';
@@ -16,6 +17,8 @@ import { getDefaultSortOption } from './sortOptions';
 import { PassThrough, Readable } from 'stream';
 import { clearInstalledModuleCache, detectOdooSeries } from './services/database';
 import { SettingsModel } from './models/settings';
+import { logger } from './services/logger';
+import { showModalWarning } from './services/notifications';
 import {
     alignEnvironment,
     buildDatabaseEnvironmentTarget,
@@ -43,7 +46,7 @@ function getEffectiveOdooVersion(db: DatabaseModel | any): string | undefined {
                 return version.odooVersion;
             }
         } catch (error) {
-            console.warn(`Failed to get version for database ${getDatabaseLabel(db)}:`, error);
+            logger.warn(`Failed to get version for database ${getDatabaseLabel(db)}:`, error);
         }
     }
     // Fall back to legacy odooVersion property
@@ -136,7 +139,7 @@ async function promptProjectRepoBranchAssignments(
     if (setupChoice.action === 'use-current') {
         const mapped = await Promise.all(repos.map(async repo => {
             const repoPath = normalizePath(repo.path);
-            const branch = await getGitBranch(repoPath);
+            const branch = await getRepoBranch(repoPath);
             if (!branch) {
                 return undefined;
             }
@@ -156,7 +159,7 @@ async function promptProjectRepoBranchAssignments(
         const repoPath = normalizePath(repo.path);
         const existing = existingByPath.get(repoPath) ?? existingByName.get(repo.name.toLowerCase());
         const existingBranch = existing?.branch;
-        const currentBranch = await getGitBranch(repoPath);
+        const currentBranch = await getRepoBranch(repoPath);
         const branches = await getGitBranches(repoPath);
         const uniqueBranches = Array.from(new Set([
             ...(existingBranch ? [existingBranch] : []),
@@ -557,7 +560,7 @@ function collectDumpSources(root: string, maxDepth = 2): DumpSelection[] {
         try {
             entries = fs.readdirSync(dir, { withFileTypes: true });
         } catch (error) {
-            console.warn(`Failed to read dumps directory ${dir}:`, error);
+            logger.warn(`Failed to read dumps directory ${dir}:`, error);
             continue;
         }
 
@@ -729,7 +732,7 @@ function queryPostgresDatabases(): string[] {
             .map(name => name.trim())
             .filter(name => name.length > 0);
     } catch (error) {
-        console.warn('Failed to query PostgreSQL database list:', error);
+        logger.warn('Failed to query PostgreSQL database list:', error);
         return [];
     }
 }
@@ -926,7 +929,7 @@ async function resolveVersionForNewDatabase(dbName: string, method: CreationMeth
     }
 
     // Non-blocking offer to create the missing version profile.
-    void vscode.window.showInformationMessage(
+    void showInfo(
         `Database "${dbName}" runs Odoo ${series}, but no matching version profile exists.`,
         'Create Version',
         'Ignore'
@@ -1451,9 +1454,8 @@ export async function manageDatabaseTemplates(): Promise<void> {
                 continue;
             }
 
-            const deleteChoice = await vscode.window.showWarningMessage(
+            const deleteChoice = await showModalWarning(
                 `Delete template "${selectedTemplate.name}" (${selectedTemplate.templateDbName})?`,
-                { modal: true },
                 'Delete Template DB + Metadata',
                 'Delete Metadata Only'
             );
@@ -1489,9 +1491,8 @@ export async function restoreDb(event: any): Promise<void> {
     }
 
     // Ask for confirmation
-    const confirm = await vscode.window.showWarningMessage(
+    const confirm = await showModalWarning(
         `Are you sure you want to restore the database "${databaseLabel}"? This will overwrite the existing database.`,
-        { modal: true },
         'Restore'
     );
 
@@ -1505,7 +1506,7 @@ export async function restoreDb(event: any): Promise<void> {
 
 export async function setupDatabase(dbName: string, dumpPath: string | undefined, remove: boolean = false): Promise<void> {
     if (dumpPath && !fs.existsSync(dumpPath)) {
-        console.error(`❌ Dump file not found at: ${dumpPath}`);
+        logger.error(`❌ Dump file not found at: ${dumpPath}`);
         return;
     }
 
@@ -1532,14 +1533,14 @@ export async function setupDatabase(dbName: string, dumpPath: string | undefined
 
                 if (result === '1') {
                     progress.report({ message: 'Dropping existing database...', increment: 20 });
-                    console.log(`🗑️ Dropping existing database: ${dbName}`);
+                    logger.debug(`🗑️ Dropping existing database: ${dbName}`);
                     execSync(`dropdb ${dbName}`, { stdio: 'inherit' });
                 }
                 clearInstalledModuleCache(dbName);
 
                 if (!remove) {
                     progress.report({ message: 'Creating database...', increment: 40 });
-                    console.log(`🚀 Creating database: ${dbName}`);
+                    logger.debug(`🚀 Creating database: ${dbName}`);
                     execSync(`createdb ${dbName}`, { stdio: 'inherit' });
 
                     if (preparedDump) {
@@ -1547,12 +1548,12 @@ export async function setupDatabase(dbName: string, dumpPath: string | undefined
                             message: preparedDump.progressMessage ?? 'Importing dump file...',
                             increment: 50
                         });
-                        console.log(`📥 Importing SQL dump into ${dbName}`);
+                        logger.debug(`📥 Importing SQL dump into ${dbName}`);
                         try {
                             await importPreparedDump(dbName, preparedDump);
                         } catch (error) {
                             if (dumpPath && preparedDump.kind === 'stream' && isToolchainUnavailableError(error)) {
-                                console.warn('Streaming import unavailable. Falling back to temporary dump extraction.');
+                                logger.warn('Streaming import unavailable. Falling back to temporary dump extraction.');
                                 progress.report({
                                     message: dumpPath.toLowerCase().endsWith('.zip')
                                         ? 'Streaming unavailable. Extracting archive to temporary SQL file...'
@@ -1572,52 +1573,52 @@ export async function setupDatabase(dbName: string, dumpPath: string | undefined
                         clearInstalledModuleCache(dbName);
 
                         progress.report({ message: 'Configuring database...', increment: 70 });
-                        console.log(`⚙️ Configuring database for development use`);
+                        logger.debug(`⚙️ Configuring database for development use`);
 
                         const newUuid = randomUUID();
 
-                        console.log(`⏸️ Disabling cron jobs`);
+                        logger.debug(`⏸️ Disabling cron jobs`);
                         execSync(`psql ${dbName} -c "UPDATE ir_cron SET active='f';"`, { stdio: 'inherit', shell: '/bin/sh' });
 
-                        console.log(`📧 Disabling mail servers`);
+                        logger.debug(`📧 Disabling mail servers`);
                         execSync(`psql ${dbName} -c "UPDATE ir_mail_server SET active=false;"`, { stdio: 'inherit', shell: '/bin/sh' });
 
-                        console.log(`⏰ Extending database expiry`);
+                        logger.debug(`⏰ Extending database expiry`);
                         execSync(`psql ${dbName} -c "UPDATE ir_config_parameter SET value = '2090-09-21 00:00:00' WHERE key = 'database.expiration_date';"`, { stdio: 'inherit', shell: '/bin/sh' });
 
-                        console.log(`🔑 Updating database UUID`);
+                        logger.debug(`🔑 Updating database UUID`);
                         execSync(`psql ${dbName} -c "UPDATE ir_config_parameter SET value = '${newUuid}' WHERE key = 'database.uuid';"`, { stdio: 'inherit', shell: '/bin/sh' });
 
-                        console.log(`📨 Adding mailcatcher server`);
+                        logger.debug(`📨 Adding mailcatcher server`);
                         try {
                             execSync(`psql ${dbName} -c "INSERT INTO ir_mail_server(active,name,smtp_host,smtp_port,smtp_encryption) VALUES (true,'mailcatcher','localhost',1025,false);"`, { stdio: 'inherit', shell: '/bin/sh' });
                         } catch (error) {
-                            console.warn(`⚠️ Failed to add mailcatcher server (continuing setup): ${error}`);
+                            logger.warn(`⚠️ Failed to add mailcatcher server (continuing setup): ${error}`);
                         }
 
-                        console.log(`👤 Resetting user passwords to login names`);
+                        logger.debug(`👤 Resetting user passwords to login names`);
                         execSync(`psql ${dbName} -c "UPDATE res_users SET password=login;"`, { stdio: 'inherit', shell: '/bin/sh' });
 
-                        console.log(`🔐 Configuring admin user`);
+                        logger.debug(`🔐 Configuring admin user`);
                         execSync(`psql ${dbName} -c "UPDATE res_users SET password='admin' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
                         execSync(`psql ${dbName} -c "UPDATE res_users SET login='admin' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
                         execSync(`psql ${dbName} -c "UPDATE res_users SET totp_secret='' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
                         execSync(`psql ${dbName} -c "UPDATE res_users SET active=true WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
 
-                        console.log(`🏢 Clearing employee PINs`);
+                        logger.debug(`🏢 Clearing employee PINs`);
                         execSync(`psql ${dbName} -c "UPDATE hr_employee SET pin = '';"`, { stdio: 'inherit', shell: '/bin/sh' });
 
                         progress.report({ message: 'Database configured for development', increment: 90 });
                     } else {
                         progress.report({ message: 'Database created (empty)...', increment: 90 });
-                        console.log(`📝 Empty database created: ${dbName}`);
+                        logger.debug(`📝 Empty database created: ${dbName}`);
                     }
                 }
 
                 progress.report({ message: 'Complete!', increment: 100 });
-                console.log(`✅ Database "${dbName}" is ready.`);
+                logger.debug(`✅ Database "${dbName}" is ready.`);
             } catch (error: any) {
-                console.error(`❌ Error: ${error.message}`);
+                logger.error(`❌ Error: ${error.message}`);
                 showError(`Failed to setup database: ${error.message}`);
             }
         });
@@ -1626,7 +1627,7 @@ export async function setupDatabase(dbName: string, dumpPath: string | undefined
             try {
                 preparedDump.cleanup();
             } catch (cleanupError) {
-                console.warn('Failed to cleanup temporary dump files:', cleanupError);
+                logger.warn('Failed to cleanup temporary dump files:', cleanupError);
             }
         }
     }
@@ -1673,7 +1674,7 @@ export async function selectDatabase(event: any) {
             { label: `Database "${databaseLabel}"` }
         );
     } catch (error: any) {
-        console.error('Error while aligning environment for database selection:', error);
+        logger.error('Error while aligning environment for database selection:', error);
         showWarning(`Database selected, but environment switching failed: ${error.message}`);
     }
 
@@ -1702,9 +1703,8 @@ export async function deleteDb(event: any) {
     }
 
     // Ask for confirmation
-    const confirm = await vscode.window.showWarningMessage(
+    const confirm = await showModalWarning(
         `Are you sure you want to delete the database "${dbLabel}"?`,
-        { modal: true },
         'Delete'
     );
 
@@ -1844,7 +1844,7 @@ export async function changeDatabaseVersion(event: any) {
     }
     } catch (error: any) {
         showError(`Failed to change database version: ${error.message}`);
-        console.error('Error in changeDatabaseVersion:', error);
+        logger.error('Error in changeDatabaseVersion:', error);
     }
 }
 
@@ -1901,7 +1901,7 @@ export async function changeDatabaseProjectRepoBranches(event: any): Promise<voi
         }
     } catch (error: any) {
         showError(`Failed to update project repo branch mapping: ${error.message}`);
-        console.error('Error in changeDatabaseProjectRepoBranches:', error);
+        logger.error('Error in changeDatabaseProjectRepoBranches:', error);
     }
 }
 
@@ -2219,7 +2219,7 @@ function prepareDumpViaTempFile(dumpPath: string): PreparedDump {
                     try {
                         fs.rmSync(tempDir, { recursive: true, force: true });
                     } catch (cleanupError) {
-                        console.warn('Failed to cleanup temporary unzip folder:', cleanupError);
+                        logger.warn('Failed to cleanup temporary unzip folder:', cleanupError);
                     }
                 }
             };
@@ -2246,7 +2246,7 @@ function prepareDumpViaTempFile(dumpPath: string): PreparedDump {
                     try {
                         fs.rmSync(tempDir, { recursive: true, force: true });
                     } catch (cleanupError) {
-                        console.warn('Failed to cleanup temporary gunzip folder:', cleanupError);
+                        logger.warn('Failed to cleanup temporary gunzip folder:', cleanupError);
                     }
                 }
             };
