@@ -591,10 +591,6 @@ export async function activate(context: vscode.ExtensionContext) {
         await quickProjectSearch();
         await refreshAll({ reason: 'ui' });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.quickSearch', async () => {
-        await quickProjectSearch();
-        await refreshAll({ reason: 'ui' });
-    }));
     extensionDisposables.push(vscode.commands.registerCommand('repoSelector.quickSearch', async () => {
         const items = ((await providers.repo.getChildren()) ?? [])
             .filter(item => !!item.command && getTreeItemLabel(item).trim().length > 0);
@@ -976,7 +972,7 @@ extensionDisposables.push(vscode.commands.registerCommand('testingSelector.setTe
     }));
 
     extensionDisposables.push(vscode.commands.registerCommand('odoo.openVersionDefaults', async () => {
-        await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:odoo-ps.odoo-debugging-mgm-tool odooDebugger.defaultVersion');
+        await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:AhmadMansour.odoo-devtools-vscode odooDebugger.defaultVersion');
     }));
 
     extensionDisposables.push(vscode.commands.registerCommand('odoo.changeBranch', async (versionIdOrTreeItem?: any) => {

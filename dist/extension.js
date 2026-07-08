@@ -563,10 +563,6 @@ async function activate(context) {
         await (0, project_1.quickProjectSearch)();
         await refreshAll({ reason: 'ui' });
     }));
-    extensionDisposables.push(vscode.commands.registerCommand('projectSelector.quickSearch', async () => {
-        await (0, project_1.quickProjectSearch)();
-        await refreshAll({ reason: 'ui' });
-    }));
     extensionDisposables.push(vscode.commands.registerCommand('repoSelector.quickSearch', async () => {
         const items = ((await providers.repo.getChildren()) ?? [])
             .filter(item => !!item.command && getTreeItemLabel(item).trim().length > 0);
@@ -914,7 +910,7 @@ async function activate(context) {
         }
     }));
     extensionDisposables.push(vscode.commands.registerCommand('odoo.openVersionDefaults', async () => {
-        await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:odoo-ps.odoo-debugging-mgm-tool odooDebugger.defaultVersion');
+        await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:AhmadMansour.odoo-devtools-vscode odooDebugger.defaultVersion');
     }));
     extensionDisposables.push(vscode.commands.registerCommand('odoo.changeBranch', async (versionIdOrTreeItem) => {
         try {
@@ -12098,6 +12094,9 @@ const versionsService_1 = __webpack_require__(19);
 const testing_1 = __webpack_require__(35);
 const database_1 = __webpack_require__(27);
 const jsonc_parser_1 = __webpack_require__(11);
+// Databases we already told the user about; prepareArgs re-runs on every
+// debounced sync, so without this the toast repeats until the DB is initialized.
+const baseInstallNotifiedDbs = new Set();
 async function selectPythonInterpreter(pythonPath) {
     if (!pythonPath || pythonPath.trim().length === 0) {
         return;
@@ -12333,7 +12332,10 @@ async function prepareArgs(project, settings, isShell = false) {
             const hasModuleTable = await (0, database_1.databaseHasModuleTable)(db.id);
             if (!hasModuleTable) {
                 installs = ['base'];
-                (0, utils_1.showAutoInfo)('Added "base" during initialization so the new database can install core tables.', 3000);
+                if (!baseInstallNotifiedDbs.has(db.id)) {
+                    baseInstallNotifiedDbs.add(db.id);
+                    (0, utils_1.showAutoInfo)('Added "base" during initialization so the new database can install core tables.', 3000);
+                }
             }
         }
         catch (error) {

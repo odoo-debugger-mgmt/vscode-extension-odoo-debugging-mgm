@@ -24,7 +24,7 @@
     "url": "https://github.com/odoo-debugger-mgmt/vscode-extension-odoo-debugging-mgm.git"
   },
   "bugs": {
-    "url": "https://discord.com/channels/1417838211631157292/1427925513074114602"
+    "url": "https://discord.gg/5DMzx3nr9z"
   },
   "keywords": [
     "odoo",
@@ -118,11 +118,6 @@
         "command": "projectSelector.sort",
         "title": "Sort Projects",
         "icon": "$(sort-precedence)"
-      },
-      {
-        "command": "projectSelector.quickSearch",
-        "title": "Search Projects",
-        "icon": "$(search)"
       },
       {
         "command": "repoSelector.sort",
@@ -278,8 +273,9 @@
       },
       {
         "command": "odoo-debugger.quickProjectSearch",
-        "title": "Quick Project Search",
-        "category": "Odoo Debugger"
+        "title": "Search Projects",
+        "category": "Odoo DevTools",
+        "icon": "$(search)"
       },
       {
         "command": "projectSelector.refresh",
@@ -583,7 +579,7 @@
           "group": "navigation@8"
         },
         {
-          "command": "projectSelector.quickSearch",
+          "command": "odoo-debugger.quickProjectSearch",
           "when": "view == projectSelector",
           "group": "navigation@7.5"
         },
@@ -969,7 +965,7 @@
     "viewsWelcome": [
       {
         "view": "projectSelector",
-        "when": "odoo-debugger.is_active === 'false'",
+        "when": "!odoo-debugger.is_active",
         "contents": "Open a folder or a workspace for the extension to work.\n[Open Folder](command:workbench.action.files.openFolder)\n[Open Workspace](command:workbench.action.openWorkspace)"
       }
     ],
@@ -982,7 +978,7 @@
       }
     ],
     "configuration": {
-      "title": "Odoo Debugger",
+      "title": "Odoo DevTools",
       "properties": {
         "odooDebugger.defaultVersion.debuggerName": {
           "type": "string",

@@ -63,7 +63,7 @@ All-in-one VS Code extension for managing and debugging Odoo projects: projects,
 
     ![Version Setup](resources/assets/version-setup.gif)
 
-5. In the **Projects** view: create a project and select it.=
+5. In the **Projects** view: create a project and select it.
 
    - `Project Selector: Create Project` will guide you through project creation.
    - Selecting a project makes it the active context for the other views.
@@ -100,7 +100,7 @@ All-in-one VS Code extension for managing and debugging Odoo projects: projects,
    - Open the Command Palette and run `Odoo: Start Server` to launch Odoo with the active version + selected DB.
    - Run `Odoo: Start Shell` for an interactive Odoo shell against the selected DB.
 
-## Discord Chanel
+## Discord Channel
 
 For bug reports or feature requests, please join our discord channel: https://discord.gg/5DMzx3nr9z
 

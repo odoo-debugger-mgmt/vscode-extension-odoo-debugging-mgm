@@ -10,6 +10,10 @@ import { ensureTestingConfigModel } from './models/testing';
 import { getInstalledModuleNames, databaseHasModuleTable } from './services/database';
 import { parse } from 'jsonc-parser';
 
+// Databases we already told the user about; prepareArgs re-runs on every
+// debounced sync, so without this the toast repeats until the DB is initialized.
+const baseInstallNotifiedDbs = new Set<string>();
+
 async function selectPythonInterpreter(pythonPath: string): Promise<void> {
     if (!pythonPath || pythonPath.trim().length === 0) {
         return;
@@ -278,7 +282,10 @@ async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShe
             const hasModuleTable = await databaseHasModuleTable(db.id);
             if (!hasModuleTable) {
                 installs = ['base'];
-                showAutoInfo('Added "base" during initialization so the new database can install core tables.', 3000);
+                if (!baseInstallNotifiedDbs.has(db.id)) {
+                    baseInstallNotifiedDbs.add(db.id);
+                    showAutoInfo('Added "base" during initialization so the new database can install core tables.', 3000);
+                }
             }
         } catch (error) {
             console.warn('Failed to verify module table state:', error);
