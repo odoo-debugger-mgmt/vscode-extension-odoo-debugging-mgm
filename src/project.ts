@@ -13,6 +13,7 @@ import { getDefaultSortOption } from './sortOptions';
 import { logger } from './services/logger';
 import { showModalInfo, showWarning } from './services/notifications';
 import { showModalWarning } from './services/notifications';
+import { BaseTreeProvider } from './views/baseTreeProvider';
 
 let projectMetadataMigrationCompleted = false;
 
@@ -63,15 +64,9 @@ function formatTicketLabel(ticket: ProjectTicketModel): string {
     return ticket.title ? `${ticket.id} - ${ticket.title}` : ticket.id;
 }
 
-export class ProjectTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-    private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
-    readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
-
-    refresh(): void {
-        this._onDidChangeTreeData.fire();
-    }
+export class ProjectTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
     constructor(private context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
-        this.context = context;
+        super();
     }
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
         return element;

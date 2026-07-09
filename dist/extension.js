@@ -42,163 +42,28 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(3));
-const utils_1 = __webpack_require__(4);
-const dbs_1 = __webpack_require__(19);
+const dbs_1 = __webpack_require__(2);
 const environment_1 = __webpack_require__(34);
 const dataMigration_1 = __webpack_require__(36);
 const project_1 = __webpack_require__(37);
 const repos_1 = __webpack_require__(41);
 const projectRepos_1 = __webpack_require__(42);
-const module_1 = __webpack_require__(44);
-const testing_1 = __webpack_require__(46);
-const debugger_1 = __webpack_require__(48);
-const odooInstaller_1 = __webpack_require__(49);
-const settingsStore_1 = __webpack_require__(24);
+const module_1 = __webpack_require__(45);
+const testing_1 = __webpack_require__(47);
+const debugger_1 = __webpack_require__(49);
+const settingsStore_1 = __webpack_require__(7);
 const versionsTreeProvider_1 = __webpack_require__(50);
-const versionsService_1 = __webpack_require__(21);
-const context_1 = __webpack_require__(47);
-const gitService_1 = __webpack_require__(9);
+const versionsService_1 = __webpack_require__(4);
+const context_1 = __webpack_require__(48);
 const sortPreferences_1 = __webpack_require__(51);
-const sortOptions_1 = __webpack_require__(29);
-const projectWorkspace_1 = __webpack_require__(52);
-const projectReposExplorer_1 = __webpack_require__(53);
-const runtimeCache_1 = __webpack_require__(11);
-const logger_1 = __webpack_require__(10);
-const notifications_1 = __webpack_require__(12);
-function extractUriFromContext(arg) {
-    if (!arg) {
-        return undefined;
-    }
-    if (arg instanceof vscode.Uri) {
-        return arg;
-    }
-    if (typeof arg === 'object') {
-        const maybeResourceUri = arg.resourceUri;
-        if (maybeResourceUri instanceof vscode.Uri) {
-            return maybeResourceUri;
-        }
-        const maybeUri = arg.uri;
-        if (maybeUri instanceof vscode.Uri) {
-            return maybeUri;
-        }
-    }
-    return undefined;
-}
-async function copyPathToClipboard(uri, relative) {
-    if (!uri) {
-        (0, utils_1.showInfo)('Select a file or folder first.');
-        return;
-    }
-    const absolutePath = uri.fsPath;
-    if (!relative) {
-        await vscode.env.clipboard.writeText(absolutePath);
-        vscode.window.setStatusBarMessage('Copied path', 2000);
-        return;
-    }
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!workspaceRoot) {
-        await vscode.env.clipboard.writeText(absolutePath);
-        vscode.window.setStatusBarMessage('Copied path (no workspace for relative path)', 2500);
-        return;
-    }
-    const relativePath = path.relative(workspaceRoot, absolutePath);
-    const valueToCopy = relativePath.startsWith('..') ? absolutePath : relativePath;
-    await vscode.env.clipboard.writeText(valueToCopy);
-    vscode.window.setStatusBarMessage('Copied relative path', 2000);
-}
-async function openUriInIntegratedTerminal(uri) {
-    if (!uri) {
-        (0, utils_1.showInfo)('Select a folder to open in terminal.');
-        return;
-    }
-    const cwd = fs.existsSync(uri.fsPath) && fs.lstatSync(uri.fsPath).isDirectory()
-        ? uri.fsPath
-        : path.dirname(uri.fsPath);
-    const terminal = vscode.window.createTerminal({ cwd });
-    terminal.show();
-}
-function getTreeItemLabel(item) {
-    if (typeof item.label === 'string') {
-        return item.label;
-    }
-    if (item.label && typeof item.label === 'object' && 'label' in item.label) {
-        return item.label.label;
-    }
-    return '';
-}
-function getTreeItemDescription(item) {
-    return typeof item.description === 'string' ? item.description : undefined;
-}
-function stripMarkdownForQuickPick(value) {
-    return value
-        // Convert markdown links to visible text only.
-        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-        // Remove common markdown tokens.
-        .replace(/[*_`>#~]/g, '')
-        // Normalize line breaks for quick-pick rows.
-        .replace(/\r?\n+/g, ' • ')
-        .replace(/\s{2,}/g, ' ')
-        .trim();
-}
-function getTreeItemDetail(item) {
-    if (typeof item.tooltip === 'string') {
-        return stripMarkdownForQuickPick(item.tooltip);
-    }
-    if (item.tooltip instanceof vscode.MarkdownString) {
-        return stripMarkdownForQuickPick(item.tooltip.value);
-    }
-    return undefined;
-}
-async function quickSearchTreeItems(items, options) {
-    if (!items.length) {
-        (0, utils_1.showInfo)(options.emptyMessage);
-        return;
-    }
-    const picks = items.map(item => ({
-        label: getTreeItemLabel(item),
-        description: getTreeItemDescription(item),
-        detail: getTreeItemDetail(item),
-        item
-    }));
-    const selected = await vscode.window.showQuickPick(picks, {
-        placeHolder: options.placeHolder,
-        title: options.title,
-        ignoreFocusOut: true,
-        matchOnDescription: true,
-        matchOnDetail: true
-    });
-    if (!selected) {
-        return;
-    }
-    if (options.onPick) {
-        await options.onPick(selected.item);
-        return;
-    }
-    if (!selected.item.command) {
-        (0, utils_1.showInfo)('No action is available for the selected item.');
-        return;
-    }
-    await vscode.commands.executeCommand(selected.item.command.command, ...(selected.item.command.arguments ?? []));
-}
-function extractVersionIdFromArg(arg) {
-    // Commands receive either a version id (direct call) or a tree item (context menu).
-    if (typeof arg === 'string') {
-        return arg;
-    }
-    return arg?.version?.id;
-}
-// Initialize testing context based on current project state
+const projectReposExplorer_1 = __webpack_require__(52);
+const logger_1 = __webpack_require__(15);
+const commands_1 = __webpack_require__(53);
+/** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
-        if (result?.project?.testingConfig?.isEnabled) {
-            (0, context_1.updateTestingContext)(true);
-        }
-        else {
-            (0, context_1.updateTestingContext)(false);
-        }
+        (0, context_1.updateTestingContext)(!!result?.project?.testingConfig?.isEnabled);
     }
     catch (error) {
         // If there's an error, default to testing disabled
@@ -219,7 +84,6 @@ async function activate(context) {
     });
     const isWorkspaceOpen = !!vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0;
     (0, context_1.updateActiveContext)(isWorkspaceOpen);
-    // Initialize testing context
     await initializeTestingContext();
     const providers = {
         project: new project_1.ProjectTreeProvider(context, sortPreferences),
@@ -237,35 +101,15 @@ async function activate(context) {
     context.subscriptions.push(vscode.commands.registerCommand('odoo.versionsChanged', () => {
         providers.versions.refresh();
     }));
-    // The explorer provider owns file-system watchers that need disposal.
-    context.subscriptions.push(providers.projectReposExplorer);
+    // Providers own event emitters (and the explorer owns file watchers)
+    // that need disposal with the extension.
+    context.subscriptions.push(...Object.values(providers));
     // One-time v1.2 migrations: fold legacy per-DB odooVersion into versions,
     // and map old databaseSwitchBehavior values onto the new auto/ask/never
     // enum. Runs after provider construction so the versions-changed refresh
     // command used when new profiles are created is already registered.
     await (0, dataMigration_1.migrateDebuggerData)();
     void (0, environment_1.migrateLegacySwitchBehaviorSetting)();
-    const registerViewSortCommand = (viewId, provider) => {
-        const options = (0, sortOptions_1.getSortOptions)(viewId);
-        context.subscriptions.push(vscode.commands.registerCommand(`${viewId}.sort`, async () => {
-            const current = sortPreferences.get(viewId, (0, sortOptions_1.getDefaultSortOption)(viewId));
-            const picks = options.map(option => ({
-                label: `${option.id === current ? '$(check) ' : ''}${option.label}`,
-                description: option.description,
-                optionId: option.id
-            }));
-            const selection = await vscode.window.showQuickPick(picks, {
-                placeHolder: 'Select sort order',
-                ignoreFocusOut: true
-            });
-            if (!selection || selection.optionId === current) {
-                return;
-            }
-            await sortPreferences.set(viewId, selection.optionId);
-            provider.refresh();
-        }));
-    };
-    // Register tree data providers and store disposables
     context.subscriptions.push(vscode.window.registerTreeDataProvider('projectSelector', providers.project));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('repoSelector', providers.repo));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('dbSelector', providers.db));
@@ -274,6 +118,10 @@ async function activate(context) {
     context.subscriptions.push(vscode.window.registerTreeDataProvider('versionsManager', providers.versions));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('projectRepos', providers.projectRepos));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('odt.projectReposExplorer', providers.projectReposExplorer));
+    // ------------------------------------------------------------------
+    // Refresh machinery: UI refreshes update every provider; debugger
+    // refreshes rewrite launch.json (debounced, single-flight).
+    // ------------------------------------------------------------------
     const refreshViews = async () => {
         await initializeTestingContext();
         Object.values(providers).forEach(provider => provider.refresh());
@@ -326,1046 +174,7 @@ async function activate(context) {
             await refreshViews();
         }
     };
-    registerViewSortCommand('projectSelector', providers.project);
-    registerViewSortCommand('repoSelector', providers.repo);
-    registerViewSortCommand('dbSelector', providers.db);
-    registerViewSortCommand('moduleSelector', providers.module);
-    registerViewSortCommand('versionsManager', providers.versions);
-    registerViewSortCommand('projectRepos', providers.projectRepos);
-    // Register all commands and store disposables
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    context.subscriptions.push(vscode.commands.registerCommand('projectRepos.reveal', async (arg) => {
-        const repo = arg?.metadata?.kind === 'repo' ? arg?.metadata?.repo : undefined;
-        if (repo?.path) {
-            await (0, projectRepos_1.revealProjectRepo)(repo);
-            return;
-        }
-        const uri = extractUriFromContext(arg);
-        if (!uri) {
-            (0, utils_1.showInfo)('Select a repository to reveal.');
-            return;
-        }
-        await vscode.commands.executeCommand('revealInExplorer', uri);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('proj.openProjectWorkspace', async () => {
-        await (0, projectWorkspace_1.openProjectWorkspace)(context);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('proj.rebuildProjectWorkspace', async () => {
-        await (0, projectWorkspace_1.rebuildProjectWorkspace)(context);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('proj.quickSwitchProject', async () => {
-        await (0, projectWorkspace_1.quickSwitchProjectWorkspace)(context);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFile', async (uri) => {
-        await (0, projectReposExplorer_1.createNewFile)(uri);
-        providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFolder', async (uri) => {
-        await (0, projectReposExplorer_1.createNewFolder)(uri);
-        providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.rename', async (uri) => {
-        await (0, projectReposExplorer_1.renameEntry)(uri);
-        providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.delete', async (uri) => {
-        await (0, projectReposExplorer_1.deleteEntry)(uri);
-        providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.openTerminalHere', async (uri) => {
-        await (0, projectReposExplorer_1.openTerminalHere)(uri);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.selectProject', async () => {
-        await (0, projectReposExplorer_1.selectProjectForExplorer)();
-        providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.copy', async (uri, uris) => {
-        const list = uris && uris.length ? uris : uri ? [uri] : [];
-        if (!list.length) {
-            return;
-        }
-        (0, projectReposExplorer_1.copyEntries)(list, false);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.cut', async (uri, uris) => {
-        const list = uris && uris.length ? uris : uri ? [uri] : [];
-        if (!list.length) {
-            return;
-        }
-        (0, projectReposExplorer_1.copyEntries)(list, true);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.paste', async (uri) => {
-        await (0, projectReposExplorer_1.pasteEntries)(uri);
-        providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyFilePath', async (arg) => {
-        await copyPathToClipboard(extractUriFromContext(arg), false);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyRelativePath', async (arg) => {
-        await copyPathToClipboard(extractUriFromContext(arg), true);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.openInIntegratedTerminal', async (arg) => {
-        await openUriInIntegratedTerminal(extractUriFromContext(arg));
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.revealInExplorer', async (arg) => {
-        const uri = extractUriFromContext(arg);
-        if (!uri) {
-            (0, utils_1.showInfo)('Select a file or folder first.');
-            return;
-        }
-        await vscode.commands.executeCommand('revealInExplorer', uri);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.revealFileInOS', async (arg) => {
-        const uri = extractUriFromContext(arg);
-        if (!uri) {
-            (0, utils_1.showInfo)('Select a file or folder first.');
-            return;
-        }
-        await vscode.commands.executeCommand('revealFileInOS', uri);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.renameEntry', async (arg) => {
-        await (0, projectReposExplorer_1.renameEntry)(extractUriFromContext(arg));
-        providers.projectRepos.refresh();
-        providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.deleteEntry', async (arg) => {
-        await (0, projectReposExplorer_1.deleteEntry)(extractUriFromContext(arg));
-        providers.projectRepos.refresh();
-        providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyEntry', async (arg) => {
-        const uri = extractUriFromContext(arg);
-        if (!uri) {
-            (0, utils_1.showInfo)('Select a file or folder first.');
-            return;
-        }
-        (0, projectReposExplorer_1.copyEntries)([uri], false);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.cutEntry', async (arg) => {
-        const uri = extractUriFromContext(arg);
-        if (!uri) {
-            (0, utils_1.showInfo)('Select a file or folder first.');
-            return;
-        }
-        (0, projectReposExplorer_1.copyEntries)([uri], true);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.pasteEntry', async (arg) => {
-        const uri = extractUriFromContext(arg);
-        if (!uri) {
-            (0, utils_1.showInfo)('Select a folder to paste into.');
-            return;
-        }
-        let target = uri;
-        try {
-            if (fs.existsSync(uri.fsPath) && fs.lstatSync(uri.fsPath).isFile()) {
-                target = vscode.Uri.file(path.dirname(uri.fsPath));
-            }
-        }
-        catch {
-            // Best effort: fall back to the provided uri
-        }
-        await (0, projectReposExplorer_1.pasteEntries)(target);
-        providers.projectRepos.refresh();
-        providers.projectReposExplorer.refresh();
-    }));
-    // Projects
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.create', async () => {
-        try {
-            // Get settings from active version
-            const settings = await versionsService.getActiveVersionSettings();
-            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-            if (!workspaceFolder) {
-                throw new Error("Open a workspace to use this command.");
-            }
-            const name = await (0, project_1.getProjectName)(workspaceFolder);
-            const customAddonsPath = (0, utils_1.normalizePath)(settings.customAddonsPath);
-            const repos = await (0, project_1.getRepo)(customAddonsPath, name); // Pass project name as search filter
-            const databaseChoice = await vscode.window.showQuickPick([
-                {
-                    label: 'Create a new database',
-                    description: 'Set up a fresh database or restore from a dump',
-                    detail: 'You can add more databases later from the Databases view.',
-                    value: 'create'
-                },
-                {
-                    label: 'Connect to an existing database',
-                    description: 'Link this project to a database that already exists in PostgreSQL',
-                    value: 'connect'
-                },
-                {
-                    label: 'Skip for now',
-                    description: 'You can configure databases later from the Databases view.',
-                    value: 'skip'
-                }
-            ], {
-                placeHolder: 'Set up a database for this project?',
-                ignoreFocusOut: true
-            });
-            if (!databaseChoice) {
-                return;
-            }
-            let db;
-            if (databaseChoice?.value === 'create') {
-                db = await (0, dbs_1.createDb)(name, repos, settings.dumpsFolder, settings, { allowExistingOption: false });
-            }
-            else if (databaseChoice?.value === 'connect') {
-                db = await (0, dbs_1.createDb)(name, repos, settings.dumpsFolder, settings, { initialMethod: 'existing' });
-            }
-            if (databaseChoice.value !== 'skip' && !db) {
-                // User cancelled within DB creation flow.
-                return;
-            }
-            await (0, project_1.createProject)(name, repos, db);
-            if (db) {
-                // Ensure project creation follows the same version/branch switch path as manual DB selection.
-                await (0, dbs_1.selectDatabase)(db);
-            }
-            await refreshAll();
-        }
-        catch (err) {
-            (0, utils_1.showError)(err.message);
-        }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.selectProject', async (event) => {
-        await (0, project_1.selectProject)(event);
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.delete', async (event) => {
-        await (0, project_1.deleteProject)(event);
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.editSettings', async (event) => {
-        await (0, project_1.editProjectSettings)(event);
-        await refreshAll({ reason: 'ui' });
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.manageTickets', async (event) => {
-        await (0, project_1.manageProjectTickets)(event);
-        await refreshAll({ reason: 'ui' });
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.openTicket', async (event) => {
-        await (0, project_1.openProjectTicket)(event);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.duplicateProject', async (event) => {
-        await (0, project_1.duplicateProject)(event);
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.exportProject', async (event) => {
-        await (0, project_1.exportProject)(event);
-        await refreshAll({ reason: 'ui' });
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.importProject', async () => {
-        await (0, project_1.importProject)();
-        await refreshAll({ reason: 'ui' });
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.setup', async () => {
-        await (0, odooInstaller_1.setupOdooBranch)();
-        await refreshAll({ reason: 'ui' });
-    }));
-    // Quick Project Search
-    context.subscriptions.push(vscode.commands.registerCommand('odoo-debugger.quickProjectSearch', async () => {
-        await (0, project_1.quickProjectSearch)();
-        await refreshAll({ reason: 'ui' });
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.quickSearch', async () => {
-        const items = ((await providers.repo.getChildren()) ?? [])
-            .filter(item => !!item.command && getTreeItemLabel(item).trim().length > 0);
-        await quickSearchTreeItems(items, {
-            placeHolder: 'Search repositories...',
-            title: 'Repository Search',
-            emptyMessage: 'No repositories available to search.'
-        });
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.quickSearch', async () => {
-        const items = ((await providers.db.getChildren()) ?? [])
-            .filter(item => item.contextValue === 'database' && !!item.command);
-        await quickSearchTreeItems(items, {
-            placeHolder: 'Search databases...',
-            title: 'Database Search',
-            emptyMessage: 'No databases available to search.'
-        });
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.quickSearch', async () => {
-        const items = ((await providers.module.getChildren()) ?? [])
-            .filter(item => item.contextValue === 'module' && !!item.command);
-        await quickSearchTreeItems(items, {
-            placeHolder: 'Search modules...',
-            title: 'Module Search',
-            emptyMessage: 'No searchable modules found for the selected database.',
-            onPick: async (item) => {
-                const moduleData = item.moduleData ?? item.command?.arguments?.[0];
-                if (!moduleData?.name) {
-                    (0, utils_1.showInfo)('Unable to read module details for this selection.');
-                    return;
-                }
-                const stateSelection = await vscode.window.showQuickPick([
-                    {
-                        label: 'Set to Install',
-                        description: moduleData.name,
-                        action: 'install'
-                    },
-                    {
-                        label: 'Set to Upgrade',
-                        description: moduleData.name,
-                        action: 'upgrade'
-                    },
-                    {
-                        label: 'Clear State',
-                        description: moduleData.name,
-                        action: 'none'
-                    }
-                ], {
-                    placeHolder: `Set state for module "${moduleData.name}"`,
-                    ignoreFocusOut: true
-                });
-                if (!stateSelection) {
-                    return;
-                }
-                if (stateSelection.action === 'install') {
-                    await (0, module_1.setModuleToInstall)(moduleData);
-                }
-                else if (stateSelection.action === 'upgrade') {
-                    await (0, module_1.setModuleToUpgrade)(moduleData);
-                }
-                else {
-                    await (0, module_1.clearModuleState)(moduleData);
-                }
-                await refreshAll({ reason: 'ui' });
-            }
-        });
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('versionsManager.quickSearch', async () => {
-        const items = ((await providers.versions.getChildren()) ?? [])
-            .filter(item => {
-            const contextValue = item.contextValue;
-            return (contextValue === 'version' || contextValue === 'activeVersion') && !!item.command;
-        })
-            .map(item => providers.versions.getTreeItem(item));
-        await quickSearchTreeItems(items, {
-            placeHolder: 'Search versions...',
-            title: 'Version Search',
-            emptyMessage: 'No versions available to search.'
-        });
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectRepos.quickSearch', async () => {
-        const rootItems = ((await providers.projectRepos.getChildren()) ?? [])
-            .filter(item => item?.metadata?.kind === 'repo');
-        await quickSearchTreeItems(rootItems, {
-            placeHolder: 'Search project repositories...',
-            title: 'Project Repo Search',
-            emptyMessage: 'No project repositories available to search.',
-            onPick: async (item) => {
-                const repo = item?.metadata?.repo;
-                if (!repo?.path) {
-                    (0, utils_1.showInfo)('Select a repository to reveal.');
-                    return;
-                }
-                await (0, projectRepos_1.revealProjectRepo)(repo);
-            }
-        });
-    }));
-    // DBS
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.create', async () => {
-        try {
-            // Get settings from active version
-            const settings = await versionsService.getActiveVersionSettings();
-            const projects = await settingsStore_1.SettingsStore.getProjects();
-            const project = projects?.find((p) => p.isSelected);
-            if (!project) {
-                throw new Error('Select a project before running this action.');
-            }
-            const db = await (0, dbs_1.createDb)(project.name, project.repos, settings.dumpsFolder, settings);
-            if (db) {
-                project.dbs.push(db);
-                // Only save projects, not settings - settings are managed via versions
-                const data = await settingsStore_1.SettingsStore.load();
-                await settingsStore_1.SettingsStore.saveWithoutComments({
-                    projects,
-                    versions: data.versions,
-                    activeVersion: data.activeVersion,
-                    dbTemplates: data.dbTemplates
-                });
-                await (0, dbs_1.selectDatabase)(db);
-            }
-            await refreshAll();
-        }
-        catch (err) {
-            (0, utils_1.showError)(err.message);
-        }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.selectDb', async (event) => {
-        try {
-            await (0, dbs_1.selectDatabase)(event);
-            await refreshAll();
-        }
-        catch (err) {
-            (0, utils_1.showError)(`Failed to select database: ${err.message}`);
-            logger_1.logger.error('Error in database selection:', err);
-        }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.delete', async (event) => {
-        try {
-            await (0, dbs_1.deleteDb)(event);
-            await refreshAll();
-        }
-        catch (err) {
-            (0, utils_1.showError)(`Failed to delete database: ${err.message}`);
-            logger_1.logger.error('Error in database deletion:', err);
-        }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.restore', async (event) => {
-        try {
-            // restoreDb shows its own success notification.
-            await (0, dbs_1.restoreDb)(event);
-            await refreshAll();
-        }
-        catch (err) {
-            (0, utils_1.showError)(`Failed to restore database: ${err.message}`);
-            logger_1.logger.error('Error in database restoration:', err);
-        }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.changeVersion', async (event) => {
-        try {
-            await (0, dbs_1.changeDatabaseVersion)(event);
-            await refreshAll();
-        }
-        catch (err) {
-            (0, utils_1.showError)(`Failed to change database version: ${err.message}`);
-            logger_1.logger.error('Error in database version change:', err);
-        }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.configureRepoBranches', async (event) => {
-        try {
-            await (0, dbs_1.changeDatabaseProjectRepoBranches)(event);
-            await refreshAll({ reason: 'ui' });
-        }
-        catch (err) {
-            (0, utils_1.showError)(`Failed to update project repo branch mapping: ${err.message}`);
-            logger_1.logger.error('Error in database project repo branch mapping update:', err);
-        }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.manageTemplates', async () => {
-        try {
-            await (0, dbs_1.manageDatabaseTemplates)();
-            await refreshAll({ reason: 'ui' });
-        }
-        catch (err) {
-            (0, utils_1.showError)(`Failed to manage database templates: ${err.message}`);
-            logger_1.logger.error('Error in database template management:', err);
-        }
-    }));
-    // Repos
-    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
-        await (0, repos_1.selectRepo)(event);
-        await (0, projectWorkspace_1.rebuildProjectWorkspace)(context);
-        await refreshAll();
-    }));
-    // Modules
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.select', async (event) => {
-        await (0, module_1.selectModule)(event);
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.togglePsaeInternalModule', async (event) => {
-        await (0, module_1.togglePsaeInternalModule)(event);
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.create', async () => {
-        await (0, module_1.createModuleFromScaffold)();
-        await refreshAll({ reason: 'ui' });
-    }));
-    // Context menu commands for individual modules
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.setToInstall', async (event) => {
-        await (0, module_1.setModuleToInstall)(event);
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.setToUpgrade', async (event) => {
-        await (0, module_1.setModuleToUpgrade)(event);
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.clearState', async (event) => {
-        await (0, module_1.clearModuleState)(event);
-        await refreshAll();
-    }));
-    // Module Quick Actions
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.updateAll', async () => {
-        await (0, module_1.updateAllModules)();
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.updateInstalled', async () => {
-        await (0, module_1.updateInstalledModules)();
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.installAll', async () => {
-        await (0, module_1.installAllModules)();
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.clearAll', async () => {
-        await (0, module_1.clearAllModuleSelections)();
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.viewInstalled', async () => {
-        await (0, module_1.viewInstalledModules)();
-    }));
-    // Testing
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleTesting', async (event) => {
-        await (0, testing_1.toggleTesting)(event);
-        await refreshAll({ reason: 'ui' });
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleStopAfterInit', async () => {
-        await (0, testing_1.toggleStopAfterInit)();
-        await refreshAll({ reason: 'ui' });
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.setTestFile', async () => {
-        await (0, testing_1.setTestFile)();
-        await refreshAll({ reason: 'ui' });
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.addTestTag', async () => {
-        await (0, testing_1.addTestTag)();
-        providers.testing.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.removeTestTag', async (event) => {
-        await (0, testing_1.removeTestTag)(event);
-        providers.testing.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.cycleTestTagState', async (event) => {
-        await (0, testing_1.cycleTestTagState)(event);
-        providers.testing.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleLogLevel', async () => {
-        await (0, testing_1.toggleLogLevel)();
-        providers.testing.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.setSpecificLogLevel', async () => {
-        await (0, testing_1.setSpecificLogLevel)();
-        providers.testing.refresh();
-    }));
-    // Version management commands
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.createVersion', async () => {
-        try {
-            // Two prompts: branch, then name. Paths and ports come from the
-            // odooDebugger.defaultVersion.* settings and stay editable in the
-            // Versions tree after creation.
-            const activeSettings = await versionsService.getActiveVersionSettings();
-            const odooPath = activeSettings?.odooPath ? (0, utils_1.normalizePath)(activeSettings.odooPath) : undefined;
-            const branchItems = [];
-            if (odooPath && fs.existsSync(odooPath)) {
-                const metadata = await (0, gitService_1.getBranchesWithMetadata)(odooPath);
-                if (metadata.length > 0) {
-                    branchItems.push(...metadata.map(branch => ({
-                        label: branch.name,
-                        description: branch.type === 'remote' ? 'Remote branch' : 'Local branch',
-                        action: 'branch',
-                        branch: branch.name
-                    })));
-                }
-                else {
-                    const branches = await (0, utils_1.getGitBranches)(odooPath);
-                    branchItems.push(...branches.map(branch => ({
-                        label: branch,
-                        action: 'branch',
-                        branch
-                    })));
-                }
-            }
-            branchItems.push({
-                label: '$(pencil) Enter branch manually…',
-                description: 'e.g. "19.0", "saas-18.4", "master"',
-                action: 'manual'
-            });
-            const branchPick = await vscode.window.showQuickPick(branchItems, {
-                title: 'Create Version',
-                placeHolder: 'Select the Odoo branch for this version',
-                ignoreFocusOut: true
-            });
-            if (!branchPick) {
-                return;
-            }
-            let odooVersion = branchPick.branch;
-            if (branchPick.action === 'manual') {
-                odooVersion = (await vscode.window.showInputBox({
-                    title: 'Create Version',
-                    placeHolder: 'Enter Odoo version/branch (e.g. "19.0", "saas-18.4", "master")',
-                    ignoreFocusOut: true,
-                    validateInput: value => value.trim() ? undefined : 'Branch is required.'
-                }))?.trim();
-            }
-            if (!odooVersion) {
-                return;
-            }
-            const name = (await vscode.window.showInputBox({
-                title: 'Create Version',
-                prompt: 'Version name',
-                value: `Odoo ${odooVersion}`,
-                ignoreFocusOut: true,
-                validateInput: value => value.trim() ? undefined : 'Name is required.'
-            }))?.trim();
-            if (!name) {
-                return;
-            }
-            const version = await versionsService.createVersion(name, odooVersion);
-            await refreshAll({ reason: 'ui' });
-            const action = await (0, utils_1.showInfo)(`Version "${name}" created on branch "${odooVersion}".`, 'Activate Now');
-            if (action === 'Activate Now') {
-                await vscode.commands.executeCommand('odoo.setActiveVersion', version.id);
-            }
-        }
-        catch (error) {
-            (0, utils_1.showError)(`Failed to create version: ${error.message}`);
-        }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.openVersionDefaults', async () => {
-        await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:AhmadMansour.odoo-devtools-vscode odooDebugger.defaultVersion');
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.changeBranch', async (versionIdOrTreeItem) => {
-        try {
-            const versionId = extractVersionIdFromArg(versionIdOrTreeItem);
-            if (!versionId) {
-                (0, utils_1.showError)('Select a version before continuing.');
-                return;
-            }
-            const version = versionsService.getVersion(versionId);
-            if (!version) {
-                (0, utils_1.showError)('The selected version could not be found.');
-                return;
-            }
-            // Get Odoo path from the specific version being edited
-            const odooPath = version.settings.odooPath;
-            let newBranch;
-            if (odooPath) {
-                // Try to get Git branches from the Odoo path
-                const branches = await (0, utils_1.getGitBranches)(odooPath);
-                if (branches.length > 0) {
-                    // Show branch selection with current branch highlighted
-                    const items = branches.map(branch => ({
-                        label: branch,
-                        description: branch === version.odooVersion ? '(current)' : ''
-                    }));
-                    const selected = await vscode.window.showQuickPick(items, {
-                        placeHolder: `Current branch: ${version.odooVersion}. Select new branch:`,
-                        title: `Change branch for "${version.name}"`
-                    });
-                    newBranch = selected?.label;
-                }
-                else {
-                    // Fallback to manual input if no branches found
-                    const result = await (0, utils_1.showWarning)(`No Git branches found in Odoo path: ${odooPath}. Would you like to enter the branch manually?`, 'Enter Manually', 'Cancel');
-                    if (result === 'Enter Manually') {
-                        newBranch = await vscode.window.showInputBox({
-                            placeHolder: version.odooVersion,
-                            prompt: 'Enter new Odoo version/branch',
-                            value: version.odooVersion
-                        });
-                    }
-                }
-            }
-            else {
-                // No Odoo path configured, show warning and fallback to manual input
-                const result = await (0, utils_1.showWarning)('Odoo path is not configured. Please set the Odoo path in settings first, or enter the branch manually.', 'Enter Manually', 'Cancel');
-                if (result === 'Enter Manually') {
-                    newBranch = await vscode.window.showInputBox({
-                        placeHolder: version.odooVersion,
-                        prompt: 'Enter new Odoo version/branch',
-                        value: version.odooVersion
-                    });
-                }
-            }
-            if (!newBranch || newBranch === version.odooVersion) {
-                return; // No change or cancelled
-            }
-            await versionsService.updateVersion(versionId, { odooVersion: newBranch });
-            (0, utils_1.showInfo)(`Branch changed from "${version.odooVersion}" to "${newBranch}" for version "${version.name}"`);
-        }
-        catch (error) {
-            (0, utils_1.showError)(`Failed to change branch: ${error.message}`);
-        }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setActiveVersion', async (versionIdOrTreeItem) => {
-        try {
-            let versionId = extractVersionIdFromArg(versionIdOrTreeItem);
-            if (!versionId) {
-                // No version provided - show version picker
-                const versions = versionsService.getVersions();
-                const items = versions.map(v => ({
-                    label: v.name,
-                    description: v.odooVersion,
-                    detail: v.isActive ? '⭐ Currently active' : '',
-                    versionId: v.id
-                }));
-                const selected = await vscode.window.showQuickPick(items, {
-                    placeHolder: 'Select version to activate'
-                });
-                if (!selected) {
-                    return;
-                }
-                versionId = selected.versionId;
-            }
-            const success = await versionsService.setActiveVersion(versionId);
-            if (success) {
-                const version = versionsService.getVersion(versionId);
-                (0, utils_1.showInfo)(`Activated version: ${version?.name}`);
-                if (version) {
-                    // Align the core repos to the version's branch through the
-                    // shared switch pipeline (honors databaseSwitchBehavior).
-                    await (0, environment_1.alignEnvironment)({ versionId: version.id }, { label: `Version "${version.name}"` });
-                }
-                await refreshAll(); // Refresh all views to reflect new active version
-            }
-            else {
-                (0, utils_1.showError)('Unable to activate the selected version.');
-            }
-        }
-        catch (error) {
-            (0, utils_1.showError)(`Unable to activate the selected version: ${error.message}`);
-        }
-    }));
-    // Helper functions for setting editing
-    const editNumberSetting = async (settingKey, currentValue) => {
-        const displayValue = currentValue?.toString() || '';
-        const newValue = await vscode.window.showInputBox({
-            placeHolder: `Enter ${settingKey} (number)`,
-            value: displayValue,
-            prompt: `Edit ${settingKey}`,
-            validateInput: (input) => {
-                const num = parseFloat(input);
-                if (isNaN(num) || num < 0) {
-                    return 'Please enter a valid non-negative number';
-                }
-                if ((settingKey === 'portNumber' || settingKey === 'shellPortNumber') && (num < 1024 || num > 65535)) {
-                    return 'Port number must be between 1024 and 65535';
-                }
-                return undefined;
-            }
-        });
-        return newValue !== undefined ? parseFloat(newValue) : undefined;
-    };
-    const editPathSetting = async (settingKey, currentValue) => {
-        const pathAction = await vscode.window.showQuickPick([
-            { label: 'Enter Path Manually', value: 'manual' },
-            { label: 'Browse for Folder', value: 'browse' }
-        ], { placeHolder: `How would you like to set ${settingKey}?` });
-        if (pathAction?.value === 'manual') {
-            return await vscode.window.showInputBox({
-                placeHolder: `Enter ${settingKey}`,
-                value: currentValue?.toString() || '',
-                prompt: `Edit ${settingKey}`
-            });
-        }
-        else if (pathAction?.value === 'browse') {
-            const result = await vscode.window.showOpenDialog({
-                canSelectFolders: settingKey !== 'pythonPath',
-                canSelectFiles: settingKey === 'pythonPath',
-                canSelectMany: false,
-                title: `Select ${settingKey}`
-            });
-            return result?.[0]?.fsPath;
-        }
-        return undefined;
-    };
-    const editDevModeSetting = async (currentValue) => {
-        const devModeOption = await vscode.window.showQuickPick([
-            { label: 'all', description: 'Enable all development features' },
-            { label: 'xml', description: 'Enable XML development features' },
-            { label: 'reload', description: 'Enable auto-reload' },
-            { label: 'qweb', description: 'Enable QWeb development' },
-            { label: 'Custom', description: 'Enter custom development parameters' },
-            { label: 'None', description: 'Disable development mode' }
-        ], {
-            placeHolder: 'Select development mode',
-            title: 'Development Mode Settings'
-        });
-        if (!devModeOption) {
-            return undefined;
-        }
-        if (devModeOption.label === 'Custom') {
-            const userInput = await vscode.window.showInputBox({
-                placeHolder: 'Enter development mode value (e.g., xml, reload, qweb)',
-                value: currentValue?.toString().replace('--dev=', '') || '',
-                prompt: 'Development mode value (--dev= will be added automatically)'
-            });
-            return userInput ? `--dev=${userInput}` : '';
-        }
-        else if (devModeOption.label === 'None') {
-            return '';
-        }
-        else {
-            return `--dev=${devModeOption.label}`;
-        }
-    };
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.editVersionSetting', async (versionIdOrTreeItem, settingKey, currentValue) => {
-        try {
-            let versionId;
-            let key;
-            let value;
-            // Handle both direct command calls and context menu calls
-            if (typeof versionIdOrTreeItem === 'string') {
-                // Direct command call with parameters
-                versionId = versionIdOrTreeItem;
-                key = settingKey;
-                value = currentValue;
-            }
-            else if (versionIdOrTreeItem?.versionId) {
-                // Context menu call - extract from tree item
-                versionId = versionIdOrTreeItem.versionId;
-                key = versionIdOrTreeItem.key;
-                value = versionIdOrTreeItem.value;
-            }
-            else {
-                (0, utils_1.showError)('This command was invoked with invalid parameters.');
-                return;
-            }
-            let newValue = undefined;
-            // Handle different types of settings
-            if (['portNumber', 'shellPortNumber', 'limitTimeReal', 'limitTimeCpu', 'maxCronThreads'].includes(key)) {
-                newValue = await editNumberSetting(key, value);
-            }
-            else if (['odooPath', 'enterprisePath', 'designThemesPath', 'customAddonsPath', 'pythonPath', 'dumpsFolder'].includes(key)) {
-                newValue = await editPathSetting(key, value);
-            }
-            else if (key === 'devMode') {
-                newValue = await editDevModeSetting(value);
-            }
-            else {
-                // Default string input for other settings
-                newValue = await vscode.window.showInputBox({
-                    placeHolder: `Enter ${key}`,
-                    value: value?.toString() || '',
-                    prompt: `Edit ${key}`
-                });
-            }
-            if (newValue === undefined) {
-                return; // User cancelled
-            }
-            await versionsService.updateVersion(versionId, {
-                settings: { [key]: newValue }
-            });
-            if (['customAddonsPath'].includes(key)) {
-                (0, runtimeCache_1.invalidateRepositoryDiscoveryCache)();
-                (0, runtimeCache_1.invalidateModuleDiscoveryCache)();
-            }
-            else if (['odooPath', 'enterprisePath', 'designThemesPath', 'subModulesPaths'].includes(key)) {
-                (0, runtimeCache_1.invalidateModuleDiscoveryCache)();
-            }
-            (0, utils_1.showInfo)(`Updated ${key} successfully`);
-            await refreshAll();
-        }
-        catch (error) {
-            (0, utils_1.showError)(`Failed to edit setting: ${error.message}`);
-        }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.cloneVersion', async (versionIdOrTreeItem) => {
-        try {
-            let versionId = extractVersionIdFromArg(versionIdOrTreeItem);
-            if (!versionId) {
-                // No version provided - show version picker
-                const versions = versionsService.getVersions();
-                const items = versions.map(v => ({
-                    label: v.name,
-                    description: v.odooVersion,
-                    versionId: v.id
-                }));
-                const selected = await vscode.window.showQuickPick(items, {
-                    placeHolder: 'Select version to clone'
-                });
-                if (!selected) {
-                    return;
-                }
-                versionId = selected.versionId;
-            }
-            const name = await vscode.window.showInputBox({
-                placeHolder: 'Enter name for the cloned version',
-                prompt: 'Version name'
-            });
-            if (!name) {
-                return;
-            }
-            const clonedVersion = await versionsService.cloneVersion(versionId, name);
-            if (clonedVersion) {
-                (0, utils_1.showInfo)(`Version "${name}" cloned successfully`);
-            }
-            else {
-                (0, utils_1.showError)('Failed to clone the selected version.');
-            }
-        }
-        catch (error) {
-            (0, utils_1.showError)(`Failed to clone the selected version: ${error.message}`);
-        }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.deleteVersion', async (versionIdOrTreeItem) => {
-        try {
-            let versionId = extractVersionIdFromArg(versionIdOrTreeItem);
-            if (!versionId) {
-                // No version provided - show version picker
-                const versions = versionsService.getVersions();
-                const items = versions.filter(v => !v.isActive).map(v => ({
-                    label: v.name,
-                    description: v.odooVersion,
-                    versionId: v.id
-                }));
-                if (items.length === 0) {
-                    (0, utils_1.showInfo)('There are no versions available to delete (the active version cannot be removed).');
-                    return;
-                }
-                const selected = await vscode.window.showQuickPick(items, {
-                    placeHolder: 'Select version to delete'
-                });
-                if (!selected) {
-                    return;
-                }
-                versionId = selected.versionId;
-            }
-            const version = versionsService.getVersion(versionId);
-            if (!version) {
-                (0, utils_1.showError)('The selected version could not be found.');
-                return;
-            }
-            const confirm = await (0, notifications_1.showModalWarning)(`Are you sure you want to delete version "${version.name}"?`, 'Delete');
-            if (confirm !== 'Delete') {
-                return;
-            }
-            const success = await versionsService.deleteVersion(versionId);
-            if (success) {
-                (0, utils_1.showInfo)(`Version "${version.name}" deleted successfully`);
-            }
-            else {
-                (0, utils_1.showError)('Failed to delete the selected version.');
-            }
-        }
-        catch (error) {
-            (0, utils_1.showError)(`Failed to delete the selected version.: ${error.message}`);
-        }
-    }));
-    // Version settings context menu commands
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setSettingToDefault', async (settingTreeItem) => {
-        try {
-            if (!settingTreeItem) {
-                (0, utils_1.showError)('Select a setting before continuing.');
-                return;
-            }
-            // Extract version ID and setting key from the tree item
-            const versionId = settingTreeItem.versionId;
-            const settingKey = settingTreeItem.key;
-            if (!versionId || !settingKey) {
-                (0, utils_1.showError)('Could not identify the selected setting.');
-                return;
-            }
-            const success = await versionsService.setSettingToDefault(versionId, settingKey);
-            if (!success) {
-                (0, utils_1.showError)('Unable to reset this setting to its default value.');
-            }
-        }
-        catch (error) {
-            (0, utils_1.showError)(`Failed to reset setting to default: ${error.message}`);
-        }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setSettingAsDefault', async (settingTreeItem) => {
-        try {
-            if (!settingTreeItem) {
-                (0, utils_1.showError)('Select a setting before continuing.');
-                return;
-            }
-            // Extract version ID and setting key from the tree item
-            const versionId = settingTreeItem.versionId;
-            const settingKey = settingTreeItem.key;
-            if (!versionId || !settingKey) {
-                (0, utils_1.showError)('Could not identify the selected setting.');
-                return;
-            }
-            const success = await versionsService.setSettingAsDefault(versionId, settingKey);
-            if (!success) {
-                (0, utils_1.showError)('Unable to save this setting as the default.');
-            }
-        }
-        catch (error) {
-            (0, utils_1.showError)(`Unable to save this setting as the default: ${error.message}`);
-        }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setAllSettingsToDefault', async (versionTreeItem) => {
-        try {
-            const versionId = extractVersionIdFromArg(versionTreeItem);
-            if (!versionId) {
-                (0, utils_1.showError)('Select a version before continuing.');
-                return;
-            }
-            const version = versionsService.getVersion(versionId);
-            if (!version) {
-                (0, utils_1.showError)('The selected version could not be found.');
-                return;
-            }
-            const confirm = await (0, utils_1.showWarning)(`Are you sure you want to reset ALL settings for version "${version.name}" to their default values?`, 'Reset All', 'Cancel');
-            if (confirm !== 'Reset All') {
-                return;
-            }
-            const success = await versionsService.setAllSettingsToDefault(versionId);
-            if (!success) {
-                (0, utils_1.showError)('Unable to reset all settings to their default values.');
-            }
-        }
-        catch (error) {
-            (0, utils_1.showError)(`Failed to reset all settings to default: ${error.message}`);
-        }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setAllSettingsAsDefault', async (versionTreeItem) => {
-        try {
-            const versionId = extractVersionIdFromArg(versionTreeItem);
-            if (!versionId) {
-                (0, utils_1.showError)('Select a version before continuing.');
-                return;
-            }
-            const version = versionsService.getVersion(versionId);
-            if (!version) {
-                (0, utils_1.showError)('The selected version could not be found.');
-                return;
-            }
-            const confirm = await (0, utils_1.showWarning)(`Are you sure you want to save ALL settings from version "${version.name}" as new default values?`, 'Save All as Default', 'Cancel');
-            if (confirm !== 'Save All as Default') {
-                return;
-            }
-            const success = await versionsService.setAllSettingsAsDefault(versionId);
-            if (!success) {
-                (0, utils_1.showError)('Unable to save these settings as the new defaults.');
-            }
-        }
-        catch (error) {
-            (0, utils_1.showError)(`Unable to save these settings as the new defaults.: ${error.message}`);
-        }
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.refreshVersions', async () => {
-        await versionsService.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.manageVersions', async () => {
-        const actions = [
-            'Create New Version',
-            'Switch Active Version',
-            'Clone Version',
-            'Delete Version'
-        ];
-        const action = await vscode.window.showQuickPick(actions, {
-            placeHolder: 'Choose version management action'
-        });
-        switch (action) {
-            case 'Create New Version':
-                vscode.commands.executeCommand('odoo.createVersion');
-                break;
-            case 'Switch Active Version':
-                vscode.commands.executeCommand('odoo.setActiveVersion');
-                break;
-            case 'Clone Version':
-                vscode.commands.executeCommand('odoo.cloneVersion');
-                break;
-            case 'Delete Version':
-                vscode.commands.executeCommand('odoo.deleteVersion');
-                break;
-        }
-    }));
-    // Start Server and Start Shell commands for versions panel
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.startServer', async () => {
-        await (0, debugger_1.startDebugServer)();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.startShell', async () => {
-        await (0, debugger_1.startDebugShell)();
-    }));
+    (0, commands_1.registerAllCommands)({ context, providers, versionsService, sortPreferences, refreshAll });
 }
 function deactivate() {
     // All cleanup runs through context.subscriptions.
@@ -1380,3171 +189,6 @@ module.exports = require("vscode");
 
 /***/ }),
 /* 2 */
-/***/ ((module) => {
-
-module.exports = require("node:fs");
-
-/***/ }),
-/* 3 */
-/***/ ((module) => {
-
-module.exports = require("node:path");
-
-/***/ }),
-/* 4 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.CONFIG = exports.showBriefStatus = exports.showAutoInfo = exports.showModalWarning = exports.showWarning = exports.showInfo = exports.showError = exports.showMessage = exports.MessageType = void 0;
-exports.stripSettings = stripSettings;
-exports.addActiveIndicator = addActiveIndicator;
-exports.getDatabaseLabel = getDatabaseLabel;
-exports.getWorkspacePath = getWorkspacePath;
-exports.normalizePath = normalizePath;
-exports.findModules = findModules;
-exports.findRepositories = findRepositories;
-exports.discoverModulesInRepos = discoverModulesInRepos;
-exports.createInfoTreeItem = createInfoTreeItem;
-exports.readFromFile = readFromFile;
-exports.camelCaseToTitleCase = camelCaseToTitleCase;
-exports.getSettingDisplayName = getSettingDisplayName;
-exports.getSettingDisplayValue = getSettingDisplayValue;
-exports.getGitBranches = getGitBranches;
-exports.getDefaultVersionSettings = getDefaultVersionSettings;
-const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(5));
-const path = __importStar(__webpack_require__(6));
-const childProcess = __importStar(__webpack_require__(7));
-const settings_1 = __webpack_require__(8);
-const gitService_1 = __webpack_require__(9);
-const runtimeCache_1 = __webpack_require__(11);
-const notifications_1 = __webpack_require__(12);
-const jsonc_parser_1 = __webpack_require__(13);
-const logger_1 = __webpack_require__(10);
-// Re-exported so existing `from './utils'` imports keep working; new code
-// should import these from './services/notifications' directly.
-var notifications_2 = __webpack_require__(12);
-Object.defineProperty(exports, "MessageType", ({ enumerable: true, get: function () { return notifications_2.MessageType; } }));
-Object.defineProperty(exports, "showMessage", ({ enumerable: true, get: function () { return notifications_2.showMessage; } }));
-Object.defineProperty(exports, "showError", ({ enumerable: true, get: function () { return notifications_2.showError; } }));
-Object.defineProperty(exports, "showInfo", ({ enumerable: true, get: function () { return notifications_2.showInfo; } }));
-Object.defineProperty(exports, "showWarning", ({ enumerable: true, get: function () { return notifications_2.showWarning; } }));
-Object.defineProperty(exports, "showModalWarning", ({ enumerable: true, get: function () { return notifications_2.showModalWarning; } }));
-Object.defineProperty(exports, "showAutoInfo", ({ enumerable: true, get: function () { return notifications_2.showAutoInfo; } }));
-Object.defineProperty(exports, "showBriefStatus", ({ enumerable: true, get: function () { return notifications_2.showBriefStatus; } }));
-const launchJsonFileContent = `{
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
-    "version": "0.2.0",
-
-    // Debug configurations for VS Code
-    // Odoo configurations will be automatically added here by the Odoo Debugger extension
-    "configurations": []
-}`;
-const debuggerDataFileContent = `{
-    // Odoo Debugger Extension Configuration
-    // This file stores your project settings and configurations
-    "settings": {
-        // Add your Odoo settings here
-    },
-    "projects": [],
-    "dbTemplates": []
-}`;
-/**
- * Strip settings from DebuggerData to ensure settings are managed exclusively by versions
- */
-function stripSettings(data) {
-    return {
-        projects: data.projects,
-        versions: data.versions,
-        activeVersion: data.activeVersion,
-        dbTemplates: data.dbTemplates
-    };
-}
-// ============================================================================
-// CONFIGURATION
-// ============================================================================
-/**
- * Configuration options for file operations
- */
-exports.CONFIG = {
-    tabSize: 4,
-    insertSpaces: true
-};
-// ============================================================================
-// UI UTILITIES
-// ============================================================================
-/**
- * Adds the pointing hand emoji (👉) to the beginning of a string if the condition is true
- * Used consistently across the extension for indicating active/selected items
- * @param text The text to potentially prefix
- * @param isActive Whether to add the pointing hand emoji
- * @returns The text with or without the pointing hand prefix
- */
-function addActiveIndicator(text, isActive) {
-    return `${isActive ? '👉' : ''} ${text}`;
-}
-/**
- * Returns a user-friendly database label prioritizing displayName, then name, then id.
- */
-function getDatabaseLabel(db) {
-    if (!db) {
-        return 'Unknown Database';
-    }
-    const candidates = [
-        typeof db.displayName === 'string' ? db.displayName.trim() : '',
-        typeof db.name === 'string' ? db.name.trim() : '',
-        typeof db.id === 'string' ? db.id.trim() : ''
-    ].filter(Boolean);
-    return candidates[0] || 'Unknown Database';
-}
-// ============================================================================
-// WORKSPACE & PATH UTILITIES
-// ============================================================================
-/**
- * Gets the workspace folder path with validation
- * @returns workspace path or null if no workspace is open
- */
-function getWorkspacePath() {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders || workspaceFolders.length === 0) {
-        (0, notifications_1.showError)("Open a workspace to use this command.");
-        return null;
-    }
-    return workspaceFolders[0].uri.fsPath;
-}
-/**
- * Normalizes a path to be absolute, relative to workspace if needed
- */
-function normalizePath(inputPath) {
-    if (path.isAbsolute(inputPath)) {
-        return inputPath;
-    }
-    const workspacePath = getWorkspacePath();
-    if (!workspacePath) {
-        return inputPath; // Return as-is if no workspace
-    }
-    return path.join(workspacePath, inputPath);
-}
-// ============================================================================
-// FILE SYSTEM UTILITIES
-// ============================================================================
-/**
- * Ensures the .vscode directory exists in the workspace
- * @param workspacePath - the workspace root path
- * @returns the .vscode directory path
- */
-function ensureVSCodeDirectory(workspacePath) {
-    const vscodeDir = path.join(workspacePath, '.vscode');
-    try {
-        if (!fs.existsSync(vscodeDir)) {
-            fs.mkdirSync(vscodeDir, { recursive: true });
-        }
-    }
-    catch (error) {
-        throw new Error(`Failed to create .vscode directory: ${error}`);
-    }
-    return vscodeDir;
-}
-const DEFAULT_MODULE_EXCLUDES = [
-    '**/node_modules/**',
-    '**/.venv/**',
-    '**/__pycache__/**',
-    '**/.git/**'
-];
-const DEFAULT_REPOSITORY_EXCLUDES = [
-    '**/node_modules/**',
-    '**/.venv/**',
-    '**/__pycache__/**'
-];
-function globToRegExp(pattern) {
-    const normalizedPattern = pattern.split(path.sep).join('/');
-    const placeholders = {
-        doubleStar: '__GLOB_DOUBLE_STAR__',
-        singleStar: '__GLOB_SINGLE_STAR__',
-        question: '__GLOB_QUESTION__'
-    };
-    let working = normalizedPattern
-        .replaceAll('**', placeholders.doubleStar)
-        .replaceAll('*', placeholders.singleStar)
-        .replaceAll('?', placeholders.question);
-    working = working.replaceAll(/[.+^${}()|[\]\\]/g, String.raw `\$&`);
-    working = working
-        .replaceAll(new RegExp(placeholders.doubleStar, 'g'), '.*')
-        .replaceAll(new RegExp(placeholders.singleStar, 'g'), '[^/]*')
-        .replaceAll(new RegExp(placeholders.question, 'g'), '[^/]');
-    return new RegExp(`^${working}$`, 'i');
-}
-function compilePatterns(patterns) {
-    return patterns.map(globToRegExp);
-}
-function shouldExcludePath(fullPath, root, regexes) {
-    if (regexes.length === 0) {
-        return false;
-    }
-    const normalized = fullPath.split(path.sep).join('/');
-    const relative = normalized.startsWith(root) ? normalized.slice(root.length) : normalized;
-    const candidates = new Set();
-    candidates.add(normalized);
-    candidates.add(`${normalized}/`);
-    if (relative) {
-        const trimmed = relative.replace(/^\//, '');
-        candidates.add(trimmed);
-        candidates.add(`${trimmed}/`);
-    }
-    for (const candidate of candidates) {
-        for (const regex of regexes) {
-            if (regex.test(candidate)) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-function getSearchOptions(kind, overrides = {}) {
-    const { maxDepth, maxEntries, patterns } = resolveSearchConfig(kind, overrides);
-    return {
-        maxDepth,
-        maxEntries,
-        excludeRegexes: compilePatterns(patterns),
-        token: overrides.token
-    };
-}
-function resolveSearchConfig(kind, overrides = {}) {
-    const config = vscode.workspace.getConfiguration('odooDebugger.search');
-    const maxDepth = Math.max(0, overrides.maxDepth ?? config.get('maxDepth', 4));
-    const maxEntries = Math.max(1, overrides.maxEntries ?? config.get('maxEntries', 100000));
-    const patternKey = kind === 'modules' ? 'excludePatterns.modules' : 'excludePatterns.repositories';
-    const defaults = kind === 'modules' ? DEFAULT_MODULE_EXCLUDES : DEFAULT_REPOSITORY_EXCLUDES;
-    const patterns = overrides.excludePatterns ?? config.get(patternKey, defaults);
-    return { maxDepth, maxEntries, patterns };
-}
-function buildDiscoveryCacheKey(kind, targetPath, overrides = {}) {
-    const normalizedRoot = path.resolve(normalizePath(targetPath));
-    const { maxDepth, maxEntries, patterns } = resolveSearchConfig(kind, overrides);
-    return JSON.stringify({
-        kind,
-        normalizedRoot,
-        maxDepth,
-        maxEntries,
-        patterns
-    });
-}
-function discoverDirectories(targetPath, kind, options) {
-    if (!targetPath) {
-        (0, notifications_1.showError)('Enter a target path to continue.');
-        return [];
-    }
-    const normalizedRoot = normalizePath(targetPath);
-    if (!fs.existsSync(normalizedRoot)) {
-        (0, notifications_1.showError)(`Path does not exist: ${normalizedRoot}`);
-        return [];
-    }
-    const stack = [{ dir: normalizedRoot, depth: 0 }];
-    const visited = new Set();
-    const results = [];
-    let processed = 0;
-    let limitWarningShown = false;
-    const rootNormalized = normalizedRoot.split(path.sep).join('/');
-    while (stack.length > 0) {
-        if (options.token?.isCancellationRequested) {
-            break;
-        }
-        const current = stack.pop();
-        const resolved = path.resolve(current.dir);
-        if (visited.has(resolved)) {
-            continue;
-        }
-        visited.add(resolved);
-        if (current.depth > 0 && shouldExcludePath(resolved, rootNormalized, options.excludeRegexes)) {
-            continue;
-        }
-        let entries;
-        try {
-            entries = fs.readdirSync(resolved, { withFileTypes: true });
-        }
-        catch (error) {
-            logger_1.logger.warn(`Failed to read directory ${resolved}:`, error);
-            continue;
-        }
-        processed++;
-        if (processed > options.maxEntries) {
-            if (!limitWarningShown) {
-                (0, notifications_1.showWarning)(`Search limit reached while scanning ${targetPath}. Some folders may be skipped. Adjust "odooDebugger.search.maxEntries" to increase the limit.`);
-                limitWarningShown = true;
-            }
-            break;
-        }
-        const hasManifest = entries.some(entry => entry.isFile() && entry.name === '__manifest__.py');
-        const hasGitDir = entries.some(entry => entry.isDirectory() && entry.name === '.git');
-        if (kind === 'modules' && hasManifest) {
-            results.push({ path: resolved, name: path.basename(resolved) });
-            continue;
-        }
-        if (kind === 'repositories' && hasGitDir) {
-            results.push({ path: resolved, name: path.basename(resolved) });
-            // Do not recurse into repository contents.
-            continue;
-        }
-        if (current.depth >= options.maxDepth) {
-            continue;
-        }
-        for (const entry of entries) {
-            if (!entry.isDirectory()) {
-                continue;
-            }
-            if (entry.name === '.' || entry.name === '..') {
-                continue;
-            }
-            const childPath = path.join(resolved, entry.name);
-            stack.push({ dir: childPath, depth: current.depth + 1 });
-        }
-    }
-    return results.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-}
-function findModules(targetPath, overrides = {}) {
-    const options = getSearchOptions('modules', overrides);
-    return discoverDirectories(targetPath, 'modules', options);
-}
-function findRepositories(targetPath, overrides = {}) {
-    if (overrides.token) {
-        const options = getSearchOptions('repositories', overrides);
-        return discoverDirectories(targetPath, 'repositories', options);
-    }
-    const cacheKey = buildDiscoveryCacheKey('repositories', targetPath, overrides);
-    return runtimeCache_1.runtimeCache.getRepositoryDiscovery(cacheKey, () => {
-        const options = getSearchOptions('repositories', overrides);
-        return discoverDirectories(targetPath, 'repositories', options);
-    });
-}
-const PSAE_INTERNAL_REGEX = /^ps[a-z]*-internal$/i;
-function buildModuleDiscoveryCacheKey(repos, options) {
-    const searchOverrides = options.search ?? {};
-    const searchConfig = resolveSearchConfig('modules', searchOverrides);
-    const repoPaths = repos
-        .map(repo => `${repo.name}:${path.resolve(normalizePath(repo.path))}`)
-        .sort((a, b) => a.localeCompare(b));
-    const manualIncludes = (options.manualIncludePaths ?? [])
-        .map(entry => path.resolve(normalizePath(entry)))
-        .sort((a, b) => a.localeCompare(b));
-    return JSON.stringify({
-        repoPaths,
-        manualIncludes,
-        search: searchConfig
-    });
-}
-function findRepoContext(repos, targetPath) {
-    for (const repo of repos) {
-        const repoPath = normalizePath(repo.path);
-        const relative = path.relative(repoPath, targetPath);
-        if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
-            return { repoName: repo.name, repoPath };
-        }
-        if (!relative.startsWith('..')) {
-            // When target is exactly the repo root, relative can be ''
-            return { repoName: repo.name, repoPath };
-        }
-    }
-    return undefined;
-}
-function addPsaeDirectory(psaeMap, pathKey, repoName, dirName) {
-    if (!psaeMap.has(pathKey)) {
-        psaeMap.set(pathKey, { repoName, dirName, moduleNames: new Set() });
-    }
-}
-function toPosixRelative(relativePath) {
-    return relativePath.split(path.sep).join('/');
-}
-function discoverModulesInRepos(repos, options = {}) {
-    const searchOverrides = options.search ?? {};
-    if (searchOverrides.token) {
-        return computeModuleDiscovery(repos, options, searchOverrides);
-    }
-    const cacheKey = buildModuleDiscoveryCacheKey(repos, options);
-    return runtimeCache_1.runtimeCache.getModuleDiscovery(cacheKey, () => computeModuleDiscovery(repos, options, searchOverrides));
-}
-function computeModuleDiscovery(repos, options, searchOverrides) {
-    const modulesByPath = new Map();
-    const psaeDirectories = new Map();
-    const accumulateModule = (entry, repoName, repoRoot) => {
-        const resolvedRepoRoot = path.resolve(repoRoot);
-        const resolvedModulePath = path.resolve(entry.path);
-        const relative = path.relative(resolvedRepoRoot, resolvedModulePath);
-        const normalizedRelative = relative ? toPosixRelative(relative) : entry.name;
-        const segments = normalizedRelative.split('/').filter(Boolean);
-        const psaeIndex = segments.findIndex(segment => PSAE_INTERNAL_REGEX.test(segment));
-        let isPsaeInternal = false;
-        let psInternalDirName;
-        let psInternalDirPath;
-        if (psaeIndex >= 0) {
-            isPsaeInternal = true;
-            psInternalDirName = segments[psaeIndex];
-            const dirSegments = segments.slice(0, psaeIndex + 1);
-            psInternalDirPath = path.join(resolvedRepoRoot, ...dirSegments);
-            addPsaeDirectory(psaeDirectories, psInternalDirPath, repoName, psInternalDirName);
-            psaeDirectories.get(psInternalDirPath)?.moduleNames.add(entry.name);
-        }
-        modulesByPath.set(resolvedModulePath, {
-            path: resolvedModulePath,
-            name: entry.name,
-            repoName,
-            repoPath: resolvedRepoRoot,
-            relativePath: normalizedRelative,
-            isPsaeInternal,
-            psInternalDirName,
-            psInternalDirPath
-        });
-    };
-    for (const repo of repos) {
-        const repoPath = normalizePath(repo.path);
-        if (!fs.existsSync(repoPath)) {
-            continue;
-        }
-        const repoModules = findModules(repoPath, searchOverrides);
-        for (const module of repoModules) {
-            accumulateModule(module, repo.name, repoPath);
-        }
-    }
-    for (const manualRaw of options.manualIncludePaths ?? []) {
-        const manualPath = normalizePath(manualRaw);
-        if (!fs.existsSync(manualPath)) {
-            continue;
-        }
-        const repoContext = findRepoContext(repos, manualPath);
-        const repoName = repoContext?.repoName ?? 'unknown';
-        const repoRoot = repoContext?.repoPath ?? path.dirname(manualPath);
-        const resolvedRepoRoot = path.resolve(repoRoot);
-        const dirName = path.basename(manualPath);
-        addPsaeDirectory(psaeDirectories, manualPath, repoName, dirName);
-        const manualModules = findModules(manualPath, searchOverrides);
-        for (const module of manualModules) {
-            if (modulesByPath.has(path.resolve(module.path))) {
-                psaeDirectories.get(manualPath)?.moduleNames.add(module.name);
-                continue;
-            }
-            const relative = repoContext
-                ? toPosixRelative(path.relative(resolvedRepoRoot, module.path))
-                : toPosixRelative(path.join(dirName, module.name));
-            modulesByPath.set(path.resolve(module.path), {
-                path: path.resolve(module.path),
-                name: module.name,
-                repoName,
-                repoPath: resolvedRepoRoot,
-                relativePath: relative || module.name,
-                isPsaeInternal: true,
-                psInternalDirName: dirName,
-                psInternalDirPath: manualPath
-            });
-            psaeDirectories.get(manualPath)?.moduleNames.add(module.name);
-        }
-    }
-    const modules = Array.from(modulesByPath.values()).sort((a, b) => {
-        const repoCompare = a.repoName.localeCompare(b.repoName, undefined, { sensitivity: 'base' });
-        if (repoCompare !== 0) {
-            return repoCompare;
-        }
-        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
-    });
-    const psaeDirs = Array.from(psaeDirectories.entries())
-        .map(([dirPath, info]) => ({
-        path: dirPath,
-        repoName: info.repoName,
-        dirName: info.dirName,
-        moduleNames: Array.from(info.moduleNames).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-    }))
-        .sort((a, b) => {
-        const repoCompare = a.repoName.localeCompare(b.repoName, undefined, { sensitivity: 'base' });
-        if (repoCompare !== 0) {
-            return repoCompare;
-        }
-        return a.dirName.localeCompare(b.dirName, undefined, { sensitivity: 'base' });
-    });
-    return { modules, psaeDirectories: psaeDirs };
-}
-/**
- * Creates a read-only tree item used for informational placeholders.
- */
-function createInfoTreeItem(message) {
-    const item = new vscode.TreeItem(message, vscode.TreeItemCollapsibleState.None);
-    item.contextValue = 'info';
-    return item;
-}
-// ============================================================================
-// FILE I/O UTILITIES
-// ============================================================================
-/**
- * Creates initial data files for the Odoo debugger
- * @param filePath - full path to the file to create
- * @param workspacePath - workspace root path
- * @param fileName - name of the file to create
- * @returns the initial data object
- */
-async function createOdooDebuggerFile(filePath, workspacePath, fileName) {
-    try {
-        ensureVSCodeDirectory(workspacePath);
-        let data;
-        let content;
-        if (fileName === "launch.json") {
-            data = {
-                version: "0.2.0",
-                configurations: []
-            };
-            content = launchJsonFileContent;
-        }
-        else {
-            data = {
-                settings: new settings_1.SettingsModel(getDefaultVersionSettings()),
-                projects: [],
-                dbTemplates: []
-            };
-            content = debuggerDataFileContent;
-        }
-        fs.writeFileSync(filePath, content, 'utf-8');
-        return data;
-    }
-    catch (error) {
-        (0, notifications_1.showError)(`Failed to create ${fileName}: ${error}`);
-        throw error;
-    }
-}
-/**
- * Reads and parses a JSON file from the .vscode directory
- * @param fileName - the name of the file to read
- * @returns the parsed data or null if reading fails
- */
-async function readFromFile(fileName) {
-    const workspacePath = getWorkspacePath();
-    if (!workspacePath) {
-        return null;
-    }
-    try {
-        const filePath = path.join(workspacePath, '.vscode', fileName);
-        if (!fs.existsSync(filePath)) {
-            (0, notifications_1.showInfo)(`Creating ${fileName} file...`);
-            return await createOdooDebuggerFile(filePath, workspacePath, fileName);
-        }
-        const data = fs.readFileSync(filePath, 'utf-8');
-        return (0, jsonc_parser_1.parse)(data);
-    }
-    catch (error) {
-        (0, notifications_1.showError)(`Failed to read ${fileName}: ${error}`);
-        return null;
-    }
-}
-/**
- * Converts a camelCase string to a human-readable title case
- * @param str - the camelCase string to convert
- * @returns the converted title case string
- */
-function camelCaseToTitleCase(str) {
-    if (!str) {
-        return '';
-    }
-    return str.replace(/([A-Z])/g, ' $1').replace(/^./, (char) => char.toUpperCase());
-}
-/**
- * Gets the display name for a settings key
- * @param key - The settings key in camelCase
- * @returns The human-readable display name
- */
-function getSettingDisplayName(key) {
-    const displayNames = {
-        debuggerName: 'Debugger',
-        debuggerVersion: 'Version',
-        portNumber: 'Port',
-        shellPortNumber: 'Shell Port',
-        limitTimeReal: 'Time Limit (Real)',
-        limitTimeCpu: 'Time Limit (CPU)',
-        maxCronThreads: 'Max Cron Threads',
-        extraParams: 'Extra Params',
-        devMode: 'Dev Mode',
-        installApps: 'Install Apps',
-        upgradeApps: 'Upgrade Apps',
-        dumpsFolder: 'Dumps Dir',
-        odooPath: 'Odoo Dir',
-        enterprisePath: 'Enterprise Dir',
-        designThemesPath: 'Themes Dir',
-        customAddonsPath: 'Custom Addons',
-        pythonPath: 'Python Exec',
-        subModulesPaths: 'Sub-modules'
-    };
-    return displayNames[key] || camelCaseToTitleCase(key);
-}
-/**
- * Gets the display value for a setting, cleaning up internal prefixes for UI display
- * @param key - The settings key
- * @param value - The internal setting value
- * @returns The cleaned value for UI display
- */
-function getSettingDisplayValue(key, value) {
-    if (key === 'devMode' && typeof value === 'string' && value.startsWith('--dev=')) {
-        // Remove --dev= prefix for display, show clean value
-        return value.substring(6) || 'none';
-    }
-    return value?.toString() || '';
-}
-/**
- * Gets all available Git branches from a repository path.
- * @param repoPath - The path to the git repository.
- * @returns Array of branch names, or empty array if not found or error occurs.
- */
-async function getGitBranches(repoPath) {
-    if (!repoPath) {
-        return [];
-    }
-    const normalizedPath = normalizePath(repoPath);
-    const apiBranches = await (0, gitService_1.getBranchesViaSourceControl)(normalizedPath);
-    if (apiBranches && apiBranches.length > 0) {
-        return apiBranches;
-    }
-    try {
-        // Check if it's a git repository
-        const gitDir = path.join(normalizedPath, '.git');
-        if (!fs.existsSync(gitDir)) {
-            logger_1.logger.warn(`Not a git repository: ${normalizedPath}`);
-            return [];
-        }
-        return new Promise((resolve) => {
-            childProcess.exec('git branch -a --format="%(refname:short)"', { cwd: normalizedPath }, (error, stdout, stderr) => {
-                if (error) {
-                    logger_1.logger.warn(`Failed to get branches for ${normalizedPath}: ${error.message}`);
-                    resolve([]);
-                    return;
-                }
-                if (stderr) {
-                    logger_1.logger.warn(`Git branch warning for ${normalizedPath}: ${stderr}`);
-                }
-                const branches = stdout
-                    .split('\n')
-                    .map(branch => branch.trim())
-                    .filter(branch => {
-                    // Filter out empty lines and HEAD reference
-                    if (!branch || branch === 'HEAD') {
-                        return false;
-                    }
-                    // Remove remote prefix for remote branches
-                    return true;
-                })
-                    .map(branch => {
-                    // Clean up branch names
-                    if (branch.startsWith('origin/')) {
-                        return branch.replace('origin/', '');
-                    }
-                    if (branch.startsWith('remotes/origin/')) {
-                        return branch.replace('remotes/origin/', '');
-                    }
-                    return branch;
-                })
-                    .filter((branch, index, array) => {
-                    // Remove duplicates (local and remote of same branch)
-                    return array.indexOf(branch) === index;
-                })
-                    .sort((a, b) => a.localeCompare(b)); // Sort alphabetically
-                resolve(branches);
-            });
-        });
-    }
-    catch (err) {
-        logger_1.logger.warn(`Failed to get branches for ${normalizedPath}: ${err}`);
-        return [];
-    }
-}
-/**
- * Get default settings for new versions from VS Code configuration
- * These settings can be configured via VS Code Settings UI or by searching for "odooDebugger.defaultVersion"
- * @returns SettingsModel with default values from configuration
- */
-function getDefaultVersionSettings() {
-    const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
-    return {
-        debuggerName: config.get('debuggerName', 'odoo:18.0'),
-        debuggerVersion: config.get('debuggerVersion', '1.0.0'),
-        portNumber: config.get('portNumber', 8018),
-        shellPortNumber: config.get('shellPortNumber', 5018),
-        limitTimeReal: config.get('limitTimeReal', 0),
-        limitTimeCpu: config.get('limitTimeCpu', 0),
-        maxCronThreads: config.get('maxCronThreads', 0),
-        extraParams: config.get('extraParams', '--log-handler,odoo.addons.base.models.ir_attachment:WARNING'),
-        devMode: config.get('devMode', '--dev=all'),
-        dumpsFolder: config.get('dumpsFolder', '/dumps'),
-        odooPath: config.get('odooPath', './odoo'),
-        enterprisePath: config.get('enterprisePath', './enterprise'),
-        designThemesPath: config.get('designThemesPath', './design-themes'),
-        customAddonsPath: config.get('customAddonsPath', './custom-addons'),
-        pythonPath: config.get('pythonPath', './venv/bin/python'),
-        subModulesPaths: config.get('subModulesPaths', ''),
-        installApps: config.get('installApps', ''),
-        upgradeApps: config.get('upgradeApps', ''),
-        preCheckoutCommands: config.get('preCheckoutCommands', []),
-        postCheckoutCommands: config.get('postCheckoutCommands', [])
-    };
-}
-
-
-/***/ }),
-/* 5 */
-/***/ ((module) => {
-
-module.exports = require("fs");
-
-/***/ }),
-/* 6 */
-/***/ ((module) => {
-
-module.exports = require("path");
-
-/***/ }),
-/* 7 */
-/***/ ((module) => {
-
-module.exports = require("child_process");
-
-/***/ }),
-/* 8 */
-/***/ ((__unused_webpack_module, exports) => {
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.SettingsModel = void 0;
-class SettingsModel {
-    debuggerName = "odoo:18.0";
-    debuggerVersion = "1.0.0";
-    portNumber = 8018;
-    shellPortNumber = 5018;
-    limitTimeReal = 0;
-    limitTimeCpu = 0;
-    maxCronThreads = 0;
-    extraParams = "--log-handler,odoo.addons.base.models.ir_attachment:WARNING";
-    devMode = "--dev=all";
-    dumpsFolder = "/dumps";
-    odooPath = "./odoo";
-    enterprisePath = "./enterprise";
-    designThemesPath = "./design-themes";
-    customAddonsPath = "./custom-addons";
-    pythonPath = "./venv/bin/python";
-    subModulesPaths = "";
-    installApps = "";
-    upgradeApps = "";
-    preCheckoutCommands = [];
-    postCheckoutCommands = [];
-    constructor(data) {
-        if (data) {
-            Object.assign(this, data);
-        }
-        this.preCheckoutCommands = Array.isArray(this.preCheckoutCommands) ? this.preCheckoutCommands : [];
-        this.postCheckoutCommands = Array.isArray(this.postCheckoutCommands) ? this.postCheckoutCommands : [];
-    }
-}
-exports.SettingsModel = SettingsModel;
-
-
-/***/ }),
-/* 9 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.checkoutBranchViaSourceControl = checkoutBranchViaSourceControl;
-exports.getCurrentBranchViaSourceControl = getCurrentBranchViaSourceControl;
-exports.getBranchesWithMetadata = getBranchesWithMetadata;
-exports.getBranchesViaSourceControl = getBranchesViaSourceControl;
-const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(3));
-const logger_1 = __webpack_require__(10);
-function resolveRepoPath(repoPath) {
-    if (path.isAbsolute(repoPath)) {
-        return path.normalize(repoPath);
-    }
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (workspaceFolders && workspaceFolders.length > 0) {
-        return path.normalize(path.join(workspaceFolders[0].uri.fsPath, repoPath));
-    }
-    return path.normalize(path.resolve(repoPath));
-}
-async function getRepository(repoPath) {
-    const gitExtension = vscode.extensions.getExtension('vscode.git');
-    if (!gitExtension) {
-        return undefined;
-    }
-    const extension = gitExtension.isActive ? gitExtension.exports : await gitExtension.activate();
-    const api = extension.getAPI(1);
-    const targetPath = path.resolve(resolveRepoPath(repoPath));
-    const repositories = api.repositories;
-    return repositories.find(repo => {
-        const repoPathResolved = path.resolve(repo.rootUri.fsPath);
-        return repoPathResolved === targetPath || repoPathResolved.toLowerCase() === targetPath.toLowerCase();
-    });
-}
-async function checkoutBranchViaSourceControl(repoPath, branch) {
-    try {
-        const repo = await getRepository(repoPath);
-        if (!repo) {
-            return false;
-        }
-        await repo.checkout(branch, false);
-        return true;
-    }
-    catch (error) {
-        logger_1.logger.warn(`Git API checkout failed for ${repoPath}:`, error);
-        return false;
-    }
-}
-async function getCurrentBranchViaSourceControl(repoPath) {
-    try {
-        const repo = await getRepository(repoPath);
-        const headName = repo?.state?.HEAD?.name;
-        return headName && headName.trim().length > 0 ? headName : null;
-    }
-    catch (error) {
-        logger_1.logger.warn(`Git API branch lookup failed for ${repoPath}:`, error);
-        return null;
-    }
-}
-function normalizeBranchName(value) {
-    if (value.startsWith('remotes/origin/')) {
-        return value.replace('remotes/origin/', '');
-    }
-    if (value.startsWith('origin/')) {
-        return value.replace('origin/', '');
-    }
-    return value;
-}
-async function getBranchesWithMetadata(repoPath) {
-    try {
-        const repo = await getRepository(repoPath);
-        if (!repo || !repo.getBranches) {
-            return [];
-        }
-        const [localBranches, remoteBranches] = await Promise.all([
-            repo.getBranches({ remote: false }),
-            repo.getBranches({ remote: true })
-        ]);
-        const branchMap = new Map();
-        const addBranches = (branches, type) => {
-            for (const branch of branches) {
-                const name = branch.name;
-                if (!name || !name.trim()) {
-                    continue;
-                }
-                const normalized = normalizeBranchName(name.trim());
-                if (type === 'local' || !branchMap.has(normalized)) {
-                    branchMap.set(normalized, type);
-                }
-            }
-        };
-        addBranches(localBranches, 'local');
-        addBranches(remoteBranches, 'remote');
-        return Array.from(branchMap.entries())
-            .map(([name, type]) => ({ name, type }))
-            .sort((a, b) => a.name.localeCompare(b.name));
-    }
-    catch (error) {
-        logger_1.logger.warn(`Git API branch listing failed for ${repoPath}:`, error);
-        return [];
-    }
-}
-async function getBranchesViaSourceControl(repoPath) {
-    const metadata = await getBranchesWithMetadata(repoPath);
-    if (!metadata || metadata.length === 0) {
-        return undefined;
-    }
-    return metadata.map(branch => branch.name);
-}
-
-
-/***/ }),
-/* 10 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.logger = void 0;
-exports.registerLogger = registerLogger;
-exports.showLogOutput = showLogOutput;
-exports.errorMessage = errorMessage;
-const vscode = __importStar(__webpack_require__(1));
-/**
- * Central logging for the extension. Everything user-relevant that used to go
- * to the developer console is appended to a single "Odoo DevTools" output
- * channel so users can actually see it (View -> Output -> Odoo DevTools).
- */
-let channel;
-function getChannel() {
-    channel ??= vscode.window.createOutputChannel('Odoo DevTools');
-    return channel;
-}
-/**
- * Registers the output channel for disposal with the extension context.
- * Safe to call before the channel exists; disposal is lazy.
- */
-function registerLogger(context) {
-    context.subscriptions.push({
-        dispose: () => {
-            channel?.dispose();
-            channel = undefined;
-        }
-    });
-}
-/** Reveals the output channel in the panel. */
-function showLogOutput() {
-    getChannel().show(true);
-}
-/**
- * Normalizes an unknown thrown value into a human-readable message,
- * so raw `${error}` interpolation (which prints stacks/objects) is avoided.
- */
-function errorMessage(error) {
-    if (error instanceof Error) {
-        return error.message;
-    }
-    if (typeof error === 'string') {
-        return error;
-    }
-    try {
-        return JSON.stringify(error);
-    }
-    catch {
-        return String(error);
-    }
-}
-function formatDetail(detail) {
-    if (detail instanceof Error) {
-        return detail.stack ?? detail.message;
-    }
-    if (typeof detail === 'string') {
-        return detail;
-    }
-    try {
-        return JSON.stringify(detail);
-    }
-    catch {
-        return String(detail);
-    }
-}
-function append(level, message, details) {
-    const timestamp = new Date().toISOString();
-    const suffix = details.length > 0 ? ` ${details.map(formatDetail).join(' ')}` : '';
-    getChannel().appendLine(`[${timestamp}] ${level}: ${message}${suffix}`);
-}
-exports.logger = {
-    debug(message, ...details) {
-        append('DEBUG', message, details);
-    },
-    info(message, ...details) {
-        append('INFO', message, details);
-    },
-    warn(message, ...details) {
-        append('WARN', message, details);
-    },
-    error(message, ...details) {
-        append('ERROR', message, details);
-    }
-};
-
-
-/***/ }),
-/* 11 */
-/***/ ((__unused_webpack_module, exports) => {
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.runtimeCache = void 0;
-exports.invalidateModuleDiscoveryCache = invalidateModuleDiscoveryCache;
-exports.invalidateRepositoryDiscoveryCache = invalidateRepositoryDiscoveryCache;
-exports.invalidateInstalledModulesCache = invalidateInstalledModulesCache;
-exports.invalidateGitBranchCache = invalidateGitBranchCache;
-exports.invalidateAllRuntimeCaches = invalidateAllRuntimeCaches;
-const DEFAULT_TTLS = {
-    moduleDiscoveryMs: 5000,
-    repositoryDiscoveryMs: 5000,
-    installedModulesMs: 5000,
-    installedModuleNamesMs: 5000,
-    gitBranchMs: 3000
-};
-class RuntimeCacheService {
-    moduleDiscovery = new Map();
-    repositoryDiscovery = new Map();
-    installedModules = new Map();
-    installedModuleNames = new Map();
-    gitBranches = new Map();
-    getOrCompute(store, key, ttlMs, loader) {
-        const now = Date.now();
-        const cached = store.get(key);
-        if (cached && cached.expiresAt > now) {
-            return cached.value;
-        }
-        const value = loader();
-        store.set(key, { value, expiresAt: now + ttlMs });
-        return value;
-    }
-    async getOrComputeAsync(store, key, ttlMs, loader) {
-        const now = Date.now();
-        const cached = store.get(key);
-        if (cached && cached.expiresAt > now) {
-            return cached.value;
-        }
-        const value = await loader();
-        store.set(key, { value, expiresAt: now + ttlMs });
-        return value;
-    }
-    getModuleDiscovery(key, loader, ttlMs = DEFAULT_TTLS.moduleDiscoveryMs) {
-        return this.getOrCompute(this.moduleDiscovery, key, ttlMs, loader);
-    }
-    getRepositoryDiscovery(key, loader, ttlMs = DEFAULT_TTLS.repositoryDiscoveryMs) {
-        return this.getOrCompute(this.repositoryDiscovery, key, ttlMs, loader);
-    }
-    async getInstalledModules(dbName, loader, ttlMs = DEFAULT_TTLS.installedModulesMs) {
-        return this.getOrComputeAsync(this.installedModules, dbName, ttlMs, loader);
-    }
-    async getInstalledModuleNames(dbName, loader, ttlMs = DEFAULT_TTLS.installedModuleNamesMs) {
-        return this.getOrComputeAsync(this.installedModuleNames, dbName, ttlMs, loader);
-    }
-    async getGitBranch(repoPath, loader, ttlMs = DEFAULT_TTLS.gitBranchMs) {
-        return this.getOrComputeAsync(this.gitBranches, repoPath, ttlMs, loader);
-    }
-    invalidateModuleDiscoveryCache(key) {
-        if (key) {
-            this.moduleDiscovery.delete(key);
-            return;
-        }
-        this.moduleDiscovery.clear();
-    }
-    invalidateRepositoryDiscoveryCache(key) {
-        if (key) {
-            this.repositoryDiscovery.delete(key);
-            return;
-        }
-        this.repositoryDiscovery.clear();
-    }
-    invalidateInstalledModulesCache(dbName) {
-        if (dbName) {
-            this.installedModules.delete(dbName);
-            this.installedModuleNames.delete(dbName);
-            return;
-        }
-        this.installedModules.clear();
-        this.installedModuleNames.clear();
-    }
-    invalidateGitBranchCache(repoPath) {
-        if (repoPath) {
-            this.gitBranches.delete(repoPath);
-            return;
-        }
-        this.gitBranches.clear();
-    }
-    invalidateAll() {
-        this.invalidateModuleDiscoveryCache();
-        this.invalidateRepositoryDiscoveryCache();
-        this.invalidateInstalledModulesCache();
-        this.invalidateGitBranchCache();
-    }
-}
-exports.runtimeCache = new RuntimeCacheService();
-function invalidateModuleDiscoveryCache(key) {
-    exports.runtimeCache.invalidateModuleDiscoveryCache(key);
-}
-function invalidateRepositoryDiscoveryCache(key) {
-    exports.runtimeCache.invalidateRepositoryDiscoveryCache(key);
-}
-function invalidateInstalledModulesCache(dbName) {
-    exports.runtimeCache.invalidateInstalledModulesCache(dbName);
-}
-function invalidateGitBranchCache(repoPath) {
-    exports.runtimeCache.invalidateGitBranchCache(repoPath);
-}
-function invalidateAllRuntimeCaches() {
-    exports.runtimeCache.invalidateAll();
-}
-
-
-/***/ }),
-/* 12 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.MessageType = void 0;
-exports.showMessage = showMessage;
-exports.showError = showError;
-exports.showInfo = showInfo;
-exports.showWarning = showWarning;
-exports.showModalWarning = showModalWarning;
-exports.showModalInfo = showModalInfo;
-exports.showAutoInfo = showAutoInfo;
-exports.showBriefStatus = showBriefStatus;
-const vscode = __importStar(__webpack_require__(1));
-const logger_1 = __webpack_require__(10);
-/**
- * User-facing messaging helpers. Every notification shown through these is
- * also logged to the "Odoo DevTools" output channel, which is why direct
- * vscode.window.show*Message calls should be avoided elsewhere.
- */
-var MessageType;
-(function (MessageType) {
-    MessageType["Error"] = "error";
-    MessageType["Warning"] = "warning";
-    MessageType["Info"] = "info";
-})(MessageType || (exports.MessageType = MessageType = {}));
-/**
- * Shows a message with logging to the output channel.
- * @param message - the message to display
- * @param type - the type of message (error, warning, info)
- * @param actions - optional action buttons
- * @returns the selected action or undefined
- */
-async function showMessage(message, type = MessageType.Error, ...actions) {
-    switch (type) {
-        case MessageType.Error:
-            logger_1.logger.error(message);
-            return vscode.window.showErrorMessage(message, ...actions);
-        case MessageType.Warning:
-            logger_1.logger.warn(message);
-            return vscode.window.showWarningMessage(message, ...actions);
-        case MessageType.Info:
-            logger_1.logger.info(message);
-            return vscode.window.showInformationMessage(message, ...actions);
-    }
-}
-/** Shows an error notification with optional action buttons. */
-async function showError(message, ...actions) {
-    return showMessage(message, MessageType.Error, ...actions);
-}
-/** Shows an info notification with optional action buttons. */
-async function showInfo(message, ...actions) {
-    return showMessage(message, MessageType.Info, ...actions);
-}
-/** Shows a warning notification with optional action buttons. */
-async function showWarning(message, ...actions) {
-    return showMessage(message, MessageType.Warning, ...actions);
-}
-/**
- * Shows a modal warning dialog. Use for destructive confirmations where the
- * user must answer before anything proceeds.
- */
-async function showModalWarning(message, ...actions) {
-    logger_1.logger.warn(message);
-    return vscode.window.showWarningMessage(message, { modal: true }, ...actions);
-}
-/** Shows a modal information dialog (blocks until dismissed). */
-async function showModalInfo(message, ...actions) {
-    logger_1.logger.info(message);
-    return vscode.window.showInformationMessage(message, { modal: true }, ...actions);
-}
-/**
- * Shows an auto-dismissing information message that disappears after a specified time.
- * @param message - the info message to display
- * @param timeoutMs - time in milliseconds before auto-dismiss (default: 3000ms)
- */
-function showAutoInfo(message, timeoutMs = 3000) {
-    logger_1.logger.info(message);
-    void vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: message,
-        cancellable: false
-    }, () => new Promise(resolve => setTimeout(resolve, timeoutMs)));
-}
-/**
- * Shows a brief status bar message that disappears automatically.
- * @param message - the message to display in the status bar
- * @param timeoutMs - time in milliseconds before auto-dismiss (default: 2000ms)
- */
-function showBriefStatus(message, timeoutMs = 2000) {
-    logger_1.logger.info(message);
-    // setStatusBarMessage owns the disposal; no leaked status bar items.
-    vscode.window.setStatusBarMessage(`$(info) ${message}`, timeoutMs);
-}
-
-
-/***/ }),
-/* 13 */
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   ParseErrorCode: () => (/* binding */ ParseErrorCode),
-/* harmony export */   ScanError: () => (/* binding */ ScanError),
-/* harmony export */   SyntaxKind: () => (/* binding */ SyntaxKind),
-/* harmony export */   applyEdits: () => (/* binding */ applyEdits),
-/* harmony export */   createScanner: () => (/* binding */ createScanner),
-/* harmony export */   findNodeAtLocation: () => (/* binding */ findNodeAtLocation),
-/* harmony export */   findNodeAtOffset: () => (/* binding */ findNodeAtOffset),
-/* harmony export */   format: () => (/* binding */ format),
-/* harmony export */   getLocation: () => (/* binding */ getLocation),
-/* harmony export */   getNodePath: () => (/* binding */ getNodePath),
-/* harmony export */   getNodeValue: () => (/* binding */ getNodeValue),
-/* harmony export */   modify: () => (/* binding */ modify),
-/* harmony export */   parse: () => (/* binding */ parse),
-/* harmony export */   parseTree: () => (/* binding */ parseTree),
-/* harmony export */   printParseErrorCode: () => (/* binding */ printParseErrorCode),
-/* harmony export */   stripComments: () => (/* binding */ stripComments),
-/* harmony export */   visit: () => (/* binding */ visit)
-/* harmony export */ });
-/* harmony import */ var _impl_format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(14);
-/* harmony import */ var _impl_edit__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(17);
-/* harmony import */ var _impl_scanner__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(15);
-/* harmony import */ var _impl_parser__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(18);
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-
-
-
-
-
-/**
- * Creates a JSON scanner on the given text.
- * If ignoreTrivia is set, whitespaces or comments are ignored.
- */
-const createScanner = _impl_scanner__WEBPACK_IMPORTED_MODULE_2__.createScanner;
-var ScanError;
-(function (ScanError) {
-    ScanError[ScanError["None"] = 0] = "None";
-    ScanError[ScanError["UnexpectedEndOfComment"] = 1] = "UnexpectedEndOfComment";
-    ScanError[ScanError["UnexpectedEndOfString"] = 2] = "UnexpectedEndOfString";
-    ScanError[ScanError["UnexpectedEndOfNumber"] = 3] = "UnexpectedEndOfNumber";
-    ScanError[ScanError["InvalidUnicode"] = 4] = "InvalidUnicode";
-    ScanError[ScanError["InvalidEscapeCharacter"] = 5] = "InvalidEscapeCharacter";
-    ScanError[ScanError["InvalidCharacter"] = 6] = "InvalidCharacter";
-})(ScanError || (ScanError = {}));
-var SyntaxKind;
-(function (SyntaxKind) {
-    SyntaxKind[SyntaxKind["OpenBraceToken"] = 1] = "OpenBraceToken";
-    SyntaxKind[SyntaxKind["CloseBraceToken"] = 2] = "CloseBraceToken";
-    SyntaxKind[SyntaxKind["OpenBracketToken"] = 3] = "OpenBracketToken";
-    SyntaxKind[SyntaxKind["CloseBracketToken"] = 4] = "CloseBracketToken";
-    SyntaxKind[SyntaxKind["CommaToken"] = 5] = "CommaToken";
-    SyntaxKind[SyntaxKind["ColonToken"] = 6] = "ColonToken";
-    SyntaxKind[SyntaxKind["NullKeyword"] = 7] = "NullKeyword";
-    SyntaxKind[SyntaxKind["TrueKeyword"] = 8] = "TrueKeyword";
-    SyntaxKind[SyntaxKind["FalseKeyword"] = 9] = "FalseKeyword";
-    SyntaxKind[SyntaxKind["StringLiteral"] = 10] = "StringLiteral";
-    SyntaxKind[SyntaxKind["NumericLiteral"] = 11] = "NumericLiteral";
-    SyntaxKind[SyntaxKind["LineCommentTrivia"] = 12] = "LineCommentTrivia";
-    SyntaxKind[SyntaxKind["BlockCommentTrivia"] = 13] = "BlockCommentTrivia";
-    SyntaxKind[SyntaxKind["LineBreakTrivia"] = 14] = "LineBreakTrivia";
-    SyntaxKind[SyntaxKind["Trivia"] = 15] = "Trivia";
-    SyntaxKind[SyntaxKind["Unknown"] = 16] = "Unknown";
-    SyntaxKind[SyntaxKind["EOF"] = 17] = "EOF";
-})(SyntaxKind || (SyntaxKind = {}));
-/**
- * For a given offset, evaluate the location in the JSON document. Each segment in the location path is either a property name or an array index.
- */
-const getLocation = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.getLocation;
-/**
- * Parses the given text and returns the object the JSON content represents. On invalid input, the parser tries to be as fault tolerant as possible, but still return a result.
- * Therefore, always check the errors list to find out if the input was valid.
- */
-const parse = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.parse;
-/**
- * Parses the given text and returns a tree representation the JSON content. On invalid input, the parser tries to be as fault tolerant as possible, but still return a result.
- */
-const parseTree = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.parseTree;
-/**
- * Finds the node at the given path in a JSON DOM.
- */
-const findNodeAtLocation = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.findNodeAtLocation;
-/**
- * Finds the innermost node at the given offset. If includeRightBound is set, also finds nodes that end at the given offset.
- */
-const findNodeAtOffset = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.findNodeAtOffset;
-/**
- * Gets the JSON path of the given JSON DOM node
- */
-const getNodePath = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.getNodePath;
-/**
- * Evaluates the JavaScript object of the given JSON DOM node
- */
-const getNodeValue = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.getNodeValue;
-/**
- * Parses the given text and invokes the visitor functions for each object, array and literal reached.
- */
-const visit = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.visit;
-/**
- * Takes JSON with JavaScript-style comments and remove
- * them. Optionally replaces every none-newline character
- * of comments with a replaceCharacter
- */
-const stripComments = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.stripComments;
-var ParseErrorCode;
-(function (ParseErrorCode) {
-    ParseErrorCode[ParseErrorCode["InvalidSymbol"] = 1] = "InvalidSymbol";
-    ParseErrorCode[ParseErrorCode["InvalidNumberFormat"] = 2] = "InvalidNumberFormat";
-    ParseErrorCode[ParseErrorCode["PropertyNameExpected"] = 3] = "PropertyNameExpected";
-    ParseErrorCode[ParseErrorCode["ValueExpected"] = 4] = "ValueExpected";
-    ParseErrorCode[ParseErrorCode["ColonExpected"] = 5] = "ColonExpected";
-    ParseErrorCode[ParseErrorCode["CommaExpected"] = 6] = "CommaExpected";
-    ParseErrorCode[ParseErrorCode["CloseBraceExpected"] = 7] = "CloseBraceExpected";
-    ParseErrorCode[ParseErrorCode["CloseBracketExpected"] = 8] = "CloseBracketExpected";
-    ParseErrorCode[ParseErrorCode["EndOfFileExpected"] = 9] = "EndOfFileExpected";
-    ParseErrorCode[ParseErrorCode["InvalidCommentToken"] = 10] = "InvalidCommentToken";
-    ParseErrorCode[ParseErrorCode["UnexpectedEndOfComment"] = 11] = "UnexpectedEndOfComment";
-    ParseErrorCode[ParseErrorCode["UnexpectedEndOfString"] = 12] = "UnexpectedEndOfString";
-    ParseErrorCode[ParseErrorCode["UnexpectedEndOfNumber"] = 13] = "UnexpectedEndOfNumber";
-    ParseErrorCode[ParseErrorCode["InvalidUnicode"] = 14] = "InvalidUnicode";
-    ParseErrorCode[ParseErrorCode["InvalidEscapeCharacter"] = 15] = "InvalidEscapeCharacter";
-    ParseErrorCode[ParseErrorCode["InvalidCharacter"] = 16] = "InvalidCharacter";
-})(ParseErrorCode || (ParseErrorCode = {}));
-function printParseErrorCode(code) {
-    switch (code) {
-        case 1 /* ParseErrorCode.InvalidSymbol */: return 'InvalidSymbol';
-        case 2 /* ParseErrorCode.InvalidNumberFormat */: return 'InvalidNumberFormat';
-        case 3 /* ParseErrorCode.PropertyNameExpected */: return 'PropertyNameExpected';
-        case 4 /* ParseErrorCode.ValueExpected */: return 'ValueExpected';
-        case 5 /* ParseErrorCode.ColonExpected */: return 'ColonExpected';
-        case 6 /* ParseErrorCode.CommaExpected */: return 'CommaExpected';
-        case 7 /* ParseErrorCode.CloseBraceExpected */: return 'CloseBraceExpected';
-        case 8 /* ParseErrorCode.CloseBracketExpected */: return 'CloseBracketExpected';
-        case 9 /* ParseErrorCode.EndOfFileExpected */: return 'EndOfFileExpected';
-        case 10 /* ParseErrorCode.InvalidCommentToken */: return 'InvalidCommentToken';
-        case 11 /* ParseErrorCode.UnexpectedEndOfComment */: return 'UnexpectedEndOfComment';
-        case 12 /* ParseErrorCode.UnexpectedEndOfString */: return 'UnexpectedEndOfString';
-        case 13 /* ParseErrorCode.UnexpectedEndOfNumber */: return 'UnexpectedEndOfNumber';
-        case 14 /* ParseErrorCode.InvalidUnicode */: return 'InvalidUnicode';
-        case 15 /* ParseErrorCode.InvalidEscapeCharacter */: return 'InvalidEscapeCharacter';
-        case 16 /* ParseErrorCode.InvalidCharacter */: return 'InvalidCharacter';
-    }
-    return '<unknown ParseErrorCode>';
-}
-/**
- * Computes the edit operations needed to format a JSON document.
- *
- * @param documentText The input text
- * @param range The range to format or `undefined` to format the full content
- * @param options The formatting options
- * @returns The edit operations describing the formatting changes to the original document following the format described in {@linkcode EditResult}.
- * To apply the edit operations to the input, use {@linkcode applyEdits}.
- */
-function format(documentText, range, options) {
-    return _impl_format__WEBPACK_IMPORTED_MODULE_0__.format(documentText, range, options);
-}
-/**
- * Computes the edit operations needed to modify a value in the JSON document.
- *
- * @param documentText The input text
- * @param path The path of the value to change. The path represents either to the document root, a property or an array item.
- * If the path points to an non-existing property or item, it will be created.
- * @param value The new value for the specified property or item. If the value is undefined,
- * the property or item will be removed.
- * @param options Options
- * @returns The edit operations describing the changes to the original document, following the format described in {@linkcode EditResult}.
- * To apply the edit operations to the input, use {@linkcode applyEdits}.
- */
-function modify(text, path, value, options) {
-    return _impl_edit__WEBPACK_IMPORTED_MODULE_1__.setProperty(text, path, value, options);
-}
-/**
- * Applies edits to an input string.
- * @param text The input text
- * @param edits Edit operations following the format described in {@linkcode EditResult}.
- * @returns The text with the applied edits.
- * @throws An error if the edit operations are not well-formed as described in {@linkcode EditResult}.
- */
-function applyEdits(text, edits) {
-    let sortedEdits = edits.slice(0).sort((a, b) => {
-        const diff = a.offset - b.offset;
-        if (diff === 0) {
-            return a.length - b.length;
-        }
-        return diff;
-    });
-    let lastModifiedOffset = text.length;
-    for (let i = sortedEdits.length - 1; i >= 0; i--) {
-        let e = sortedEdits[i];
-        if (e.offset + e.length <= lastModifiedOffset) {
-            text = _impl_edit__WEBPACK_IMPORTED_MODULE_1__.applyEdit(text, e);
-        }
-        else {
-            throw new Error('Overlapping edit');
-        }
-        lastModifiedOffset = e.offset;
-    }
-    return text;
-}
-
-
-/***/ }),
-/* 14 */
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   format: () => (/* binding */ format),
-/* harmony export */   isEOL: () => (/* binding */ isEOL)
-/* harmony export */ });
-/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(15);
-/* harmony import */ var _string_intern__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(16);
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-
-
-
-function format(documentText, range, options) {
-    let initialIndentLevel;
-    let formatText;
-    let formatTextStart;
-    let rangeStart;
-    let rangeEnd;
-    if (range) {
-        rangeStart = range.offset;
-        rangeEnd = rangeStart + range.length;
-        formatTextStart = rangeStart;
-        while (formatTextStart > 0 && !isEOL(documentText, formatTextStart - 1)) {
-            formatTextStart--;
-        }
-        let endOffset = rangeEnd;
-        while (endOffset < documentText.length && !isEOL(documentText, endOffset)) {
-            endOffset++;
-        }
-        formatText = documentText.substring(formatTextStart, endOffset);
-        initialIndentLevel = computeIndentLevel(formatText, options);
-    }
-    else {
-        formatText = documentText;
-        initialIndentLevel = 0;
-        formatTextStart = 0;
-        rangeStart = 0;
-        rangeEnd = documentText.length;
-    }
-    const eol = getEOL(options, documentText);
-    const eolFastPathSupported = _string_intern__WEBPACK_IMPORTED_MODULE_1__.supportedEols.includes(eol);
-    let numberLineBreaks = 0;
-    let indentLevel = 0;
-    let indentValue;
-    if (options.insertSpaces) {
-        indentValue = _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[options.tabSize || 4] ?? repeat(_string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1], options.tabSize || 4);
-    }
-    else {
-        indentValue = '\t';
-    }
-    const indentType = indentValue === '\t' ? '\t' : ' ';
-    let scanner = (0,_scanner__WEBPACK_IMPORTED_MODULE_0__.createScanner)(formatText, false);
-    let hasError = false;
-    function newLinesAndIndent() {
-        if (numberLineBreaks > 1) {
-            return repeat(eol, numberLineBreaks) + repeat(indentValue, initialIndentLevel + indentLevel);
-        }
-        const amountOfSpaces = indentValue.length * (initialIndentLevel + indentLevel);
-        if (!eolFastPathSupported || amountOfSpaces > _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedBreakLinesWithSpaces[indentType][eol].length) {
-            return eol + repeat(indentValue, initialIndentLevel + indentLevel);
-        }
-        if (amountOfSpaces <= 0) {
-            return eol;
-        }
-        return _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedBreakLinesWithSpaces[indentType][eol][amountOfSpaces];
-    }
-    function scanNext() {
-        let token = scanner.scan();
-        numberLineBreaks = 0;
-        while (token === 15 /* SyntaxKind.Trivia */ || token === 14 /* SyntaxKind.LineBreakTrivia */) {
-            if (token === 14 /* SyntaxKind.LineBreakTrivia */ && options.keepLines) {
-                numberLineBreaks += 1;
-            }
-            else if (token === 14 /* SyntaxKind.LineBreakTrivia */) {
-                numberLineBreaks = 1;
-            }
-            token = scanner.scan();
-        }
-        hasError = token === 16 /* SyntaxKind.Unknown */ || scanner.getTokenError() !== 0 /* ScanError.None */;
-        return token;
-    }
-    const editOperations = [];
-    function addEdit(text, startOffset, endOffset) {
-        if (!hasError && (!range || (startOffset < rangeEnd && endOffset > rangeStart)) && documentText.substring(startOffset, endOffset) !== text) {
-            editOperations.push({ offset: startOffset, length: endOffset - startOffset, content: text });
-        }
-    }
-    let firstToken = scanNext();
-    if (options.keepLines && numberLineBreaks > 0) {
-        addEdit(repeat(eol, numberLineBreaks), 0, 0);
-    }
-    if (firstToken !== 17 /* SyntaxKind.EOF */) {
-        let firstTokenStart = scanner.getTokenOffset() + formatTextStart;
-        let initialIndent = (indentValue.length * initialIndentLevel < 20) && options.insertSpaces
-            ? _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[indentValue.length * initialIndentLevel]
-            : repeat(indentValue, initialIndentLevel);
-        addEdit(initialIndent, formatTextStart, firstTokenStart);
-    }
-    while (firstToken !== 17 /* SyntaxKind.EOF */) {
-        let firstTokenEnd = scanner.getTokenOffset() + scanner.getTokenLength() + formatTextStart;
-        let secondToken = scanNext();
-        let replaceContent = '';
-        let needsLineBreak = false;
-        while (numberLineBreaks === 0 && (secondToken === 12 /* SyntaxKind.LineCommentTrivia */ || secondToken === 13 /* SyntaxKind.BlockCommentTrivia */)) {
-            let commentTokenStart = scanner.getTokenOffset() + formatTextStart;
-            addEdit(_string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1], firstTokenEnd, commentTokenStart);
-            firstTokenEnd = scanner.getTokenOffset() + scanner.getTokenLength() + formatTextStart;
-            needsLineBreak = secondToken === 12 /* SyntaxKind.LineCommentTrivia */;
-            replaceContent = needsLineBreak ? newLinesAndIndent() : '';
-            secondToken = scanNext();
-        }
-        if (secondToken === 2 /* SyntaxKind.CloseBraceToken */) {
-            if (firstToken !== 1 /* SyntaxKind.OpenBraceToken */) {
-                indentLevel--;
-            }
-            ;
-            if (options.keepLines && numberLineBreaks > 0 || !options.keepLines && firstToken !== 1 /* SyntaxKind.OpenBraceToken */) {
-                replaceContent = newLinesAndIndent();
-            }
-            else if (options.keepLines) {
-                replaceContent = _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1];
-            }
-        }
-        else if (secondToken === 4 /* SyntaxKind.CloseBracketToken */) {
-            if (firstToken !== 3 /* SyntaxKind.OpenBracketToken */) {
-                indentLevel--;
-            }
-            ;
-            if (options.keepLines && numberLineBreaks > 0 || !options.keepLines && firstToken !== 3 /* SyntaxKind.OpenBracketToken */) {
-                replaceContent = newLinesAndIndent();
-            }
-            else if (options.keepLines) {
-                replaceContent = _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1];
-            }
-        }
-        else {
-            switch (firstToken) {
-                case 3 /* SyntaxKind.OpenBracketToken */:
-                case 1 /* SyntaxKind.OpenBraceToken */:
-                    indentLevel++;
-                    if (options.keepLines && numberLineBreaks > 0 || !options.keepLines) {
-                        replaceContent = newLinesAndIndent();
-                    }
-                    else {
-                        replaceContent = _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1];
-                    }
-                    break;
-                case 5 /* SyntaxKind.CommaToken */:
-                    if (options.keepLines && numberLineBreaks > 0 || !options.keepLines) {
-                        replaceContent = newLinesAndIndent();
-                    }
-                    else {
-                        replaceContent = _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1];
-                    }
-                    break;
-                case 12 /* SyntaxKind.LineCommentTrivia */:
-                    replaceContent = newLinesAndIndent();
-                    break;
-                case 13 /* SyntaxKind.BlockCommentTrivia */:
-                    if (numberLineBreaks > 0) {
-                        replaceContent = newLinesAndIndent();
-                    }
-                    else if (!needsLineBreak) {
-                        replaceContent = _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1];
-                    }
-                    break;
-                case 6 /* SyntaxKind.ColonToken */:
-                    if (options.keepLines && numberLineBreaks > 0) {
-                        replaceContent = newLinesAndIndent();
-                    }
-                    else if (!needsLineBreak) {
-                        replaceContent = _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1];
-                    }
-                    break;
-                case 10 /* SyntaxKind.StringLiteral */:
-                    if (options.keepLines && numberLineBreaks > 0) {
-                        replaceContent = newLinesAndIndent();
-                    }
-                    else if (secondToken === 6 /* SyntaxKind.ColonToken */ && !needsLineBreak) {
-                        replaceContent = '';
-                    }
-                    break;
-                case 7 /* SyntaxKind.NullKeyword */:
-                case 8 /* SyntaxKind.TrueKeyword */:
-                case 9 /* SyntaxKind.FalseKeyword */:
-                case 11 /* SyntaxKind.NumericLiteral */:
-                case 2 /* SyntaxKind.CloseBraceToken */:
-                case 4 /* SyntaxKind.CloseBracketToken */:
-                    if (options.keepLines && numberLineBreaks > 0) {
-                        replaceContent = newLinesAndIndent();
-                    }
-                    else {
-                        if ((secondToken === 12 /* SyntaxKind.LineCommentTrivia */ || secondToken === 13 /* SyntaxKind.BlockCommentTrivia */) && !needsLineBreak) {
-                            replaceContent = _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1];
-                        }
-                        else if (secondToken !== 5 /* SyntaxKind.CommaToken */ && secondToken !== 17 /* SyntaxKind.EOF */) {
-                            hasError = true;
-                        }
-                    }
-                    break;
-                case 16 /* SyntaxKind.Unknown */:
-                    hasError = true;
-                    break;
-            }
-            if (numberLineBreaks > 0 && (secondToken === 12 /* SyntaxKind.LineCommentTrivia */ || secondToken === 13 /* SyntaxKind.BlockCommentTrivia */)) {
-                replaceContent = newLinesAndIndent();
-            }
-        }
-        if (secondToken === 17 /* SyntaxKind.EOF */) {
-            if (options.keepLines && numberLineBreaks > 0) {
-                replaceContent = newLinesAndIndent();
-            }
-            else {
-                replaceContent = options.insertFinalNewline ? eol : '';
-            }
-        }
-        const secondTokenStart = scanner.getTokenOffset() + formatTextStart;
-        addEdit(replaceContent, firstTokenEnd, secondTokenStart);
-        firstToken = secondToken;
-    }
-    return editOperations;
-}
-function repeat(s, count) {
-    let result = '';
-    for (let i = 0; i < count; i++) {
-        result += s;
-    }
-    return result;
-}
-function computeIndentLevel(content, options) {
-    let i = 0;
-    let nChars = 0;
-    const tabSize = options.tabSize || 4;
-    while (i < content.length) {
-        let ch = content.charAt(i);
-        if (ch === _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1]) {
-            nChars++;
-        }
-        else if (ch === '\t') {
-            nChars += tabSize;
-        }
-        else {
-            break;
-        }
-        i++;
-    }
-    return Math.floor(nChars / tabSize);
-}
-function getEOL(options, text) {
-    for (let i = 0; i < text.length; i++) {
-        const ch = text.charAt(i);
-        if (ch === '\r') {
-            if (i + 1 < text.length && text.charAt(i + 1) === '\n') {
-                return '\r\n';
-            }
-            return '\r';
-        }
-        else if (ch === '\n') {
-            return '\n';
-        }
-    }
-    return (options && options.eol) || '\n';
-}
-function isEOL(text, offset) {
-    return '\r\n'.indexOf(text.charAt(offset)) !== -1;
-}
-
-
-/***/ }),
-/* 15 */
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   createScanner: () => (/* binding */ createScanner)
-/* harmony export */ });
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-
-/**
- * Creates a JSON scanner on the given text.
- * If ignoreTrivia is set, whitespaces or comments are ignored.
- */
-function createScanner(text, ignoreTrivia = false) {
-    const len = text.length;
-    let pos = 0, value = '', tokenOffset = 0, token = 16 /* SyntaxKind.Unknown */, lineNumber = 0, lineStartOffset = 0, tokenLineStartOffset = 0, prevTokenLineStartOffset = 0, scanError = 0 /* ScanError.None */;
-    function scanHexDigits(count, exact) {
-        let digits = 0;
-        let value = 0;
-        while (digits < count || !exact) {
-            let ch = text.charCodeAt(pos);
-            if (ch >= 48 /* CharacterCodes._0 */ && ch <= 57 /* CharacterCodes._9 */) {
-                value = value * 16 + ch - 48 /* CharacterCodes._0 */;
-            }
-            else if (ch >= 65 /* CharacterCodes.A */ && ch <= 70 /* CharacterCodes.F */) {
-                value = value * 16 + ch - 65 /* CharacterCodes.A */ + 10;
-            }
-            else if (ch >= 97 /* CharacterCodes.a */ && ch <= 102 /* CharacterCodes.f */) {
-                value = value * 16 + ch - 97 /* CharacterCodes.a */ + 10;
-            }
-            else {
-                break;
-            }
-            pos++;
-            digits++;
-        }
-        if (digits < count) {
-            value = -1;
-        }
-        return value;
-    }
-    function setPosition(newPosition) {
-        pos = newPosition;
-        value = '';
-        tokenOffset = 0;
-        token = 16 /* SyntaxKind.Unknown */;
-        scanError = 0 /* ScanError.None */;
-    }
-    function scanNumber() {
-        let start = pos;
-        if (text.charCodeAt(pos) === 48 /* CharacterCodes._0 */) {
-            pos++;
-        }
-        else {
-            pos++;
-            while (pos < text.length && isDigit(text.charCodeAt(pos))) {
-                pos++;
-            }
-        }
-        if (pos < text.length && text.charCodeAt(pos) === 46 /* CharacterCodes.dot */) {
-            pos++;
-            if (pos < text.length && isDigit(text.charCodeAt(pos))) {
-                pos++;
-                while (pos < text.length && isDigit(text.charCodeAt(pos))) {
-                    pos++;
-                }
-            }
-            else {
-                scanError = 3 /* ScanError.UnexpectedEndOfNumber */;
-                return text.substring(start, pos);
-            }
-        }
-        let end = pos;
-        if (pos < text.length && (text.charCodeAt(pos) === 69 /* CharacterCodes.E */ || text.charCodeAt(pos) === 101 /* CharacterCodes.e */)) {
-            pos++;
-            if (pos < text.length && text.charCodeAt(pos) === 43 /* CharacterCodes.plus */ || text.charCodeAt(pos) === 45 /* CharacterCodes.minus */) {
-                pos++;
-            }
-            if (pos < text.length && isDigit(text.charCodeAt(pos))) {
-                pos++;
-                while (pos < text.length && isDigit(text.charCodeAt(pos))) {
-                    pos++;
-                }
-                end = pos;
-            }
-            else {
-                scanError = 3 /* ScanError.UnexpectedEndOfNumber */;
-            }
-        }
-        return text.substring(start, end);
-    }
-    function scanString() {
-        let result = '', start = pos;
-        while (true) {
-            if (pos >= len) {
-                result += text.substring(start, pos);
-                scanError = 2 /* ScanError.UnexpectedEndOfString */;
-                break;
-            }
-            const ch = text.charCodeAt(pos);
-            if (ch === 34 /* CharacterCodes.doubleQuote */) {
-                result += text.substring(start, pos);
-                pos++;
-                break;
-            }
-            if (ch === 92 /* CharacterCodes.backslash */) {
-                result += text.substring(start, pos);
-                pos++;
-                if (pos >= len) {
-                    scanError = 2 /* ScanError.UnexpectedEndOfString */;
-                    break;
-                }
-                const ch2 = text.charCodeAt(pos++);
-                switch (ch2) {
-                    case 34 /* CharacterCodes.doubleQuote */:
-                        result += '\"';
-                        break;
-                    case 92 /* CharacterCodes.backslash */:
-                        result += '\\';
-                        break;
-                    case 47 /* CharacterCodes.slash */:
-                        result += '/';
-                        break;
-                    case 98 /* CharacterCodes.b */:
-                        result += '\b';
-                        break;
-                    case 102 /* CharacterCodes.f */:
-                        result += '\f';
-                        break;
-                    case 110 /* CharacterCodes.n */:
-                        result += '\n';
-                        break;
-                    case 114 /* CharacterCodes.r */:
-                        result += '\r';
-                        break;
-                    case 116 /* CharacterCodes.t */:
-                        result += '\t';
-                        break;
-                    case 117 /* CharacterCodes.u */:
-                        const ch3 = scanHexDigits(4, true);
-                        if (ch3 >= 0) {
-                            result += String.fromCharCode(ch3);
-                        }
-                        else {
-                            scanError = 4 /* ScanError.InvalidUnicode */;
-                        }
-                        break;
-                    default:
-                        scanError = 5 /* ScanError.InvalidEscapeCharacter */;
-                }
-                start = pos;
-                continue;
-            }
-            if (ch >= 0 && ch <= 0x1f) {
-                if (isLineBreak(ch)) {
-                    result += text.substring(start, pos);
-                    scanError = 2 /* ScanError.UnexpectedEndOfString */;
-                    break;
-                }
-                else {
-                    scanError = 6 /* ScanError.InvalidCharacter */;
-                    // mark as error but continue with string
-                }
-            }
-            pos++;
-        }
-        return result;
-    }
-    function scanNext() {
-        value = '';
-        scanError = 0 /* ScanError.None */;
-        tokenOffset = pos;
-        lineStartOffset = lineNumber;
-        prevTokenLineStartOffset = tokenLineStartOffset;
-        if (pos >= len) {
-            // at the end
-            tokenOffset = len;
-            return token = 17 /* SyntaxKind.EOF */;
-        }
-        let code = text.charCodeAt(pos);
-        // trivia: whitespace
-        if (isWhiteSpace(code)) {
-            do {
-                pos++;
-                value += String.fromCharCode(code);
-                code = text.charCodeAt(pos);
-            } while (isWhiteSpace(code));
-            return token = 15 /* SyntaxKind.Trivia */;
-        }
-        // trivia: newlines
-        if (isLineBreak(code)) {
-            pos++;
-            value += String.fromCharCode(code);
-            if (code === 13 /* CharacterCodes.carriageReturn */ && text.charCodeAt(pos) === 10 /* CharacterCodes.lineFeed */) {
-                pos++;
-                value += '\n';
-            }
-            lineNumber++;
-            tokenLineStartOffset = pos;
-            return token = 14 /* SyntaxKind.LineBreakTrivia */;
-        }
-        switch (code) {
-            // tokens: []{}:,
-            case 123 /* CharacterCodes.openBrace */:
-                pos++;
-                return token = 1 /* SyntaxKind.OpenBraceToken */;
-            case 125 /* CharacterCodes.closeBrace */:
-                pos++;
-                return token = 2 /* SyntaxKind.CloseBraceToken */;
-            case 91 /* CharacterCodes.openBracket */:
-                pos++;
-                return token = 3 /* SyntaxKind.OpenBracketToken */;
-            case 93 /* CharacterCodes.closeBracket */:
-                pos++;
-                return token = 4 /* SyntaxKind.CloseBracketToken */;
-            case 58 /* CharacterCodes.colon */:
-                pos++;
-                return token = 6 /* SyntaxKind.ColonToken */;
-            case 44 /* CharacterCodes.comma */:
-                pos++;
-                return token = 5 /* SyntaxKind.CommaToken */;
-            // strings
-            case 34 /* CharacterCodes.doubleQuote */:
-                pos++;
-                value = scanString();
-                return token = 10 /* SyntaxKind.StringLiteral */;
-            // comments
-            case 47 /* CharacterCodes.slash */:
-                const start = pos - 1;
-                // Single-line comment
-                if (text.charCodeAt(pos + 1) === 47 /* CharacterCodes.slash */) {
-                    pos += 2;
-                    while (pos < len) {
-                        if (isLineBreak(text.charCodeAt(pos))) {
-                            break;
-                        }
-                        pos++;
-                    }
-                    value = text.substring(start, pos);
-                    return token = 12 /* SyntaxKind.LineCommentTrivia */;
-                }
-                // Multi-line comment
-                if (text.charCodeAt(pos + 1) === 42 /* CharacterCodes.asterisk */) {
-                    pos += 2;
-                    const safeLength = len - 1; // For lookahead.
-                    let commentClosed = false;
-                    while (pos < safeLength) {
-                        const ch = text.charCodeAt(pos);
-                        if (ch === 42 /* CharacterCodes.asterisk */ && text.charCodeAt(pos + 1) === 47 /* CharacterCodes.slash */) {
-                            pos += 2;
-                            commentClosed = true;
-                            break;
-                        }
-                        pos++;
-                        if (isLineBreak(ch)) {
-                            if (ch === 13 /* CharacterCodes.carriageReturn */ && text.charCodeAt(pos) === 10 /* CharacterCodes.lineFeed */) {
-                                pos++;
-                            }
-                            lineNumber++;
-                            tokenLineStartOffset = pos;
-                        }
-                    }
-                    if (!commentClosed) {
-                        pos++;
-                        scanError = 1 /* ScanError.UnexpectedEndOfComment */;
-                    }
-                    value = text.substring(start, pos);
-                    return token = 13 /* SyntaxKind.BlockCommentTrivia */;
-                }
-                // just a single slash
-                value += String.fromCharCode(code);
-                pos++;
-                return token = 16 /* SyntaxKind.Unknown */;
-            // numbers
-            case 45 /* CharacterCodes.minus */:
-                value += String.fromCharCode(code);
-                pos++;
-                if (pos === len || !isDigit(text.charCodeAt(pos))) {
-                    return token = 16 /* SyntaxKind.Unknown */;
-                }
-            // found a minus, followed by a number so
-            // we fall through to proceed with scanning
-            // numbers
-            case 48 /* CharacterCodes._0 */:
-            case 49 /* CharacterCodes._1 */:
-            case 50 /* CharacterCodes._2 */:
-            case 51 /* CharacterCodes._3 */:
-            case 52 /* CharacterCodes._4 */:
-            case 53 /* CharacterCodes._5 */:
-            case 54 /* CharacterCodes._6 */:
-            case 55 /* CharacterCodes._7 */:
-            case 56 /* CharacterCodes._8 */:
-            case 57 /* CharacterCodes._9 */:
-                value += scanNumber();
-                return token = 11 /* SyntaxKind.NumericLiteral */;
-            // literals and unknown symbols
-            default:
-                // is a literal? Read the full word.
-                while (pos < len && isUnknownContentCharacter(code)) {
-                    pos++;
-                    code = text.charCodeAt(pos);
-                }
-                if (tokenOffset !== pos) {
-                    value = text.substring(tokenOffset, pos);
-                    // keywords: true, false, null
-                    switch (value) {
-                        case 'true': return token = 8 /* SyntaxKind.TrueKeyword */;
-                        case 'false': return token = 9 /* SyntaxKind.FalseKeyword */;
-                        case 'null': return token = 7 /* SyntaxKind.NullKeyword */;
-                    }
-                    return token = 16 /* SyntaxKind.Unknown */;
-                }
-                // some
-                value += String.fromCharCode(code);
-                pos++;
-                return token = 16 /* SyntaxKind.Unknown */;
-        }
-    }
-    function isUnknownContentCharacter(code) {
-        if (isWhiteSpace(code) || isLineBreak(code)) {
-            return false;
-        }
-        switch (code) {
-            case 125 /* CharacterCodes.closeBrace */:
-            case 93 /* CharacterCodes.closeBracket */:
-            case 123 /* CharacterCodes.openBrace */:
-            case 91 /* CharacterCodes.openBracket */:
-            case 34 /* CharacterCodes.doubleQuote */:
-            case 58 /* CharacterCodes.colon */:
-            case 44 /* CharacterCodes.comma */:
-            case 47 /* CharacterCodes.slash */:
-                return false;
-        }
-        return true;
-    }
-    function scanNextNonTrivia() {
-        let result;
-        do {
-            result = scanNext();
-        } while (result >= 12 /* SyntaxKind.LineCommentTrivia */ && result <= 15 /* SyntaxKind.Trivia */);
-        return result;
-    }
-    return {
-        setPosition: setPosition,
-        getPosition: () => pos,
-        scan: ignoreTrivia ? scanNextNonTrivia : scanNext,
-        getToken: () => token,
-        getTokenValue: () => value,
-        getTokenOffset: () => tokenOffset,
-        getTokenLength: () => pos - tokenOffset,
-        getTokenStartLine: () => lineStartOffset,
-        getTokenStartCharacter: () => tokenOffset - prevTokenLineStartOffset,
-        getTokenError: () => scanError,
-    };
-}
-function isWhiteSpace(ch) {
-    return ch === 32 /* CharacterCodes.space */ || ch === 9 /* CharacterCodes.tab */;
-}
-function isLineBreak(ch) {
-    return ch === 10 /* CharacterCodes.lineFeed */ || ch === 13 /* CharacterCodes.carriageReturn */;
-}
-function isDigit(ch) {
-    return ch >= 48 /* CharacterCodes._0 */ && ch <= 57 /* CharacterCodes._9 */;
-}
-var CharacterCodes;
-(function (CharacterCodes) {
-    CharacterCodes[CharacterCodes["lineFeed"] = 10] = "lineFeed";
-    CharacterCodes[CharacterCodes["carriageReturn"] = 13] = "carriageReturn";
-    CharacterCodes[CharacterCodes["space"] = 32] = "space";
-    CharacterCodes[CharacterCodes["_0"] = 48] = "_0";
-    CharacterCodes[CharacterCodes["_1"] = 49] = "_1";
-    CharacterCodes[CharacterCodes["_2"] = 50] = "_2";
-    CharacterCodes[CharacterCodes["_3"] = 51] = "_3";
-    CharacterCodes[CharacterCodes["_4"] = 52] = "_4";
-    CharacterCodes[CharacterCodes["_5"] = 53] = "_5";
-    CharacterCodes[CharacterCodes["_6"] = 54] = "_6";
-    CharacterCodes[CharacterCodes["_7"] = 55] = "_7";
-    CharacterCodes[CharacterCodes["_8"] = 56] = "_8";
-    CharacterCodes[CharacterCodes["_9"] = 57] = "_9";
-    CharacterCodes[CharacterCodes["a"] = 97] = "a";
-    CharacterCodes[CharacterCodes["b"] = 98] = "b";
-    CharacterCodes[CharacterCodes["c"] = 99] = "c";
-    CharacterCodes[CharacterCodes["d"] = 100] = "d";
-    CharacterCodes[CharacterCodes["e"] = 101] = "e";
-    CharacterCodes[CharacterCodes["f"] = 102] = "f";
-    CharacterCodes[CharacterCodes["g"] = 103] = "g";
-    CharacterCodes[CharacterCodes["h"] = 104] = "h";
-    CharacterCodes[CharacterCodes["i"] = 105] = "i";
-    CharacterCodes[CharacterCodes["j"] = 106] = "j";
-    CharacterCodes[CharacterCodes["k"] = 107] = "k";
-    CharacterCodes[CharacterCodes["l"] = 108] = "l";
-    CharacterCodes[CharacterCodes["m"] = 109] = "m";
-    CharacterCodes[CharacterCodes["n"] = 110] = "n";
-    CharacterCodes[CharacterCodes["o"] = 111] = "o";
-    CharacterCodes[CharacterCodes["p"] = 112] = "p";
-    CharacterCodes[CharacterCodes["q"] = 113] = "q";
-    CharacterCodes[CharacterCodes["r"] = 114] = "r";
-    CharacterCodes[CharacterCodes["s"] = 115] = "s";
-    CharacterCodes[CharacterCodes["t"] = 116] = "t";
-    CharacterCodes[CharacterCodes["u"] = 117] = "u";
-    CharacterCodes[CharacterCodes["v"] = 118] = "v";
-    CharacterCodes[CharacterCodes["w"] = 119] = "w";
-    CharacterCodes[CharacterCodes["x"] = 120] = "x";
-    CharacterCodes[CharacterCodes["y"] = 121] = "y";
-    CharacterCodes[CharacterCodes["z"] = 122] = "z";
-    CharacterCodes[CharacterCodes["A"] = 65] = "A";
-    CharacterCodes[CharacterCodes["B"] = 66] = "B";
-    CharacterCodes[CharacterCodes["C"] = 67] = "C";
-    CharacterCodes[CharacterCodes["D"] = 68] = "D";
-    CharacterCodes[CharacterCodes["E"] = 69] = "E";
-    CharacterCodes[CharacterCodes["F"] = 70] = "F";
-    CharacterCodes[CharacterCodes["G"] = 71] = "G";
-    CharacterCodes[CharacterCodes["H"] = 72] = "H";
-    CharacterCodes[CharacterCodes["I"] = 73] = "I";
-    CharacterCodes[CharacterCodes["J"] = 74] = "J";
-    CharacterCodes[CharacterCodes["K"] = 75] = "K";
-    CharacterCodes[CharacterCodes["L"] = 76] = "L";
-    CharacterCodes[CharacterCodes["M"] = 77] = "M";
-    CharacterCodes[CharacterCodes["N"] = 78] = "N";
-    CharacterCodes[CharacterCodes["O"] = 79] = "O";
-    CharacterCodes[CharacterCodes["P"] = 80] = "P";
-    CharacterCodes[CharacterCodes["Q"] = 81] = "Q";
-    CharacterCodes[CharacterCodes["R"] = 82] = "R";
-    CharacterCodes[CharacterCodes["S"] = 83] = "S";
-    CharacterCodes[CharacterCodes["T"] = 84] = "T";
-    CharacterCodes[CharacterCodes["U"] = 85] = "U";
-    CharacterCodes[CharacterCodes["V"] = 86] = "V";
-    CharacterCodes[CharacterCodes["W"] = 87] = "W";
-    CharacterCodes[CharacterCodes["X"] = 88] = "X";
-    CharacterCodes[CharacterCodes["Y"] = 89] = "Y";
-    CharacterCodes[CharacterCodes["Z"] = 90] = "Z";
-    CharacterCodes[CharacterCodes["asterisk"] = 42] = "asterisk";
-    CharacterCodes[CharacterCodes["backslash"] = 92] = "backslash";
-    CharacterCodes[CharacterCodes["closeBrace"] = 125] = "closeBrace";
-    CharacterCodes[CharacterCodes["closeBracket"] = 93] = "closeBracket";
-    CharacterCodes[CharacterCodes["colon"] = 58] = "colon";
-    CharacterCodes[CharacterCodes["comma"] = 44] = "comma";
-    CharacterCodes[CharacterCodes["dot"] = 46] = "dot";
-    CharacterCodes[CharacterCodes["doubleQuote"] = 34] = "doubleQuote";
-    CharacterCodes[CharacterCodes["minus"] = 45] = "minus";
-    CharacterCodes[CharacterCodes["openBrace"] = 123] = "openBrace";
-    CharacterCodes[CharacterCodes["openBracket"] = 91] = "openBracket";
-    CharacterCodes[CharacterCodes["plus"] = 43] = "plus";
-    CharacterCodes[CharacterCodes["slash"] = 47] = "slash";
-    CharacterCodes[CharacterCodes["formFeed"] = 12] = "formFeed";
-    CharacterCodes[CharacterCodes["tab"] = 9] = "tab";
-})(CharacterCodes || (CharacterCodes = {}));
-
-
-/***/ }),
-/* 16 */
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   cachedBreakLinesWithSpaces: () => (/* binding */ cachedBreakLinesWithSpaces),
-/* harmony export */   cachedSpaces: () => (/* binding */ cachedSpaces),
-/* harmony export */   supportedEols: () => (/* binding */ supportedEols)
-/* harmony export */ });
-const cachedSpaces = new Array(20).fill(0).map((_, index) => {
-    return ' '.repeat(index);
-});
-const maxCachedValues = 200;
-const cachedBreakLinesWithSpaces = {
-    ' ': {
-        '\n': new Array(maxCachedValues).fill(0).map((_, index) => {
-            return '\n' + ' '.repeat(index);
-        }),
-        '\r': new Array(maxCachedValues).fill(0).map((_, index) => {
-            return '\r' + ' '.repeat(index);
-        }),
-        '\r\n': new Array(maxCachedValues).fill(0).map((_, index) => {
-            return '\r\n' + ' '.repeat(index);
-        }),
-    },
-    '\t': {
-        '\n': new Array(maxCachedValues).fill(0).map((_, index) => {
-            return '\n' + '\t'.repeat(index);
-        }),
-        '\r': new Array(maxCachedValues).fill(0).map((_, index) => {
-            return '\r' + '\t'.repeat(index);
-        }),
-        '\r\n': new Array(maxCachedValues).fill(0).map((_, index) => {
-            return '\r\n' + '\t'.repeat(index);
-        }),
-    }
-};
-const supportedEols = ['\n', '\r', '\r\n'];
-
-
-/***/ }),
-/* 17 */
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   applyEdit: () => (/* binding */ applyEdit),
-/* harmony export */   isWS: () => (/* binding */ isWS),
-/* harmony export */   removeProperty: () => (/* binding */ removeProperty),
-/* harmony export */   setProperty: () => (/* binding */ setProperty)
-/* harmony export */ });
-/* harmony import */ var _format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(14);
-/* harmony import */ var _parser__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(18);
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-
-
-
-function removeProperty(text, path, options) {
-    return setProperty(text, path, void 0, options);
-}
-function setProperty(text, originalPath, value, options) {
-    const path = originalPath.slice();
-    const errors = [];
-    const root = (0,_parser__WEBPACK_IMPORTED_MODULE_1__.parseTree)(text, errors);
-    let parent = void 0;
-    let lastSegment = void 0;
-    while (path.length > 0) {
-        lastSegment = path.pop();
-        parent = (0,_parser__WEBPACK_IMPORTED_MODULE_1__.findNodeAtLocation)(root, path);
-        if (parent === void 0 && value !== void 0) {
-            if (typeof lastSegment === 'string') {
-                value = { [lastSegment]: value };
-            }
-            else {
-                value = [value];
-            }
-        }
-        else {
-            break;
-        }
-    }
-    if (!parent) {
-        // empty document
-        if (value === void 0) { // delete
-            throw new Error('Can not delete in empty document');
-        }
-        return withFormatting(text, { offset: root ? root.offset : 0, length: root ? root.length : 0, content: JSON.stringify(value) }, options);
-    }
-    else if (parent.type === 'object' && typeof lastSegment === 'string' && Array.isArray(parent.children)) {
-        const existing = (0,_parser__WEBPACK_IMPORTED_MODULE_1__.findNodeAtLocation)(parent, [lastSegment]);
-        if (existing !== void 0) {
-            if (value === void 0) { // delete
-                if (!existing.parent) {
-                    throw new Error('Malformed AST');
-                }
-                const propertyIndex = parent.children.indexOf(existing.parent);
-                let removeBegin;
-                let removeEnd = existing.parent.offset + existing.parent.length;
-                if (propertyIndex > 0) {
-                    // remove the comma of the previous node
-                    let previous = parent.children[propertyIndex - 1];
-                    removeBegin = previous.offset + previous.length;
-                }
-                else {
-                    removeBegin = parent.offset + 1;
-                    if (parent.children.length > 1) {
-                        // remove the comma of the next node
-                        let next = parent.children[1];
-                        removeEnd = next.offset;
-                    }
-                }
-                return withFormatting(text, { offset: removeBegin, length: removeEnd - removeBegin, content: '' }, options);
-            }
-            else {
-                // set value of existing property
-                return withFormatting(text, { offset: existing.offset, length: existing.length, content: JSON.stringify(value) }, options);
-            }
-        }
-        else {
-            if (value === void 0) { // delete
-                return []; // property does not exist, nothing to do
-            }
-            const newProperty = `${JSON.stringify(lastSegment)}: ${JSON.stringify(value)}`;
-            const index = options.getInsertionIndex ? options.getInsertionIndex(parent.children.map(p => p.children[0].value)) : parent.children.length;
-            let edit;
-            if (index > 0) {
-                let previous = parent.children[index - 1];
-                edit = { offset: previous.offset + previous.length, length: 0, content: ',' + newProperty };
-            }
-            else if (parent.children.length === 0) {
-                edit = { offset: parent.offset + 1, length: 0, content: newProperty };
-            }
-            else {
-                edit = { offset: parent.offset + 1, length: 0, content: newProperty + ',' };
-            }
-            return withFormatting(text, edit, options);
-        }
-    }
-    else if (parent.type === 'array' && typeof lastSegment === 'number' && Array.isArray(parent.children)) {
-        const insertIndex = lastSegment;
-        if (insertIndex === -1) {
-            // Insert
-            const newProperty = `${JSON.stringify(value)}`;
-            let edit;
-            if (parent.children.length === 0) {
-                edit = { offset: parent.offset + 1, length: 0, content: newProperty };
-            }
-            else {
-                const previous = parent.children[parent.children.length - 1];
-                edit = { offset: previous.offset + previous.length, length: 0, content: ',' + newProperty };
-            }
-            return withFormatting(text, edit, options);
-        }
-        else if (value === void 0 && parent.children.length >= 0) {
-            // Removal
-            const removalIndex = lastSegment;
-            const toRemove = parent.children[removalIndex];
-            let edit;
-            if (parent.children.length === 1) {
-                // only item
-                edit = { offset: parent.offset + 1, length: parent.length - 2, content: '' };
-            }
-            else if (parent.children.length - 1 === removalIndex) {
-                // last item
-                let previous = parent.children[removalIndex - 1];
-                let offset = previous.offset + previous.length;
-                let parentEndOffset = parent.offset + parent.length;
-                edit = { offset, length: parentEndOffset - 2 - offset, content: '' };
-            }
-            else {
-                edit = { offset: toRemove.offset, length: parent.children[removalIndex + 1].offset - toRemove.offset, content: '' };
-            }
-            return withFormatting(text, edit, options);
-        }
-        else if (value !== void 0) {
-            let edit;
-            const newProperty = `${JSON.stringify(value)}`;
-            if (!options.isArrayInsertion && parent.children.length > lastSegment) {
-                const toModify = parent.children[lastSegment];
-                edit = { offset: toModify.offset, length: toModify.length, content: newProperty };
-            }
-            else if (parent.children.length === 0 || lastSegment === 0) {
-                edit = { offset: parent.offset + 1, length: 0, content: parent.children.length === 0 ? newProperty : newProperty + ',' };
-            }
-            else {
-                const index = lastSegment > parent.children.length ? parent.children.length : lastSegment;
-                const previous = parent.children[index - 1];
-                edit = { offset: previous.offset + previous.length, length: 0, content: ',' + newProperty };
-            }
-            return withFormatting(text, edit, options);
-        }
-        else {
-            throw new Error(`Can not ${value === void 0 ? 'remove' : (options.isArrayInsertion ? 'insert' : 'modify')} Array index ${insertIndex} as length is not sufficient`);
-        }
-    }
-    else {
-        throw new Error(`Can not add ${typeof lastSegment !== 'number' ? 'index' : 'property'} to parent of type ${parent.type}`);
-    }
-}
-function withFormatting(text, edit, options) {
-    if (!options.formattingOptions) {
-        return [edit];
-    }
-    // apply the edit
-    let newText = applyEdit(text, edit);
-    // format the new text
-    let begin = edit.offset;
-    let end = edit.offset + edit.content.length;
-    if (edit.length === 0 || edit.content.length === 0) { // insert or remove
-        while (begin > 0 && !(0,_format__WEBPACK_IMPORTED_MODULE_0__.isEOL)(newText, begin - 1)) {
-            begin--;
-        }
-        while (end < newText.length && !(0,_format__WEBPACK_IMPORTED_MODULE_0__.isEOL)(newText, end)) {
-            end++;
-        }
-    }
-    const edits = (0,_format__WEBPACK_IMPORTED_MODULE_0__.format)(newText, { offset: begin, length: end - begin }, { ...options.formattingOptions, keepLines: false });
-    // apply the formatting edits and track the begin and end offsets of the changes
-    for (let i = edits.length - 1; i >= 0; i--) {
-        const edit = edits[i];
-        newText = applyEdit(newText, edit);
-        begin = Math.min(begin, edit.offset);
-        end = Math.max(end, edit.offset + edit.length);
-        end += edit.content.length - edit.length;
-    }
-    // create a single edit with all changes
-    const editLength = text.length - (newText.length - end) - begin;
-    return [{ offset: begin, length: editLength, content: newText.substring(begin, end) }];
-}
-function applyEdit(text, edit) {
-    return text.substring(0, edit.offset) + edit.content + text.substring(edit.offset + edit.length);
-}
-function isWS(text, offset) {
-    return '\r\n \t'.indexOf(text.charAt(offset)) !== -1;
-}
-
-
-/***/ }),
-/* 18 */
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   contains: () => (/* binding */ contains),
-/* harmony export */   findNodeAtLocation: () => (/* binding */ findNodeAtLocation),
-/* harmony export */   findNodeAtOffset: () => (/* binding */ findNodeAtOffset),
-/* harmony export */   getLocation: () => (/* binding */ getLocation),
-/* harmony export */   getNodePath: () => (/* binding */ getNodePath),
-/* harmony export */   getNodeType: () => (/* binding */ getNodeType),
-/* harmony export */   getNodeValue: () => (/* binding */ getNodeValue),
-/* harmony export */   parse: () => (/* binding */ parse),
-/* harmony export */   parseTree: () => (/* binding */ parseTree),
-/* harmony export */   stripComments: () => (/* binding */ stripComments),
-/* harmony export */   visit: () => (/* binding */ visit)
-/* harmony export */ });
-/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(15);
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-
-
-var ParseOptions;
-(function (ParseOptions) {
-    ParseOptions.DEFAULT = {
-        allowTrailingComma: false
-    };
-})(ParseOptions || (ParseOptions = {}));
-/**
- * For a given offset, evaluate the location in the JSON document. Each segment in the location path is either a property name or an array index.
- */
-function getLocation(text, position) {
-    const segments = []; // strings or numbers
-    const earlyReturnException = new Object();
-    let previousNode = undefined;
-    const previousNodeInst = {
-        value: {},
-        offset: 0,
-        length: 0,
-        type: 'object',
-        parent: undefined
-    };
-    let isAtPropertyKey = false;
-    function setPreviousNode(value, offset, length, type) {
-        previousNodeInst.value = value;
-        previousNodeInst.offset = offset;
-        previousNodeInst.length = length;
-        previousNodeInst.type = type;
-        previousNodeInst.colonOffset = undefined;
-        previousNode = previousNodeInst;
-    }
-    try {
-        visit(text, {
-            onObjectBegin: (offset, length) => {
-                if (position <= offset) {
-                    throw earlyReturnException;
-                }
-                previousNode = undefined;
-                isAtPropertyKey = position > offset;
-                segments.push(''); // push a placeholder (will be replaced)
-            },
-            onObjectProperty: (name, offset, length) => {
-                if (position < offset) {
-                    throw earlyReturnException;
-                }
-                setPreviousNode(name, offset, length, 'property');
-                segments[segments.length - 1] = name;
-                if (position <= offset + length) {
-                    throw earlyReturnException;
-                }
-            },
-            onObjectEnd: (offset, length) => {
-                if (position <= offset) {
-                    throw earlyReturnException;
-                }
-                previousNode = undefined;
-                segments.pop();
-            },
-            onArrayBegin: (offset, length) => {
-                if (position <= offset) {
-                    throw earlyReturnException;
-                }
-                previousNode = undefined;
-                segments.push(0);
-            },
-            onArrayEnd: (offset, length) => {
-                if (position <= offset) {
-                    throw earlyReturnException;
-                }
-                previousNode = undefined;
-                segments.pop();
-            },
-            onLiteralValue: (value, offset, length) => {
-                if (position < offset) {
-                    throw earlyReturnException;
-                }
-                setPreviousNode(value, offset, length, getNodeType(value));
-                if (position <= offset + length) {
-                    throw earlyReturnException;
-                }
-            },
-            onSeparator: (sep, offset, length) => {
-                if (position <= offset) {
-                    throw earlyReturnException;
-                }
-                if (sep === ':' && previousNode && previousNode.type === 'property') {
-                    previousNode.colonOffset = offset;
-                    isAtPropertyKey = false;
-                    previousNode = undefined;
-                }
-                else if (sep === ',') {
-                    const last = segments[segments.length - 1];
-                    if (typeof last === 'number') {
-                        segments[segments.length - 1] = last + 1;
-                    }
-                    else {
-                        isAtPropertyKey = true;
-                        segments[segments.length - 1] = '';
-                    }
-                    previousNode = undefined;
-                }
-            }
-        });
-    }
-    catch (e) {
-        if (e !== earlyReturnException) {
-            throw e;
-        }
-    }
-    return {
-        path: segments,
-        previousNode,
-        isAtPropertyKey,
-        matches: (pattern) => {
-            let k = 0;
-            for (let i = 0; k < pattern.length && i < segments.length; i++) {
-                if (pattern[k] === segments[i] || pattern[k] === '*') {
-                    k++;
-                }
-                else if (pattern[k] !== '**') {
-                    return false;
-                }
-            }
-            return k === pattern.length;
-        }
-    };
-}
-/**
- * Parses the given text and returns the object the JSON content represents. On invalid input, the parser tries to be as fault tolerant as possible, but still return a result.
- * Therefore always check the errors list to find out if the input was valid.
- */
-function parse(text, errors = [], options = ParseOptions.DEFAULT) {
-    let currentProperty = null;
-    let currentParent = [];
-    const previousParents = [];
-    function onValue(value) {
-        if (Array.isArray(currentParent)) {
-            currentParent.push(value);
-        }
-        else if (currentProperty !== null) {
-            currentParent[currentProperty] = value;
-        }
-    }
-    const visitor = {
-        onObjectBegin: () => {
-            const object = {};
-            onValue(object);
-            previousParents.push(currentParent);
-            currentParent = object;
-            currentProperty = null;
-        },
-        onObjectProperty: (name) => {
-            currentProperty = name;
-        },
-        onObjectEnd: () => {
-            currentParent = previousParents.pop();
-        },
-        onArrayBegin: () => {
-            const array = [];
-            onValue(array);
-            previousParents.push(currentParent);
-            currentParent = array;
-            currentProperty = null;
-        },
-        onArrayEnd: () => {
-            currentParent = previousParents.pop();
-        },
-        onLiteralValue: onValue,
-        onError: (error, offset, length) => {
-            errors.push({ error, offset, length });
-        }
-    };
-    visit(text, visitor, options);
-    return currentParent[0];
-}
-/**
- * Parses the given text and returns a tree representation the JSON content. On invalid input, the parser tries to be as fault tolerant as possible, but still return a result.
- */
-function parseTree(text, errors = [], options = ParseOptions.DEFAULT) {
-    let currentParent = { type: 'array', offset: -1, length: -1, children: [], parent: undefined }; // artificial root
-    function ensurePropertyComplete(endOffset) {
-        if (currentParent.type === 'property') {
-            currentParent.length = endOffset - currentParent.offset;
-            currentParent = currentParent.parent;
-        }
-    }
-    function onValue(valueNode) {
-        currentParent.children.push(valueNode);
-        return valueNode;
-    }
-    const visitor = {
-        onObjectBegin: (offset) => {
-            currentParent = onValue({ type: 'object', offset, length: -1, parent: currentParent, children: [] });
-        },
-        onObjectProperty: (name, offset, length) => {
-            currentParent = onValue({ type: 'property', offset, length: -1, parent: currentParent, children: [] });
-            currentParent.children.push({ type: 'string', value: name, offset, length, parent: currentParent });
-        },
-        onObjectEnd: (offset, length) => {
-            ensurePropertyComplete(offset + length); // in case of a missing value for a property: make sure property is complete
-            currentParent.length = offset + length - currentParent.offset;
-            currentParent = currentParent.parent;
-            ensurePropertyComplete(offset + length);
-        },
-        onArrayBegin: (offset, length) => {
-            currentParent = onValue({ type: 'array', offset, length: -1, parent: currentParent, children: [] });
-        },
-        onArrayEnd: (offset, length) => {
-            currentParent.length = offset + length - currentParent.offset;
-            currentParent = currentParent.parent;
-            ensurePropertyComplete(offset + length);
-        },
-        onLiteralValue: (value, offset, length) => {
-            onValue({ type: getNodeType(value), offset, length, parent: currentParent, value });
-            ensurePropertyComplete(offset + length);
-        },
-        onSeparator: (sep, offset, length) => {
-            if (currentParent.type === 'property') {
-                if (sep === ':') {
-                    currentParent.colonOffset = offset;
-                }
-                else if (sep === ',') {
-                    ensurePropertyComplete(offset);
-                }
-            }
-        },
-        onError: (error, offset, length) => {
-            errors.push({ error, offset, length });
-        }
-    };
-    visit(text, visitor, options);
-    const result = currentParent.children[0];
-    if (result) {
-        delete result.parent;
-    }
-    return result;
-}
-/**
- * Finds the node at the given path in a JSON DOM.
- */
-function findNodeAtLocation(root, path) {
-    if (!root) {
-        return undefined;
-    }
-    let node = root;
-    for (let segment of path) {
-        if (typeof segment === 'string') {
-            if (node.type !== 'object' || !Array.isArray(node.children)) {
-                return undefined;
-            }
-            let found = false;
-            for (const propertyNode of node.children) {
-                if (Array.isArray(propertyNode.children) && propertyNode.children[0].value === segment && propertyNode.children.length === 2) {
-                    node = propertyNode.children[1];
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                return undefined;
-            }
-        }
-        else {
-            const index = segment;
-            if (node.type !== 'array' || index < 0 || !Array.isArray(node.children) || index >= node.children.length) {
-                return undefined;
-            }
-            node = node.children[index];
-        }
-    }
-    return node;
-}
-/**
- * Gets the JSON path of the given JSON DOM node
- */
-function getNodePath(node) {
-    if (!node.parent || !node.parent.children) {
-        return [];
-    }
-    const path = getNodePath(node.parent);
-    if (node.parent.type === 'property') {
-        const key = node.parent.children[0].value;
-        path.push(key);
-    }
-    else if (node.parent.type === 'array') {
-        const index = node.parent.children.indexOf(node);
-        if (index !== -1) {
-            path.push(index);
-        }
-    }
-    return path;
-}
-/**
- * Evaluates the JavaScript object of the given JSON DOM node
- */
-function getNodeValue(node) {
-    switch (node.type) {
-        case 'array':
-            return node.children.map(getNodeValue);
-        case 'object':
-            const obj = Object.create(null);
-            for (let prop of node.children) {
-                const valueNode = prop.children[1];
-                if (valueNode) {
-                    obj[prop.children[0].value] = getNodeValue(valueNode);
-                }
-            }
-            return obj;
-        case 'null':
-        case 'string':
-        case 'number':
-        case 'boolean':
-            return node.value;
-        default:
-            return undefined;
-    }
-}
-function contains(node, offset, includeRightBound = false) {
-    return (offset >= node.offset && offset < (node.offset + node.length)) || includeRightBound && (offset === (node.offset + node.length));
-}
-/**
- * Finds the most inner node at the given offset. If includeRightBound is set, also finds nodes that end at the given offset.
- */
-function findNodeAtOffset(node, offset, includeRightBound = false) {
-    if (contains(node, offset, includeRightBound)) {
-        const children = node.children;
-        if (Array.isArray(children)) {
-            for (let i = 0; i < children.length && children[i].offset <= offset; i++) {
-                const item = findNodeAtOffset(children[i], offset, includeRightBound);
-                if (item) {
-                    return item;
-                }
-            }
-        }
-        return node;
-    }
-    return undefined;
-}
-/**
- * Parses the given text and invokes the visitor functions for each object, array and literal reached.
- */
-function visit(text, visitor, options = ParseOptions.DEFAULT) {
-    const _scanner = (0,_scanner__WEBPACK_IMPORTED_MODULE_0__.createScanner)(text, false);
-    // Important: Only pass copies of this to visitor functions to prevent accidental modification, and
-    // to not affect visitor functions which stored a reference to a previous JSONPath
-    const _jsonPath = [];
-    // Depth of onXXXBegin() callbacks suppressed. onXXXEnd() decrements this if it isn't 0 already.
-    // Callbacks are only called when this value is 0.
-    let suppressedCallbacks = 0;
-    function toNoArgVisit(visitFunction) {
-        return visitFunction ? () => suppressedCallbacks === 0 && visitFunction(_scanner.getTokenOffset(), _scanner.getTokenLength(), _scanner.getTokenStartLine(), _scanner.getTokenStartCharacter()) : () => true;
-    }
-    function toOneArgVisit(visitFunction) {
-        return visitFunction ? (arg) => suppressedCallbacks === 0 && visitFunction(arg, _scanner.getTokenOffset(), _scanner.getTokenLength(), _scanner.getTokenStartLine(), _scanner.getTokenStartCharacter()) : () => true;
-    }
-    function toOneArgVisitWithPath(visitFunction) {
-        return visitFunction ? (arg) => suppressedCallbacks === 0 && visitFunction(arg, _scanner.getTokenOffset(), _scanner.getTokenLength(), _scanner.getTokenStartLine(), _scanner.getTokenStartCharacter(), () => _jsonPath.slice()) : () => true;
-    }
-    function toBeginVisit(visitFunction) {
-        return visitFunction ?
-            () => {
-                if (suppressedCallbacks > 0) {
-                    suppressedCallbacks++;
-                }
-                else {
-                    let cbReturn = visitFunction(_scanner.getTokenOffset(), _scanner.getTokenLength(), _scanner.getTokenStartLine(), _scanner.getTokenStartCharacter(), () => _jsonPath.slice());
-                    if (cbReturn === false) {
-                        suppressedCallbacks = 1;
-                    }
-                }
-            }
-            : () => true;
-    }
-    function toEndVisit(visitFunction) {
-        return visitFunction ?
-            () => {
-                if (suppressedCallbacks > 0) {
-                    suppressedCallbacks--;
-                }
-                if (suppressedCallbacks === 0) {
-                    visitFunction(_scanner.getTokenOffset(), _scanner.getTokenLength(), _scanner.getTokenStartLine(), _scanner.getTokenStartCharacter());
-                }
-            }
-            : () => true;
-    }
-    const onObjectBegin = toBeginVisit(visitor.onObjectBegin), onObjectProperty = toOneArgVisitWithPath(visitor.onObjectProperty), onObjectEnd = toEndVisit(visitor.onObjectEnd), onArrayBegin = toBeginVisit(visitor.onArrayBegin), onArrayEnd = toEndVisit(visitor.onArrayEnd), onLiteralValue = toOneArgVisitWithPath(visitor.onLiteralValue), onSeparator = toOneArgVisit(visitor.onSeparator), onComment = toNoArgVisit(visitor.onComment), onError = toOneArgVisit(visitor.onError);
-    const disallowComments = options && options.disallowComments;
-    const allowTrailingComma = options && options.allowTrailingComma;
-    function scanNext() {
-        while (true) {
-            const token = _scanner.scan();
-            switch (_scanner.getTokenError()) {
-                case 4 /* ScanError.InvalidUnicode */:
-                    handleError(14 /* ParseErrorCode.InvalidUnicode */);
-                    break;
-                case 5 /* ScanError.InvalidEscapeCharacter */:
-                    handleError(15 /* ParseErrorCode.InvalidEscapeCharacter */);
-                    break;
-                case 3 /* ScanError.UnexpectedEndOfNumber */:
-                    handleError(13 /* ParseErrorCode.UnexpectedEndOfNumber */);
-                    break;
-                case 1 /* ScanError.UnexpectedEndOfComment */:
-                    if (!disallowComments) {
-                        handleError(11 /* ParseErrorCode.UnexpectedEndOfComment */);
-                    }
-                    break;
-                case 2 /* ScanError.UnexpectedEndOfString */:
-                    handleError(12 /* ParseErrorCode.UnexpectedEndOfString */);
-                    break;
-                case 6 /* ScanError.InvalidCharacter */:
-                    handleError(16 /* ParseErrorCode.InvalidCharacter */);
-                    break;
-            }
-            switch (token) {
-                case 12 /* SyntaxKind.LineCommentTrivia */:
-                case 13 /* SyntaxKind.BlockCommentTrivia */:
-                    if (disallowComments) {
-                        handleError(10 /* ParseErrorCode.InvalidCommentToken */);
-                    }
-                    else {
-                        onComment();
-                    }
-                    break;
-                case 16 /* SyntaxKind.Unknown */:
-                    handleError(1 /* ParseErrorCode.InvalidSymbol */);
-                    break;
-                case 15 /* SyntaxKind.Trivia */:
-                case 14 /* SyntaxKind.LineBreakTrivia */:
-                    break;
-                default:
-                    return token;
-            }
-        }
-    }
-    function handleError(error, skipUntilAfter = [], skipUntil = []) {
-        onError(error);
-        if (skipUntilAfter.length + skipUntil.length > 0) {
-            let token = _scanner.getToken();
-            while (token !== 17 /* SyntaxKind.EOF */) {
-                if (skipUntilAfter.indexOf(token) !== -1) {
-                    scanNext();
-                    break;
-                }
-                else if (skipUntil.indexOf(token) !== -1) {
-                    break;
-                }
-                token = scanNext();
-            }
-        }
-    }
-    function parseString(isValue) {
-        const value = _scanner.getTokenValue();
-        if (isValue) {
-            onLiteralValue(value);
-        }
-        else {
-            onObjectProperty(value);
-            // add property name afterwards
-            _jsonPath.push(value);
-        }
-        scanNext();
-        return true;
-    }
-    function parseLiteral() {
-        switch (_scanner.getToken()) {
-            case 11 /* SyntaxKind.NumericLiteral */:
-                const tokenValue = _scanner.getTokenValue();
-                let value = Number(tokenValue);
-                if (isNaN(value)) {
-                    handleError(2 /* ParseErrorCode.InvalidNumberFormat */);
-                    value = 0;
-                }
-                onLiteralValue(value);
-                break;
-            case 7 /* SyntaxKind.NullKeyword */:
-                onLiteralValue(null);
-                break;
-            case 8 /* SyntaxKind.TrueKeyword */:
-                onLiteralValue(true);
-                break;
-            case 9 /* SyntaxKind.FalseKeyword */:
-                onLiteralValue(false);
-                break;
-            default:
-                return false;
-        }
-        scanNext();
-        return true;
-    }
-    function parseProperty() {
-        if (_scanner.getToken() !== 10 /* SyntaxKind.StringLiteral */) {
-            handleError(3 /* ParseErrorCode.PropertyNameExpected */, [], [2 /* SyntaxKind.CloseBraceToken */, 5 /* SyntaxKind.CommaToken */]);
-            return false;
-        }
-        parseString(false);
-        if (_scanner.getToken() === 6 /* SyntaxKind.ColonToken */) {
-            onSeparator(':');
-            scanNext(); // consume colon
-            if (!parseValue()) {
-                handleError(4 /* ParseErrorCode.ValueExpected */, [], [2 /* SyntaxKind.CloseBraceToken */, 5 /* SyntaxKind.CommaToken */]);
-            }
-        }
-        else {
-            handleError(5 /* ParseErrorCode.ColonExpected */, [], [2 /* SyntaxKind.CloseBraceToken */, 5 /* SyntaxKind.CommaToken */]);
-        }
-        _jsonPath.pop(); // remove processed property name
-        return true;
-    }
-    function parseObject() {
-        onObjectBegin();
-        scanNext(); // consume open brace
-        let needsComma = false;
-        while (_scanner.getToken() !== 2 /* SyntaxKind.CloseBraceToken */ && _scanner.getToken() !== 17 /* SyntaxKind.EOF */) {
-            if (_scanner.getToken() === 5 /* SyntaxKind.CommaToken */) {
-                if (!needsComma) {
-                    handleError(4 /* ParseErrorCode.ValueExpected */, [], []);
-                }
-                onSeparator(',');
-                scanNext(); // consume comma
-                if (_scanner.getToken() === 2 /* SyntaxKind.CloseBraceToken */ && allowTrailingComma) {
-                    break;
-                }
-            }
-            else if (needsComma) {
-                handleError(6 /* ParseErrorCode.CommaExpected */, [], []);
-            }
-            if (!parseProperty()) {
-                handleError(4 /* ParseErrorCode.ValueExpected */, [], [2 /* SyntaxKind.CloseBraceToken */, 5 /* SyntaxKind.CommaToken */]);
-            }
-            needsComma = true;
-        }
-        onObjectEnd();
-        if (_scanner.getToken() !== 2 /* SyntaxKind.CloseBraceToken */) {
-            handleError(7 /* ParseErrorCode.CloseBraceExpected */, [2 /* SyntaxKind.CloseBraceToken */], []);
-        }
-        else {
-            scanNext(); // consume close brace
-        }
-        return true;
-    }
-    function parseArray() {
-        onArrayBegin();
-        scanNext(); // consume open bracket
-        let isFirstElement = true;
-        let needsComma = false;
-        while (_scanner.getToken() !== 4 /* SyntaxKind.CloseBracketToken */ && _scanner.getToken() !== 17 /* SyntaxKind.EOF */) {
-            if (_scanner.getToken() === 5 /* SyntaxKind.CommaToken */) {
-                if (!needsComma) {
-                    handleError(4 /* ParseErrorCode.ValueExpected */, [], []);
-                }
-                onSeparator(',');
-                scanNext(); // consume comma
-                if (_scanner.getToken() === 4 /* SyntaxKind.CloseBracketToken */ && allowTrailingComma) {
-                    break;
-                }
-            }
-            else if (needsComma) {
-                handleError(6 /* ParseErrorCode.CommaExpected */, [], []);
-            }
-            if (isFirstElement) {
-                _jsonPath.push(0);
-                isFirstElement = false;
-            }
-            else {
-                _jsonPath[_jsonPath.length - 1]++;
-            }
-            if (!parseValue()) {
-                handleError(4 /* ParseErrorCode.ValueExpected */, [], [4 /* SyntaxKind.CloseBracketToken */, 5 /* SyntaxKind.CommaToken */]);
-            }
-            needsComma = true;
-        }
-        onArrayEnd();
-        if (!isFirstElement) {
-            _jsonPath.pop(); // remove array index
-        }
-        if (_scanner.getToken() !== 4 /* SyntaxKind.CloseBracketToken */) {
-            handleError(8 /* ParseErrorCode.CloseBracketExpected */, [4 /* SyntaxKind.CloseBracketToken */], []);
-        }
-        else {
-            scanNext(); // consume close bracket
-        }
-        return true;
-    }
-    function parseValue() {
-        switch (_scanner.getToken()) {
-            case 3 /* SyntaxKind.OpenBracketToken */:
-                return parseArray();
-            case 1 /* SyntaxKind.OpenBraceToken */:
-                return parseObject();
-            case 10 /* SyntaxKind.StringLiteral */:
-                return parseString(true);
-            default:
-                return parseLiteral();
-        }
-    }
-    scanNext();
-    if (_scanner.getToken() === 17 /* SyntaxKind.EOF */) {
-        if (options.allowEmptyContent) {
-            return true;
-        }
-        handleError(4 /* ParseErrorCode.ValueExpected */, [], []);
-        return false;
-    }
-    if (!parseValue()) {
-        handleError(4 /* ParseErrorCode.ValueExpected */, [], []);
-        return false;
-    }
-    if (_scanner.getToken() !== 17 /* SyntaxKind.EOF */) {
-        handleError(9 /* ParseErrorCode.EndOfFileExpected */, [], []);
-    }
-    return true;
-}
-/**
- * Takes JSON with JavaScript-style comments and remove
- * them. Optionally replaces every none-newline character
- * of comments with a replaceCharacter
- */
-function stripComments(text, replaceCh) {
-    let _scanner = (0,_scanner__WEBPACK_IMPORTED_MODULE_0__.createScanner)(text), parts = [], kind, offset = 0, pos;
-    do {
-        pos = _scanner.getPosition();
-        kind = _scanner.scan();
-        switch (kind) {
-            case 12 /* SyntaxKind.LineCommentTrivia */:
-            case 13 /* SyntaxKind.BlockCommentTrivia */:
-            case 17 /* SyntaxKind.EOF */:
-                if (offset !== pos) {
-                    parts.push(text.substring(offset, pos));
-                }
-                if (replaceCh !== undefined) {
-                    parts.push(_scanner.getTokenValue().replace(/[^\r\n]/g, replaceCh));
-                }
-                offset = _scanner.getPosition();
-                break;
-        }
-    } while (kind !== 17 /* SyntaxKind.EOF */);
-    return parts.join('');
-}
-function getNodeType(value) {
-    switch (typeof value) {
-        case 'boolean': return 'boolean';
-        case 'number': return 'number';
-        case 'string': return 'string';
-        case 'object': {
-            if (!value) {
-                return 'null';
-            }
-            else if (Array.isArray(value)) {
-                return 'array';
-            }
-            return 'object';
-        }
-        default: return 'null';
-    }
-}
-
-
-/***/ }),
-/* 19 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -4593,22 +237,23 @@ exports.deleteDb = deleteDb;
 exports.changeDatabaseVersion = changeDatabaseVersion;
 exports.changeDatabaseProjectRepoBranches = changeDatabaseProjectRepoBranches;
 const vscode = __importStar(__webpack_require__(1));
-const db_1 = __webpack_require__(20);
-const utils_1 = __webpack_require__(4);
-const branches_1 = __webpack_require__(25);
-const settingsStore_1 = __webpack_require__(24);
-const versionsService_1 = __webpack_require__(21);
-const child_process_1 = __webpack_require__(7);
-const fs = __importStar(__webpack_require__(5));
-const path = __importStar(__webpack_require__(6));
-const crypto_1 = __webpack_require__(23);
-const dbNaming_1 = __webpack_require__(27);
-const os = __importStar(__webpack_require__(28));
-const sortOptions_1 = __webpack_require__(29);
-const stream_1 = __webpack_require__(30);
-const database_1 = __webpack_require__(31);
-const logger_1 = __webpack_require__(10);
-const notifications_1 = __webpack_require__(12);
+const db_1 = __webpack_require__(3);
+const utils_1 = __webpack_require__(9);
+const branches_1 = __webpack_require__(24);
+const settingsStore_1 = __webpack_require__(7);
+const versionsService_1 = __webpack_require__(4);
+const child_process_1 = __webpack_require__(12);
+const fs = __importStar(__webpack_require__(10));
+const path = __importStar(__webpack_require__(11));
+const crypto_1 = __webpack_require__(6);
+const dbNaming_1 = __webpack_require__(26);
+const os = __importStar(__webpack_require__(27));
+const sortOptions_1 = __webpack_require__(28);
+const stream_1 = __webpack_require__(29);
+const database_1 = __webpack_require__(30);
+const logger_1 = __webpack_require__(15);
+const notifications_1 = __webpack_require__(17);
+const baseTreeProvider_1 = __webpack_require__(33);
 const environment_1 = __webpack_require__(34);
 /**
  * Gets the effective Odoo version for a database object.
@@ -4832,15 +477,11 @@ function extractDatabaseFromEvent(event) {
     }
     return null;
 }
-class DbsTreeProvider {
+class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     sortPreferences;
-    _onDidChangeTreeData = new vscode.EventEmitter();
-    onDidChangeTreeData = this._onDidChangeTreeData.event;
     constructor(sortPreferences) {
+        super();
         this.sortPreferences = sortPreferences;
-    }
-    refresh() {
-        this._onDidChangeTreeData.fire();
     }
     getTreeItem(item) {
         return item;
@@ -6556,14 +2197,14 @@ function prepareDumpViaTempFile(dumpPath) {
 
 
 /***/ }),
-/* 20 */
+/* 3 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.DatabaseModel = void 0;
-const versionsService_1 = __webpack_require__(21);
-const logger_1 = __webpack_require__(10);
+const versionsService_1 = __webpack_require__(4);
+const logger_1 = __webpack_require__(15);
 class DatabaseModel {
     name;
     isItABackup;
@@ -6639,7 +2280,7 @@ exports.DatabaseModel = DatabaseModel;
 
 
 /***/ }),
-/* 21 */
+/* 4 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -6679,11 +2320,11 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VersionsService = void 0;
 const vscode = __importStar(__webpack_require__(1));
-const version_1 = __webpack_require__(22);
-const settingsStore_1 = __webpack_require__(24);
-const utils_1 = __webpack_require__(4);
-const logger_1 = __webpack_require__(10);
-const notifications_1 = __webpack_require__(12);
+const version_1 = __webpack_require__(5);
+const settingsStore_1 = __webpack_require__(7);
+const utils_1 = __webpack_require__(9);
+const logger_1 = __webpack_require__(15);
+const notifications_1 = __webpack_require__(17);
 class VersionsService {
     static instance;
     versions = new Map();
@@ -7305,13 +2946,13 @@ exports.VersionsService = VersionsService;
 
 
 /***/ }),
-/* 22 */
+/* 5 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VersionModel = void 0;
-const crypto_1 = __webpack_require__(23);
+const crypto_1 = __webpack_require__(6);
 class VersionModel {
     id;
     name; // User-friendly name like "Odoo 17.0", "Saas 17.4"
@@ -7383,13 +3024,13 @@ exports.VersionModel = VersionModel;
 
 
 /***/ }),
-/* 23 */
+/* 6 */
 /***/ ((module) => {
 
 module.exports = require("crypto");
 
 /***/ }),
-/* 24 */
+/* 7 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -7399,11 +3040,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SettingsStore = void 0;
 const settings_1 = __webpack_require__(8);
-const utils_1 = __webpack_require__(4);
-const jsonc_parser_1 = __webpack_require__(13);
-const fs_1 = __importDefault(__webpack_require__(5));
-const path_1 = __importDefault(__webpack_require__(6));
-const logger_1 = __webpack_require__(10);
+const utils_1 = __webpack_require__(9);
+const jsonc_parser_1 = __webpack_require__(18);
+const fs_1 = __importDefault(__webpack_require__(10));
+const path_1 = __importDefault(__webpack_require__(11));
+const logger_1 = __webpack_require__(15);
 const WRITE_DEBOUNCE_MS = 25;
 class SettingsStore {
     static cache = new Map();
@@ -7610,7 +3251,3166 @@ exports.SettingsStore = SettingsStore;
 
 
 /***/ }),
-/* 25 */
+/* 8 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.SettingsModel = void 0;
+class SettingsModel {
+    debuggerName = "odoo:18.0";
+    debuggerVersion = "1.0.0";
+    portNumber = 8018;
+    shellPortNumber = 5018;
+    limitTimeReal = 0;
+    limitTimeCpu = 0;
+    maxCronThreads = 0;
+    extraParams = "--log-handler,odoo.addons.base.models.ir_attachment:WARNING";
+    devMode = "--dev=all";
+    dumpsFolder = "/dumps";
+    odooPath = "./odoo";
+    enterprisePath = "./enterprise";
+    designThemesPath = "./design-themes";
+    customAddonsPath = "./custom-addons";
+    pythonPath = "./venv/bin/python";
+    subModulesPaths = "";
+    installApps = "";
+    upgradeApps = "";
+    preCheckoutCommands = [];
+    postCheckoutCommands = [];
+    constructor(data) {
+        if (data) {
+            Object.assign(this, data);
+        }
+        this.preCheckoutCommands = Array.isArray(this.preCheckoutCommands) ? this.preCheckoutCommands : [];
+        this.postCheckoutCommands = Array.isArray(this.postCheckoutCommands) ? this.postCheckoutCommands : [];
+    }
+}
+exports.SettingsModel = SettingsModel;
+
+
+/***/ }),
+/* 9 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CONFIG = exports.showBriefStatus = exports.showAutoInfo = exports.showModalWarning = exports.showWarning = exports.showInfo = exports.showError = exports.showMessage = exports.MessageType = void 0;
+exports.stripSettings = stripSettings;
+exports.addActiveIndicator = addActiveIndicator;
+exports.getDatabaseLabel = getDatabaseLabel;
+exports.getWorkspacePath = getWorkspacePath;
+exports.normalizePath = normalizePath;
+exports.findModules = findModules;
+exports.findRepositories = findRepositories;
+exports.discoverModulesInRepos = discoverModulesInRepos;
+exports.createInfoTreeItem = createInfoTreeItem;
+exports.readFromFile = readFromFile;
+exports.camelCaseToTitleCase = camelCaseToTitleCase;
+exports.getSettingDisplayName = getSettingDisplayName;
+exports.getSettingDisplayValue = getSettingDisplayValue;
+exports.getGitBranches = getGitBranches;
+exports.getDefaultVersionSettings = getDefaultVersionSettings;
+const vscode = __importStar(__webpack_require__(1));
+const fs = __importStar(__webpack_require__(10));
+const path = __importStar(__webpack_require__(11));
+const childProcess = __importStar(__webpack_require__(12));
+const settings_1 = __webpack_require__(8);
+const gitService_1 = __webpack_require__(13);
+const runtimeCache_1 = __webpack_require__(16);
+const notifications_1 = __webpack_require__(17);
+const jsonc_parser_1 = __webpack_require__(18);
+const logger_1 = __webpack_require__(15);
+// Re-exported so existing `from './utils'` imports keep working; new code
+// should import these from './services/notifications' directly.
+var notifications_2 = __webpack_require__(17);
+Object.defineProperty(exports, "MessageType", ({ enumerable: true, get: function () { return notifications_2.MessageType; } }));
+Object.defineProperty(exports, "showMessage", ({ enumerable: true, get: function () { return notifications_2.showMessage; } }));
+Object.defineProperty(exports, "showError", ({ enumerable: true, get: function () { return notifications_2.showError; } }));
+Object.defineProperty(exports, "showInfo", ({ enumerable: true, get: function () { return notifications_2.showInfo; } }));
+Object.defineProperty(exports, "showWarning", ({ enumerable: true, get: function () { return notifications_2.showWarning; } }));
+Object.defineProperty(exports, "showModalWarning", ({ enumerable: true, get: function () { return notifications_2.showModalWarning; } }));
+Object.defineProperty(exports, "showAutoInfo", ({ enumerable: true, get: function () { return notifications_2.showAutoInfo; } }));
+Object.defineProperty(exports, "showBriefStatus", ({ enumerable: true, get: function () { return notifications_2.showBriefStatus; } }));
+const launchJsonFileContent = `{
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+
+    // Debug configurations for VS Code
+    // Odoo configurations will be automatically added here by the Odoo Debugger extension
+    "configurations": []
+}`;
+const debuggerDataFileContent = `{
+    // Odoo Debugger Extension Configuration
+    // This file stores your project settings and configurations
+    "settings": {
+        // Add your Odoo settings here
+    },
+    "projects": [],
+    "dbTemplates": []
+}`;
+/**
+ * Strip settings from DebuggerData to ensure settings are managed exclusively by versions
+ */
+function stripSettings(data) {
+    return {
+        projects: data.projects,
+        versions: data.versions,
+        activeVersion: data.activeVersion,
+        dbTemplates: data.dbTemplates
+    };
+}
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+/**
+ * Configuration options for file operations
+ */
+exports.CONFIG = {
+    tabSize: 4,
+    insertSpaces: true
+};
+// ============================================================================
+// UI UTILITIES
+// ============================================================================
+/**
+ * Adds the pointing hand emoji (👉) to the beginning of a string if the condition is true
+ * Used consistently across the extension for indicating active/selected items
+ * @param text The text to potentially prefix
+ * @param isActive Whether to add the pointing hand emoji
+ * @returns The text with or without the pointing hand prefix
+ */
+function addActiveIndicator(text, isActive) {
+    return `${isActive ? '👉' : ''} ${text}`;
+}
+/**
+ * Returns a user-friendly database label prioritizing displayName, then name, then id.
+ */
+function getDatabaseLabel(db) {
+    if (!db) {
+        return 'Unknown Database';
+    }
+    const candidates = [
+        typeof db.displayName === 'string' ? db.displayName.trim() : '',
+        typeof db.name === 'string' ? db.name.trim() : '',
+        typeof db.id === 'string' ? db.id.trim() : ''
+    ].filter(Boolean);
+    return candidates[0] || 'Unknown Database';
+}
+// ============================================================================
+// WORKSPACE & PATH UTILITIES
+// ============================================================================
+/**
+ * Gets the workspace folder path with validation
+ * @returns workspace path or null if no workspace is open
+ */
+function getWorkspacePath() {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+        (0, notifications_1.showError)("Open a workspace to use this command.");
+        return null;
+    }
+    return workspaceFolders[0].uri.fsPath;
+}
+/**
+ * Normalizes a path to be absolute, relative to workspace if needed
+ */
+function normalizePath(inputPath) {
+    if (path.isAbsolute(inputPath)) {
+        return inputPath;
+    }
+    const workspacePath = getWorkspacePath();
+    if (!workspacePath) {
+        return inputPath; // Return as-is if no workspace
+    }
+    return path.join(workspacePath, inputPath);
+}
+// ============================================================================
+// FILE SYSTEM UTILITIES
+// ============================================================================
+/**
+ * Ensures the .vscode directory exists in the workspace
+ * @param workspacePath - the workspace root path
+ * @returns the .vscode directory path
+ */
+function ensureVSCodeDirectory(workspacePath) {
+    const vscodeDir = path.join(workspacePath, '.vscode');
+    try {
+        if (!fs.existsSync(vscodeDir)) {
+            fs.mkdirSync(vscodeDir, { recursive: true });
+        }
+    }
+    catch (error) {
+        throw new Error(`Failed to create .vscode directory: ${error}`);
+    }
+    return vscodeDir;
+}
+const DEFAULT_MODULE_EXCLUDES = [
+    '**/node_modules/**',
+    '**/.venv/**',
+    '**/__pycache__/**',
+    '**/.git/**'
+];
+const DEFAULT_REPOSITORY_EXCLUDES = [
+    '**/node_modules/**',
+    '**/.venv/**',
+    '**/__pycache__/**'
+];
+function globToRegExp(pattern) {
+    const normalizedPattern = pattern.split(path.sep).join('/');
+    const placeholders = {
+        doubleStar: '__GLOB_DOUBLE_STAR__',
+        singleStar: '__GLOB_SINGLE_STAR__',
+        question: '__GLOB_QUESTION__'
+    };
+    let working = normalizedPattern
+        .replaceAll('**', placeholders.doubleStar)
+        .replaceAll('*', placeholders.singleStar)
+        .replaceAll('?', placeholders.question);
+    working = working.replaceAll(/[.+^${}()|[\]\\]/g, String.raw `\$&`);
+    working = working
+        .replaceAll(new RegExp(placeholders.doubleStar, 'g'), '.*')
+        .replaceAll(new RegExp(placeholders.singleStar, 'g'), '[^/]*')
+        .replaceAll(new RegExp(placeholders.question, 'g'), '[^/]');
+    return new RegExp(`^${working}$`, 'i');
+}
+function compilePatterns(patterns) {
+    return patterns.map(globToRegExp);
+}
+function shouldExcludePath(fullPath, root, regexes) {
+    if (regexes.length === 0) {
+        return false;
+    }
+    const normalized = fullPath.split(path.sep).join('/');
+    const relative = normalized.startsWith(root) ? normalized.slice(root.length) : normalized;
+    const candidates = new Set();
+    candidates.add(normalized);
+    candidates.add(`${normalized}/`);
+    if (relative) {
+        const trimmed = relative.replace(/^\//, '');
+        candidates.add(trimmed);
+        candidates.add(`${trimmed}/`);
+    }
+    for (const candidate of candidates) {
+        for (const regex of regexes) {
+            if (regex.test(candidate)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+function getSearchOptions(kind, overrides = {}) {
+    const { maxDepth, maxEntries, patterns } = resolveSearchConfig(kind, overrides);
+    return {
+        maxDepth,
+        maxEntries,
+        excludeRegexes: compilePatterns(patterns),
+        token: overrides.token
+    };
+}
+function resolveSearchConfig(kind, overrides = {}) {
+    const config = vscode.workspace.getConfiguration('odooDebugger.search');
+    const maxDepth = Math.max(0, overrides.maxDepth ?? config.get('maxDepth', 4));
+    const maxEntries = Math.max(1, overrides.maxEntries ?? config.get('maxEntries', 100000));
+    const patternKey = kind === 'modules' ? 'excludePatterns.modules' : 'excludePatterns.repositories';
+    const defaults = kind === 'modules' ? DEFAULT_MODULE_EXCLUDES : DEFAULT_REPOSITORY_EXCLUDES;
+    const patterns = overrides.excludePatterns ?? config.get(patternKey, defaults);
+    return { maxDepth, maxEntries, patterns };
+}
+function buildDiscoveryCacheKey(kind, targetPath, overrides = {}) {
+    const normalizedRoot = path.resolve(normalizePath(targetPath));
+    const { maxDepth, maxEntries, patterns } = resolveSearchConfig(kind, overrides);
+    return JSON.stringify({
+        kind,
+        normalizedRoot,
+        maxDepth,
+        maxEntries,
+        patterns
+    });
+}
+function discoverDirectories(targetPath, kind, options) {
+    if (!targetPath) {
+        (0, notifications_1.showError)('Enter a target path to continue.');
+        return [];
+    }
+    const normalizedRoot = normalizePath(targetPath);
+    if (!fs.existsSync(normalizedRoot)) {
+        (0, notifications_1.showError)(`Path does not exist: ${normalizedRoot}`);
+        return [];
+    }
+    const stack = [{ dir: normalizedRoot, depth: 0 }];
+    const visited = new Set();
+    const results = [];
+    let processed = 0;
+    let limitWarningShown = false;
+    const rootNormalized = normalizedRoot.split(path.sep).join('/');
+    while (stack.length > 0) {
+        if (options.token?.isCancellationRequested) {
+            break;
+        }
+        const current = stack.pop();
+        const resolved = path.resolve(current.dir);
+        if (visited.has(resolved)) {
+            continue;
+        }
+        visited.add(resolved);
+        if (current.depth > 0 && shouldExcludePath(resolved, rootNormalized, options.excludeRegexes)) {
+            continue;
+        }
+        let entries;
+        try {
+            entries = fs.readdirSync(resolved, { withFileTypes: true });
+        }
+        catch (error) {
+            logger_1.logger.warn(`Failed to read directory ${resolved}:`, error);
+            continue;
+        }
+        processed++;
+        if (processed > options.maxEntries) {
+            if (!limitWarningShown) {
+                (0, notifications_1.showWarning)(`Search limit reached while scanning ${targetPath}. Some folders may be skipped. Adjust "odooDebugger.search.maxEntries" to increase the limit.`);
+                limitWarningShown = true;
+            }
+            break;
+        }
+        const hasManifest = entries.some(entry => entry.isFile() && entry.name === '__manifest__.py');
+        const hasGitDir = entries.some(entry => entry.isDirectory() && entry.name === '.git');
+        if (kind === 'modules' && hasManifest) {
+            results.push({ path: resolved, name: path.basename(resolved) });
+            continue;
+        }
+        if (kind === 'repositories' && hasGitDir) {
+            results.push({ path: resolved, name: path.basename(resolved) });
+            // Do not recurse into repository contents.
+            continue;
+        }
+        if (current.depth >= options.maxDepth) {
+            continue;
+        }
+        for (const entry of entries) {
+            if (!entry.isDirectory()) {
+                continue;
+            }
+            if (entry.name === '.' || entry.name === '..') {
+                continue;
+            }
+            const childPath = path.join(resolved, entry.name);
+            stack.push({ dir: childPath, depth: current.depth + 1 });
+        }
+    }
+    return results.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+}
+function findModules(targetPath, overrides = {}) {
+    const options = getSearchOptions('modules', overrides);
+    return discoverDirectories(targetPath, 'modules', options);
+}
+function findRepositories(targetPath, overrides = {}) {
+    if (overrides.token) {
+        const options = getSearchOptions('repositories', overrides);
+        return discoverDirectories(targetPath, 'repositories', options);
+    }
+    const cacheKey = buildDiscoveryCacheKey('repositories', targetPath, overrides);
+    return runtimeCache_1.runtimeCache.getRepositoryDiscovery(cacheKey, () => {
+        const options = getSearchOptions('repositories', overrides);
+        return discoverDirectories(targetPath, 'repositories', options);
+    });
+}
+const PSAE_INTERNAL_REGEX = /^ps[a-z]*-internal$/i;
+function buildModuleDiscoveryCacheKey(repos, options) {
+    const searchOverrides = options.search ?? {};
+    const searchConfig = resolveSearchConfig('modules', searchOverrides);
+    const repoPaths = repos
+        .map(repo => `${repo.name}:${path.resolve(normalizePath(repo.path))}`)
+        .sort((a, b) => a.localeCompare(b));
+    const manualIncludes = (options.manualIncludePaths ?? [])
+        .map(entry => path.resolve(normalizePath(entry)))
+        .sort((a, b) => a.localeCompare(b));
+    return JSON.stringify({
+        repoPaths,
+        manualIncludes,
+        search: searchConfig
+    });
+}
+function findRepoContext(repos, targetPath) {
+    for (const repo of repos) {
+        const repoPath = normalizePath(repo.path);
+        const relative = path.relative(repoPath, targetPath);
+        if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+            return { repoName: repo.name, repoPath };
+        }
+        if (!relative.startsWith('..')) {
+            // When target is exactly the repo root, relative can be ''
+            return { repoName: repo.name, repoPath };
+        }
+    }
+    return undefined;
+}
+function addPsaeDirectory(psaeMap, pathKey, repoName, dirName) {
+    if (!psaeMap.has(pathKey)) {
+        psaeMap.set(pathKey, { repoName, dirName, moduleNames: new Set() });
+    }
+}
+function toPosixRelative(relativePath) {
+    return relativePath.split(path.sep).join('/');
+}
+function discoverModulesInRepos(repos, options = {}) {
+    const searchOverrides = options.search ?? {};
+    if (searchOverrides.token) {
+        return computeModuleDiscovery(repos, options, searchOverrides);
+    }
+    const cacheKey = buildModuleDiscoveryCacheKey(repos, options);
+    return runtimeCache_1.runtimeCache.getModuleDiscovery(cacheKey, () => computeModuleDiscovery(repos, options, searchOverrides));
+}
+function computeModuleDiscovery(repos, options, searchOverrides) {
+    const modulesByPath = new Map();
+    const psaeDirectories = new Map();
+    const accumulateModule = (entry, repoName, repoRoot) => {
+        const resolvedRepoRoot = path.resolve(repoRoot);
+        const resolvedModulePath = path.resolve(entry.path);
+        const relative = path.relative(resolvedRepoRoot, resolvedModulePath);
+        const normalizedRelative = relative ? toPosixRelative(relative) : entry.name;
+        const segments = normalizedRelative.split('/').filter(Boolean);
+        const psaeIndex = segments.findIndex(segment => PSAE_INTERNAL_REGEX.test(segment));
+        let isPsaeInternal = false;
+        let psInternalDirName;
+        let psInternalDirPath;
+        if (psaeIndex >= 0) {
+            isPsaeInternal = true;
+            psInternalDirName = segments[psaeIndex];
+            const dirSegments = segments.slice(0, psaeIndex + 1);
+            psInternalDirPath = path.join(resolvedRepoRoot, ...dirSegments);
+            addPsaeDirectory(psaeDirectories, psInternalDirPath, repoName, psInternalDirName);
+            psaeDirectories.get(psInternalDirPath)?.moduleNames.add(entry.name);
+        }
+        modulesByPath.set(resolvedModulePath, {
+            path: resolvedModulePath,
+            name: entry.name,
+            repoName,
+            repoPath: resolvedRepoRoot,
+            relativePath: normalizedRelative,
+            isPsaeInternal,
+            psInternalDirName,
+            psInternalDirPath
+        });
+    };
+    for (const repo of repos) {
+        const repoPath = normalizePath(repo.path);
+        if (!fs.existsSync(repoPath)) {
+            continue;
+        }
+        const repoModules = findModules(repoPath, searchOverrides);
+        for (const module of repoModules) {
+            accumulateModule(module, repo.name, repoPath);
+        }
+    }
+    for (const manualRaw of options.manualIncludePaths ?? []) {
+        const manualPath = normalizePath(manualRaw);
+        if (!fs.existsSync(manualPath)) {
+            continue;
+        }
+        const repoContext = findRepoContext(repos, manualPath);
+        const repoName = repoContext?.repoName ?? 'unknown';
+        const repoRoot = repoContext?.repoPath ?? path.dirname(manualPath);
+        const resolvedRepoRoot = path.resolve(repoRoot);
+        const dirName = path.basename(manualPath);
+        addPsaeDirectory(psaeDirectories, manualPath, repoName, dirName);
+        const manualModules = findModules(manualPath, searchOverrides);
+        for (const module of manualModules) {
+            if (modulesByPath.has(path.resolve(module.path))) {
+                psaeDirectories.get(manualPath)?.moduleNames.add(module.name);
+                continue;
+            }
+            const relative = repoContext
+                ? toPosixRelative(path.relative(resolvedRepoRoot, module.path))
+                : toPosixRelative(path.join(dirName, module.name));
+            modulesByPath.set(path.resolve(module.path), {
+                path: path.resolve(module.path),
+                name: module.name,
+                repoName,
+                repoPath: resolvedRepoRoot,
+                relativePath: relative || module.name,
+                isPsaeInternal: true,
+                psInternalDirName: dirName,
+                psInternalDirPath: manualPath
+            });
+            psaeDirectories.get(manualPath)?.moduleNames.add(module.name);
+        }
+    }
+    const modules = Array.from(modulesByPath.values()).sort((a, b) => {
+        const repoCompare = a.repoName.localeCompare(b.repoName, undefined, { sensitivity: 'base' });
+        if (repoCompare !== 0) {
+            return repoCompare;
+        }
+        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
+    const psaeDirs = Array.from(psaeDirectories.entries())
+        .map(([dirPath, info]) => ({
+        path: dirPath,
+        repoName: info.repoName,
+        dirName: info.dirName,
+        moduleNames: Array.from(info.moduleNames).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    }))
+        .sort((a, b) => {
+        const repoCompare = a.repoName.localeCompare(b.repoName, undefined, { sensitivity: 'base' });
+        if (repoCompare !== 0) {
+            return repoCompare;
+        }
+        return a.dirName.localeCompare(b.dirName, undefined, { sensitivity: 'base' });
+    });
+    return { modules, psaeDirectories: psaeDirs };
+}
+/**
+ * Creates a read-only tree item used for informational placeholders.
+ */
+function createInfoTreeItem(message) {
+    const item = new vscode.TreeItem(message, vscode.TreeItemCollapsibleState.None);
+    item.contextValue = 'info';
+    return item;
+}
+// ============================================================================
+// FILE I/O UTILITIES
+// ============================================================================
+/**
+ * Creates initial data files for the Odoo debugger
+ * @param filePath - full path to the file to create
+ * @param workspacePath - workspace root path
+ * @param fileName - name of the file to create
+ * @returns the initial data object
+ */
+async function createOdooDebuggerFile(filePath, workspacePath, fileName) {
+    try {
+        ensureVSCodeDirectory(workspacePath);
+        let data;
+        let content;
+        if (fileName === "launch.json") {
+            data = {
+                version: "0.2.0",
+                configurations: []
+            };
+            content = launchJsonFileContent;
+        }
+        else {
+            data = {
+                settings: new settings_1.SettingsModel(getDefaultVersionSettings()),
+                projects: [],
+                dbTemplates: []
+            };
+            content = debuggerDataFileContent;
+        }
+        fs.writeFileSync(filePath, content, 'utf-8');
+        return data;
+    }
+    catch (error) {
+        (0, notifications_1.showError)(`Failed to create ${fileName}: ${error}`);
+        throw error;
+    }
+}
+/**
+ * Reads and parses a JSON file from the .vscode directory
+ * @param fileName - the name of the file to read
+ * @returns the parsed data or null if reading fails
+ */
+async function readFromFile(fileName) {
+    const workspacePath = getWorkspacePath();
+    if (!workspacePath) {
+        return null;
+    }
+    try {
+        const filePath = path.join(workspacePath, '.vscode', fileName);
+        if (!fs.existsSync(filePath)) {
+            (0, notifications_1.showInfo)(`Creating ${fileName} file...`);
+            return await createOdooDebuggerFile(filePath, workspacePath, fileName);
+        }
+        const data = fs.readFileSync(filePath, 'utf-8');
+        return (0, jsonc_parser_1.parse)(data);
+    }
+    catch (error) {
+        (0, notifications_1.showError)(`Failed to read ${fileName}: ${error}`);
+        return null;
+    }
+}
+/**
+ * Converts a camelCase string to a human-readable title case
+ * @param str - the camelCase string to convert
+ * @returns the converted title case string
+ */
+function camelCaseToTitleCase(str) {
+    if (!str) {
+        return '';
+    }
+    return str.replace(/([A-Z])/g, ' $1').replace(/^./, (char) => char.toUpperCase());
+}
+/**
+ * Gets the display name for a settings key
+ * @param key - The settings key in camelCase
+ * @returns The human-readable display name
+ */
+function getSettingDisplayName(key) {
+    const displayNames = {
+        debuggerName: 'Debugger',
+        debuggerVersion: 'Version',
+        portNumber: 'Port',
+        shellPortNumber: 'Shell Port',
+        limitTimeReal: 'Time Limit (Real)',
+        limitTimeCpu: 'Time Limit (CPU)',
+        maxCronThreads: 'Max Cron Threads',
+        extraParams: 'Extra Params',
+        devMode: 'Dev Mode',
+        installApps: 'Install Apps',
+        upgradeApps: 'Upgrade Apps',
+        dumpsFolder: 'Dumps Dir',
+        odooPath: 'Odoo Dir',
+        enterprisePath: 'Enterprise Dir',
+        designThemesPath: 'Themes Dir',
+        customAddonsPath: 'Custom Addons',
+        pythonPath: 'Python Exec',
+        subModulesPaths: 'Sub-modules'
+    };
+    return displayNames[key] || camelCaseToTitleCase(key);
+}
+/**
+ * Gets the display value for a setting, cleaning up internal prefixes for UI display
+ * @param key - The settings key
+ * @param value - The internal setting value
+ * @returns The cleaned value for UI display
+ */
+function getSettingDisplayValue(key, value) {
+    if (key === 'devMode' && typeof value === 'string' && value.startsWith('--dev=')) {
+        // Remove --dev= prefix for display, show clean value
+        return value.substring(6) || 'none';
+    }
+    return value?.toString() || '';
+}
+/**
+ * Gets all available Git branches from a repository path.
+ * @param repoPath - The path to the git repository.
+ * @returns Array of branch names, or empty array if not found or error occurs.
+ */
+async function getGitBranches(repoPath) {
+    if (!repoPath) {
+        return [];
+    }
+    const normalizedPath = normalizePath(repoPath);
+    const apiBranches = await (0, gitService_1.getBranchesViaSourceControl)(normalizedPath);
+    if (apiBranches && apiBranches.length > 0) {
+        return apiBranches;
+    }
+    try {
+        // Check if it's a git repository
+        const gitDir = path.join(normalizedPath, '.git');
+        if (!fs.existsSync(gitDir)) {
+            logger_1.logger.warn(`Not a git repository: ${normalizedPath}`);
+            return [];
+        }
+        return new Promise((resolve) => {
+            childProcess.exec('git branch -a --format="%(refname:short)"', { cwd: normalizedPath }, (error, stdout, stderr) => {
+                if (error) {
+                    logger_1.logger.warn(`Failed to get branches for ${normalizedPath}: ${error.message}`);
+                    resolve([]);
+                    return;
+                }
+                if (stderr) {
+                    logger_1.logger.warn(`Git branch warning for ${normalizedPath}: ${stderr}`);
+                }
+                const branches = stdout
+                    .split('\n')
+                    .map(branch => branch.trim())
+                    .filter(branch => {
+                    // Filter out empty lines and HEAD reference
+                    if (!branch || branch === 'HEAD') {
+                        return false;
+                    }
+                    // Remove remote prefix for remote branches
+                    return true;
+                })
+                    .map(branch => {
+                    // Clean up branch names
+                    if (branch.startsWith('origin/')) {
+                        return branch.replace('origin/', '');
+                    }
+                    if (branch.startsWith('remotes/origin/')) {
+                        return branch.replace('remotes/origin/', '');
+                    }
+                    return branch;
+                })
+                    .filter((branch, index, array) => {
+                    // Remove duplicates (local and remote of same branch)
+                    return array.indexOf(branch) === index;
+                })
+                    .sort((a, b) => a.localeCompare(b)); // Sort alphabetically
+                resolve(branches);
+            });
+        });
+    }
+    catch (err) {
+        logger_1.logger.warn(`Failed to get branches for ${normalizedPath}: ${err}`);
+        return [];
+    }
+}
+/**
+ * Get default settings for new versions from VS Code configuration
+ * These settings can be configured via VS Code Settings UI or by searching for "odooDebugger.defaultVersion"
+ * @returns SettingsModel with default values from configuration
+ */
+function getDefaultVersionSettings() {
+    const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
+    return {
+        debuggerName: config.get('debuggerName', 'odoo:18.0'),
+        debuggerVersion: config.get('debuggerVersion', '1.0.0'),
+        portNumber: config.get('portNumber', 8018),
+        shellPortNumber: config.get('shellPortNumber', 5018),
+        limitTimeReal: config.get('limitTimeReal', 0),
+        limitTimeCpu: config.get('limitTimeCpu', 0),
+        maxCronThreads: config.get('maxCronThreads', 0),
+        extraParams: config.get('extraParams', '--log-handler,odoo.addons.base.models.ir_attachment:WARNING'),
+        devMode: config.get('devMode', '--dev=all'),
+        dumpsFolder: config.get('dumpsFolder', '/dumps'),
+        odooPath: config.get('odooPath', './odoo'),
+        enterprisePath: config.get('enterprisePath', './enterprise'),
+        designThemesPath: config.get('designThemesPath', './design-themes'),
+        customAddonsPath: config.get('customAddonsPath', './custom-addons'),
+        pythonPath: config.get('pythonPath', './venv/bin/python'),
+        subModulesPaths: config.get('subModulesPaths', ''),
+        installApps: config.get('installApps', ''),
+        upgradeApps: config.get('upgradeApps', ''),
+        preCheckoutCommands: config.get('preCheckoutCommands', []),
+        postCheckoutCommands: config.get('postCheckoutCommands', [])
+    };
+}
+
+
+/***/ }),
+/* 10 */
+/***/ ((module) => {
+
+module.exports = require("fs");
+
+/***/ }),
+/* 11 */
+/***/ ((module) => {
+
+module.exports = require("path");
+
+/***/ }),
+/* 12 */
+/***/ ((module) => {
+
+module.exports = require("child_process");
+
+/***/ }),
+/* 13 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.checkoutBranchViaSourceControl = checkoutBranchViaSourceControl;
+exports.getCurrentBranchViaSourceControl = getCurrentBranchViaSourceControl;
+exports.getBranchesWithMetadata = getBranchesWithMetadata;
+exports.getBranchesViaSourceControl = getBranchesViaSourceControl;
+const vscode = __importStar(__webpack_require__(1));
+const path = __importStar(__webpack_require__(14));
+const logger_1 = __webpack_require__(15);
+function resolveRepoPath(repoPath) {
+    if (path.isAbsolute(repoPath)) {
+        return path.normalize(repoPath);
+    }
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders && workspaceFolders.length > 0) {
+        return path.normalize(path.join(workspaceFolders[0].uri.fsPath, repoPath));
+    }
+    return path.normalize(path.resolve(repoPath));
+}
+async function getRepository(repoPath) {
+    const gitExtension = vscode.extensions.getExtension('vscode.git');
+    if (!gitExtension) {
+        return undefined;
+    }
+    const extension = gitExtension.isActive ? gitExtension.exports : await gitExtension.activate();
+    const api = extension.getAPI(1);
+    const targetPath = path.resolve(resolveRepoPath(repoPath));
+    const repositories = api.repositories;
+    return repositories.find(repo => {
+        const repoPathResolved = path.resolve(repo.rootUri.fsPath);
+        return repoPathResolved === targetPath || repoPathResolved.toLowerCase() === targetPath.toLowerCase();
+    });
+}
+async function checkoutBranchViaSourceControl(repoPath, branch) {
+    try {
+        const repo = await getRepository(repoPath);
+        if (!repo) {
+            return false;
+        }
+        await repo.checkout(branch, false);
+        return true;
+    }
+    catch (error) {
+        logger_1.logger.warn(`Git API checkout failed for ${repoPath}:`, error);
+        return false;
+    }
+}
+async function getCurrentBranchViaSourceControl(repoPath) {
+    try {
+        const repo = await getRepository(repoPath);
+        const headName = repo?.state?.HEAD?.name;
+        return headName && headName.trim().length > 0 ? headName : null;
+    }
+    catch (error) {
+        logger_1.logger.warn(`Git API branch lookup failed for ${repoPath}:`, error);
+        return null;
+    }
+}
+function normalizeBranchName(value) {
+    if (value.startsWith('remotes/origin/')) {
+        return value.replace('remotes/origin/', '');
+    }
+    if (value.startsWith('origin/')) {
+        return value.replace('origin/', '');
+    }
+    return value;
+}
+async function getBranchesWithMetadata(repoPath) {
+    try {
+        const repo = await getRepository(repoPath);
+        if (!repo || !repo.getBranches) {
+            return [];
+        }
+        const [localBranches, remoteBranches] = await Promise.all([
+            repo.getBranches({ remote: false }),
+            repo.getBranches({ remote: true })
+        ]);
+        const branchMap = new Map();
+        const addBranches = (branches, type) => {
+            for (const branch of branches) {
+                const name = branch.name;
+                if (!name || !name.trim()) {
+                    continue;
+                }
+                const normalized = normalizeBranchName(name.trim());
+                if (type === 'local' || !branchMap.has(normalized)) {
+                    branchMap.set(normalized, type);
+                }
+            }
+        };
+        addBranches(localBranches, 'local');
+        addBranches(remoteBranches, 'remote');
+        return Array.from(branchMap.entries())
+            .map(([name, type]) => ({ name, type }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }
+    catch (error) {
+        logger_1.logger.warn(`Git API branch listing failed for ${repoPath}:`, error);
+        return [];
+    }
+}
+async function getBranchesViaSourceControl(repoPath) {
+    const metadata = await getBranchesWithMetadata(repoPath);
+    if (!metadata || metadata.length === 0) {
+        return undefined;
+    }
+    return metadata.map(branch => branch.name);
+}
+
+
+/***/ }),
+/* 14 */
+/***/ ((module) => {
+
+module.exports = require("node:path");
+
+/***/ }),
+/* 15 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.logger = void 0;
+exports.registerLogger = registerLogger;
+exports.showLogOutput = showLogOutput;
+exports.errorMessage = errorMessage;
+const vscode = __importStar(__webpack_require__(1));
+/**
+ * Central logging for the extension. Everything user-relevant that used to go
+ * to the developer console is appended to a single "Odoo DevTools" output
+ * channel so users can actually see it (View -> Output -> Odoo DevTools).
+ */
+let channel;
+function getChannel() {
+    channel ??= vscode.window.createOutputChannel('Odoo DevTools');
+    return channel;
+}
+/**
+ * Registers the output channel for disposal with the extension context.
+ * Safe to call before the channel exists; disposal is lazy.
+ */
+function registerLogger(context) {
+    context.subscriptions.push({
+        dispose: () => {
+            channel?.dispose();
+            channel = undefined;
+        }
+    });
+}
+/** Reveals the output channel in the panel. */
+function showLogOutput() {
+    getChannel().show(true);
+}
+/**
+ * Normalizes an unknown thrown value into a human-readable message,
+ * so raw `${error}` interpolation (which prints stacks/objects) is avoided.
+ */
+function errorMessage(error) {
+    if (error instanceof Error) {
+        return error.message;
+    }
+    if (typeof error === 'string') {
+        return error;
+    }
+    try {
+        return JSON.stringify(error);
+    }
+    catch {
+        return String(error);
+    }
+}
+function formatDetail(detail) {
+    if (detail instanceof Error) {
+        return detail.stack ?? detail.message;
+    }
+    if (typeof detail === 'string') {
+        return detail;
+    }
+    try {
+        return JSON.stringify(detail);
+    }
+    catch {
+        return String(detail);
+    }
+}
+function append(level, message, details) {
+    const timestamp = new Date().toISOString();
+    const suffix = details.length > 0 ? ` ${details.map(formatDetail).join(' ')}` : '';
+    getChannel().appendLine(`[${timestamp}] ${level}: ${message}${suffix}`);
+}
+exports.logger = {
+    debug(message, ...details) {
+        append('DEBUG', message, details);
+    },
+    info(message, ...details) {
+        append('INFO', message, details);
+    },
+    warn(message, ...details) {
+        append('WARN', message, details);
+    },
+    error(message, ...details) {
+        append('ERROR', message, details);
+    }
+};
+
+
+/***/ }),
+/* 16 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.runtimeCache = void 0;
+exports.invalidateModuleDiscoveryCache = invalidateModuleDiscoveryCache;
+exports.invalidateRepositoryDiscoveryCache = invalidateRepositoryDiscoveryCache;
+exports.invalidateInstalledModulesCache = invalidateInstalledModulesCache;
+exports.invalidateGitBranchCache = invalidateGitBranchCache;
+exports.invalidateAllRuntimeCaches = invalidateAllRuntimeCaches;
+const DEFAULT_TTLS = {
+    moduleDiscoveryMs: 5000,
+    repositoryDiscoveryMs: 5000,
+    installedModulesMs: 5000,
+    installedModuleNamesMs: 5000,
+    gitBranchMs: 3000
+};
+class RuntimeCacheService {
+    moduleDiscovery = new Map();
+    repositoryDiscovery = new Map();
+    installedModules = new Map();
+    installedModuleNames = new Map();
+    gitBranches = new Map();
+    getOrCompute(store, key, ttlMs, loader) {
+        const now = Date.now();
+        const cached = store.get(key);
+        if (cached && cached.expiresAt > now) {
+            return cached.value;
+        }
+        const value = loader();
+        store.set(key, { value, expiresAt: now + ttlMs });
+        return value;
+    }
+    async getOrComputeAsync(store, key, ttlMs, loader) {
+        const now = Date.now();
+        const cached = store.get(key);
+        if (cached && cached.expiresAt > now) {
+            return cached.value;
+        }
+        const value = await loader();
+        store.set(key, { value, expiresAt: now + ttlMs });
+        return value;
+    }
+    getModuleDiscovery(key, loader, ttlMs = DEFAULT_TTLS.moduleDiscoveryMs) {
+        return this.getOrCompute(this.moduleDiscovery, key, ttlMs, loader);
+    }
+    getRepositoryDiscovery(key, loader, ttlMs = DEFAULT_TTLS.repositoryDiscoveryMs) {
+        return this.getOrCompute(this.repositoryDiscovery, key, ttlMs, loader);
+    }
+    async getInstalledModules(dbName, loader, ttlMs = DEFAULT_TTLS.installedModulesMs) {
+        return this.getOrComputeAsync(this.installedModules, dbName, ttlMs, loader);
+    }
+    async getInstalledModuleNames(dbName, loader, ttlMs = DEFAULT_TTLS.installedModuleNamesMs) {
+        return this.getOrComputeAsync(this.installedModuleNames, dbName, ttlMs, loader);
+    }
+    async getGitBranch(repoPath, loader, ttlMs = DEFAULT_TTLS.gitBranchMs) {
+        return this.getOrComputeAsync(this.gitBranches, repoPath, ttlMs, loader);
+    }
+    invalidateModuleDiscoveryCache(key) {
+        if (key) {
+            this.moduleDiscovery.delete(key);
+            return;
+        }
+        this.moduleDiscovery.clear();
+    }
+    invalidateRepositoryDiscoveryCache(key) {
+        if (key) {
+            this.repositoryDiscovery.delete(key);
+            return;
+        }
+        this.repositoryDiscovery.clear();
+    }
+    invalidateInstalledModulesCache(dbName) {
+        if (dbName) {
+            this.installedModules.delete(dbName);
+            this.installedModuleNames.delete(dbName);
+            return;
+        }
+        this.installedModules.clear();
+        this.installedModuleNames.clear();
+    }
+    invalidateGitBranchCache(repoPath) {
+        if (repoPath) {
+            this.gitBranches.delete(repoPath);
+            return;
+        }
+        this.gitBranches.clear();
+    }
+    invalidateAll() {
+        this.invalidateModuleDiscoveryCache();
+        this.invalidateRepositoryDiscoveryCache();
+        this.invalidateInstalledModulesCache();
+        this.invalidateGitBranchCache();
+    }
+}
+exports.runtimeCache = new RuntimeCacheService();
+function invalidateModuleDiscoveryCache(key) {
+    exports.runtimeCache.invalidateModuleDiscoveryCache(key);
+}
+function invalidateRepositoryDiscoveryCache(key) {
+    exports.runtimeCache.invalidateRepositoryDiscoveryCache(key);
+}
+function invalidateInstalledModulesCache(dbName) {
+    exports.runtimeCache.invalidateInstalledModulesCache(dbName);
+}
+function invalidateGitBranchCache(repoPath) {
+    exports.runtimeCache.invalidateGitBranchCache(repoPath);
+}
+function invalidateAllRuntimeCaches() {
+    exports.runtimeCache.invalidateAll();
+}
+
+
+/***/ }),
+/* 17 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.MessageType = void 0;
+exports.showMessage = showMessage;
+exports.showError = showError;
+exports.showInfo = showInfo;
+exports.showWarning = showWarning;
+exports.showModalWarning = showModalWarning;
+exports.showModalInfo = showModalInfo;
+exports.showAutoInfo = showAutoInfo;
+exports.showBriefStatus = showBriefStatus;
+const vscode = __importStar(__webpack_require__(1));
+const logger_1 = __webpack_require__(15);
+/**
+ * User-facing messaging helpers. Every notification shown through these is
+ * also logged to the "Odoo DevTools" output channel, which is why direct
+ * vscode.window.show*Message calls should be avoided elsewhere.
+ */
+var MessageType;
+(function (MessageType) {
+    MessageType["Error"] = "error";
+    MessageType["Warning"] = "warning";
+    MessageType["Info"] = "info";
+})(MessageType || (exports.MessageType = MessageType = {}));
+/**
+ * Shows a message with logging to the output channel.
+ * @param message - the message to display
+ * @param type - the type of message (error, warning, info)
+ * @param actions - optional action buttons
+ * @returns the selected action or undefined
+ */
+async function showMessage(message, type = MessageType.Error, ...actions) {
+    switch (type) {
+        case MessageType.Error:
+            logger_1.logger.error(message);
+            return vscode.window.showErrorMessage(message, ...actions);
+        case MessageType.Warning:
+            logger_1.logger.warn(message);
+            return vscode.window.showWarningMessage(message, ...actions);
+        case MessageType.Info:
+            logger_1.logger.info(message);
+            return vscode.window.showInformationMessage(message, ...actions);
+    }
+}
+/** Shows an error notification with optional action buttons. */
+async function showError(message, ...actions) {
+    return showMessage(message, MessageType.Error, ...actions);
+}
+/** Shows an info notification with optional action buttons. */
+async function showInfo(message, ...actions) {
+    return showMessage(message, MessageType.Info, ...actions);
+}
+/** Shows a warning notification with optional action buttons. */
+async function showWarning(message, ...actions) {
+    return showMessage(message, MessageType.Warning, ...actions);
+}
+/**
+ * Shows a modal warning dialog. Use for destructive confirmations where the
+ * user must answer before anything proceeds.
+ */
+async function showModalWarning(message, ...actions) {
+    logger_1.logger.warn(message);
+    return vscode.window.showWarningMessage(message, { modal: true }, ...actions);
+}
+/** Shows a modal information dialog (blocks until dismissed). */
+async function showModalInfo(message, ...actions) {
+    logger_1.logger.info(message);
+    return vscode.window.showInformationMessage(message, { modal: true }, ...actions);
+}
+/**
+ * Shows an auto-dismissing information message that disappears after a specified time.
+ * @param message - the info message to display
+ * @param timeoutMs - time in milliseconds before auto-dismiss (default: 3000ms)
+ */
+function showAutoInfo(message, timeoutMs = 3000) {
+    logger_1.logger.info(message);
+    void vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: message,
+        cancellable: false
+    }, () => new Promise(resolve => setTimeout(resolve, timeoutMs)));
+}
+/**
+ * Shows a brief status bar message that disappears automatically.
+ * @param message - the message to display in the status bar
+ * @param timeoutMs - time in milliseconds before auto-dismiss (default: 2000ms)
+ */
+function showBriefStatus(message, timeoutMs = 2000) {
+    logger_1.logger.info(message);
+    // setStatusBarMessage owns the disposal; no leaked status bar items.
+    vscode.window.setStatusBarMessage(`$(info) ${message}`, timeoutMs);
+}
+
+
+/***/ }),
+/* 18 */
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   ParseErrorCode: () => (/* binding */ ParseErrorCode),
+/* harmony export */   ScanError: () => (/* binding */ ScanError),
+/* harmony export */   SyntaxKind: () => (/* binding */ SyntaxKind),
+/* harmony export */   applyEdits: () => (/* binding */ applyEdits),
+/* harmony export */   createScanner: () => (/* binding */ createScanner),
+/* harmony export */   findNodeAtLocation: () => (/* binding */ findNodeAtLocation),
+/* harmony export */   findNodeAtOffset: () => (/* binding */ findNodeAtOffset),
+/* harmony export */   format: () => (/* binding */ format),
+/* harmony export */   getLocation: () => (/* binding */ getLocation),
+/* harmony export */   getNodePath: () => (/* binding */ getNodePath),
+/* harmony export */   getNodeValue: () => (/* binding */ getNodeValue),
+/* harmony export */   modify: () => (/* binding */ modify),
+/* harmony export */   parse: () => (/* binding */ parse),
+/* harmony export */   parseTree: () => (/* binding */ parseTree),
+/* harmony export */   printParseErrorCode: () => (/* binding */ printParseErrorCode),
+/* harmony export */   stripComments: () => (/* binding */ stripComments),
+/* harmony export */   visit: () => (/* binding */ visit)
+/* harmony export */ });
+/* harmony import */ var _impl_format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(19);
+/* harmony import */ var _impl_edit__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(22);
+/* harmony import */ var _impl_scanner__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(20);
+/* harmony import */ var _impl_parser__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(23);
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+
+
+
+
+/**
+ * Creates a JSON scanner on the given text.
+ * If ignoreTrivia is set, whitespaces or comments are ignored.
+ */
+const createScanner = _impl_scanner__WEBPACK_IMPORTED_MODULE_2__.createScanner;
+var ScanError;
+(function (ScanError) {
+    ScanError[ScanError["None"] = 0] = "None";
+    ScanError[ScanError["UnexpectedEndOfComment"] = 1] = "UnexpectedEndOfComment";
+    ScanError[ScanError["UnexpectedEndOfString"] = 2] = "UnexpectedEndOfString";
+    ScanError[ScanError["UnexpectedEndOfNumber"] = 3] = "UnexpectedEndOfNumber";
+    ScanError[ScanError["InvalidUnicode"] = 4] = "InvalidUnicode";
+    ScanError[ScanError["InvalidEscapeCharacter"] = 5] = "InvalidEscapeCharacter";
+    ScanError[ScanError["InvalidCharacter"] = 6] = "InvalidCharacter";
+})(ScanError || (ScanError = {}));
+var SyntaxKind;
+(function (SyntaxKind) {
+    SyntaxKind[SyntaxKind["OpenBraceToken"] = 1] = "OpenBraceToken";
+    SyntaxKind[SyntaxKind["CloseBraceToken"] = 2] = "CloseBraceToken";
+    SyntaxKind[SyntaxKind["OpenBracketToken"] = 3] = "OpenBracketToken";
+    SyntaxKind[SyntaxKind["CloseBracketToken"] = 4] = "CloseBracketToken";
+    SyntaxKind[SyntaxKind["CommaToken"] = 5] = "CommaToken";
+    SyntaxKind[SyntaxKind["ColonToken"] = 6] = "ColonToken";
+    SyntaxKind[SyntaxKind["NullKeyword"] = 7] = "NullKeyword";
+    SyntaxKind[SyntaxKind["TrueKeyword"] = 8] = "TrueKeyword";
+    SyntaxKind[SyntaxKind["FalseKeyword"] = 9] = "FalseKeyword";
+    SyntaxKind[SyntaxKind["StringLiteral"] = 10] = "StringLiteral";
+    SyntaxKind[SyntaxKind["NumericLiteral"] = 11] = "NumericLiteral";
+    SyntaxKind[SyntaxKind["LineCommentTrivia"] = 12] = "LineCommentTrivia";
+    SyntaxKind[SyntaxKind["BlockCommentTrivia"] = 13] = "BlockCommentTrivia";
+    SyntaxKind[SyntaxKind["LineBreakTrivia"] = 14] = "LineBreakTrivia";
+    SyntaxKind[SyntaxKind["Trivia"] = 15] = "Trivia";
+    SyntaxKind[SyntaxKind["Unknown"] = 16] = "Unknown";
+    SyntaxKind[SyntaxKind["EOF"] = 17] = "EOF";
+})(SyntaxKind || (SyntaxKind = {}));
+/**
+ * For a given offset, evaluate the location in the JSON document. Each segment in the location path is either a property name or an array index.
+ */
+const getLocation = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.getLocation;
+/**
+ * Parses the given text and returns the object the JSON content represents. On invalid input, the parser tries to be as fault tolerant as possible, but still return a result.
+ * Therefore, always check the errors list to find out if the input was valid.
+ */
+const parse = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.parse;
+/**
+ * Parses the given text and returns a tree representation the JSON content. On invalid input, the parser tries to be as fault tolerant as possible, but still return a result.
+ */
+const parseTree = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.parseTree;
+/**
+ * Finds the node at the given path in a JSON DOM.
+ */
+const findNodeAtLocation = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.findNodeAtLocation;
+/**
+ * Finds the innermost node at the given offset. If includeRightBound is set, also finds nodes that end at the given offset.
+ */
+const findNodeAtOffset = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.findNodeAtOffset;
+/**
+ * Gets the JSON path of the given JSON DOM node
+ */
+const getNodePath = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.getNodePath;
+/**
+ * Evaluates the JavaScript object of the given JSON DOM node
+ */
+const getNodeValue = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.getNodeValue;
+/**
+ * Parses the given text and invokes the visitor functions for each object, array and literal reached.
+ */
+const visit = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.visit;
+/**
+ * Takes JSON with JavaScript-style comments and remove
+ * them. Optionally replaces every none-newline character
+ * of comments with a replaceCharacter
+ */
+const stripComments = _impl_parser__WEBPACK_IMPORTED_MODULE_3__.stripComments;
+var ParseErrorCode;
+(function (ParseErrorCode) {
+    ParseErrorCode[ParseErrorCode["InvalidSymbol"] = 1] = "InvalidSymbol";
+    ParseErrorCode[ParseErrorCode["InvalidNumberFormat"] = 2] = "InvalidNumberFormat";
+    ParseErrorCode[ParseErrorCode["PropertyNameExpected"] = 3] = "PropertyNameExpected";
+    ParseErrorCode[ParseErrorCode["ValueExpected"] = 4] = "ValueExpected";
+    ParseErrorCode[ParseErrorCode["ColonExpected"] = 5] = "ColonExpected";
+    ParseErrorCode[ParseErrorCode["CommaExpected"] = 6] = "CommaExpected";
+    ParseErrorCode[ParseErrorCode["CloseBraceExpected"] = 7] = "CloseBraceExpected";
+    ParseErrorCode[ParseErrorCode["CloseBracketExpected"] = 8] = "CloseBracketExpected";
+    ParseErrorCode[ParseErrorCode["EndOfFileExpected"] = 9] = "EndOfFileExpected";
+    ParseErrorCode[ParseErrorCode["InvalidCommentToken"] = 10] = "InvalidCommentToken";
+    ParseErrorCode[ParseErrorCode["UnexpectedEndOfComment"] = 11] = "UnexpectedEndOfComment";
+    ParseErrorCode[ParseErrorCode["UnexpectedEndOfString"] = 12] = "UnexpectedEndOfString";
+    ParseErrorCode[ParseErrorCode["UnexpectedEndOfNumber"] = 13] = "UnexpectedEndOfNumber";
+    ParseErrorCode[ParseErrorCode["InvalidUnicode"] = 14] = "InvalidUnicode";
+    ParseErrorCode[ParseErrorCode["InvalidEscapeCharacter"] = 15] = "InvalidEscapeCharacter";
+    ParseErrorCode[ParseErrorCode["InvalidCharacter"] = 16] = "InvalidCharacter";
+})(ParseErrorCode || (ParseErrorCode = {}));
+function printParseErrorCode(code) {
+    switch (code) {
+        case 1 /* ParseErrorCode.InvalidSymbol */: return 'InvalidSymbol';
+        case 2 /* ParseErrorCode.InvalidNumberFormat */: return 'InvalidNumberFormat';
+        case 3 /* ParseErrorCode.PropertyNameExpected */: return 'PropertyNameExpected';
+        case 4 /* ParseErrorCode.ValueExpected */: return 'ValueExpected';
+        case 5 /* ParseErrorCode.ColonExpected */: return 'ColonExpected';
+        case 6 /* ParseErrorCode.CommaExpected */: return 'CommaExpected';
+        case 7 /* ParseErrorCode.CloseBraceExpected */: return 'CloseBraceExpected';
+        case 8 /* ParseErrorCode.CloseBracketExpected */: return 'CloseBracketExpected';
+        case 9 /* ParseErrorCode.EndOfFileExpected */: return 'EndOfFileExpected';
+        case 10 /* ParseErrorCode.InvalidCommentToken */: return 'InvalidCommentToken';
+        case 11 /* ParseErrorCode.UnexpectedEndOfComment */: return 'UnexpectedEndOfComment';
+        case 12 /* ParseErrorCode.UnexpectedEndOfString */: return 'UnexpectedEndOfString';
+        case 13 /* ParseErrorCode.UnexpectedEndOfNumber */: return 'UnexpectedEndOfNumber';
+        case 14 /* ParseErrorCode.InvalidUnicode */: return 'InvalidUnicode';
+        case 15 /* ParseErrorCode.InvalidEscapeCharacter */: return 'InvalidEscapeCharacter';
+        case 16 /* ParseErrorCode.InvalidCharacter */: return 'InvalidCharacter';
+    }
+    return '<unknown ParseErrorCode>';
+}
+/**
+ * Computes the edit operations needed to format a JSON document.
+ *
+ * @param documentText The input text
+ * @param range The range to format or `undefined` to format the full content
+ * @param options The formatting options
+ * @returns The edit operations describing the formatting changes to the original document following the format described in {@linkcode EditResult}.
+ * To apply the edit operations to the input, use {@linkcode applyEdits}.
+ */
+function format(documentText, range, options) {
+    return _impl_format__WEBPACK_IMPORTED_MODULE_0__.format(documentText, range, options);
+}
+/**
+ * Computes the edit operations needed to modify a value in the JSON document.
+ *
+ * @param documentText The input text
+ * @param path The path of the value to change. The path represents either to the document root, a property or an array item.
+ * If the path points to an non-existing property or item, it will be created.
+ * @param value The new value for the specified property or item. If the value is undefined,
+ * the property or item will be removed.
+ * @param options Options
+ * @returns The edit operations describing the changes to the original document, following the format described in {@linkcode EditResult}.
+ * To apply the edit operations to the input, use {@linkcode applyEdits}.
+ */
+function modify(text, path, value, options) {
+    return _impl_edit__WEBPACK_IMPORTED_MODULE_1__.setProperty(text, path, value, options);
+}
+/**
+ * Applies edits to an input string.
+ * @param text The input text
+ * @param edits Edit operations following the format described in {@linkcode EditResult}.
+ * @returns The text with the applied edits.
+ * @throws An error if the edit operations are not well-formed as described in {@linkcode EditResult}.
+ */
+function applyEdits(text, edits) {
+    let sortedEdits = edits.slice(0).sort((a, b) => {
+        const diff = a.offset - b.offset;
+        if (diff === 0) {
+            return a.length - b.length;
+        }
+        return diff;
+    });
+    let lastModifiedOffset = text.length;
+    for (let i = sortedEdits.length - 1; i >= 0; i--) {
+        let e = sortedEdits[i];
+        if (e.offset + e.length <= lastModifiedOffset) {
+            text = _impl_edit__WEBPACK_IMPORTED_MODULE_1__.applyEdit(text, e);
+        }
+        else {
+            throw new Error('Overlapping edit');
+        }
+        lastModifiedOffset = e.offset;
+    }
+    return text;
+}
+
+
+/***/ }),
+/* 19 */
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   format: () => (/* binding */ format),
+/* harmony export */   isEOL: () => (/* binding */ isEOL)
+/* harmony export */ });
+/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(20);
+/* harmony import */ var _string_intern__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(21);
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+
+
+function format(documentText, range, options) {
+    let initialIndentLevel;
+    let formatText;
+    let formatTextStart;
+    let rangeStart;
+    let rangeEnd;
+    if (range) {
+        rangeStart = range.offset;
+        rangeEnd = rangeStart + range.length;
+        formatTextStart = rangeStart;
+        while (formatTextStart > 0 && !isEOL(documentText, formatTextStart - 1)) {
+            formatTextStart--;
+        }
+        let endOffset = rangeEnd;
+        while (endOffset < documentText.length && !isEOL(documentText, endOffset)) {
+            endOffset++;
+        }
+        formatText = documentText.substring(formatTextStart, endOffset);
+        initialIndentLevel = computeIndentLevel(formatText, options);
+    }
+    else {
+        formatText = documentText;
+        initialIndentLevel = 0;
+        formatTextStart = 0;
+        rangeStart = 0;
+        rangeEnd = documentText.length;
+    }
+    const eol = getEOL(options, documentText);
+    const eolFastPathSupported = _string_intern__WEBPACK_IMPORTED_MODULE_1__.supportedEols.includes(eol);
+    let numberLineBreaks = 0;
+    let indentLevel = 0;
+    let indentValue;
+    if (options.insertSpaces) {
+        indentValue = _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[options.tabSize || 4] ?? repeat(_string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1], options.tabSize || 4);
+    }
+    else {
+        indentValue = '\t';
+    }
+    const indentType = indentValue === '\t' ? '\t' : ' ';
+    let scanner = (0,_scanner__WEBPACK_IMPORTED_MODULE_0__.createScanner)(formatText, false);
+    let hasError = false;
+    function newLinesAndIndent() {
+        if (numberLineBreaks > 1) {
+            return repeat(eol, numberLineBreaks) + repeat(indentValue, initialIndentLevel + indentLevel);
+        }
+        const amountOfSpaces = indentValue.length * (initialIndentLevel + indentLevel);
+        if (!eolFastPathSupported || amountOfSpaces > _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedBreakLinesWithSpaces[indentType][eol].length) {
+            return eol + repeat(indentValue, initialIndentLevel + indentLevel);
+        }
+        if (amountOfSpaces <= 0) {
+            return eol;
+        }
+        return _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedBreakLinesWithSpaces[indentType][eol][amountOfSpaces];
+    }
+    function scanNext() {
+        let token = scanner.scan();
+        numberLineBreaks = 0;
+        while (token === 15 /* SyntaxKind.Trivia */ || token === 14 /* SyntaxKind.LineBreakTrivia */) {
+            if (token === 14 /* SyntaxKind.LineBreakTrivia */ && options.keepLines) {
+                numberLineBreaks += 1;
+            }
+            else if (token === 14 /* SyntaxKind.LineBreakTrivia */) {
+                numberLineBreaks = 1;
+            }
+            token = scanner.scan();
+        }
+        hasError = token === 16 /* SyntaxKind.Unknown */ || scanner.getTokenError() !== 0 /* ScanError.None */;
+        return token;
+    }
+    const editOperations = [];
+    function addEdit(text, startOffset, endOffset) {
+        if (!hasError && (!range || (startOffset < rangeEnd && endOffset > rangeStart)) && documentText.substring(startOffset, endOffset) !== text) {
+            editOperations.push({ offset: startOffset, length: endOffset - startOffset, content: text });
+        }
+    }
+    let firstToken = scanNext();
+    if (options.keepLines && numberLineBreaks > 0) {
+        addEdit(repeat(eol, numberLineBreaks), 0, 0);
+    }
+    if (firstToken !== 17 /* SyntaxKind.EOF */) {
+        let firstTokenStart = scanner.getTokenOffset() + formatTextStart;
+        let initialIndent = (indentValue.length * initialIndentLevel < 20) && options.insertSpaces
+            ? _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[indentValue.length * initialIndentLevel]
+            : repeat(indentValue, initialIndentLevel);
+        addEdit(initialIndent, formatTextStart, firstTokenStart);
+    }
+    while (firstToken !== 17 /* SyntaxKind.EOF */) {
+        let firstTokenEnd = scanner.getTokenOffset() + scanner.getTokenLength() + formatTextStart;
+        let secondToken = scanNext();
+        let replaceContent = '';
+        let needsLineBreak = false;
+        while (numberLineBreaks === 0 && (secondToken === 12 /* SyntaxKind.LineCommentTrivia */ || secondToken === 13 /* SyntaxKind.BlockCommentTrivia */)) {
+            let commentTokenStart = scanner.getTokenOffset() + formatTextStart;
+            addEdit(_string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1], firstTokenEnd, commentTokenStart);
+            firstTokenEnd = scanner.getTokenOffset() + scanner.getTokenLength() + formatTextStart;
+            needsLineBreak = secondToken === 12 /* SyntaxKind.LineCommentTrivia */;
+            replaceContent = needsLineBreak ? newLinesAndIndent() : '';
+            secondToken = scanNext();
+        }
+        if (secondToken === 2 /* SyntaxKind.CloseBraceToken */) {
+            if (firstToken !== 1 /* SyntaxKind.OpenBraceToken */) {
+                indentLevel--;
+            }
+            ;
+            if (options.keepLines && numberLineBreaks > 0 || !options.keepLines && firstToken !== 1 /* SyntaxKind.OpenBraceToken */) {
+                replaceContent = newLinesAndIndent();
+            }
+            else if (options.keepLines) {
+                replaceContent = _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1];
+            }
+        }
+        else if (secondToken === 4 /* SyntaxKind.CloseBracketToken */) {
+            if (firstToken !== 3 /* SyntaxKind.OpenBracketToken */) {
+                indentLevel--;
+            }
+            ;
+            if (options.keepLines && numberLineBreaks > 0 || !options.keepLines && firstToken !== 3 /* SyntaxKind.OpenBracketToken */) {
+                replaceContent = newLinesAndIndent();
+            }
+            else if (options.keepLines) {
+                replaceContent = _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1];
+            }
+        }
+        else {
+            switch (firstToken) {
+                case 3 /* SyntaxKind.OpenBracketToken */:
+                case 1 /* SyntaxKind.OpenBraceToken */:
+                    indentLevel++;
+                    if (options.keepLines && numberLineBreaks > 0 || !options.keepLines) {
+                        replaceContent = newLinesAndIndent();
+                    }
+                    else {
+                        replaceContent = _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1];
+                    }
+                    break;
+                case 5 /* SyntaxKind.CommaToken */:
+                    if (options.keepLines && numberLineBreaks > 0 || !options.keepLines) {
+                        replaceContent = newLinesAndIndent();
+                    }
+                    else {
+                        replaceContent = _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1];
+                    }
+                    break;
+                case 12 /* SyntaxKind.LineCommentTrivia */:
+                    replaceContent = newLinesAndIndent();
+                    break;
+                case 13 /* SyntaxKind.BlockCommentTrivia */:
+                    if (numberLineBreaks > 0) {
+                        replaceContent = newLinesAndIndent();
+                    }
+                    else if (!needsLineBreak) {
+                        replaceContent = _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1];
+                    }
+                    break;
+                case 6 /* SyntaxKind.ColonToken */:
+                    if (options.keepLines && numberLineBreaks > 0) {
+                        replaceContent = newLinesAndIndent();
+                    }
+                    else if (!needsLineBreak) {
+                        replaceContent = _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1];
+                    }
+                    break;
+                case 10 /* SyntaxKind.StringLiteral */:
+                    if (options.keepLines && numberLineBreaks > 0) {
+                        replaceContent = newLinesAndIndent();
+                    }
+                    else if (secondToken === 6 /* SyntaxKind.ColonToken */ && !needsLineBreak) {
+                        replaceContent = '';
+                    }
+                    break;
+                case 7 /* SyntaxKind.NullKeyword */:
+                case 8 /* SyntaxKind.TrueKeyword */:
+                case 9 /* SyntaxKind.FalseKeyword */:
+                case 11 /* SyntaxKind.NumericLiteral */:
+                case 2 /* SyntaxKind.CloseBraceToken */:
+                case 4 /* SyntaxKind.CloseBracketToken */:
+                    if (options.keepLines && numberLineBreaks > 0) {
+                        replaceContent = newLinesAndIndent();
+                    }
+                    else {
+                        if ((secondToken === 12 /* SyntaxKind.LineCommentTrivia */ || secondToken === 13 /* SyntaxKind.BlockCommentTrivia */) && !needsLineBreak) {
+                            replaceContent = _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1];
+                        }
+                        else if (secondToken !== 5 /* SyntaxKind.CommaToken */ && secondToken !== 17 /* SyntaxKind.EOF */) {
+                            hasError = true;
+                        }
+                    }
+                    break;
+                case 16 /* SyntaxKind.Unknown */:
+                    hasError = true;
+                    break;
+            }
+            if (numberLineBreaks > 0 && (secondToken === 12 /* SyntaxKind.LineCommentTrivia */ || secondToken === 13 /* SyntaxKind.BlockCommentTrivia */)) {
+                replaceContent = newLinesAndIndent();
+            }
+        }
+        if (secondToken === 17 /* SyntaxKind.EOF */) {
+            if (options.keepLines && numberLineBreaks > 0) {
+                replaceContent = newLinesAndIndent();
+            }
+            else {
+                replaceContent = options.insertFinalNewline ? eol : '';
+            }
+        }
+        const secondTokenStart = scanner.getTokenOffset() + formatTextStart;
+        addEdit(replaceContent, firstTokenEnd, secondTokenStart);
+        firstToken = secondToken;
+    }
+    return editOperations;
+}
+function repeat(s, count) {
+    let result = '';
+    for (let i = 0; i < count; i++) {
+        result += s;
+    }
+    return result;
+}
+function computeIndentLevel(content, options) {
+    let i = 0;
+    let nChars = 0;
+    const tabSize = options.tabSize || 4;
+    while (i < content.length) {
+        let ch = content.charAt(i);
+        if (ch === _string_intern__WEBPACK_IMPORTED_MODULE_1__.cachedSpaces[1]) {
+            nChars++;
+        }
+        else if (ch === '\t') {
+            nChars += tabSize;
+        }
+        else {
+            break;
+        }
+        i++;
+    }
+    return Math.floor(nChars / tabSize);
+}
+function getEOL(options, text) {
+    for (let i = 0; i < text.length; i++) {
+        const ch = text.charAt(i);
+        if (ch === '\r') {
+            if (i + 1 < text.length && text.charAt(i + 1) === '\n') {
+                return '\r\n';
+            }
+            return '\r';
+        }
+        else if (ch === '\n') {
+            return '\n';
+        }
+    }
+    return (options && options.eol) || '\n';
+}
+function isEOL(text, offset) {
+    return '\r\n'.indexOf(text.charAt(offset)) !== -1;
+}
+
+
+/***/ }),
+/* 20 */
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   createScanner: () => (/* binding */ createScanner)
+/* harmony export */ });
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/**
+ * Creates a JSON scanner on the given text.
+ * If ignoreTrivia is set, whitespaces or comments are ignored.
+ */
+function createScanner(text, ignoreTrivia = false) {
+    const len = text.length;
+    let pos = 0, value = '', tokenOffset = 0, token = 16 /* SyntaxKind.Unknown */, lineNumber = 0, lineStartOffset = 0, tokenLineStartOffset = 0, prevTokenLineStartOffset = 0, scanError = 0 /* ScanError.None */;
+    function scanHexDigits(count, exact) {
+        let digits = 0;
+        let value = 0;
+        while (digits < count || !exact) {
+            let ch = text.charCodeAt(pos);
+            if (ch >= 48 /* CharacterCodes._0 */ && ch <= 57 /* CharacterCodes._9 */) {
+                value = value * 16 + ch - 48 /* CharacterCodes._0 */;
+            }
+            else if (ch >= 65 /* CharacterCodes.A */ && ch <= 70 /* CharacterCodes.F */) {
+                value = value * 16 + ch - 65 /* CharacterCodes.A */ + 10;
+            }
+            else if (ch >= 97 /* CharacterCodes.a */ && ch <= 102 /* CharacterCodes.f */) {
+                value = value * 16 + ch - 97 /* CharacterCodes.a */ + 10;
+            }
+            else {
+                break;
+            }
+            pos++;
+            digits++;
+        }
+        if (digits < count) {
+            value = -1;
+        }
+        return value;
+    }
+    function setPosition(newPosition) {
+        pos = newPosition;
+        value = '';
+        tokenOffset = 0;
+        token = 16 /* SyntaxKind.Unknown */;
+        scanError = 0 /* ScanError.None */;
+    }
+    function scanNumber() {
+        let start = pos;
+        if (text.charCodeAt(pos) === 48 /* CharacterCodes._0 */) {
+            pos++;
+        }
+        else {
+            pos++;
+            while (pos < text.length && isDigit(text.charCodeAt(pos))) {
+                pos++;
+            }
+        }
+        if (pos < text.length && text.charCodeAt(pos) === 46 /* CharacterCodes.dot */) {
+            pos++;
+            if (pos < text.length && isDigit(text.charCodeAt(pos))) {
+                pos++;
+                while (pos < text.length && isDigit(text.charCodeAt(pos))) {
+                    pos++;
+                }
+            }
+            else {
+                scanError = 3 /* ScanError.UnexpectedEndOfNumber */;
+                return text.substring(start, pos);
+            }
+        }
+        let end = pos;
+        if (pos < text.length && (text.charCodeAt(pos) === 69 /* CharacterCodes.E */ || text.charCodeAt(pos) === 101 /* CharacterCodes.e */)) {
+            pos++;
+            if (pos < text.length && text.charCodeAt(pos) === 43 /* CharacterCodes.plus */ || text.charCodeAt(pos) === 45 /* CharacterCodes.minus */) {
+                pos++;
+            }
+            if (pos < text.length && isDigit(text.charCodeAt(pos))) {
+                pos++;
+                while (pos < text.length && isDigit(text.charCodeAt(pos))) {
+                    pos++;
+                }
+                end = pos;
+            }
+            else {
+                scanError = 3 /* ScanError.UnexpectedEndOfNumber */;
+            }
+        }
+        return text.substring(start, end);
+    }
+    function scanString() {
+        let result = '', start = pos;
+        while (true) {
+            if (pos >= len) {
+                result += text.substring(start, pos);
+                scanError = 2 /* ScanError.UnexpectedEndOfString */;
+                break;
+            }
+            const ch = text.charCodeAt(pos);
+            if (ch === 34 /* CharacterCodes.doubleQuote */) {
+                result += text.substring(start, pos);
+                pos++;
+                break;
+            }
+            if (ch === 92 /* CharacterCodes.backslash */) {
+                result += text.substring(start, pos);
+                pos++;
+                if (pos >= len) {
+                    scanError = 2 /* ScanError.UnexpectedEndOfString */;
+                    break;
+                }
+                const ch2 = text.charCodeAt(pos++);
+                switch (ch2) {
+                    case 34 /* CharacterCodes.doubleQuote */:
+                        result += '\"';
+                        break;
+                    case 92 /* CharacterCodes.backslash */:
+                        result += '\\';
+                        break;
+                    case 47 /* CharacterCodes.slash */:
+                        result += '/';
+                        break;
+                    case 98 /* CharacterCodes.b */:
+                        result += '\b';
+                        break;
+                    case 102 /* CharacterCodes.f */:
+                        result += '\f';
+                        break;
+                    case 110 /* CharacterCodes.n */:
+                        result += '\n';
+                        break;
+                    case 114 /* CharacterCodes.r */:
+                        result += '\r';
+                        break;
+                    case 116 /* CharacterCodes.t */:
+                        result += '\t';
+                        break;
+                    case 117 /* CharacterCodes.u */:
+                        const ch3 = scanHexDigits(4, true);
+                        if (ch3 >= 0) {
+                            result += String.fromCharCode(ch3);
+                        }
+                        else {
+                            scanError = 4 /* ScanError.InvalidUnicode */;
+                        }
+                        break;
+                    default:
+                        scanError = 5 /* ScanError.InvalidEscapeCharacter */;
+                }
+                start = pos;
+                continue;
+            }
+            if (ch >= 0 && ch <= 0x1f) {
+                if (isLineBreak(ch)) {
+                    result += text.substring(start, pos);
+                    scanError = 2 /* ScanError.UnexpectedEndOfString */;
+                    break;
+                }
+                else {
+                    scanError = 6 /* ScanError.InvalidCharacter */;
+                    // mark as error but continue with string
+                }
+            }
+            pos++;
+        }
+        return result;
+    }
+    function scanNext() {
+        value = '';
+        scanError = 0 /* ScanError.None */;
+        tokenOffset = pos;
+        lineStartOffset = lineNumber;
+        prevTokenLineStartOffset = tokenLineStartOffset;
+        if (pos >= len) {
+            // at the end
+            tokenOffset = len;
+            return token = 17 /* SyntaxKind.EOF */;
+        }
+        let code = text.charCodeAt(pos);
+        // trivia: whitespace
+        if (isWhiteSpace(code)) {
+            do {
+                pos++;
+                value += String.fromCharCode(code);
+                code = text.charCodeAt(pos);
+            } while (isWhiteSpace(code));
+            return token = 15 /* SyntaxKind.Trivia */;
+        }
+        // trivia: newlines
+        if (isLineBreak(code)) {
+            pos++;
+            value += String.fromCharCode(code);
+            if (code === 13 /* CharacterCodes.carriageReturn */ && text.charCodeAt(pos) === 10 /* CharacterCodes.lineFeed */) {
+                pos++;
+                value += '\n';
+            }
+            lineNumber++;
+            tokenLineStartOffset = pos;
+            return token = 14 /* SyntaxKind.LineBreakTrivia */;
+        }
+        switch (code) {
+            // tokens: []{}:,
+            case 123 /* CharacterCodes.openBrace */:
+                pos++;
+                return token = 1 /* SyntaxKind.OpenBraceToken */;
+            case 125 /* CharacterCodes.closeBrace */:
+                pos++;
+                return token = 2 /* SyntaxKind.CloseBraceToken */;
+            case 91 /* CharacterCodes.openBracket */:
+                pos++;
+                return token = 3 /* SyntaxKind.OpenBracketToken */;
+            case 93 /* CharacterCodes.closeBracket */:
+                pos++;
+                return token = 4 /* SyntaxKind.CloseBracketToken */;
+            case 58 /* CharacterCodes.colon */:
+                pos++;
+                return token = 6 /* SyntaxKind.ColonToken */;
+            case 44 /* CharacterCodes.comma */:
+                pos++;
+                return token = 5 /* SyntaxKind.CommaToken */;
+            // strings
+            case 34 /* CharacterCodes.doubleQuote */:
+                pos++;
+                value = scanString();
+                return token = 10 /* SyntaxKind.StringLiteral */;
+            // comments
+            case 47 /* CharacterCodes.slash */:
+                const start = pos - 1;
+                // Single-line comment
+                if (text.charCodeAt(pos + 1) === 47 /* CharacterCodes.slash */) {
+                    pos += 2;
+                    while (pos < len) {
+                        if (isLineBreak(text.charCodeAt(pos))) {
+                            break;
+                        }
+                        pos++;
+                    }
+                    value = text.substring(start, pos);
+                    return token = 12 /* SyntaxKind.LineCommentTrivia */;
+                }
+                // Multi-line comment
+                if (text.charCodeAt(pos + 1) === 42 /* CharacterCodes.asterisk */) {
+                    pos += 2;
+                    const safeLength = len - 1; // For lookahead.
+                    let commentClosed = false;
+                    while (pos < safeLength) {
+                        const ch = text.charCodeAt(pos);
+                        if (ch === 42 /* CharacterCodes.asterisk */ && text.charCodeAt(pos + 1) === 47 /* CharacterCodes.slash */) {
+                            pos += 2;
+                            commentClosed = true;
+                            break;
+                        }
+                        pos++;
+                        if (isLineBreak(ch)) {
+                            if (ch === 13 /* CharacterCodes.carriageReturn */ && text.charCodeAt(pos) === 10 /* CharacterCodes.lineFeed */) {
+                                pos++;
+                            }
+                            lineNumber++;
+                            tokenLineStartOffset = pos;
+                        }
+                    }
+                    if (!commentClosed) {
+                        pos++;
+                        scanError = 1 /* ScanError.UnexpectedEndOfComment */;
+                    }
+                    value = text.substring(start, pos);
+                    return token = 13 /* SyntaxKind.BlockCommentTrivia */;
+                }
+                // just a single slash
+                value += String.fromCharCode(code);
+                pos++;
+                return token = 16 /* SyntaxKind.Unknown */;
+            // numbers
+            case 45 /* CharacterCodes.minus */:
+                value += String.fromCharCode(code);
+                pos++;
+                if (pos === len || !isDigit(text.charCodeAt(pos))) {
+                    return token = 16 /* SyntaxKind.Unknown */;
+                }
+            // found a minus, followed by a number so
+            // we fall through to proceed with scanning
+            // numbers
+            case 48 /* CharacterCodes._0 */:
+            case 49 /* CharacterCodes._1 */:
+            case 50 /* CharacterCodes._2 */:
+            case 51 /* CharacterCodes._3 */:
+            case 52 /* CharacterCodes._4 */:
+            case 53 /* CharacterCodes._5 */:
+            case 54 /* CharacterCodes._6 */:
+            case 55 /* CharacterCodes._7 */:
+            case 56 /* CharacterCodes._8 */:
+            case 57 /* CharacterCodes._9 */:
+                value += scanNumber();
+                return token = 11 /* SyntaxKind.NumericLiteral */;
+            // literals and unknown symbols
+            default:
+                // is a literal? Read the full word.
+                while (pos < len && isUnknownContentCharacter(code)) {
+                    pos++;
+                    code = text.charCodeAt(pos);
+                }
+                if (tokenOffset !== pos) {
+                    value = text.substring(tokenOffset, pos);
+                    // keywords: true, false, null
+                    switch (value) {
+                        case 'true': return token = 8 /* SyntaxKind.TrueKeyword */;
+                        case 'false': return token = 9 /* SyntaxKind.FalseKeyword */;
+                        case 'null': return token = 7 /* SyntaxKind.NullKeyword */;
+                    }
+                    return token = 16 /* SyntaxKind.Unknown */;
+                }
+                // some
+                value += String.fromCharCode(code);
+                pos++;
+                return token = 16 /* SyntaxKind.Unknown */;
+        }
+    }
+    function isUnknownContentCharacter(code) {
+        if (isWhiteSpace(code) || isLineBreak(code)) {
+            return false;
+        }
+        switch (code) {
+            case 125 /* CharacterCodes.closeBrace */:
+            case 93 /* CharacterCodes.closeBracket */:
+            case 123 /* CharacterCodes.openBrace */:
+            case 91 /* CharacterCodes.openBracket */:
+            case 34 /* CharacterCodes.doubleQuote */:
+            case 58 /* CharacterCodes.colon */:
+            case 44 /* CharacterCodes.comma */:
+            case 47 /* CharacterCodes.slash */:
+                return false;
+        }
+        return true;
+    }
+    function scanNextNonTrivia() {
+        let result;
+        do {
+            result = scanNext();
+        } while (result >= 12 /* SyntaxKind.LineCommentTrivia */ && result <= 15 /* SyntaxKind.Trivia */);
+        return result;
+    }
+    return {
+        setPosition: setPosition,
+        getPosition: () => pos,
+        scan: ignoreTrivia ? scanNextNonTrivia : scanNext,
+        getToken: () => token,
+        getTokenValue: () => value,
+        getTokenOffset: () => tokenOffset,
+        getTokenLength: () => pos - tokenOffset,
+        getTokenStartLine: () => lineStartOffset,
+        getTokenStartCharacter: () => tokenOffset - prevTokenLineStartOffset,
+        getTokenError: () => scanError,
+    };
+}
+function isWhiteSpace(ch) {
+    return ch === 32 /* CharacterCodes.space */ || ch === 9 /* CharacterCodes.tab */;
+}
+function isLineBreak(ch) {
+    return ch === 10 /* CharacterCodes.lineFeed */ || ch === 13 /* CharacterCodes.carriageReturn */;
+}
+function isDigit(ch) {
+    return ch >= 48 /* CharacterCodes._0 */ && ch <= 57 /* CharacterCodes._9 */;
+}
+var CharacterCodes;
+(function (CharacterCodes) {
+    CharacterCodes[CharacterCodes["lineFeed"] = 10] = "lineFeed";
+    CharacterCodes[CharacterCodes["carriageReturn"] = 13] = "carriageReturn";
+    CharacterCodes[CharacterCodes["space"] = 32] = "space";
+    CharacterCodes[CharacterCodes["_0"] = 48] = "_0";
+    CharacterCodes[CharacterCodes["_1"] = 49] = "_1";
+    CharacterCodes[CharacterCodes["_2"] = 50] = "_2";
+    CharacterCodes[CharacterCodes["_3"] = 51] = "_3";
+    CharacterCodes[CharacterCodes["_4"] = 52] = "_4";
+    CharacterCodes[CharacterCodes["_5"] = 53] = "_5";
+    CharacterCodes[CharacterCodes["_6"] = 54] = "_6";
+    CharacterCodes[CharacterCodes["_7"] = 55] = "_7";
+    CharacterCodes[CharacterCodes["_8"] = 56] = "_8";
+    CharacterCodes[CharacterCodes["_9"] = 57] = "_9";
+    CharacterCodes[CharacterCodes["a"] = 97] = "a";
+    CharacterCodes[CharacterCodes["b"] = 98] = "b";
+    CharacterCodes[CharacterCodes["c"] = 99] = "c";
+    CharacterCodes[CharacterCodes["d"] = 100] = "d";
+    CharacterCodes[CharacterCodes["e"] = 101] = "e";
+    CharacterCodes[CharacterCodes["f"] = 102] = "f";
+    CharacterCodes[CharacterCodes["g"] = 103] = "g";
+    CharacterCodes[CharacterCodes["h"] = 104] = "h";
+    CharacterCodes[CharacterCodes["i"] = 105] = "i";
+    CharacterCodes[CharacterCodes["j"] = 106] = "j";
+    CharacterCodes[CharacterCodes["k"] = 107] = "k";
+    CharacterCodes[CharacterCodes["l"] = 108] = "l";
+    CharacterCodes[CharacterCodes["m"] = 109] = "m";
+    CharacterCodes[CharacterCodes["n"] = 110] = "n";
+    CharacterCodes[CharacterCodes["o"] = 111] = "o";
+    CharacterCodes[CharacterCodes["p"] = 112] = "p";
+    CharacterCodes[CharacterCodes["q"] = 113] = "q";
+    CharacterCodes[CharacterCodes["r"] = 114] = "r";
+    CharacterCodes[CharacterCodes["s"] = 115] = "s";
+    CharacterCodes[CharacterCodes["t"] = 116] = "t";
+    CharacterCodes[CharacterCodes["u"] = 117] = "u";
+    CharacterCodes[CharacterCodes["v"] = 118] = "v";
+    CharacterCodes[CharacterCodes["w"] = 119] = "w";
+    CharacterCodes[CharacterCodes["x"] = 120] = "x";
+    CharacterCodes[CharacterCodes["y"] = 121] = "y";
+    CharacterCodes[CharacterCodes["z"] = 122] = "z";
+    CharacterCodes[CharacterCodes["A"] = 65] = "A";
+    CharacterCodes[CharacterCodes["B"] = 66] = "B";
+    CharacterCodes[CharacterCodes["C"] = 67] = "C";
+    CharacterCodes[CharacterCodes["D"] = 68] = "D";
+    CharacterCodes[CharacterCodes["E"] = 69] = "E";
+    CharacterCodes[CharacterCodes["F"] = 70] = "F";
+    CharacterCodes[CharacterCodes["G"] = 71] = "G";
+    CharacterCodes[CharacterCodes["H"] = 72] = "H";
+    CharacterCodes[CharacterCodes["I"] = 73] = "I";
+    CharacterCodes[CharacterCodes["J"] = 74] = "J";
+    CharacterCodes[CharacterCodes["K"] = 75] = "K";
+    CharacterCodes[CharacterCodes["L"] = 76] = "L";
+    CharacterCodes[CharacterCodes["M"] = 77] = "M";
+    CharacterCodes[CharacterCodes["N"] = 78] = "N";
+    CharacterCodes[CharacterCodes["O"] = 79] = "O";
+    CharacterCodes[CharacterCodes["P"] = 80] = "P";
+    CharacterCodes[CharacterCodes["Q"] = 81] = "Q";
+    CharacterCodes[CharacterCodes["R"] = 82] = "R";
+    CharacterCodes[CharacterCodes["S"] = 83] = "S";
+    CharacterCodes[CharacterCodes["T"] = 84] = "T";
+    CharacterCodes[CharacterCodes["U"] = 85] = "U";
+    CharacterCodes[CharacterCodes["V"] = 86] = "V";
+    CharacterCodes[CharacterCodes["W"] = 87] = "W";
+    CharacterCodes[CharacterCodes["X"] = 88] = "X";
+    CharacterCodes[CharacterCodes["Y"] = 89] = "Y";
+    CharacterCodes[CharacterCodes["Z"] = 90] = "Z";
+    CharacterCodes[CharacterCodes["asterisk"] = 42] = "asterisk";
+    CharacterCodes[CharacterCodes["backslash"] = 92] = "backslash";
+    CharacterCodes[CharacterCodes["closeBrace"] = 125] = "closeBrace";
+    CharacterCodes[CharacterCodes["closeBracket"] = 93] = "closeBracket";
+    CharacterCodes[CharacterCodes["colon"] = 58] = "colon";
+    CharacterCodes[CharacterCodes["comma"] = 44] = "comma";
+    CharacterCodes[CharacterCodes["dot"] = 46] = "dot";
+    CharacterCodes[CharacterCodes["doubleQuote"] = 34] = "doubleQuote";
+    CharacterCodes[CharacterCodes["minus"] = 45] = "minus";
+    CharacterCodes[CharacterCodes["openBrace"] = 123] = "openBrace";
+    CharacterCodes[CharacterCodes["openBracket"] = 91] = "openBracket";
+    CharacterCodes[CharacterCodes["plus"] = 43] = "plus";
+    CharacterCodes[CharacterCodes["slash"] = 47] = "slash";
+    CharacterCodes[CharacterCodes["formFeed"] = 12] = "formFeed";
+    CharacterCodes[CharacterCodes["tab"] = 9] = "tab";
+})(CharacterCodes || (CharacterCodes = {}));
+
+
+/***/ }),
+/* 21 */
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   cachedBreakLinesWithSpaces: () => (/* binding */ cachedBreakLinesWithSpaces),
+/* harmony export */   cachedSpaces: () => (/* binding */ cachedSpaces),
+/* harmony export */   supportedEols: () => (/* binding */ supportedEols)
+/* harmony export */ });
+const cachedSpaces = new Array(20).fill(0).map((_, index) => {
+    return ' '.repeat(index);
+});
+const maxCachedValues = 200;
+const cachedBreakLinesWithSpaces = {
+    ' ': {
+        '\n': new Array(maxCachedValues).fill(0).map((_, index) => {
+            return '\n' + ' '.repeat(index);
+        }),
+        '\r': new Array(maxCachedValues).fill(0).map((_, index) => {
+            return '\r' + ' '.repeat(index);
+        }),
+        '\r\n': new Array(maxCachedValues).fill(0).map((_, index) => {
+            return '\r\n' + ' '.repeat(index);
+        }),
+    },
+    '\t': {
+        '\n': new Array(maxCachedValues).fill(0).map((_, index) => {
+            return '\n' + '\t'.repeat(index);
+        }),
+        '\r': new Array(maxCachedValues).fill(0).map((_, index) => {
+            return '\r' + '\t'.repeat(index);
+        }),
+        '\r\n': new Array(maxCachedValues).fill(0).map((_, index) => {
+            return '\r\n' + '\t'.repeat(index);
+        }),
+    }
+};
+const supportedEols = ['\n', '\r', '\r\n'];
+
+
+/***/ }),
+/* 22 */
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   applyEdit: () => (/* binding */ applyEdit),
+/* harmony export */   isWS: () => (/* binding */ isWS),
+/* harmony export */   removeProperty: () => (/* binding */ removeProperty),
+/* harmony export */   setProperty: () => (/* binding */ setProperty)
+/* harmony export */ });
+/* harmony import */ var _format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(19);
+/* harmony import */ var _parser__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(23);
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+
+
+function removeProperty(text, path, options) {
+    return setProperty(text, path, void 0, options);
+}
+function setProperty(text, originalPath, value, options) {
+    const path = originalPath.slice();
+    const errors = [];
+    const root = (0,_parser__WEBPACK_IMPORTED_MODULE_1__.parseTree)(text, errors);
+    let parent = void 0;
+    let lastSegment = void 0;
+    while (path.length > 0) {
+        lastSegment = path.pop();
+        parent = (0,_parser__WEBPACK_IMPORTED_MODULE_1__.findNodeAtLocation)(root, path);
+        if (parent === void 0 && value !== void 0) {
+            if (typeof lastSegment === 'string') {
+                value = { [lastSegment]: value };
+            }
+            else {
+                value = [value];
+            }
+        }
+        else {
+            break;
+        }
+    }
+    if (!parent) {
+        // empty document
+        if (value === void 0) { // delete
+            throw new Error('Can not delete in empty document');
+        }
+        return withFormatting(text, { offset: root ? root.offset : 0, length: root ? root.length : 0, content: JSON.stringify(value) }, options);
+    }
+    else if (parent.type === 'object' && typeof lastSegment === 'string' && Array.isArray(parent.children)) {
+        const existing = (0,_parser__WEBPACK_IMPORTED_MODULE_1__.findNodeAtLocation)(parent, [lastSegment]);
+        if (existing !== void 0) {
+            if (value === void 0) { // delete
+                if (!existing.parent) {
+                    throw new Error('Malformed AST');
+                }
+                const propertyIndex = parent.children.indexOf(existing.parent);
+                let removeBegin;
+                let removeEnd = existing.parent.offset + existing.parent.length;
+                if (propertyIndex > 0) {
+                    // remove the comma of the previous node
+                    let previous = parent.children[propertyIndex - 1];
+                    removeBegin = previous.offset + previous.length;
+                }
+                else {
+                    removeBegin = parent.offset + 1;
+                    if (parent.children.length > 1) {
+                        // remove the comma of the next node
+                        let next = parent.children[1];
+                        removeEnd = next.offset;
+                    }
+                }
+                return withFormatting(text, { offset: removeBegin, length: removeEnd - removeBegin, content: '' }, options);
+            }
+            else {
+                // set value of existing property
+                return withFormatting(text, { offset: existing.offset, length: existing.length, content: JSON.stringify(value) }, options);
+            }
+        }
+        else {
+            if (value === void 0) { // delete
+                return []; // property does not exist, nothing to do
+            }
+            const newProperty = `${JSON.stringify(lastSegment)}: ${JSON.stringify(value)}`;
+            const index = options.getInsertionIndex ? options.getInsertionIndex(parent.children.map(p => p.children[0].value)) : parent.children.length;
+            let edit;
+            if (index > 0) {
+                let previous = parent.children[index - 1];
+                edit = { offset: previous.offset + previous.length, length: 0, content: ',' + newProperty };
+            }
+            else if (parent.children.length === 0) {
+                edit = { offset: parent.offset + 1, length: 0, content: newProperty };
+            }
+            else {
+                edit = { offset: parent.offset + 1, length: 0, content: newProperty + ',' };
+            }
+            return withFormatting(text, edit, options);
+        }
+    }
+    else if (parent.type === 'array' && typeof lastSegment === 'number' && Array.isArray(parent.children)) {
+        const insertIndex = lastSegment;
+        if (insertIndex === -1) {
+            // Insert
+            const newProperty = `${JSON.stringify(value)}`;
+            let edit;
+            if (parent.children.length === 0) {
+                edit = { offset: parent.offset + 1, length: 0, content: newProperty };
+            }
+            else {
+                const previous = parent.children[parent.children.length - 1];
+                edit = { offset: previous.offset + previous.length, length: 0, content: ',' + newProperty };
+            }
+            return withFormatting(text, edit, options);
+        }
+        else if (value === void 0 && parent.children.length >= 0) {
+            // Removal
+            const removalIndex = lastSegment;
+            const toRemove = parent.children[removalIndex];
+            let edit;
+            if (parent.children.length === 1) {
+                // only item
+                edit = { offset: parent.offset + 1, length: parent.length - 2, content: '' };
+            }
+            else if (parent.children.length - 1 === removalIndex) {
+                // last item
+                let previous = parent.children[removalIndex - 1];
+                let offset = previous.offset + previous.length;
+                let parentEndOffset = parent.offset + parent.length;
+                edit = { offset, length: parentEndOffset - 2 - offset, content: '' };
+            }
+            else {
+                edit = { offset: toRemove.offset, length: parent.children[removalIndex + 1].offset - toRemove.offset, content: '' };
+            }
+            return withFormatting(text, edit, options);
+        }
+        else if (value !== void 0) {
+            let edit;
+            const newProperty = `${JSON.stringify(value)}`;
+            if (!options.isArrayInsertion && parent.children.length > lastSegment) {
+                const toModify = parent.children[lastSegment];
+                edit = { offset: toModify.offset, length: toModify.length, content: newProperty };
+            }
+            else if (parent.children.length === 0 || lastSegment === 0) {
+                edit = { offset: parent.offset + 1, length: 0, content: parent.children.length === 0 ? newProperty : newProperty + ',' };
+            }
+            else {
+                const index = lastSegment > parent.children.length ? parent.children.length : lastSegment;
+                const previous = parent.children[index - 1];
+                edit = { offset: previous.offset + previous.length, length: 0, content: ',' + newProperty };
+            }
+            return withFormatting(text, edit, options);
+        }
+        else {
+            throw new Error(`Can not ${value === void 0 ? 'remove' : (options.isArrayInsertion ? 'insert' : 'modify')} Array index ${insertIndex} as length is not sufficient`);
+        }
+    }
+    else {
+        throw new Error(`Can not add ${typeof lastSegment !== 'number' ? 'index' : 'property'} to parent of type ${parent.type}`);
+    }
+}
+function withFormatting(text, edit, options) {
+    if (!options.formattingOptions) {
+        return [edit];
+    }
+    // apply the edit
+    let newText = applyEdit(text, edit);
+    // format the new text
+    let begin = edit.offset;
+    let end = edit.offset + edit.content.length;
+    if (edit.length === 0 || edit.content.length === 0) { // insert or remove
+        while (begin > 0 && !(0,_format__WEBPACK_IMPORTED_MODULE_0__.isEOL)(newText, begin - 1)) {
+            begin--;
+        }
+        while (end < newText.length && !(0,_format__WEBPACK_IMPORTED_MODULE_0__.isEOL)(newText, end)) {
+            end++;
+        }
+    }
+    const edits = (0,_format__WEBPACK_IMPORTED_MODULE_0__.format)(newText, { offset: begin, length: end - begin }, { ...options.formattingOptions, keepLines: false });
+    // apply the formatting edits and track the begin and end offsets of the changes
+    for (let i = edits.length - 1; i >= 0; i--) {
+        const edit = edits[i];
+        newText = applyEdit(newText, edit);
+        begin = Math.min(begin, edit.offset);
+        end = Math.max(end, edit.offset + edit.length);
+        end += edit.content.length - edit.length;
+    }
+    // create a single edit with all changes
+    const editLength = text.length - (newText.length - end) - begin;
+    return [{ offset: begin, length: editLength, content: newText.substring(begin, end) }];
+}
+function applyEdit(text, edit) {
+    return text.substring(0, edit.offset) + edit.content + text.substring(edit.offset + edit.length);
+}
+function isWS(text, offset) {
+    return '\r\n \t'.indexOf(text.charAt(offset)) !== -1;
+}
+
+
+/***/ }),
+/* 23 */
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   contains: () => (/* binding */ contains),
+/* harmony export */   findNodeAtLocation: () => (/* binding */ findNodeAtLocation),
+/* harmony export */   findNodeAtOffset: () => (/* binding */ findNodeAtOffset),
+/* harmony export */   getLocation: () => (/* binding */ getLocation),
+/* harmony export */   getNodePath: () => (/* binding */ getNodePath),
+/* harmony export */   getNodeType: () => (/* binding */ getNodeType),
+/* harmony export */   getNodeValue: () => (/* binding */ getNodeValue),
+/* harmony export */   parse: () => (/* binding */ parse),
+/* harmony export */   parseTree: () => (/* binding */ parseTree),
+/* harmony export */   stripComments: () => (/* binding */ stripComments),
+/* harmony export */   visit: () => (/* binding */ visit)
+/* harmony export */ });
+/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(20);
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+
+var ParseOptions;
+(function (ParseOptions) {
+    ParseOptions.DEFAULT = {
+        allowTrailingComma: false
+    };
+})(ParseOptions || (ParseOptions = {}));
+/**
+ * For a given offset, evaluate the location in the JSON document. Each segment in the location path is either a property name or an array index.
+ */
+function getLocation(text, position) {
+    const segments = []; // strings or numbers
+    const earlyReturnException = new Object();
+    let previousNode = undefined;
+    const previousNodeInst = {
+        value: {},
+        offset: 0,
+        length: 0,
+        type: 'object',
+        parent: undefined
+    };
+    let isAtPropertyKey = false;
+    function setPreviousNode(value, offset, length, type) {
+        previousNodeInst.value = value;
+        previousNodeInst.offset = offset;
+        previousNodeInst.length = length;
+        previousNodeInst.type = type;
+        previousNodeInst.colonOffset = undefined;
+        previousNode = previousNodeInst;
+    }
+    try {
+        visit(text, {
+            onObjectBegin: (offset, length) => {
+                if (position <= offset) {
+                    throw earlyReturnException;
+                }
+                previousNode = undefined;
+                isAtPropertyKey = position > offset;
+                segments.push(''); // push a placeholder (will be replaced)
+            },
+            onObjectProperty: (name, offset, length) => {
+                if (position < offset) {
+                    throw earlyReturnException;
+                }
+                setPreviousNode(name, offset, length, 'property');
+                segments[segments.length - 1] = name;
+                if (position <= offset + length) {
+                    throw earlyReturnException;
+                }
+            },
+            onObjectEnd: (offset, length) => {
+                if (position <= offset) {
+                    throw earlyReturnException;
+                }
+                previousNode = undefined;
+                segments.pop();
+            },
+            onArrayBegin: (offset, length) => {
+                if (position <= offset) {
+                    throw earlyReturnException;
+                }
+                previousNode = undefined;
+                segments.push(0);
+            },
+            onArrayEnd: (offset, length) => {
+                if (position <= offset) {
+                    throw earlyReturnException;
+                }
+                previousNode = undefined;
+                segments.pop();
+            },
+            onLiteralValue: (value, offset, length) => {
+                if (position < offset) {
+                    throw earlyReturnException;
+                }
+                setPreviousNode(value, offset, length, getNodeType(value));
+                if (position <= offset + length) {
+                    throw earlyReturnException;
+                }
+            },
+            onSeparator: (sep, offset, length) => {
+                if (position <= offset) {
+                    throw earlyReturnException;
+                }
+                if (sep === ':' && previousNode && previousNode.type === 'property') {
+                    previousNode.colonOffset = offset;
+                    isAtPropertyKey = false;
+                    previousNode = undefined;
+                }
+                else if (sep === ',') {
+                    const last = segments[segments.length - 1];
+                    if (typeof last === 'number') {
+                        segments[segments.length - 1] = last + 1;
+                    }
+                    else {
+                        isAtPropertyKey = true;
+                        segments[segments.length - 1] = '';
+                    }
+                    previousNode = undefined;
+                }
+            }
+        });
+    }
+    catch (e) {
+        if (e !== earlyReturnException) {
+            throw e;
+        }
+    }
+    return {
+        path: segments,
+        previousNode,
+        isAtPropertyKey,
+        matches: (pattern) => {
+            let k = 0;
+            for (let i = 0; k < pattern.length && i < segments.length; i++) {
+                if (pattern[k] === segments[i] || pattern[k] === '*') {
+                    k++;
+                }
+                else if (pattern[k] !== '**') {
+                    return false;
+                }
+            }
+            return k === pattern.length;
+        }
+    };
+}
+/**
+ * Parses the given text and returns the object the JSON content represents. On invalid input, the parser tries to be as fault tolerant as possible, but still return a result.
+ * Therefore always check the errors list to find out if the input was valid.
+ */
+function parse(text, errors = [], options = ParseOptions.DEFAULT) {
+    let currentProperty = null;
+    let currentParent = [];
+    const previousParents = [];
+    function onValue(value) {
+        if (Array.isArray(currentParent)) {
+            currentParent.push(value);
+        }
+        else if (currentProperty !== null) {
+            currentParent[currentProperty] = value;
+        }
+    }
+    const visitor = {
+        onObjectBegin: () => {
+            const object = {};
+            onValue(object);
+            previousParents.push(currentParent);
+            currentParent = object;
+            currentProperty = null;
+        },
+        onObjectProperty: (name) => {
+            currentProperty = name;
+        },
+        onObjectEnd: () => {
+            currentParent = previousParents.pop();
+        },
+        onArrayBegin: () => {
+            const array = [];
+            onValue(array);
+            previousParents.push(currentParent);
+            currentParent = array;
+            currentProperty = null;
+        },
+        onArrayEnd: () => {
+            currentParent = previousParents.pop();
+        },
+        onLiteralValue: onValue,
+        onError: (error, offset, length) => {
+            errors.push({ error, offset, length });
+        }
+    };
+    visit(text, visitor, options);
+    return currentParent[0];
+}
+/**
+ * Parses the given text and returns a tree representation the JSON content. On invalid input, the parser tries to be as fault tolerant as possible, but still return a result.
+ */
+function parseTree(text, errors = [], options = ParseOptions.DEFAULT) {
+    let currentParent = { type: 'array', offset: -1, length: -1, children: [], parent: undefined }; // artificial root
+    function ensurePropertyComplete(endOffset) {
+        if (currentParent.type === 'property') {
+            currentParent.length = endOffset - currentParent.offset;
+            currentParent = currentParent.parent;
+        }
+    }
+    function onValue(valueNode) {
+        currentParent.children.push(valueNode);
+        return valueNode;
+    }
+    const visitor = {
+        onObjectBegin: (offset) => {
+            currentParent = onValue({ type: 'object', offset, length: -1, parent: currentParent, children: [] });
+        },
+        onObjectProperty: (name, offset, length) => {
+            currentParent = onValue({ type: 'property', offset, length: -1, parent: currentParent, children: [] });
+            currentParent.children.push({ type: 'string', value: name, offset, length, parent: currentParent });
+        },
+        onObjectEnd: (offset, length) => {
+            ensurePropertyComplete(offset + length); // in case of a missing value for a property: make sure property is complete
+            currentParent.length = offset + length - currentParent.offset;
+            currentParent = currentParent.parent;
+            ensurePropertyComplete(offset + length);
+        },
+        onArrayBegin: (offset, length) => {
+            currentParent = onValue({ type: 'array', offset, length: -1, parent: currentParent, children: [] });
+        },
+        onArrayEnd: (offset, length) => {
+            currentParent.length = offset + length - currentParent.offset;
+            currentParent = currentParent.parent;
+            ensurePropertyComplete(offset + length);
+        },
+        onLiteralValue: (value, offset, length) => {
+            onValue({ type: getNodeType(value), offset, length, parent: currentParent, value });
+            ensurePropertyComplete(offset + length);
+        },
+        onSeparator: (sep, offset, length) => {
+            if (currentParent.type === 'property') {
+                if (sep === ':') {
+                    currentParent.colonOffset = offset;
+                }
+                else if (sep === ',') {
+                    ensurePropertyComplete(offset);
+                }
+            }
+        },
+        onError: (error, offset, length) => {
+            errors.push({ error, offset, length });
+        }
+    };
+    visit(text, visitor, options);
+    const result = currentParent.children[0];
+    if (result) {
+        delete result.parent;
+    }
+    return result;
+}
+/**
+ * Finds the node at the given path in a JSON DOM.
+ */
+function findNodeAtLocation(root, path) {
+    if (!root) {
+        return undefined;
+    }
+    let node = root;
+    for (let segment of path) {
+        if (typeof segment === 'string') {
+            if (node.type !== 'object' || !Array.isArray(node.children)) {
+                return undefined;
+            }
+            let found = false;
+            for (const propertyNode of node.children) {
+                if (Array.isArray(propertyNode.children) && propertyNode.children[0].value === segment && propertyNode.children.length === 2) {
+                    node = propertyNode.children[1];
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                return undefined;
+            }
+        }
+        else {
+            const index = segment;
+            if (node.type !== 'array' || index < 0 || !Array.isArray(node.children) || index >= node.children.length) {
+                return undefined;
+            }
+            node = node.children[index];
+        }
+    }
+    return node;
+}
+/**
+ * Gets the JSON path of the given JSON DOM node
+ */
+function getNodePath(node) {
+    if (!node.parent || !node.parent.children) {
+        return [];
+    }
+    const path = getNodePath(node.parent);
+    if (node.parent.type === 'property') {
+        const key = node.parent.children[0].value;
+        path.push(key);
+    }
+    else if (node.parent.type === 'array') {
+        const index = node.parent.children.indexOf(node);
+        if (index !== -1) {
+            path.push(index);
+        }
+    }
+    return path;
+}
+/**
+ * Evaluates the JavaScript object of the given JSON DOM node
+ */
+function getNodeValue(node) {
+    switch (node.type) {
+        case 'array':
+            return node.children.map(getNodeValue);
+        case 'object':
+            const obj = Object.create(null);
+            for (let prop of node.children) {
+                const valueNode = prop.children[1];
+                if (valueNode) {
+                    obj[prop.children[0].value] = getNodeValue(valueNode);
+                }
+            }
+            return obj;
+        case 'null':
+        case 'string':
+        case 'number':
+        case 'boolean':
+            return node.value;
+        default:
+            return undefined;
+    }
+}
+function contains(node, offset, includeRightBound = false) {
+    return (offset >= node.offset && offset < (node.offset + node.length)) || includeRightBound && (offset === (node.offset + node.length));
+}
+/**
+ * Finds the most inner node at the given offset. If includeRightBound is set, also finds nodes that end at the given offset.
+ */
+function findNodeAtOffset(node, offset, includeRightBound = false) {
+    if (contains(node, offset, includeRightBound)) {
+        const children = node.children;
+        if (Array.isArray(children)) {
+            for (let i = 0; i < children.length && children[i].offset <= offset; i++) {
+                const item = findNodeAtOffset(children[i], offset, includeRightBound);
+                if (item) {
+                    return item;
+                }
+            }
+        }
+        return node;
+    }
+    return undefined;
+}
+/**
+ * Parses the given text and invokes the visitor functions for each object, array and literal reached.
+ */
+function visit(text, visitor, options = ParseOptions.DEFAULT) {
+    const _scanner = (0,_scanner__WEBPACK_IMPORTED_MODULE_0__.createScanner)(text, false);
+    // Important: Only pass copies of this to visitor functions to prevent accidental modification, and
+    // to not affect visitor functions which stored a reference to a previous JSONPath
+    const _jsonPath = [];
+    // Depth of onXXXBegin() callbacks suppressed. onXXXEnd() decrements this if it isn't 0 already.
+    // Callbacks are only called when this value is 0.
+    let suppressedCallbacks = 0;
+    function toNoArgVisit(visitFunction) {
+        return visitFunction ? () => suppressedCallbacks === 0 && visitFunction(_scanner.getTokenOffset(), _scanner.getTokenLength(), _scanner.getTokenStartLine(), _scanner.getTokenStartCharacter()) : () => true;
+    }
+    function toOneArgVisit(visitFunction) {
+        return visitFunction ? (arg) => suppressedCallbacks === 0 && visitFunction(arg, _scanner.getTokenOffset(), _scanner.getTokenLength(), _scanner.getTokenStartLine(), _scanner.getTokenStartCharacter()) : () => true;
+    }
+    function toOneArgVisitWithPath(visitFunction) {
+        return visitFunction ? (arg) => suppressedCallbacks === 0 && visitFunction(arg, _scanner.getTokenOffset(), _scanner.getTokenLength(), _scanner.getTokenStartLine(), _scanner.getTokenStartCharacter(), () => _jsonPath.slice()) : () => true;
+    }
+    function toBeginVisit(visitFunction) {
+        return visitFunction ?
+            () => {
+                if (suppressedCallbacks > 0) {
+                    suppressedCallbacks++;
+                }
+                else {
+                    let cbReturn = visitFunction(_scanner.getTokenOffset(), _scanner.getTokenLength(), _scanner.getTokenStartLine(), _scanner.getTokenStartCharacter(), () => _jsonPath.slice());
+                    if (cbReturn === false) {
+                        suppressedCallbacks = 1;
+                    }
+                }
+            }
+            : () => true;
+    }
+    function toEndVisit(visitFunction) {
+        return visitFunction ?
+            () => {
+                if (suppressedCallbacks > 0) {
+                    suppressedCallbacks--;
+                }
+                if (suppressedCallbacks === 0) {
+                    visitFunction(_scanner.getTokenOffset(), _scanner.getTokenLength(), _scanner.getTokenStartLine(), _scanner.getTokenStartCharacter());
+                }
+            }
+            : () => true;
+    }
+    const onObjectBegin = toBeginVisit(visitor.onObjectBegin), onObjectProperty = toOneArgVisitWithPath(visitor.onObjectProperty), onObjectEnd = toEndVisit(visitor.onObjectEnd), onArrayBegin = toBeginVisit(visitor.onArrayBegin), onArrayEnd = toEndVisit(visitor.onArrayEnd), onLiteralValue = toOneArgVisitWithPath(visitor.onLiteralValue), onSeparator = toOneArgVisit(visitor.onSeparator), onComment = toNoArgVisit(visitor.onComment), onError = toOneArgVisit(visitor.onError);
+    const disallowComments = options && options.disallowComments;
+    const allowTrailingComma = options && options.allowTrailingComma;
+    function scanNext() {
+        while (true) {
+            const token = _scanner.scan();
+            switch (_scanner.getTokenError()) {
+                case 4 /* ScanError.InvalidUnicode */:
+                    handleError(14 /* ParseErrorCode.InvalidUnicode */);
+                    break;
+                case 5 /* ScanError.InvalidEscapeCharacter */:
+                    handleError(15 /* ParseErrorCode.InvalidEscapeCharacter */);
+                    break;
+                case 3 /* ScanError.UnexpectedEndOfNumber */:
+                    handleError(13 /* ParseErrorCode.UnexpectedEndOfNumber */);
+                    break;
+                case 1 /* ScanError.UnexpectedEndOfComment */:
+                    if (!disallowComments) {
+                        handleError(11 /* ParseErrorCode.UnexpectedEndOfComment */);
+                    }
+                    break;
+                case 2 /* ScanError.UnexpectedEndOfString */:
+                    handleError(12 /* ParseErrorCode.UnexpectedEndOfString */);
+                    break;
+                case 6 /* ScanError.InvalidCharacter */:
+                    handleError(16 /* ParseErrorCode.InvalidCharacter */);
+                    break;
+            }
+            switch (token) {
+                case 12 /* SyntaxKind.LineCommentTrivia */:
+                case 13 /* SyntaxKind.BlockCommentTrivia */:
+                    if (disallowComments) {
+                        handleError(10 /* ParseErrorCode.InvalidCommentToken */);
+                    }
+                    else {
+                        onComment();
+                    }
+                    break;
+                case 16 /* SyntaxKind.Unknown */:
+                    handleError(1 /* ParseErrorCode.InvalidSymbol */);
+                    break;
+                case 15 /* SyntaxKind.Trivia */:
+                case 14 /* SyntaxKind.LineBreakTrivia */:
+                    break;
+                default:
+                    return token;
+            }
+        }
+    }
+    function handleError(error, skipUntilAfter = [], skipUntil = []) {
+        onError(error);
+        if (skipUntilAfter.length + skipUntil.length > 0) {
+            let token = _scanner.getToken();
+            while (token !== 17 /* SyntaxKind.EOF */) {
+                if (skipUntilAfter.indexOf(token) !== -1) {
+                    scanNext();
+                    break;
+                }
+                else if (skipUntil.indexOf(token) !== -1) {
+                    break;
+                }
+                token = scanNext();
+            }
+        }
+    }
+    function parseString(isValue) {
+        const value = _scanner.getTokenValue();
+        if (isValue) {
+            onLiteralValue(value);
+        }
+        else {
+            onObjectProperty(value);
+            // add property name afterwards
+            _jsonPath.push(value);
+        }
+        scanNext();
+        return true;
+    }
+    function parseLiteral() {
+        switch (_scanner.getToken()) {
+            case 11 /* SyntaxKind.NumericLiteral */:
+                const tokenValue = _scanner.getTokenValue();
+                let value = Number(tokenValue);
+                if (isNaN(value)) {
+                    handleError(2 /* ParseErrorCode.InvalidNumberFormat */);
+                    value = 0;
+                }
+                onLiteralValue(value);
+                break;
+            case 7 /* SyntaxKind.NullKeyword */:
+                onLiteralValue(null);
+                break;
+            case 8 /* SyntaxKind.TrueKeyword */:
+                onLiteralValue(true);
+                break;
+            case 9 /* SyntaxKind.FalseKeyword */:
+                onLiteralValue(false);
+                break;
+            default:
+                return false;
+        }
+        scanNext();
+        return true;
+    }
+    function parseProperty() {
+        if (_scanner.getToken() !== 10 /* SyntaxKind.StringLiteral */) {
+            handleError(3 /* ParseErrorCode.PropertyNameExpected */, [], [2 /* SyntaxKind.CloseBraceToken */, 5 /* SyntaxKind.CommaToken */]);
+            return false;
+        }
+        parseString(false);
+        if (_scanner.getToken() === 6 /* SyntaxKind.ColonToken */) {
+            onSeparator(':');
+            scanNext(); // consume colon
+            if (!parseValue()) {
+                handleError(4 /* ParseErrorCode.ValueExpected */, [], [2 /* SyntaxKind.CloseBraceToken */, 5 /* SyntaxKind.CommaToken */]);
+            }
+        }
+        else {
+            handleError(5 /* ParseErrorCode.ColonExpected */, [], [2 /* SyntaxKind.CloseBraceToken */, 5 /* SyntaxKind.CommaToken */]);
+        }
+        _jsonPath.pop(); // remove processed property name
+        return true;
+    }
+    function parseObject() {
+        onObjectBegin();
+        scanNext(); // consume open brace
+        let needsComma = false;
+        while (_scanner.getToken() !== 2 /* SyntaxKind.CloseBraceToken */ && _scanner.getToken() !== 17 /* SyntaxKind.EOF */) {
+            if (_scanner.getToken() === 5 /* SyntaxKind.CommaToken */) {
+                if (!needsComma) {
+                    handleError(4 /* ParseErrorCode.ValueExpected */, [], []);
+                }
+                onSeparator(',');
+                scanNext(); // consume comma
+                if (_scanner.getToken() === 2 /* SyntaxKind.CloseBraceToken */ && allowTrailingComma) {
+                    break;
+                }
+            }
+            else if (needsComma) {
+                handleError(6 /* ParseErrorCode.CommaExpected */, [], []);
+            }
+            if (!parseProperty()) {
+                handleError(4 /* ParseErrorCode.ValueExpected */, [], [2 /* SyntaxKind.CloseBraceToken */, 5 /* SyntaxKind.CommaToken */]);
+            }
+            needsComma = true;
+        }
+        onObjectEnd();
+        if (_scanner.getToken() !== 2 /* SyntaxKind.CloseBraceToken */) {
+            handleError(7 /* ParseErrorCode.CloseBraceExpected */, [2 /* SyntaxKind.CloseBraceToken */], []);
+        }
+        else {
+            scanNext(); // consume close brace
+        }
+        return true;
+    }
+    function parseArray() {
+        onArrayBegin();
+        scanNext(); // consume open bracket
+        let isFirstElement = true;
+        let needsComma = false;
+        while (_scanner.getToken() !== 4 /* SyntaxKind.CloseBracketToken */ && _scanner.getToken() !== 17 /* SyntaxKind.EOF */) {
+            if (_scanner.getToken() === 5 /* SyntaxKind.CommaToken */) {
+                if (!needsComma) {
+                    handleError(4 /* ParseErrorCode.ValueExpected */, [], []);
+                }
+                onSeparator(',');
+                scanNext(); // consume comma
+                if (_scanner.getToken() === 4 /* SyntaxKind.CloseBracketToken */ && allowTrailingComma) {
+                    break;
+                }
+            }
+            else if (needsComma) {
+                handleError(6 /* ParseErrorCode.CommaExpected */, [], []);
+            }
+            if (isFirstElement) {
+                _jsonPath.push(0);
+                isFirstElement = false;
+            }
+            else {
+                _jsonPath[_jsonPath.length - 1]++;
+            }
+            if (!parseValue()) {
+                handleError(4 /* ParseErrorCode.ValueExpected */, [], [4 /* SyntaxKind.CloseBracketToken */, 5 /* SyntaxKind.CommaToken */]);
+            }
+            needsComma = true;
+        }
+        onArrayEnd();
+        if (!isFirstElement) {
+            _jsonPath.pop(); // remove array index
+        }
+        if (_scanner.getToken() !== 4 /* SyntaxKind.CloseBracketToken */) {
+            handleError(8 /* ParseErrorCode.CloseBracketExpected */, [4 /* SyntaxKind.CloseBracketToken */], []);
+        }
+        else {
+            scanNext(); // consume close bracket
+        }
+        return true;
+    }
+    function parseValue() {
+        switch (_scanner.getToken()) {
+            case 3 /* SyntaxKind.OpenBracketToken */:
+                return parseArray();
+            case 1 /* SyntaxKind.OpenBraceToken */:
+                return parseObject();
+            case 10 /* SyntaxKind.StringLiteral */:
+                return parseString(true);
+            default:
+                return parseLiteral();
+        }
+    }
+    scanNext();
+    if (_scanner.getToken() === 17 /* SyntaxKind.EOF */) {
+        if (options.allowEmptyContent) {
+            return true;
+        }
+        handleError(4 /* ParseErrorCode.ValueExpected */, [], []);
+        return false;
+    }
+    if (!parseValue()) {
+        handleError(4 /* ParseErrorCode.ValueExpected */, [], []);
+        return false;
+    }
+    if (_scanner.getToken() !== 17 /* SyntaxKind.EOF */) {
+        handleError(9 /* ParseErrorCode.EndOfFileExpected */, [], []);
+    }
+    return true;
+}
+/**
+ * Takes JSON with JavaScript-style comments and remove
+ * them. Optionally replaces every none-newline character
+ * of comments with a replaceCharacter
+ */
+function stripComments(text, replaceCh) {
+    let _scanner = (0,_scanner__WEBPACK_IMPORTED_MODULE_0__.createScanner)(text), parts = [], kind, offset = 0, pos;
+    do {
+        pos = _scanner.getPosition();
+        kind = _scanner.scan();
+        switch (kind) {
+            case 12 /* SyntaxKind.LineCommentTrivia */:
+            case 13 /* SyntaxKind.BlockCommentTrivia */:
+            case 17 /* SyntaxKind.EOF */:
+                if (offset !== pos) {
+                    parts.push(text.substring(offset, pos));
+                }
+                if (replaceCh !== undefined) {
+                    parts.push(_scanner.getTokenValue().replace(/[^\r\n]/g, replaceCh));
+                }
+                offset = _scanner.getPosition();
+                break;
+        }
+    } while (kind !== 17 /* SyntaxKind.EOF */);
+    return parts.join('');
+}
+function getNodeType(value) {
+    switch (typeof value) {
+        case 'boolean': return 'boolean';
+        case 'number': return 'number';
+        case 'string': return 'string';
+        case 'object': {
+            if (!value) {
+                return 'null';
+            }
+            else if (Array.isArray(value)) {
+                return 'array';
+            }
+            return 'object';
+        }
+        default: return 'null';
+    }
+}
+
+
+/***/ }),
+/* 24 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -7650,11 +6450,11 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getRepoBranch = getRepoBranch;
 const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(3));
-const fs = __importStar(__webpack_require__(26));
-const gitService_1 = __webpack_require__(9);
-const runtimeCache_1 = __webpack_require__(11);
-const logger_1 = __webpack_require__(10);
+const path = __importStar(__webpack_require__(14));
+const fs = __importStar(__webpack_require__(25));
+const gitService_1 = __webpack_require__(13);
+const runtimeCache_1 = __webpack_require__(16);
+const logger_1 = __webpack_require__(15);
 /**
  * The single branch reader for the extension. Prefers the built-in git
  * extension's API (accurate for worktrees, detached heads, etc.), falls back
@@ -7703,13 +6503,13 @@ async function getRepoBranch(repoPath) {
 
 
 /***/ }),
-/* 26 */
+/* 25 */
 /***/ ((module) => {
 
 module.exports = require("node:fs/promises");
 
 /***/ }),
-/* 27 */
+/* 26 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -7748,7 +6548,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.generateDatabaseIdentifiers = generateDatabaseIdentifiers;
-const crypto = __importStar(__webpack_require__(23));
+const crypto = __importStar(__webpack_require__(6));
 const MAX_IDENTIFIER_LENGTH = 63;
 const KIND_LABELS = {
     dump: 'Dump',
@@ -7840,13 +6640,13 @@ function generateDatabaseIdentifiers(options) {
 
 
 /***/ }),
-/* 28 */
+/* 27 */
 /***/ ((module) => {
 
 module.exports = require("os");
 
 /***/ }),
-/* 29 */
+/* 28 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -7907,13 +6707,13 @@ function getSortOptions(viewId) {
 
 
 /***/ }),
-/* 30 */
+/* 29 */
 /***/ ((module) => {
 
 module.exports = require("stream");
 
 /***/ }),
-/* 31 */
+/* 30 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -7957,10 +6757,10 @@ exports.getInstalledModuleNames = getInstalledModuleNames;
 exports.clearInstalledModuleCache = clearInstalledModuleCache;
 exports.parseOdooSeries = parseOdooSeries;
 exports.detectOdooSeries = detectOdooSeries;
-const node_child_process_1 = __webpack_require__(32);
-const util = __importStar(__webpack_require__(33));
-const runtimeCache_1 = __webpack_require__(11);
-const logger_1 = __webpack_require__(10);
+const node_child_process_1 = __webpack_require__(31);
+const util = __importStar(__webpack_require__(32));
+const runtimeCache_1 = __webpack_require__(16);
+const logger_1 = __webpack_require__(15);
 const execFileAsync = util.promisify(node_child_process_1.execFile);
 const INSTALLED_MODULES_QUERY = `
     SELECT id, name, shortdesc, latest_version, state, application
@@ -8134,16 +6934,77 @@ async function detectOdooSeries(dbName) {
 
 
 /***/ }),
-/* 32 */
+/* 31 */
 /***/ ((module) => {
 
 module.exports = require("node:child_process");
 
 /***/ }),
-/* 33 */
+/* 32 */
 /***/ ((module) => {
 
 module.exports = require("node:util");
+
+/***/ }),
+/* 33 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BaseTreeProvider = void 0;
+const vscode = __importStar(__webpack_require__(1));
+/**
+ * Shared base for the extension's tree data providers: owns the change
+ * emitter (and disposes it), and exposes refresh() supporting both full and
+ * element-scoped updates. Register instances in context.subscriptions so the
+ * emitter is cleaned up on deactivation.
+ */
+class BaseTreeProvider {
+    _onDidChangeTreeData = new vscode.EventEmitter();
+    onDidChangeTreeData = this._onDidChangeTreeData.event;
+    /** Refreshes the whole tree, or only `element` when provided. */
+    refresh(element) {
+        this._onDidChangeTreeData.fire(element);
+    }
+    dispose() {
+        this._onDidChangeTreeData.dispose();
+    }
+}
+exports.BaseTreeProvider = BaseTreeProvider;
+
 
 /***/ }),
 /* 34 */
@@ -8192,15 +7053,15 @@ exports.captureCurrentRepoBranches = captureCurrentRepoBranches;
 exports.buildDatabaseEnvironmentTarget = buildDatabaseEnvironmentTarget;
 exports.alignEnvironment = alignEnvironment;
 const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(5));
-const path = __importStar(__webpack_require__(6));
+const fs = __importStar(__webpack_require__(10));
+const path = __importStar(__webpack_require__(11));
 const settings_1 = __webpack_require__(8);
-const versionsService_1 = __webpack_require__(21);
-const utils_1 = __webpack_require__(4);
-const branches_1 = __webpack_require__(25);
+const versionsService_1 = __webpack_require__(4);
+const utils_1 = __webpack_require__(9);
+const branches_1 = __webpack_require__(24);
 const checkout_1 = __webpack_require__(35);
-const logger_1 = __webpack_require__(10);
-const notifications_1 = __webpack_require__(12);
+const logger_1 = __webpack_require__(15);
+const notifications_1 = __webpack_require__(17);
 const LEGACY_BEHAVIOR_MAP = {
     'auto-both': 'auto',
     'auto-version-only': 'auto',
@@ -8533,11 +7394,11 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.checkoutRepoBranch = checkoutRepoBranch;
 exports.checkoutCoreRepos = checkoutCoreRepos;
 const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(5));
-const child_process_1 = __webpack_require__(7);
-const utils_1 = __webpack_require__(4);
-const gitService_1 = __webpack_require__(9);
-const runtimeCache_1 = __webpack_require__(11);
+const fs = __importStar(__webpack_require__(10));
+const child_process_1 = __webpack_require__(12);
+const utils_1 = __webpack_require__(9);
+const gitService_1 = __webpack_require__(13);
+const runtimeCache_1 = __webpack_require__(16);
 const checkoutHooksOutput = vscode.window.createOutputChannel('Odoo Debugger: Branch Hooks');
 function quoteForSingleQuotedShell(value) {
     return `'${value.replace(/'/g, `'\"'\"'`)}'`;
@@ -8777,11 +7638,11 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.collectLegacyBranchesNeedingVersions = collectLegacyBranchesNeedingVersions;
 exports.applyDatabaseFieldMigration = applyDatabaseFieldMigration;
 exports.migrateDebuggerData = migrateDebuggerData;
-const settingsStore_1 = __webpack_require__(24);
-const versionsService_1 = __webpack_require__(21);
-const version_1 = __webpack_require__(22);
-const utils_1 = __webpack_require__(4);
-const logger_1 = __webpack_require__(10);
+const settingsStore_1 = __webpack_require__(7);
+const versionsService_1 = __webpack_require__(4);
+const version_1 = __webpack_require__(5);
+const utils_1 = __webpack_require__(9);
+const logger_1 = __webpack_require__(15);
 /** Branch names that denote a real Odoo series, e.g. "17.0", "saas-17.4", "master". */
 const ODOO_SERIES_PATTERN = /^((saas-)?\d+(\.\d+)?|master)$/i;
 function findMatchingVersionId(versions, branch) {
@@ -8928,18 +7789,19 @@ exports.exportProject = exportProject;
 exports.importProject = importProject;
 exports.quickProjectSearch = quickProjectSearch;
 const vscode = __importStar(__webpack_require__(1));
-const os = __importStar(__webpack_require__(28));
+const os = __importStar(__webpack_require__(27));
 const project_1 = __webpack_require__(38);
 const repo_1 = __webpack_require__(40);
-const utils_1 = __webpack_require__(4);
-const settingsStore_1 = __webpack_require__(24);
-const versionsService_1 = __webpack_require__(21);
-const crypto_1 = __webpack_require__(23);
+const utils_1 = __webpack_require__(9);
+const settingsStore_1 = __webpack_require__(7);
+const versionsService_1 = __webpack_require__(4);
+const crypto_1 = __webpack_require__(6);
 const environment_1 = __webpack_require__(34);
-const sortOptions_1 = __webpack_require__(29);
-const logger_1 = __webpack_require__(10);
-const notifications_1 = __webpack_require__(12);
-const notifications_2 = __webpack_require__(12);
+const sortOptions_1 = __webpack_require__(28);
+const logger_1 = __webpack_require__(15);
+const notifications_1 = __webpack_require__(17);
+const notifications_2 = __webpack_require__(17);
+const baseTreeProvider_1 = __webpack_require__(33);
 let projectMetadataMigrationCompleted = false;
 function sanitizeProjectTickets(rawTickets) {
     if (!Array.isArray(rawTickets)) {
@@ -8981,18 +7843,13 @@ function buildTicketUrl(ticketId) {
 function formatTicketLabel(ticket) {
     return ticket.title ? `${ticket.id} - ${ticket.title}` : ticket.id;
 }
-class ProjectTreeProvider {
+class ProjectTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     context;
     sortPreferences;
-    _onDidChangeTreeData = new vscode.EventEmitter();
-    onDidChangeTreeData = this._onDidChangeTreeData.event;
-    refresh() {
-        this._onDidChangeTreeData.fire();
-    }
     constructor(context, sortPreferences) {
+        super();
         this.context = context;
         this.sortPreferences = sortPreferences;
-        this.context = context;
     }
     getTreeItem(element) {
         return element;
@@ -9864,7 +8721,7 @@ async function quickProjectSearch() {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectModel = void 0;
 const testing_1 = __webpack_require__(39);
-const crypto_1 = __webpack_require__(23);
+const crypto_1 = __webpack_require__(6);
 class ProjectModel {
     name; // project sh name
     createdAt;
@@ -9898,7 +8755,7 @@ exports.ProjectModel = ProjectModel;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.TestingConfigModel = void 0;
 exports.ensureTestingConfigModel = ensureTestingConfigModel;
-const logger_1 = __webpack_require__(10);
+const logger_1 = __webpack_require__(15);
 class TestingConfigModel {
     isEnabled;
     testTags;
@@ -10038,14 +8895,15 @@ exports.RepoTreeProvider = void 0;
 exports.selectRepo = selectRepo;
 const repo_1 = __webpack_require__(40);
 const vscode = __importStar(__webpack_require__(1));
-const utils_1 = __webpack_require__(4);
-const settingsStore_1 = __webpack_require__(24);
-const versionsService_1 = __webpack_require__(21);
-const path = __importStar(__webpack_require__(6));
-const fs = __importStar(__webpack_require__(5));
-const sortOptions_1 = __webpack_require__(29);
-const branches_1 = __webpack_require__(25);
-const runtimeCache_1 = __webpack_require__(11);
+const utils_1 = __webpack_require__(9);
+const settingsStore_1 = __webpack_require__(7);
+const versionsService_1 = __webpack_require__(4);
+const path = __importStar(__webpack_require__(11));
+const fs = __importStar(__webpack_require__(10));
+const sortOptions_1 = __webpack_require__(28);
+const branches_1 = __webpack_require__(24);
+const runtimeCache_1 = __webpack_require__(16);
+const baseTreeProvider_1 = __webpack_require__(33);
 async function mapWithConcurrency(items, limit, worker) {
     if (items.length === 0) {
         return [];
@@ -10065,18 +8923,13 @@ async function mapWithConcurrency(items, limit, worker) {
     await Promise.all(workers);
     return results;
 }
-class RepoTreeProvider {
+class RepoTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     context;
     sortPreferences;
-    _onDidChangeTreeData = new vscode.EventEmitter();
-    onDidChangeTreeData = this._onDidChangeTreeData.event;
-    refresh() {
-        this._onDidChangeTreeData.fire();
-    }
     constructor(context, sortPreferences) {
+        super();
         this.context = context;
         this.sortPreferences = sortPreferences;
-        this.context = context;
     }
     getTreeItem(element) {
         return element;
@@ -10246,12 +9099,14 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectReposProvider = void 0;
 exports.revealProjectRepo = revealProjectRepo;
 const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(26));
-const path = __importStar(__webpack_require__(3));
-const settingsStore_1 = __webpack_require__(24);
-const utils_1 = __webpack_require__(4);
-const sortOptions_1 = __webpack_require__(29);
+const fs = __importStar(__webpack_require__(25));
+const path = __importStar(__webpack_require__(14));
+const settingsStore_1 = __webpack_require__(7);
+const utils_1 = __webpack_require__(9);
+const sortOptions_1 = __webpack_require__(28);
 const filesExclude_1 = __webpack_require__(43);
+const baseTreeProvider_1 = __webpack_require__(33);
+const logger_1 = __webpack_require__(15);
 class ProjectRepoItem extends vscode.TreeItem {
     metadata;
     constructor(metadata) {
@@ -10331,15 +9186,11 @@ class ProjectRepoItem extends vscode.TreeItem {
         }
     }
 }
-class ProjectReposProvider {
+class ProjectReposProvider extends baseTreeProvider_1.BaseTreeProvider {
     sortPreferences;
-    _onDidChangeTreeData = new vscode.EventEmitter();
-    onDidChangeTreeData = this._onDidChangeTreeData.event;
     constructor(sortPreferences) {
+        super();
         this.sortPreferences = sortPreferences;
-    }
-    refresh() {
-        this._onDidChangeTreeData.fire();
     }
     getTreeItem(element) {
         return element;
@@ -10430,7 +9281,7 @@ async function revealProjectRepo(repo) {
         await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(repo.path));
     }
     catch (error) {
-        (0, utils_1.showError)(`Unable to reveal repository: ${error?.message ?? error}`);
+        (0, utils_1.showError)(`Unable to reveal repository: ${(0, logger_1.errorMessage)(error)}`);
     }
 }
 
@@ -10475,8 +9326,8 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.createFilesExcludeMatcher = createFilesExcludeMatcher;
-const fs = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(3));
+const fs = __importStar(__webpack_require__(44));
+const path = __importStar(__webpack_require__(14));
 const vscode = __importStar(__webpack_require__(1));
 function globToRegExp(pattern) {
     const normalizedPattern = pattern.split(path.sep).join('/');
@@ -10580,6 +9431,12 @@ function createFilesExcludeMatcher(scopeUri) {
 
 /***/ }),
 /* 44 */
+/***/ ((module) => {
+
+module.exports = require("node:fs");
+
+/***/ }),
+/* 45 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10629,33 +9486,29 @@ exports.updateInstalledModules = updateInstalledModules;
 exports.installAllModules = installAllModules;
 exports.clearAllModuleSelections = clearAllModuleSelections;
 exports.viewInstalledModules = viewInstalledModules;
-const module_1 = __webpack_require__(45);
+const module_1 = __webpack_require__(46);
 const vscode = __importStar(__webpack_require__(1));
-const utils_1 = __webpack_require__(4);
-const child_process_1 = __webpack_require__(7);
-const fs = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(3));
+const utils_1 = __webpack_require__(9);
+const child_process_1 = __webpack_require__(12);
+const fs = __importStar(__webpack_require__(44));
+const path = __importStar(__webpack_require__(14));
 function collectModuleDiscovery(project) {
     const manualIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
     return (0, utils_1.discoverModulesInRepos)(project.repos, { manualIncludePaths: manualIncludes });
 }
-const settingsStore_1 = __webpack_require__(24);
-const database_1 = __webpack_require__(31);
-const sortOptions_1 = __webpack_require__(29);
-const versionsService_1 = __webpack_require__(21);
-const notifications_1 = __webpack_require__(12);
-class ModuleTreeProvider {
+const settingsStore_1 = __webpack_require__(7);
+const database_1 = __webpack_require__(30);
+const sortOptions_1 = __webpack_require__(28);
+const versionsService_1 = __webpack_require__(4);
+const notifications_1 = __webpack_require__(17);
+const baseTreeProvider_1 = __webpack_require__(33);
+class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     context;
     sortPreferences;
-    _onDidChangeTreeData = new vscode.EventEmitter();
-    onDidChangeTreeData = this._onDidChangeTreeData.event;
-    refresh() {
-        this._onDidChangeTreeData.fire();
-    }
     constructor(context, sortPreferences) {
+        super();
         this.context = context;
         this.sortPreferences = sortPreferences;
-        this.context = context;
     }
     getTreeItem(element) {
         return element;
@@ -10735,6 +9588,7 @@ class ModuleTreeProvider {
                 psaeTooltip = `${psaeDir.dirName}: Not included (${reason})\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to include in addons path`;
             }
             treeItems.push({
+                id: psaeDir.path,
                 label: `${psaeIcon} ${psaeDir.dirName}`,
                 tooltip: isTestingEnabled
                     ? `${psaeTooltip}\n⚠️ Module management disabled while testing is enabled`
@@ -10783,6 +9637,7 @@ class ModuleTreeProvider {
                 moduleTooltipDetails.push(`**Source:** ${repoPath}`);
                 moduleTooltipDetails.push(`**Path:** ${module.path}`);
                 const managedModuleItem = {
+                    id: module.path,
                     label: `${moduleIcon} ${module.name}`,
                     tooltip: new vscode.MarkdownString(moduleTooltipDetails.join('\n\n')),
                     description: repoPath,
@@ -10815,6 +9670,7 @@ class ModuleTreeProvider {
                 moduleTooltipDetails.push(`**Source:** ${repoPath}`);
                 moduleTooltipDetails.push(`**Path:** ${module.path}`);
                 const unmanagedModuleItem = {
+                    id: module.path,
                     label: `${moduleIcon} ${module.name}`,
                     tooltip: new vscode.MarkdownString(moduleTooltipDetails.join('\n\n')),
                     description: repoPath,
@@ -11461,7 +10317,7 @@ async function viewInstalledModules() {
 
 
 /***/ }),
-/* 45 */
+/* 46 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -11481,7 +10337,7 @@ exports.ModuleModel = ModuleModel;
 
 
 /***/ }),
-/* 46 */
+/* 47 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11529,24 +10385,20 @@ exports.removeTestTag = removeTestTag;
 exports.toggleLogLevel = toggleLogLevel;
 exports.setSpecificLogLevel = setSpecificLogLevel;
 const vscode = __importStar(__webpack_require__(1));
-const settingsStore_1 = __webpack_require__(24);
+const settingsStore_1 = __webpack_require__(7);
 const testing_1 = __webpack_require__(39);
-const module_1 = __webpack_require__(45);
-const utils_1 = __webpack_require__(4);
-const context_1 = __webpack_require__(47);
-const debugger_1 = __webpack_require__(48);
-const database_1 = __webpack_require__(31);
-const logger_1 = __webpack_require__(10);
-const notifications_1 = __webpack_require__(12);
-class TestingTreeProvider {
+const module_1 = __webpack_require__(46);
+const utils_1 = __webpack_require__(9);
+const context_1 = __webpack_require__(48);
+const debugger_1 = __webpack_require__(49);
+const database_1 = __webpack_require__(30);
+const logger_1 = __webpack_require__(15);
+const notifications_1 = __webpack_require__(17);
+const baseTreeProvider_1 = __webpack_require__(33);
+class TestingTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     context;
-    _onDidChangeTreeData = new vscode.EventEmitter();
-    onDidChangeTreeData = this._onDidChangeTreeData.event;
-    refresh() {
-        this._onDidChangeTreeData.fire();
-    }
     constructor(context) {
-        this.context = context;
+        super();
         this.context = context;
     }
     getTreeItem(element) {
@@ -12168,7 +11020,7 @@ async function setSpecificLogLevel() {
 
 
 /***/ }),
-/* 47 */
+/* 48 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12222,7 +11074,7 @@ function updateActiveContext(isActive) {
 
 
 /***/ }),
-/* 48 */
+/* 49 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12264,15 +11116,15 @@ exports.setupDebugger = setupDebugger;
 exports.startDebugShell = startDebugShell;
 exports.startDebugServer = startDebugServer;
 const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(5));
-const path = __importStar(__webpack_require__(3));
-const utils_1 = __webpack_require__(4);
-const settingsStore_1 = __webpack_require__(24);
-const versionsService_1 = __webpack_require__(21);
+const fs = __importStar(__webpack_require__(10));
+const path = __importStar(__webpack_require__(14));
+const utils_1 = __webpack_require__(9);
+const settingsStore_1 = __webpack_require__(7);
+const versionsService_1 = __webpack_require__(4);
 const testing_1 = __webpack_require__(39);
-const database_1 = __webpack_require__(31);
-const jsonc_parser_1 = __webpack_require__(13);
-const logger_1 = __webpack_require__(10);
+const database_1 = __webpack_require__(30);
+const jsonc_parser_1 = __webpack_require__(18);
+const logger_1 = __webpack_require__(15);
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
 const baseInstallNotifiedDbs = new Set();
@@ -12654,205 +11506,6 @@ async function startDebugServer() {
 
 
 /***/ }),
-/* 49 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.setupOdooBranch = setupOdooBranch;
-// VSCode Extension Utility: Clone Odoo & Enterprise for a selected branch and setup venv with progress
-const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(6));
-const fs = __importStar(__webpack_require__(5));
-const utils_1 = __webpack_require__(4);
-const child_process_1 = __webpack_require__(7);
-const logger_1 = __webpack_require__(10);
-const notifications_1 = __webpack_require__(12);
-async function setupOdooBranch() {
-    // Show confirmation dialog with detailed information
-    const confirmMessage = `This will:
-• Clone Odoo and Enterprise repositories
-• Create a Python virtual environment
-• Allow you to select a specific branch
-
-This may take several minutes depending on your internet connection.
-
-Continue?`;
-    const confirm = await (0, notifications_1.showModalWarning)(confirmMessage, 'Continue');
-    if (confirm !== 'Continue') {
-        return;
-    }
-    const baseDir = (0, utils_1.getWorkspacePath)();
-    if (!baseDir) {
-        (0, utils_1.showError)('Open a workspace folder before running this command.');
-        return;
-    }
-    // Check if directories already exist
-    const odooPath = path.join(baseDir, 'odoo');
-    const enterprisePath = path.join(baseDir, 'enterprise');
-    const venvPath = path.join(baseDir, 'venv');
-    const existingPaths = [];
-    if (fs.existsSync(odooPath)) {
-        existingPaths.push('odoo');
-    }
-    if (fs.existsSync(enterprisePath)) {
-        existingPaths.push('enterprise');
-    }
-    if (fs.existsSync(venvPath)) {
-        existingPaths.push('venv');
-    }
-    if (existingPaths.length > 0) {
-        const overwriteConfirm = await (0, notifications_1.showModalWarning)(`The following directories already exist: ${existingPaths.join(', ')}\n\nDo you want to continue? This may overwrite existing files.`, 'Continue Anyway', 'Cancel');
-        if (overwriteConfirm !== 'Continue Anyway') {
-            return;
-        }
-    }
-    // Let user select branch
-    const branchOptions = [
-        { label: '17.0', description: 'Latest stable version' },
-        { label: '16.0', description: 'Previous stable version' },
-        { label: '15.0', description: 'Legacy stable version' },
-        { label: '14.0', description: 'Legacy stable version' },
-        { label: 'master', description: 'Development branch (unstable)' },
-        { label: 'saas-17.4', description: 'SaaS version' },
-        { label: 'saas-17.3', description: 'SaaS version' },
-        { label: 'saas-17.2', description: 'SaaS version' },
-        { label: 'Custom', description: 'Enter a custom branch name' }
-    ];
-    const selectedBranch = await vscode.window.showQuickPick(branchOptions, {
-        placeHolder: 'Select an Odoo branch to clone',
-        ignoreFocusOut: true
-    });
-    if (!selectedBranch) {
-        return;
-    }
-    let branch = selectedBranch.label;
-    if (branch === 'Custom') {
-        const customBranch = await vscode.window.showInputBox({
-            prompt: 'Enter the branch name',
-            placeHolder: 'e.g., 17.0, master, saas-17.4',
-            ignoreFocusOut: true
-        });
-        if (!customBranch) {
-            return;
-        }
-        branch = customBranch.trim();
-    }
-    await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: `Setting up Odoo ${branch}…`,
-        cancellable: false
-    }, async (progress) => {
-        try {
-            progress.report({ message: 'Preparing setup…', increment: 5 });
-            // Create terminal for operations
-            const terminal = vscode.window.createTerminal({
-                name: `Odoo Setup (${branch})`,
-                cwd: baseDir
-            });
-            terminal.show();
-            // Clone Odoo repository
-            progress.report({ message: 'Cloning Odoo repository…', increment: 15 });
-            logger_1.logger.debug(`🔄 Cloning Odoo repository (branch: ${branch})`);
-            terminal.sendText(`echo "🔄 Cloning Odoo repository (branch: ${branch})..."`);
-            terminal.sendText(`git clone --depth 1 --branch ${branch} https://github.com/odoo/odoo.git`);
-            // Wait a bit for the clone to start
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            // Clone Enterprise repository
-            progress.report({ message: 'Cloning Enterprise repository…', increment: 35 });
-            logger_1.logger.debug(`🔄 Cloning Enterprise repository (branch: ${branch})`);
-            terminal.sendText(`echo "🔄 Cloning Enterprise repository (branch: ${branch})..."`);
-            terminal.sendText(`git clone --depth 1 --branch ${branch} git@github.com:odoo/enterprise.git || git clone --depth 1 --branch ${branch} https://github.com/odoo/enterprise.git`);
-            // Wait for enterprise clone
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            // Check Python availability
-            progress.report({ message: 'Checking Python installation…', increment: 55 });
-            logger_1.logger.debug('🐍 Checking Python installation');
-            let pythonCmd = 'python3';
-            try {
-                (0, child_process_1.execSync)('python3 --version', { stdio: 'ignore' });
-            }
-            catch {
-                try {
-                    (0, child_process_1.execSync)('python --version', { stdio: 'ignore' });
-                    pythonCmd = 'python';
-                }
-                catch {
-                    throw new Error('Python not found. Please install Python 3.8+ first.');
-                }
-            }
-            // Create virtual environment
-            progress.report({ message: 'Creating Python virtual environment…', increment: 75 });
-            logger_1.logger.debug('🔧 Creating Python virtual environment');
-            terminal.sendText(`echo "🔧 Creating Python virtual environment..."`);
-            terminal.sendText(`${pythonCmd} -m venv venv`);
-            // Wait for venv creation
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            // Activate venv and install basic requirements
-            progress.report({ message: 'Installing basic Python packages…', increment: 85 });
-            logger_1.logger.debug('📦 Installing basic Python packages');
-            terminal.sendText(`echo "📦 Installing basic Python packages..."`);
-            // Platform-specific activation
-            const isWindows = process.platform === 'win32';
-            const activateCmd = isWindows ? '.\\venv\\Scripts\\activate' : 'source venv/bin/activate';
-            terminal.sendText(`${activateCmd} && pip install --upgrade pip setuptools wheel`);
-            // Install Odoo requirements if they exist
-            terminal.sendText(`${activateCmd} && if [ -f odoo/requirements.txt ]; then pip install -r odoo/requirements.txt; else echo "No requirements.txt found in odoo directory"; fi`);
-            progress.report({ message: 'Setup complete!', increment: 100 });
-            // Show completion message with next steps
-            terminal.sendText(`echo ""`);
-            terminal.sendText(`echo "✅ Odoo ${branch} setup complete!"`);
-            terminal.sendText(`echo ""`);
-            terminal.sendText(`echo "Next steps:"`);
-            terminal.sendText(`echo "1. Configure your VS Code settings to point to these directories"`);
-            terminal.sendText(`echo "2. Activate the virtual environment: ${activateCmd}"`);
-            terminal.sendText(`echo "3. Install additional dependencies if needed"`);
-            terminal.sendText(`echo "4. Create your custom addons directory"`);
-            terminal.sendText(`echo ""`);
-            (0, utils_1.showInfo)(`Odoo ${branch} setup completed successfully!\n\nCheck the terminal for next steps.`);
-        }
-        catch (error) {
-            logger_1.logger.error('Setup failed:', error);
-            (0, utils_1.showError)(`Setup failed: ${error.message}`);
-        }
-    });
-}
-
-
-/***/ }),
 /* 50 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
@@ -12893,10 +11546,11 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VersionsTreeProvider = exports.VersionSettingTreeItem = exports.VersionTreeItem = void 0;
 const vscode = __importStar(__webpack_require__(1));
-const versionsService_1 = __webpack_require__(21);
-const utils_1 = __webpack_require__(4);
-const sortOptions_1 = __webpack_require__(29);
-const logger_1 = __webpack_require__(10);
+const versionsService_1 = __webpack_require__(4);
+const utils_1 = __webpack_require__(9);
+const sortOptions_1 = __webpack_require__(28);
+const logger_1 = __webpack_require__(15);
+const baseTreeProvider_1 = __webpack_require__(33);
 class VersionTreeItem extends vscode.TreeItem {
     version;
     collapsibleState;
@@ -12905,6 +11559,7 @@ class VersionTreeItem extends vscode.TreeItem {
         super((0, utils_1.addActiveIndicator)(version.name, version.isActive), collapsibleState);
         this.version = version;
         this.collapsibleState = collapsibleState;
+        this.id = version.id;
         this.tooltip = `${version.name} (${version.odooVersion})`;
         this.description = version.odooVersion;
         this.contextValue = version.isActive ? 'activeVersion' : 'version';
@@ -12929,6 +11584,7 @@ class VersionSettingTreeItem extends vscode.TreeItem {
         this.key = key;
         this.value = value;
         this.versionId = versionId;
+        this.id = `${versionId}:${key}`;
         this.tooltip = `${displayName}: ${displayValue}`;
         this.contextValue = 'versionSetting';
         // Set appropriate icon based on setting type
@@ -12971,17 +11627,13 @@ class VersionSettingTreeItem extends vscode.TreeItem {
     }
 }
 exports.VersionSettingTreeItem = VersionSettingTreeItem;
-class VersionsTreeProvider {
+class VersionsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     sortPreferences;
-    _onDidChangeTreeData = new vscode.EventEmitter();
-    onDidChangeTreeData = this._onDidChangeTreeData.event;
     versionsService;
     constructor(sortPreferences) {
+        super();
         this.sortPreferences = sortPreferences;
         this.versionsService = versionsService_1.VersionsService.getInstance();
-    }
-    refresh() {
-        this._onDidChangeTreeData.fire();
     }
     getTreeItem(element) {
         return element;
@@ -13111,140 +11763,6 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.rebuildProjectWorkspace = rebuildProjectWorkspace;
-exports.openProjectWorkspace = openProjectWorkspace;
-exports.quickSwitchProjectWorkspace = quickSwitchProjectWorkspace;
-const vscode = __importStar(__webpack_require__(1));
-const settingsStore_1 = __webpack_require__(24);
-const utils_1 = __webpack_require__(4);
-async function getActiveProjectOrPrompt() {
-    const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
-    if (!data?.projects || data.projects.length === 0) {
-        (0, utils_1.showInfo)('No projects found. Create a project first.');
-        return undefined;
-    }
-    let projectIndex = data.projects.findIndex((p) => p.isSelected);
-    if (projectIndex === -1) {
-        const pick = await vscode.window.showQuickPick(data.projects.map((p, idx) => ({
-            label: p.name,
-            description: `${p.repos?.length ?? 0} repos`,
-            index: idx
-        })), { placeHolder: 'Select a project' });
-        if (!pick) {
-            return undefined;
-        }
-        projectIndex = pick.index;
-        data.projects.forEach((p, idx) => (p.isSelected = idx === projectIndex));
-        await settingsStore_1.SettingsStore.saveWithoutComments(data);
-    }
-    return { project: data.projects[projectIndex], projectIndex, data };
-}
-async function buildWorkspaceFile(context, project) {
-    if (!project.repos || project.repos.length === 0) {
-        (0, utils_1.showInfo)(`Project "${project.name}" has no repositories. Add repos first.`);
-        return undefined;
-    }
-    const workspacesDir = vscode.Uri.joinPath(context.globalStorageUri, 'workspaces');
-    await vscode.workspace.fs.createDirectory(workspacesDir);
-    const workspaceFile = vscode.Uri.joinPath(workspacesDir, `${project.uid || project.name}.code-workspace`);
-    const folders = [];
-    for (const repo of project.repos) {
-        const repoPath = (0, utils_1.normalizePath)(repo.path);
-        const folderEntry = { path: repoPath };
-        try {
-            await vscode.workspace.fs.stat(vscode.Uri.file(repoPath));
-        }
-        catch {
-            folderEntry.name = `${repo.name} (missing)`;
-        }
-        folders.push(folderEntry);
-    }
-    const workspaceData = {
-        folders,
-        settings: {}
-    };
-    const content = Buffer.from(JSON.stringify(workspaceData, null, 2), 'utf8');
-    await vscode.workspace.fs.writeFile(workspaceFile, content);
-    return workspaceFile;
-}
-async function rebuildProjectWorkspace(context) {
-    const selection = await getActiveProjectOrPrompt();
-    if (!selection) {
-        return undefined;
-    }
-    return buildWorkspaceFile(context, selection.project);
-}
-async function openProjectWorkspace(context) {
-    const workspaceFile = await rebuildProjectWorkspace(context);
-    if (!workspaceFile) {
-        return;
-    }
-    const choice = await (0, utils_1.showInfo)('Open project workspace?', 'This window', 'New window');
-    if (!choice) {
-        return;
-    }
-    const forceNewWindow = choice === 'New window';
-    await vscode.commands.executeCommand('vscode.openFolder', workspaceFile, forceNewWindow);
-}
-async function quickSwitchProjectWorkspace(context) {
-    const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
-    if (!data?.projects || data.projects.length === 0) {
-        (0, utils_1.showInfo)('No projects found. Create a project first.');
-        return;
-    }
-    const pick = await vscode.window.showQuickPick(data.projects.map((p, idx) => ({
-        label: p.name,
-        description: `${p.repos?.length ?? 0} repos`,
-        index: idx
-    })), { placeHolder: 'Select a project to open its workspace' });
-    if (!pick) {
-        return;
-    }
-    data.projects.forEach((p, idx) => (p.isSelected = idx === pick.index));
-    await settingsStore_1.SettingsStore.saveWithoutComments(data);
-    await openProjectWorkspace(context);
-}
-
-
-/***/ }),
-/* 53 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectReposExplorerProvider = void 0;
 exports.createNewFile = createNewFile;
 exports.createNewFolder = createNewFolder;
@@ -13255,22 +11773,17 @@ exports.selectProjectForExplorer = selectProjectForExplorer;
 exports.copyEntries = copyEntries;
 exports.pasteEntries = pasteEntries;
 const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(3));
-const settingsStore_1 = __webpack_require__(24);
-const utils_1 = __webpack_require__(4);
-const runtimeCache_1 = __webpack_require__(11);
+const path = __importStar(__webpack_require__(14));
+const settingsStore_1 = __webpack_require__(7);
+const utils_1 = __webpack_require__(9);
+const runtimeCache_1 = __webpack_require__(16);
 const filesExclude_1 = __webpack_require__(43);
-const notifications_1 = __webpack_require__(12);
-class ProjectReposExplorerProvider {
-    _onDidChangeTreeData = new vscode.EventEmitter();
-    onDidChangeTreeData = this._onDidChangeTreeData.event;
+const notifications_1 = __webpack_require__(17);
+const baseTreeProvider_1 = __webpack_require__(33);
+class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
     watchers = [];
     watcherKey = '';
     refreshDebounceTimer;
-    constructor() { }
-    refresh() {
-        this._onDidChangeTreeData.fire();
-    }
     scheduleRefresh() {
         if (this.refreshDebounceTimer) {
             clearTimeout(this.refreshDebounceTimer);
@@ -13307,7 +11820,7 @@ class ProjectReposExplorerProvider {
     }
     dispose() {
         this.disposeWatchers();
-        this._onDidChangeTreeData.dispose();
+        super.dispose();
     }
     getTreeItem(element) {
         switch (element.kind) {
@@ -13573,6 +12086,2086 @@ async function pasteEntries(targetUri) {
     if (clipboard.cut) {
         clipboard = null;
     }
+}
+
+
+/***/ }),
+/* 53 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerAllCommands = registerAllCommands;
+const viewCommands_1 = __webpack_require__(54);
+const projectCommands_1 = __webpack_require__(56);
+const repoCommands_1 = __webpack_require__(59);
+const dbCommands_1 = __webpack_require__(60);
+const moduleCommands_1 = __webpack_require__(61);
+const testingCommands_1 = __webpack_require__(62);
+const versionCommands_1 = __webpack_require__(63);
+const debugCommands_1 = __webpack_require__(65);
+const reposExplorerCommands_1 = __webpack_require__(66);
+/** Registers every command the extension contributes. */
+function registerAllCommands(deps) {
+    (0, viewCommands_1.registerViewCommands)(deps);
+    (0, projectCommands_1.registerProjectCommands)(deps);
+    (0, repoCommands_1.registerRepoCommands)(deps);
+    (0, dbCommands_1.registerDbCommands)(deps);
+    (0, moduleCommands_1.registerModuleCommands)(deps);
+    (0, testingCommands_1.registerTestingCommands)(deps);
+    (0, versionCommands_1.registerVersionCommands)(deps);
+    (0, debugCommands_1.registerDebugCommands)(deps);
+    (0, reposExplorerCommands_1.registerReposExplorerCommands)(deps);
+}
+
+
+/***/ }),
+/* 54 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerViewCommands = registerViewCommands;
+const vscode = __importStar(__webpack_require__(1));
+const quickSearch_1 = __webpack_require__(55);
+const sortOptions_1 = __webpack_require__(28);
+const notifications_1 = __webpack_require__(17);
+const module_1 = __webpack_require__(45);
+const projectRepos_1 = __webpack_require__(42);
+/**
+ * Generic per-view plumbing: refresh, sort, and quick-search commands.
+ */
+function registerViewCommands(deps) {
+    const { context, providers, sortPreferences, refreshAll } = deps;
+    const registerViewSortCommand = (viewId, provider) => {
+        const options = (0, sortOptions_1.getSortOptions)(viewId);
+        context.subscriptions.push(vscode.commands.registerCommand(`${viewId}.sort`, async () => {
+            const current = sortPreferences.get(viewId, (0, sortOptions_1.getDefaultSortOption)(viewId));
+            const picks = options.map(option => ({
+                label: `${option.id === current ? '$(check) ' : ''}${option.label}`,
+                description: option.description,
+                optionId: option.id
+            }));
+            const selection = await vscode.window.showQuickPick(picks, {
+                placeHolder: 'Select sort order',
+                ignoreFocusOut: true
+            });
+            if (!selection || selection.optionId === current) {
+                return;
+            }
+            await sortPreferences.set(viewId, selection.optionId);
+            provider.refresh();
+        }));
+    };
+    registerViewSortCommand('projectSelector', providers.project);
+    registerViewSortCommand('repoSelector', providers.repo);
+    registerViewSortCommand('dbSelector', providers.db);
+    registerViewSortCommand('moduleSelector', providers.module);
+    registerViewSortCommand('versionsManager', providers.versions);
+    registerViewSortCommand('projectRepos', providers.projectRepos);
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.quickSearch', async () => {
+        const items = ((await providers.repo.getChildren()) ?? [])
+            .filter(item => !!item.command && (0, quickSearch_1.getTreeItemLabel)(item).trim().length > 0);
+        await (0, quickSearch_1.quickSearchTreeItems)(items, {
+            placeHolder: 'Search repositories...',
+            title: 'Repository Search',
+            emptyMessage: 'No repositories available to search.'
+        });
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.quickSearch', async () => {
+        const items = ((await providers.db.getChildren()) ?? [])
+            .filter(item => item.contextValue === 'database' && !!item.command);
+        await (0, quickSearch_1.quickSearchTreeItems)(items, {
+            placeHolder: 'Search databases...',
+            title: 'Database Search',
+            emptyMessage: 'No databases available to search.'
+        });
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.quickSearch', async () => {
+        const items = ((await providers.module.getChildren()) ?? [])
+            .filter(item => item.contextValue === 'module' && !!item.command);
+        await (0, quickSearch_1.quickSearchTreeItems)(items, {
+            placeHolder: 'Search modules...',
+            title: 'Module Search',
+            emptyMessage: 'No searchable modules found for the selected database.',
+            onPick: async (item) => {
+                const moduleData = item.moduleData
+                    ?? item.command?.arguments?.[0];
+                if (!moduleData?.name) {
+                    (0, notifications_1.showInfo)('Unable to read module details for this selection.');
+                    return;
+                }
+                const stateSelection = await vscode.window.showQuickPick([
+                    { label: 'Set to Install', description: moduleData.name, action: 'install' },
+                    { label: 'Set to Upgrade', description: moduleData.name, action: 'upgrade' },
+                    { label: 'Clear State', description: moduleData.name, action: 'none' }
+                ], {
+                    placeHolder: `Set state for module "${moduleData.name}"`,
+                    ignoreFocusOut: true
+                });
+                if (!stateSelection) {
+                    return;
+                }
+                if (stateSelection.action === 'install') {
+                    await (0, module_1.setModuleToInstall)(moduleData);
+                }
+                else if (stateSelection.action === 'upgrade') {
+                    await (0, module_1.setModuleToUpgrade)(moduleData);
+                }
+                else {
+                    await (0, module_1.clearModuleState)(moduleData);
+                }
+                await refreshAll({ reason: 'ui' });
+            }
+        });
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('versionsManager.quickSearch', async () => {
+        const items = ((await providers.versions.getChildren()) ?? [])
+            .filter(item => {
+            const contextValue = item.contextValue;
+            return (contextValue === 'version' || contextValue === 'activeVersion') && !!item.command;
+        })
+            .map(item => providers.versions.getTreeItem(item));
+        await (0, quickSearch_1.quickSearchTreeItems)(items, {
+            placeHolder: 'Search versions...',
+            title: 'Version Search',
+            emptyMessage: 'No versions available to search.'
+        });
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('projectRepos.quickSearch', async () => {
+        const rootItems = ((await providers.projectRepos.getChildren()) ?? [])
+            .filter(item => item?.metadata?.kind === 'repo');
+        await (0, quickSearch_1.quickSearchTreeItems)(rootItems, {
+            placeHolder: 'Search project repositories...',
+            title: 'Project Repo Search',
+            emptyMessage: 'No project repositories available to search.',
+            onPick: async (item) => {
+                const repo = item?.metadata?.repo;
+                if (!repo?.path) {
+                    (0, notifications_1.showInfo)('Select a repository to reveal.');
+                    return;
+                }
+                await (0, projectRepos_1.revealProjectRepo)(repo);
+            }
+        });
+    }));
+}
+
+
+/***/ }),
+/* 55 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getTreeItemLabel = getTreeItemLabel;
+exports.quickSearchTreeItems = quickSearchTreeItems;
+const vscode = __importStar(__webpack_require__(1));
+const notifications_1 = __webpack_require__(17);
+/**
+ * Shared quick-pick search over tree items, used by every view's
+ * "search" title-bar action.
+ */
+function getTreeItemLabel(item) {
+    if (typeof item.label === 'string') {
+        return item.label;
+    }
+    if (item.label && typeof item.label === 'object' && 'label' in item.label) {
+        return item.label.label;
+    }
+    return '';
+}
+function getTreeItemDescription(item) {
+    return typeof item.description === 'string' ? item.description : undefined;
+}
+function stripMarkdownForQuickPick(value) {
+    return value
+        // Convert markdown links to visible text only.
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        // Remove common markdown tokens.
+        .replace(/[*_`>#~]/g, '')
+        // Normalize line breaks for quick-pick rows.
+        .replace(/\r?\n+/g, ' • ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+}
+function getTreeItemDetail(item) {
+    if (typeof item.tooltip === 'string') {
+        return stripMarkdownForQuickPick(item.tooltip);
+    }
+    if (item.tooltip instanceof vscode.MarkdownString) {
+        return stripMarkdownForQuickPick(item.tooltip.value);
+    }
+    return undefined;
+}
+async function quickSearchTreeItems(items, options) {
+    if (!items.length) {
+        (0, notifications_1.showInfo)(options.emptyMessage);
+        return;
+    }
+    const picks = items.map(item => ({
+        label: getTreeItemLabel(item),
+        description: getTreeItemDescription(item),
+        detail: getTreeItemDetail(item),
+        item
+    }));
+    const selected = await vscode.window.showQuickPick(picks, {
+        placeHolder: options.placeHolder,
+        title: options.title,
+        ignoreFocusOut: true,
+        matchOnDescription: true,
+        matchOnDetail: true
+    });
+    if (!selected) {
+        return;
+    }
+    if (options.onPick) {
+        await options.onPick(selected.item);
+        return;
+    }
+    if (!selected.item.command) {
+        (0, notifications_1.showInfo)('No action is available for the selected item.');
+        return;
+    }
+    await vscode.commands.executeCommand(selected.item.command.command, ...(selected.item.command.arguments ?? []));
+}
+
+
+/***/ }),
+/* 56 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerProjectCommands = registerProjectCommands;
+const vscode = __importStar(__webpack_require__(1));
+const utils_1 = __webpack_require__(9);
+const notifications_1 = __webpack_require__(17);
+const logger_1 = __webpack_require__(15);
+const project_1 = __webpack_require__(37);
+const dbs_1 = __webpack_require__(2);
+const odooInstaller_1 = __webpack_require__(57);
+const projectWorkspace_1 = __webpack_require__(58);
+function registerProjectCommands(deps) {
+    const { context, versionsService, refreshAll } = deps;
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.create', async () => {
+        try {
+            // Get settings from active version
+            const settings = await versionsService.getActiveVersionSettings();
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                throw new Error('Open a workspace to use this command.');
+            }
+            const name = await (0, project_1.getProjectName)(workspaceFolder);
+            const customAddonsPath = (0, utils_1.normalizePath)(settings.customAddonsPath);
+            const repos = await (0, project_1.getRepo)(customAddonsPath, name); // Pass project name as search filter
+            const databaseChoice = await vscode.window.showQuickPick([
+                {
+                    label: 'Create a new database',
+                    description: 'Set up a fresh database or restore from a dump',
+                    detail: 'You can add more databases later from the Databases view.',
+                    value: 'create'
+                },
+                {
+                    label: 'Connect to an existing database',
+                    description: 'Link this project to a database that already exists in PostgreSQL',
+                    value: 'connect'
+                },
+                {
+                    label: 'Skip for now',
+                    description: 'You can configure databases later from the Databases view.',
+                    value: 'skip'
+                }
+            ], {
+                placeHolder: 'Set up a database for this project?',
+                ignoreFocusOut: true
+            });
+            if (!databaseChoice) {
+                return;
+            }
+            let db;
+            if (databaseChoice.value === 'create') {
+                db = await (0, dbs_1.createDb)(name, repos, settings.dumpsFolder, settings, { allowExistingOption: false });
+            }
+            else if (databaseChoice.value === 'connect') {
+                db = await (0, dbs_1.createDb)(name, repos, settings.dumpsFolder, settings, { initialMethod: 'existing' });
+            }
+            if (databaseChoice.value !== 'skip' && !db) {
+                // User cancelled within DB creation flow.
+                return;
+            }
+            await (0, project_1.createProject)(name, repos, db);
+            if (db) {
+                // Ensure project creation follows the same version/branch switch path as manual DB selection.
+                await (0, dbs_1.selectDatabase)(db);
+            }
+            await refreshAll();
+        }
+        catch (err) {
+            (0, notifications_1.showError)((0, logger_1.errorMessage)(err));
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.selectProject', async (event) => {
+        await (0, project_1.selectProject)(event);
+        await refreshAll();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.delete', async (event) => {
+        await (0, project_1.deleteProject)(event);
+        await refreshAll();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.editSettings', async (event) => {
+        await (0, project_1.editProjectSettings)(event);
+        await refreshAll({ reason: 'ui' });
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.manageTickets', async (event) => {
+        await (0, project_1.manageProjectTickets)(event);
+        await refreshAll({ reason: 'ui' });
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.openTicket', async (event) => {
+        await (0, project_1.openProjectTicket)(event);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.duplicateProject', async (event) => {
+        await (0, project_1.duplicateProject)(event);
+        await refreshAll();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.exportProject', async (event) => {
+        await (0, project_1.exportProject)(event);
+        await refreshAll({ reason: 'ui' });
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.importProject', async () => {
+        await (0, project_1.importProject)();
+        await refreshAll({ reason: 'ui' });
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.setup', async () => {
+        await (0, odooInstaller_1.setupOdooBranch)();
+        await refreshAll({ reason: 'ui' });
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo-debugger.quickProjectSearch', async () => {
+        await (0, project_1.quickProjectSearch)();
+        await refreshAll({ reason: 'ui' });
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('proj.openProjectWorkspace', async () => {
+        await (0, projectWorkspace_1.openProjectWorkspace)(context);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('proj.rebuildProjectWorkspace', async () => {
+        await (0, projectWorkspace_1.rebuildProjectWorkspace)(context);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('proj.quickSwitchProject', async () => {
+        await (0, projectWorkspace_1.quickSwitchProjectWorkspace)(context);
+    }));
+}
+
+
+/***/ }),
+/* 57 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.setupOdooBranch = setupOdooBranch;
+// VSCode Extension Utility: Clone Odoo & Enterprise for a selected branch and setup venv with progress
+const vscode = __importStar(__webpack_require__(1));
+const path = __importStar(__webpack_require__(11));
+const fs = __importStar(__webpack_require__(10));
+const utils_1 = __webpack_require__(9);
+const child_process_1 = __webpack_require__(12);
+const logger_1 = __webpack_require__(15);
+const notifications_1 = __webpack_require__(17);
+async function setupOdooBranch() {
+    // Show confirmation dialog with detailed information
+    const confirmMessage = `This will:
+• Clone Odoo and Enterprise repositories
+• Create a Python virtual environment
+• Allow you to select a specific branch
+
+This may take several minutes depending on your internet connection.
+
+Continue?`;
+    const confirm = await (0, notifications_1.showModalWarning)(confirmMessage, 'Continue');
+    if (confirm !== 'Continue') {
+        return;
+    }
+    const baseDir = (0, utils_1.getWorkspacePath)();
+    if (!baseDir) {
+        (0, utils_1.showError)('Open a workspace folder before running this command.');
+        return;
+    }
+    // Check if directories already exist
+    const odooPath = path.join(baseDir, 'odoo');
+    const enterprisePath = path.join(baseDir, 'enterprise');
+    const venvPath = path.join(baseDir, 'venv');
+    const existingPaths = [];
+    if (fs.existsSync(odooPath)) {
+        existingPaths.push('odoo');
+    }
+    if (fs.existsSync(enterprisePath)) {
+        existingPaths.push('enterprise');
+    }
+    if (fs.existsSync(venvPath)) {
+        existingPaths.push('venv');
+    }
+    if (existingPaths.length > 0) {
+        const overwriteConfirm = await (0, notifications_1.showModalWarning)(`The following directories already exist: ${existingPaths.join(', ')}\n\nDo you want to continue? This may overwrite existing files.`, 'Continue Anyway', 'Cancel');
+        if (overwriteConfirm !== 'Continue Anyway') {
+            return;
+        }
+    }
+    // Let user select branch
+    const branchOptions = [
+        { label: '17.0', description: 'Latest stable version' },
+        { label: '16.0', description: 'Previous stable version' },
+        { label: '15.0', description: 'Legacy stable version' },
+        { label: '14.0', description: 'Legacy stable version' },
+        { label: 'master', description: 'Development branch (unstable)' },
+        { label: 'saas-17.4', description: 'SaaS version' },
+        { label: 'saas-17.3', description: 'SaaS version' },
+        { label: 'saas-17.2', description: 'SaaS version' },
+        { label: 'Custom', description: 'Enter a custom branch name' }
+    ];
+    const selectedBranch = await vscode.window.showQuickPick(branchOptions, {
+        placeHolder: 'Select an Odoo branch to clone',
+        ignoreFocusOut: true
+    });
+    if (!selectedBranch) {
+        return;
+    }
+    let branch = selectedBranch.label;
+    if (branch === 'Custom') {
+        const customBranch = await vscode.window.showInputBox({
+            prompt: 'Enter the branch name',
+            placeHolder: 'e.g., 17.0, master, saas-17.4',
+            ignoreFocusOut: true
+        });
+        if (!customBranch) {
+            return;
+        }
+        branch = customBranch.trim();
+    }
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Setting up Odoo ${branch}…`,
+        cancellable: false
+    }, async (progress) => {
+        try {
+            progress.report({ message: 'Preparing setup…', increment: 5 });
+            // Create terminal for operations
+            const terminal = vscode.window.createTerminal({
+                name: `Odoo Setup (${branch})`,
+                cwd: baseDir
+            });
+            terminal.show();
+            // Clone Odoo repository
+            progress.report({ message: 'Cloning Odoo repository…', increment: 15 });
+            logger_1.logger.debug(`🔄 Cloning Odoo repository (branch: ${branch})`);
+            terminal.sendText(`echo "🔄 Cloning Odoo repository (branch: ${branch})..."`);
+            terminal.sendText(`git clone --depth 1 --branch ${branch} https://github.com/odoo/odoo.git`);
+            // Wait a bit for the clone to start
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            // Clone Enterprise repository
+            progress.report({ message: 'Cloning Enterprise repository…', increment: 35 });
+            logger_1.logger.debug(`🔄 Cloning Enterprise repository (branch: ${branch})`);
+            terminal.sendText(`echo "🔄 Cloning Enterprise repository (branch: ${branch})..."`);
+            terminal.sendText(`git clone --depth 1 --branch ${branch} git@github.com:odoo/enterprise.git || git clone --depth 1 --branch ${branch} https://github.com/odoo/enterprise.git`);
+            // Wait for enterprise clone
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            // Check Python availability
+            progress.report({ message: 'Checking Python installation…', increment: 55 });
+            logger_1.logger.debug('🐍 Checking Python installation');
+            let pythonCmd = 'python3';
+            try {
+                (0, child_process_1.execSync)('python3 --version', { stdio: 'ignore' });
+            }
+            catch {
+                try {
+                    (0, child_process_1.execSync)('python --version', { stdio: 'ignore' });
+                    pythonCmd = 'python';
+                }
+                catch {
+                    throw new Error('Python not found. Please install Python 3.8+ first.');
+                }
+            }
+            // Create virtual environment
+            progress.report({ message: 'Creating Python virtual environment…', increment: 75 });
+            logger_1.logger.debug('🔧 Creating Python virtual environment');
+            terminal.sendText(`echo "🔧 Creating Python virtual environment..."`);
+            terminal.sendText(`${pythonCmd} -m venv venv`);
+            // Wait for venv creation
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            // Activate venv and install basic requirements
+            progress.report({ message: 'Installing basic Python packages…', increment: 85 });
+            logger_1.logger.debug('📦 Installing basic Python packages');
+            terminal.sendText(`echo "📦 Installing basic Python packages..."`);
+            // Platform-specific activation
+            const isWindows = process.platform === 'win32';
+            const activateCmd = isWindows ? '.\\venv\\Scripts\\activate' : 'source venv/bin/activate';
+            terminal.sendText(`${activateCmd} && pip install --upgrade pip setuptools wheel`);
+            // Install Odoo requirements if they exist
+            terminal.sendText(`${activateCmd} && if [ -f odoo/requirements.txt ]; then pip install -r odoo/requirements.txt; else echo "No requirements.txt found in odoo directory"; fi`);
+            progress.report({ message: 'Setup complete!', increment: 100 });
+            // Show completion message with next steps
+            terminal.sendText(`echo ""`);
+            terminal.sendText(`echo "✅ Odoo ${branch} setup complete!"`);
+            terminal.sendText(`echo ""`);
+            terminal.sendText(`echo "Next steps:"`);
+            terminal.sendText(`echo "1. Configure your VS Code settings to point to these directories"`);
+            terminal.sendText(`echo "2. Activate the virtual environment: ${activateCmd}"`);
+            terminal.sendText(`echo "3. Install additional dependencies if needed"`);
+            terminal.sendText(`echo "4. Create your custom addons directory"`);
+            terminal.sendText(`echo ""`);
+            (0, utils_1.showInfo)(`Odoo ${branch} setup completed successfully!\n\nCheck the terminal for next steps.`);
+        }
+        catch (error) {
+            logger_1.logger.error('Setup failed:', error);
+            (0, utils_1.showError)(`Setup failed: ${error.message}`);
+        }
+    });
+}
+
+
+/***/ }),
+/* 58 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.rebuildProjectWorkspace = rebuildProjectWorkspace;
+exports.openProjectWorkspace = openProjectWorkspace;
+exports.quickSwitchProjectWorkspace = quickSwitchProjectWorkspace;
+const vscode = __importStar(__webpack_require__(1));
+const settingsStore_1 = __webpack_require__(7);
+const utils_1 = __webpack_require__(9);
+async function getActiveProjectOrPrompt() {
+    const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
+    if (!data?.projects || data.projects.length === 0) {
+        (0, utils_1.showInfo)('No projects found. Create a project first.');
+        return undefined;
+    }
+    let projectIndex = data.projects.findIndex((p) => p.isSelected);
+    if (projectIndex === -1) {
+        const pick = await vscode.window.showQuickPick(data.projects.map((p, idx) => ({
+            label: p.name,
+            description: `${p.repos?.length ?? 0} repos`,
+            index: idx
+        })), { placeHolder: 'Select a project' });
+        if (!pick) {
+            return undefined;
+        }
+        projectIndex = pick.index;
+        data.projects.forEach((p, idx) => (p.isSelected = idx === projectIndex));
+        await settingsStore_1.SettingsStore.saveWithoutComments(data);
+    }
+    return { project: data.projects[projectIndex], projectIndex, data };
+}
+async function buildWorkspaceFile(context, project) {
+    if (!project.repos || project.repos.length === 0) {
+        (0, utils_1.showInfo)(`Project "${project.name}" has no repositories. Add repos first.`);
+        return undefined;
+    }
+    const workspacesDir = vscode.Uri.joinPath(context.globalStorageUri, 'workspaces');
+    await vscode.workspace.fs.createDirectory(workspacesDir);
+    const workspaceFile = vscode.Uri.joinPath(workspacesDir, `${project.uid || project.name}.code-workspace`);
+    const folders = [];
+    for (const repo of project.repos) {
+        const repoPath = (0, utils_1.normalizePath)(repo.path);
+        const folderEntry = { path: repoPath };
+        try {
+            await vscode.workspace.fs.stat(vscode.Uri.file(repoPath));
+        }
+        catch {
+            folderEntry.name = `${repo.name} (missing)`;
+        }
+        folders.push(folderEntry);
+    }
+    const workspaceData = {
+        folders,
+        settings: {}
+    };
+    const content = Buffer.from(JSON.stringify(workspaceData, null, 2), 'utf8');
+    await vscode.workspace.fs.writeFile(workspaceFile, content);
+    return workspaceFile;
+}
+async function rebuildProjectWorkspace(context) {
+    const selection = await getActiveProjectOrPrompt();
+    if (!selection) {
+        return undefined;
+    }
+    return buildWorkspaceFile(context, selection.project);
+}
+async function openProjectWorkspace(context) {
+    const workspaceFile = await rebuildProjectWorkspace(context);
+    if (!workspaceFile) {
+        return;
+    }
+    const choice = await (0, utils_1.showInfo)('Open project workspace?', 'This window', 'New window');
+    if (!choice) {
+        return;
+    }
+    const forceNewWindow = choice === 'New window';
+    await vscode.commands.executeCommand('vscode.openFolder', workspaceFile, forceNewWindow);
+}
+async function quickSwitchProjectWorkspace(context) {
+    const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
+    if (!data?.projects || data.projects.length === 0) {
+        (0, utils_1.showInfo)('No projects found. Create a project first.');
+        return;
+    }
+    const pick = await vscode.window.showQuickPick(data.projects.map((p, idx) => ({
+        label: p.name,
+        description: `${p.repos?.length ?? 0} repos`,
+        index: idx
+    })), { placeHolder: 'Select a project to open its workspace' });
+    if (!pick) {
+        return;
+    }
+    data.projects.forEach((p, idx) => (p.isSelected = idx === pick.index));
+    await settingsStore_1.SettingsStore.saveWithoutComments(data);
+    await openProjectWorkspace(context);
+}
+
+
+/***/ }),
+/* 59 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerRepoCommands = registerRepoCommands;
+const vscode = __importStar(__webpack_require__(1));
+const repos_1 = __webpack_require__(41);
+const projectWorkspace_1 = __webpack_require__(58);
+function registerRepoCommands(deps) {
+    const { context, refreshAll } = deps;
+    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
+        await (0, repos_1.selectRepo)(event);
+        await (0, projectWorkspace_1.rebuildProjectWorkspace)(context);
+        await refreshAll();
+    }));
+}
+
+
+/***/ }),
+/* 60 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerDbCommands = registerDbCommands;
+const vscode = __importStar(__webpack_require__(1));
+const settingsStore_1 = __webpack_require__(7);
+const notifications_1 = __webpack_require__(17);
+const logger_1 = __webpack_require__(15);
+const dbs_1 = __webpack_require__(2);
+function registerDbCommands(deps) {
+    const { context, versionsService, refreshAll } = deps;
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.create', async () => {
+        try {
+            // Get settings from active version
+            const settings = await versionsService.getActiveVersionSettings();
+            const projects = await settingsStore_1.SettingsStore.getProjects();
+            const project = projects?.find((p) => p.isSelected);
+            if (!project) {
+                throw new Error('Select a project before running this action.');
+            }
+            const db = await (0, dbs_1.createDb)(project.name, project.repos, settings.dumpsFolder, settings);
+            if (db) {
+                project.dbs.push(db);
+                // Only save projects, not settings - settings are managed via versions
+                const data = await settingsStore_1.SettingsStore.load();
+                await settingsStore_1.SettingsStore.saveWithoutComments({
+                    projects,
+                    versions: data.versions,
+                    activeVersion: data.activeVersion,
+                    dbTemplates: data.dbTemplates
+                });
+                await (0, dbs_1.selectDatabase)(db);
+            }
+            await refreshAll();
+        }
+        catch (err) {
+            (0, notifications_1.showError)((0, logger_1.errorMessage)(err));
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.selectDb', async (event) => {
+        try {
+            await (0, dbs_1.selectDatabase)(event);
+            await refreshAll();
+        }
+        catch (err) {
+            (0, notifications_1.showError)(`Failed to select database: ${(0, logger_1.errorMessage)(err)}`);
+            logger_1.logger.error('Error in database selection:', err);
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.delete', async (event) => {
+        try {
+            await (0, dbs_1.deleteDb)(event);
+            await refreshAll();
+        }
+        catch (err) {
+            (0, notifications_1.showError)(`Failed to delete database: ${(0, logger_1.errorMessage)(err)}`);
+            logger_1.logger.error('Error in database deletion:', err);
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.restore', async (event) => {
+        try {
+            // restoreDb shows its own success notification.
+            await (0, dbs_1.restoreDb)(event);
+            await refreshAll();
+        }
+        catch (err) {
+            (0, notifications_1.showError)(`Failed to restore database: ${(0, logger_1.errorMessage)(err)}`);
+            logger_1.logger.error('Error in database restoration:', err);
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.changeVersion', async (event) => {
+        try {
+            await (0, dbs_1.changeDatabaseVersion)(event);
+            await refreshAll();
+        }
+        catch (err) {
+            (0, notifications_1.showError)(`Failed to change database version: ${(0, logger_1.errorMessage)(err)}`);
+            logger_1.logger.error('Error in database version change:', err);
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.configureRepoBranches', async (event) => {
+        try {
+            await (0, dbs_1.changeDatabaseProjectRepoBranches)(event);
+            await refreshAll({ reason: 'ui' });
+        }
+        catch (err) {
+            (0, notifications_1.showError)(`Failed to update project repo branch mapping: ${(0, logger_1.errorMessage)(err)}`);
+            logger_1.logger.error('Error in database project repo branch mapping update:', err);
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.manageTemplates', async () => {
+        try {
+            await (0, dbs_1.manageDatabaseTemplates)();
+            await refreshAll({ reason: 'ui' });
+        }
+        catch (err) {
+            (0, notifications_1.showError)(`Failed to manage database templates: ${(0, logger_1.errorMessage)(err)}`);
+            logger_1.logger.error('Error in database template management:', err);
+        }
+    }));
+}
+
+
+/***/ }),
+/* 61 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerModuleCommands = registerModuleCommands;
+const vscode = __importStar(__webpack_require__(1));
+const module_1 = __webpack_require__(45);
+function registerModuleCommands(deps) {
+    const { context, refreshAll } = deps;
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.select', async (event) => {
+        await (0, module_1.selectModule)(event);
+        await refreshAll();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.togglePsaeInternalModule', async (event) => {
+        await (0, module_1.togglePsaeInternalModule)(event);
+        await refreshAll();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.create', async () => {
+        await (0, module_1.createModuleFromScaffold)();
+        await refreshAll({ reason: 'ui' });
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.setToInstall', async (event) => {
+        await (0, module_1.setModuleToInstall)(event);
+        await refreshAll();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.setToUpgrade', async (event) => {
+        await (0, module_1.setModuleToUpgrade)(event);
+        await refreshAll();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.clearState', async (event) => {
+        await (0, module_1.clearModuleState)(event);
+        await refreshAll();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.updateAll', async () => {
+        await (0, module_1.updateAllModules)();
+        await refreshAll();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.updateInstalled', async () => {
+        await (0, module_1.updateInstalledModules)();
+        await refreshAll();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.installAll', async () => {
+        await (0, module_1.installAllModules)();
+        await refreshAll();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.clearAll', async () => {
+        await (0, module_1.clearAllModuleSelections)();
+        await refreshAll();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.viewInstalled', async () => {
+        await (0, module_1.viewInstalledModules)();
+    }));
+}
+
+
+/***/ }),
+/* 62 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerTestingCommands = registerTestingCommands;
+const vscode = __importStar(__webpack_require__(1));
+const testing_1 = __webpack_require__(47);
+function registerTestingCommands(deps) {
+    const { context, providers, refreshAll } = deps;
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleTesting', async (event) => {
+        await (0, testing_1.toggleTesting)(event);
+        await refreshAll({ reason: 'ui' });
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleStopAfterInit', async () => {
+        await (0, testing_1.toggleStopAfterInit)();
+        await refreshAll({ reason: 'ui' });
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.setTestFile', async () => {
+        await (0, testing_1.setTestFile)();
+        await refreshAll({ reason: 'ui' });
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.addTestTag', async () => {
+        await (0, testing_1.addTestTag)();
+        providers.testing.refresh();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.removeTestTag', async (event) => {
+        await (0, testing_1.removeTestTag)(event);
+        providers.testing.refresh();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.cycleTestTagState', async (event) => {
+        await (0, testing_1.cycleTestTagState)(event);
+        providers.testing.refresh();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleLogLevel', async () => {
+        await (0, testing_1.toggleLogLevel)();
+        providers.testing.refresh();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.setSpecificLogLevel', async () => {
+        await (0, testing_1.setSpecificLogLevel)();
+        providers.testing.refresh();
+    }));
+}
+
+
+/***/ }),
+/* 63 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerVersionCommands = registerVersionCommands;
+const vscode = __importStar(__webpack_require__(1));
+const fs = __importStar(__webpack_require__(44));
+const args_1 = __webpack_require__(64);
+const utils_1 = __webpack_require__(9);
+const notifications_1 = __webpack_require__(17);
+const logger_1 = __webpack_require__(15);
+const gitService_1 = __webpack_require__(13);
+const runtimeCache_1 = __webpack_require__(16);
+const environment_1 = __webpack_require__(34);
+function registerVersionCommands(deps) {
+    const { context, versionsService, refreshAll } = deps;
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.createVersion', async () => {
+        try {
+            // Two prompts: branch, then name. Paths and ports come from the
+            // odooDebugger.defaultVersion.* settings and stay editable in the
+            // Versions tree after creation.
+            const activeSettings = await versionsService.getActiveVersionSettings();
+            const odooPath = activeSettings?.odooPath ? (0, utils_1.normalizePath)(activeSettings.odooPath) : undefined;
+            const branchItems = [];
+            if (odooPath && fs.existsSync(odooPath)) {
+                const metadata = await (0, gitService_1.getBranchesWithMetadata)(odooPath);
+                if (metadata.length > 0) {
+                    branchItems.push(...metadata.map(branch => ({
+                        label: branch.name,
+                        description: branch.type === 'remote' ? 'Remote branch' : 'Local branch',
+                        action: 'branch',
+                        branch: branch.name
+                    })));
+                }
+                else {
+                    const branches = await (0, utils_1.getGitBranches)(odooPath);
+                    branchItems.push(...branches.map(branch => ({
+                        label: branch,
+                        action: 'branch',
+                        branch
+                    })));
+                }
+            }
+            branchItems.push({
+                label: '$(pencil) Enter branch manually…',
+                description: 'e.g. "19.0", "saas-18.4", "master"',
+                action: 'manual'
+            });
+            const branchPick = await vscode.window.showQuickPick(branchItems, {
+                title: 'Create Version',
+                placeHolder: 'Select the Odoo branch for this version',
+                ignoreFocusOut: true
+            });
+            if (!branchPick) {
+                return;
+            }
+            let odooVersion = branchPick.branch;
+            if (branchPick.action === 'manual') {
+                odooVersion = (await vscode.window.showInputBox({
+                    title: 'Create Version',
+                    placeHolder: 'Enter Odoo version/branch (e.g. "19.0", "saas-18.4", "master")',
+                    ignoreFocusOut: true,
+                    validateInput: value => value.trim() ? undefined : 'Branch is required.'
+                }))?.trim();
+            }
+            if (!odooVersion) {
+                return;
+            }
+            const name = (await vscode.window.showInputBox({
+                title: 'Create Version',
+                prompt: 'Version name',
+                value: `Odoo ${odooVersion}`,
+                ignoreFocusOut: true,
+                validateInput: value => value.trim() ? undefined : 'Name is required.'
+            }))?.trim();
+            if (!name) {
+                return;
+            }
+            const version = await versionsService.createVersion(name, odooVersion);
+            await refreshAll({ reason: 'ui' });
+            const action = await (0, notifications_1.showInfo)(`Version "${name}" created on branch "${odooVersion}".`, 'Activate Now');
+            if (action === 'Activate Now') {
+                await vscode.commands.executeCommand('odoo.setActiveVersion', version.id);
+            }
+        }
+        catch (error) {
+            (0, notifications_1.showError)(`Failed to create version: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.openVersionDefaults', async () => {
+        await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:AhmadMansour.odoo-devtools-vscode odooDebugger.defaultVersion');
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.changeBranch', async (versionIdOrTreeItem) => {
+        try {
+            const versionId = (0, args_1.extractVersionId)(versionIdOrTreeItem);
+            if (!versionId) {
+                (0, notifications_1.showError)('Select a version before continuing.');
+                return;
+            }
+            const version = versionsService.getVersion(versionId);
+            if (!version) {
+                (0, notifications_1.showError)('The selected version could not be found.');
+                return;
+            }
+            // Get Odoo path from the specific version being edited
+            const odooPath = version.settings.odooPath;
+            let newBranch;
+            if (odooPath) {
+                // Try to get Git branches from the Odoo path
+                const branches = await (0, utils_1.getGitBranches)(odooPath);
+                if (branches.length > 0) {
+                    // Show branch selection with current branch highlighted
+                    const items = branches.map(branch => ({
+                        label: branch,
+                        description: branch === version.odooVersion ? '(current)' : ''
+                    }));
+                    const selected = await vscode.window.showQuickPick(items, {
+                        placeHolder: `Current branch: ${version.odooVersion}. Select new branch:`,
+                        title: `Change branch for "${version.name}"`
+                    });
+                    newBranch = selected?.label;
+                }
+                else {
+                    // Fallback to manual input if no branches found
+                    const result = await (0, notifications_1.showWarning)(`No Git branches found in Odoo path: ${odooPath}. Would you like to enter the branch manually?`, 'Enter Manually', 'Cancel');
+                    if (result === 'Enter Manually') {
+                        newBranch = await vscode.window.showInputBox({
+                            placeHolder: version.odooVersion,
+                            prompt: 'Enter new Odoo version/branch',
+                            value: version.odooVersion
+                        });
+                    }
+                }
+            }
+            else {
+                // No Odoo path configured, show warning and fallback to manual input
+                const result = await (0, notifications_1.showWarning)('Odoo path is not configured. Please set the Odoo path in settings first, or enter the branch manually.', 'Enter Manually', 'Cancel');
+                if (result === 'Enter Manually') {
+                    newBranch = await vscode.window.showInputBox({
+                        placeHolder: version.odooVersion,
+                        prompt: 'Enter new Odoo version/branch',
+                        value: version.odooVersion
+                    });
+                }
+            }
+            if (!newBranch || newBranch === version.odooVersion) {
+                return; // No change or cancelled
+            }
+            await versionsService.updateVersion(versionId, { odooVersion: newBranch });
+            (0, notifications_1.showInfo)(`Branch changed from "${version.odooVersion}" to "${newBranch}" for version "${version.name}"`);
+        }
+        catch (error) {
+            (0, notifications_1.showError)(`Failed to change branch: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.setActiveVersion', async (versionIdOrTreeItem) => {
+        try {
+            let versionId = (0, args_1.extractVersionId)(versionIdOrTreeItem);
+            if (!versionId) {
+                // No version provided - show version picker
+                const versions = versionsService.getVersions();
+                const items = versions.map(v => ({
+                    label: v.name,
+                    description: v.odooVersion,
+                    detail: v.isActive ? '⭐ Currently active' : '',
+                    versionId: v.id
+                }));
+                const selected = await vscode.window.showQuickPick(items, {
+                    placeHolder: 'Select version to activate'
+                });
+                if (!selected) {
+                    return;
+                }
+                versionId = selected.versionId;
+            }
+            const success = await versionsService.setActiveVersion(versionId);
+            if (success) {
+                const version = versionsService.getVersion(versionId);
+                (0, notifications_1.showInfo)(`Activated version: ${version?.name}`);
+                if (version) {
+                    // Align the core repos to the version's branch through the
+                    // shared switch pipeline (honors databaseSwitchBehavior).
+                    await (0, environment_1.alignEnvironment)({ versionId: version.id }, { label: `Version "${version.name}"` });
+                }
+                await refreshAll(); // Refresh all views to reflect new active version
+            }
+            else {
+                (0, notifications_1.showError)('Unable to activate the selected version.');
+            }
+        }
+        catch (error) {
+            (0, notifications_1.showError)(`Unable to activate the selected version: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
+    // Helper functions for setting editing
+    const editNumberSetting = async (settingKey, currentValue) => {
+        const displayValue = currentValue?.toString() || '';
+        const newValue = await vscode.window.showInputBox({
+            placeHolder: `Enter ${settingKey} (number)`,
+            value: displayValue,
+            prompt: `Edit ${settingKey}`,
+            validateInput: (input) => {
+                const num = parseFloat(input);
+                if (isNaN(num) || num < 0) {
+                    return 'Please enter a valid non-negative number';
+                }
+                if ((settingKey === 'portNumber' || settingKey === 'shellPortNumber') && (num < 1024 || num > 65535)) {
+                    return 'Port number must be between 1024 and 65535';
+                }
+                return undefined;
+            }
+        });
+        return newValue !== undefined ? parseFloat(newValue) : undefined;
+    };
+    const editPathSetting = async (settingKey, currentValue) => {
+        const pathAction = await vscode.window.showQuickPick([
+            { label: 'Enter Path Manually', value: 'manual' },
+            { label: 'Browse for Folder', value: 'browse' }
+        ], { placeHolder: `How would you like to set ${settingKey}?` });
+        if (pathAction?.value === 'manual') {
+            return await vscode.window.showInputBox({
+                placeHolder: `Enter ${settingKey}`,
+                value: currentValue?.toString() || '',
+                prompt: `Edit ${settingKey}`
+            });
+        }
+        else if (pathAction?.value === 'browse') {
+            const result = await vscode.window.showOpenDialog({
+                canSelectFolders: settingKey !== 'pythonPath',
+                canSelectFiles: settingKey === 'pythonPath',
+                canSelectMany: false,
+                title: `Select ${settingKey}`
+            });
+            return result?.[0]?.fsPath;
+        }
+        return undefined;
+    };
+    const editDevModeSetting = async (currentValue) => {
+        const devModeOption = await vscode.window.showQuickPick([
+            { label: 'all', description: 'Enable all development features' },
+            { label: 'xml', description: 'Enable XML development features' },
+            { label: 'reload', description: 'Enable auto-reload' },
+            { label: 'qweb', description: 'Enable QWeb development' },
+            { label: 'Custom', description: 'Enter custom development parameters' },
+            { label: 'None', description: 'Disable development mode' }
+        ], {
+            placeHolder: 'Select development mode',
+            title: 'Development Mode Settings'
+        });
+        if (!devModeOption) {
+            return undefined;
+        }
+        if (devModeOption.label === 'Custom') {
+            const userInput = await vscode.window.showInputBox({
+                placeHolder: 'Enter development mode value (e.g., xml, reload, qweb)',
+                value: currentValue?.toString().replace('--dev=', '') || '',
+                prompt: 'Development mode value (--dev= will be added automatically)'
+            });
+            return userInput ? `--dev=${userInput}` : '';
+        }
+        else if (devModeOption.label === 'None') {
+            return '';
+        }
+        else {
+            return `--dev=${devModeOption.label}`;
+        }
+    };
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.editVersionSetting', async (versionIdOrTreeItem, settingKey, currentValue) => {
+        try {
+            const ref = (0, args_1.extractVersionSettingRef)(versionIdOrTreeItem, settingKey, currentValue);
+            if (!ref) {
+                (0, notifications_1.showError)('This command was invoked with invalid parameters.');
+                return;
+            }
+            const { versionId, key, value } = ref;
+            let newValue = undefined;
+            // Handle different types of settings
+            if (['portNumber', 'shellPortNumber', 'limitTimeReal', 'limitTimeCpu', 'maxCronThreads'].includes(key)) {
+                newValue = await editNumberSetting(key, value);
+            }
+            else if (['odooPath', 'enterprisePath', 'designThemesPath', 'customAddonsPath', 'pythonPath', 'dumpsFolder'].includes(key)) {
+                newValue = await editPathSetting(key, value);
+            }
+            else if (key === 'devMode') {
+                newValue = await editDevModeSetting(value);
+            }
+            else {
+                // Default string input for other settings
+                newValue = await vscode.window.showInputBox({
+                    placeHolder: `Enter ${key}`,
+                    value: value?.toString() || '',
+                    prompt: `Edit ${key}`
+                });
+            }
+            if (newValue === undefined) {
+                return; // User cancelled
+            }
+            await versionsService.updateVersion(versionId, {
+                settings: { [key]: newValue }
+            });
+            if (['customAddonsPath'].includes(key)) {
+                (0, runtimeCache_1.invalidateRepositoryDiscoveryCache)();
+                (0, runtimeCache_1.invalidateModuleDiscoveryCache)();
+            }
+            else if (['odooPath', 'enterprisePath', 'designThemesPath', 'subModulesPaths'].includes(key)) {
+                (0, runtimeCache_1.invalidateModuleDiscoveryCache)();
+            }
+            (0, notifications_1.showInfo)(`Updated ${key} successfully`);
+            await refreshAll();
+        }
+        catch (error) {
+            (0, notifications_1.showError)(`Failed to edit setting: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.cloneVersion', async (versionIdOrTreeItem) => {
+        try {
+            let versionId = (0, args_1.extractVersionId)(versionIdOrTreeItem);
+            if (!versionId) {
+                // No version provided - show version picker
+                const versions = versionsService.getVersions();
+                const items = versions.map(v => ({
+                    label: v.name,
+                    description: v.odooVersion,
+                    versionId: v.id
+                }));
+                const selected = await vscode.window.showQuickPick(items, {
+                    placeHolder: 'Select version to clone'
+                });
+                if (!selected) {
+                    return;
+                }
+                versionId = selected.versionId;
+            }
+            const name = await vscode.window.showInputBox({
+                placeHolder: 'Enter name for the cloned version',
+                prompt: 'Version name'
+            });
+            if (!name) {
+                return;
+            }
+            const clonedVersion = await versionsService.cloneVersion(versionId, name);
+            if (clonedVersion) {
+                (0, notifications_1.showInfo)(`Version "${name}" cloned successfully`);
+            }
+            else {
+                (0, notifications_1.showError)('Failed to clone the selected version.');
+            }
+        }
+        catch (error) {
+            (0, notifications_1.showError)(`Failed to clone the selected version: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.deleteVersion', async (versionIdOrTreeItem) => {
+        try {
+            let versionId = (0, args_1.extractVersionId)(versionIdOrTreeItem);
+            if (!versionId) {
+                // No version provided - show version picker
+                const versions = versionsService.getVersions();
+                const items = versions.filter(v => !v.isActive).map(v => ({
+                    label: v.name,
+                    description: v.odooVersion,
+                    versionId: v.id
+                }));
+                if (items.length === 0) {
+                    (0, notifications_1.showInfo)('There are no versions available to delete (the active version cannot be removed).');
+                    return;
+                }
+                const selected = await vscode.window.showQuickPick(items, {
+                    placeHolder: 'Select version to delete'
+                });
+                if (!selected) {
+                    return;
+                }
+                versionId = selected.versionId;
+            }
+            const version = versionsService.getVersion(versionId);
+            if (!version) {
+                (0, notifications_1.showError)('The selected version could not be found.');
+                return;
+            }
+            const confirm = await (0, notifications_1.showModalWarning)(`Are you sure you want to delete version "${version.name}"?`, 'Delete');
+            if (confirm !== 'Delete') {
+                return;
+            }
+            const success = await versionsService.deleteVersion(versionId);
+            if (success) {
+                (0, notifications_1.showInfo)(`Version "${version.name}" deleted successfully`);
+            }
+            else {
+                (0, notifications_1.showError)('Failed to delete the selected version.');
+            }
+        }
+        catch (error) {
+            (0, notifications_1.showError)(`Failed to delete the selected version: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.setSettingToDefault', async (settingTreeItem) => {
+        try {
+            const ref = (0, args_1.extractVersionSettingRef)(settingTreeItem);
+            if (!ref) {
+                (0, notifications_1.showError)('Select a setting before continuing.');
+                return;
+            }
+            const success = await versionsService.setSettingToDefault(ref.versionId, ref.key);
+            if (!success) {
+                (0, notifications_1.showError)('Unable to reset this setting to its default value.');
+            }
+        }
+        catch (error) {
+            (0, notifications_1.showError)(`Failed to reset setting to default: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.setSettingAsDefault', async (settingTreeItem) => {
+        try {
+            const ref = (0, args_1.extractVersionSettingRef)(settingTreeItem);
+            if (!ref) {
+                (0, notifications_1.showError)('Select a setting before continuing.');
+                return;
+            }
+            const success = await versionsService.setSettingAsDefault(ref.versionId, ref.key);
+            if (!success) {
+                (0, notifications_1.showError)('Unable to save this setting as the default.');
+            }
+        }
+        catch (error) {
+            (0, notifications_1.showError)(`Unable to save this setting as the default: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.setAllSettingsToDefault', async (versionTreeItem) => {
+        try {
+            const versionId = (0, args_1.extractVersionId)(versionTreeItem);
+            if (!versionId) {
+                (0, notifications_1.showError)('Select a version before continuing.');
+                return;
+            }
+            const version = versionsService.getVersion(versionId);
+            if (!version) {
+                (0, notifications_1.showError)('The selected version could not be found.');
+                return;
+            }
+            const confirm = await (0, notifications_1.showWarning)(`Are you sure you want to reset ALL settings for version "${version.name}" to their default values?`, 'Reset All', 'Cancel');
+            if (confirm !== 'Reset All') {
+                return;
+            }
+            const success = await versionsService.setAllSettingsToDefault(versionId);
+            if (!success) {
+                (0, notifications_1.showError)('Unable to reset all settings to their default values.');
+            }
+        }
+        catch (error) {
+            (0, notifications_1.showError)(`Failed to reset all settings to default: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.setAllSettingsAsDefault', async (versionTreeItem) => {
+        try {
+            const versionId = (0, args_1.extractVersionId)(versionTreeItem);
+            if (!versionId) {
+                (0, notifications_1.showError)('Select a version before continuing.');
+                return;
+            }
+            const version = versionsService.getVersion(versionId);
+            if (!version) {
+                (0, notifications_1.showError)('The selected version could not be found.');
+                return;
+            }
+            const confirm = await (0, notifications_1.showWarning)(`Are you sure you want to save ALL settings from version "${version.name}" as new default values?`, 'Save All as Default', 'Cancel');
+            if (confirm !== 'Save All as Default') {
+                return;
+            }
+            const success = await versionsService.setAllSettingsAsDefault(versionId);
+            if (!success) {
+                (0, notifications_1.showError)('Unable to save these settings as the new defaults.');
+            }
+        }
+        catch (error) {
+            (0, notifications_1.showError)(`Unable to save these settings as the new defaults: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.refreshVersions', async () => {
+        await versionsService.refresh();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.manageVersions', async () => {
+        const actions = [
+            'Create New Version',
+            'Switch Active Version',
+            'Clone Version',
+            'Delete Version'
+        ];
+        const action = await vscode.window.showQuickPick(actions, {
+            placeHolder: 'Choose version management action'
+        });
+        switch (action) {
+            case 'Create New Version':
+                vscode.commands.executeCommand('odoo.createVersion');
+                break;
+            case 'Switch Active Version':
+                vscode.commands.executeCommand('odoo.setActiveVersion');
+                break;
+            case 'Clone Version':
+                vscode.commands.executeCommand('odoo.cloneVersion');
+                break;
+            case 'Delete Version':
+                vscode.commands.executeCommand('odoo.deleteVersion');
+                break;
+        }
+    }));
+}
+
+
+/***/ }),
+/* 64 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.extractVersionId = extractVersionId;
+exports.extractVersionSettingRef = extractVersionSettingRef;
+exports.extractUri = extractUri;
+exports.extractRepoFromMetadata = extractRepoFromMetadata;
+const vscode = __importStar(__webpack_require__(1));
+function isObject(value) {
+    return typeof value === 'object' && value !== null;
+}
+/** A version id passed directly, or a version tree item. */
+function extractVersionId(arg) {
+    if (typeof arg === 'string') {
+        return arg;
+    }
+    if (isObject(arg)) {
+        const id = arg.version?.id;
+        if (typeof id === 'string') {
+            return id;
+        }
+    }
+    return undefined;
+}
+/** A version-setting tree item, or explicit (versionId, key, value) params. */
+function extractVersionSettingRef(arg, settingKey, currentValue) {
+    if (typeof arg === 'string' && typeof settingKey === 'string') {
+        return { versionId: arg, key: settingKey, value: currentValue };
+    }
+    if (isObject(arg)) {
+        const carrier = arg;
+        if (typeof carrier.versionId === 'string' && typeof carrier.key === 'string') {
+            return { versionId: carrier.versionId, key: carrier.key, value: carrier.value };
+        }
+    }
+    return undefined;
+}
+/** A Uri passed directly, or a tree item carrying resourceUri/uri. */
+function extractUri(arg) {
+    if (!arg) {
+        return undefined;
+    }
+    if (arg instanceof vscode.Uri) {
+        return arg;
+    }
+    if (isObject(arg)) {
+        const carrier = arg;
+        if (carrier.resourceUri instanceof vscode.Uri) {
+            return carrier.resourceUri;
+        }
+        if (carrier.uri instanceof vscode.Uri) {
+            return carrier.uri;
+        }
+    }
+    return undefined;
+}
+/** A repo model attached to a Project Repos tree item. */
+function extractRepoFromMetadata(arg) {
+    if (!isObject(arg)) {
+        return undefined;
+    }
+    const metadata = arg.metadata;
+    if (!isObject(metadata) || metadata.kind !== 'repo') {
+        return undefined;
+    }
+    const repo = metadata.repo;
+    if (isObject(repo) && typeof repo.path === 'string') {
+        return repo;
+    }
+    return undefined;
+}
+
+
+/***/ }),
+/* 65 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerDebugCommands = registerDebugCommands;
+const vscode = __importStar(__webpack_require__(1));
+const debugger_1 = __webpack_require__(49);
+function registerDebugCommands(deps) {
+    const { context } = deps;
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.startServer', async () => {
+        await (0, debugger_1.startDebugServer)();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.startShell', async () => {
+        await (0, debugger_1.startDebugShell)();
+    }));
+}
+
+
+/***/ }),
+/* 66 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerReposExplorerCommands = registerReposExplorerCommands;
+const vscode = __importStar(__webpack_require__(1));
+const fs = __importStar(__webpack_require__(44));
+const path = __importStar(__webpack_require__(14));
+const args_1 = __webpack_require__(64);
+const notifications_1 = __webpack_require__(17);
+const projectRepos_1 = __webpack_require__(42);
+const projectReposExplorer_1 = __webpack_require__(52);
+async function copyPathToClipboard(uri, relative) {
+    if (!uri) {
+        (0, notifications_1.showInfo)('Select a file or folder first.');
+        return;
+    }
+    const absolutePath = uri.fsPath;
+    if (!relative) {
+        await vscode.env.clipboard.writeText(absolutePath);
+        vscode.window.setStatusBarMessage('Copied path', 2000);
+        return;
+    }
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+        await vscode.env.clipboard.writeText(absolutePath);
+        vscode.window.setStatusBarMessage('Copied path (no workspace for relative path)', 2500);
+        return;
+    }
+    const relativePath = path.relative(workspaceRoot, absolutePath);
+    const valueToCopy = relativePath.startsWith('..') ? absolutePath : relativePath;
+    await vscode.env.clipboard.writeText(valueToCopy);
+    vscode.window.setStatusBarMessage('Copied relative path', 2000);
+}
+async function openUriInIntegratedTerminal(uri) {
+    if (!uri) {
+        (0, notifications_1.showInfo)('Select a folder to open in terminal.');
+        return;
+    }
+    const cwd = fs.existsSync(uri.fsPath) && fs.lstatSync(uri.fsPath).isDirectory()
+        ? uri.fsPath
+        : path.dirname(uri.fsPath);
+    const terminal = vscode.window.createTerminal({ cwd });
+    terminal.show();
+}
+function registerReposExplorerCommands(deps) {
+    const { context, providers } = deps;
+    context.subscriptions.push(vscode.commands.registerCommand('projectRepos.reveal', async (arg) => {
+        const repo = (0, args_1.extractRepoFromMetadata)(arg);
+        if (repo?.path) {
+            await (0, projectRepos_1.revealProjectRepo)(repo);
+            return;
+        }
+        const uri = (0, args_1.extractUri)(arg);
+        if (!uri) {
+            (0, notifications_1.showInfo)('Select a repository to reveal.');
+            return;
+        }
+        await vscode.commands.executeCommand('revealInExplorer', uri);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFile', async (uri) => {
+        await (0, projectReposExplorer_1.createNewFile)(uri);
+        providers.projectReposExplorer.refresh();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFolder', async (uri) => {
+        await (0, projectReposExplorer_1.createNewFolder)(uri);
+        providers.projectReposExplorer.refresh();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.rename', async (uri) => {
+        await (0, projectReposExplorer_1.renameEntry)(uri);
+        providers.projectReposExplorer.refresh();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.delete', async (uri) => {
+        await (0, projectReposExplorer_1.deleteEntry)(uri);
+        providers.projectReposExplorer.refresh();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.openTerminalHere', async (uri) => {
+        await (0, projectReposExplorer_1.openTerminalHere)(uri);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.selectProject', async () => {
+        await (0, projectReposExplorer_1.selectProjectForExplorer)();
+        providers.projectReposExplorer.refresh();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.copy', async (uri, uris) => {
+        const list = uris && uris.length ? uris : uri ? [uri] : [];
+        if (!list.length) {
+            return;
+        }
+        (0, projectReposExplorer_1.copyEntries)(list, false);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.cut', async (uri, uris) => {
+        const list = uris && uris.length ? uris : uri ? [uri] : [];
+        if (!list.length) {
+            return;
+        }
+        (0, projectReposExplorer_1.copyEntries)(list, true);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.paste', async (uri) => {
+        await (0, projectReposExplorer_1.pasteEntries)(uri);
+        providers.projectReposExplorer.refresh();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyFilePath', async (arg) => {
+        await copyPathToClipboard((0, args_1.extractUri)(arg), false);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyRelativePath', async (arg) => {
+        await copyPathToClipboard((0, args_1.extractUri)(arg), true);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.openInIntegratedTerminal', async (arg) => {
+        await openUriInIntegratedTerminal((0, args_1.extractUri)(arg));
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.revealInExplorer', async (arg) => {
+        const uri = (0, args_1.extractUri)(arg);
+        if (!uri) {
+            (0, notifications_1.showInfo)('Select a file or folder first.');
+            return;
+        }
+        await vscode.commands.executeCommand('revealInExplorer', uri);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.revealFileInOS', async (arg) => {
+        const uri = (0, args_1.extractUri)(arg);
+        if (!uri) {
+            (0, notifications_1.showInfo)('Select a file or folder first.');
+            return;
+        }
+        await vscode.commands.executeCommand('revealFileInOS', uri);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.renameEntry', async (arg) => {
+        await (0, projectReposExplorer_1.renameEntry)((0, args_1.extractUri)(arg));
+        providers.projectRepos.refresh();
+        providers.projectReposExplorer.refresh();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.deleteEntry', async (arg) => {
+        await (0, projectReposExplorer_1.deleteEntry)((0, args_1.extractUri)(arg));
+        providers.projectRepos.refresh();
+        providers.projectReposExplorer.refresh();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyEntry', async (arg) => {
+        const uri = (0, args_1.extractUri)(arg);
+        if (!uri) {
+            (0, notifications_1.showInfo)('Select a file or folder first.');
+            return;
+        }
+        (0, projectReposExplorer_1.copyEntries)([uri], false);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.cutEntry', async (arg) => {
+        const uri = (0, args_1.extractUri)(arg);
+        if (!uri) {
+            (0, notifications_1.showInfo)('Select a file or folder first.');
+            return;
+        }
+        (0, projectReposExplorer_1.copyEntries)([uri], true);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.pasteEntry', async (arg) => {
+        const uri = (0, args_1.extractUri)(arg);
+        if (!uri) {
+            (0, notifications_1.showInfo)('Select a folder to paste into.');
+            return;
+        }
+        let target = uri;
+        try {
+            if (fs.existsSync(uri.fsPath) && fs.lstatSync(uri.fsPath).isFile()) {
+                target = vscode.Uri.file(path.dirname(uri.fsPath));
+            }
+        }
+        catch {
+            // Best effort: fall back to the provided uri
+        }
+        await (0, projectReposExplorer_1.pasteEntries)(target);
+        providers.projectRepos.refresh();
+        providers.projectReposExplorer.refresh();
+    }));
 }
 
 

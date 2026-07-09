@@ -5,6 +5,7 @@ import { addActiveIndicator, getSettingDisplayName, getSettingDisplayValue } fro
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { logger } from './services/logger';
+import { BaseTreeProvider } from './views/baseTreeProvider';
 
 export class VersionTreeItem extends vscode.TreeItem {
     constructor(
@@ -14,6 +15,7 @@ export class VersionTreeItem extends vscode.TreeItem {
         // Use the same pattern as projects and databases - emoji in label
         super(addActiveIndicator(version.name, version.isActive), collapsibleState);
 
+        this.id = version.id;
         this.tooltip = `${version.name} (${version.odooVersion})`;
         this.description = version.odooVersion;
         this.contextValue = version.isActive ? 'activeVersion' : 'version';
@@ -39,6 +41,7 @@ export class VersionSettingTreeItem extends vscode.TreeItem {
         const displayValue = getSettingDisplayValue(key, value);
         super(`${displayName}: ${displayValue}`, vscode.TreeItemCollapsibleState.None);
 
+        this.id = `${versionId}:${key}`;
         this.tooltip = `${displayName}: ${displayValue}`;
         this.contextValue = 'versionSetting';
 
@@ -74,20 +77,12 @@ export class VersionSettingTreeItem extends vscode.TreeItem {
     }
 }
 
-type TreeDataChangeEvent = VersionTreeItem | VersionSettingTreeItem | undefined | null | void;
-
-export class VersionsTreeProvider implements vscode.TreeDataProvider<VersionTreeItem | VersionSettingTreeItem> {
-    private readonly _onDidChangeTreeData: vscode.EventEmitter<TreeDataChangeEvent> = new vscode.EventEmitter<TreeDataChangeEvent>();
-    readonly onDidChangeTreeData: vscode.Event<TreeDataChangeEvent> = this._onDidChangeTreeData.event;
-
+export class VersionsTreeProvider extends BaseTreeProvider<VersionTreeItem | VersionSettingTreeItem> {
     private readonly versionsService: VersionsService;
 
     constructor(private readonly sortPreferences: SortPreferences) {
+        super();
         this.versionsService = VersionsService.getInstance();
-    }
-
-    refresh(): void {
-        this._onDidChangeTreeData.fire();
     }
 
     getTreeItem(element: VersionTreeItem | VersionSettingTreeItem): vscode.TreeItem {

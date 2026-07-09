@@ -19,17 +19,12 @@ import { getDefaultSortOption } from './sortOptions';
 import { VersionsService } from './versionsService';
 import { showWarning } from './services/notifications';
 import { showModalWarning } from './services/notifications';
+import { BaseTreeProvider } from './views/baseTreeProvider';
 
-export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-    private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
-    readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
-
-    refresh(): void {
-        this._onDidChangeTreeData.fire();
-    }
+export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
     constructor(private context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
-        this.context = context;
+        super();
     }
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
         return element;
@@ -131,6 +126,7 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
             }
 
             treeItems.push({
+                id: psaeDir.path,
                 label: `${psaeIcon} ${psaeDir.dirName}`,
                 tooltip: isTestingEnabled
                     ? `${psaeTooltip}\n⚠️ Module management disabled while testing is enabled`
@@ -185,6 +181,7 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
                 moduleTooltipDetails.push(`**Path:** ${module.path}`);
 
                 const managedModuleItem = {
+                    id: module.path,
                     label: `${moduleIcon} ${module.name}`,
                     tooltip: new vscode.MarkdownString(moduleTooltipDetails.join('\n\n')),
                     description: repoPath,
@@ -220,6 +217,7 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
                 moduleTooltipDetails.push(`**Path:** ${module.path}`);
 
                 const unmanagedModuleItem = {
+                    id: module.path,
                     label: `${moduleIcon} ${module.name}`,
                     tooltip: new vscode.MarkdownString(moduleTooltipDetails.join('\n\n')),
                     description: repoPath,

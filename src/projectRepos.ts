@@ -9,6 +9,8 @@ import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { createFilesExcludeMatcher } from './services/filesExclude';
 import * as os from 'node:os';
+import { BaseTreeProvider } from './views/baseTreeProvider';
+import { errorMessage } from './services/logger';
 
 type ProjectRepoItemMetadata =
     | { kind: 'info'; message: string }
@@ -102,14 +104,10 @@ class ProjectRepoItem extends vscode.TreeItem {
     }
 }
 
-export class ProjectReposProvider implements vscode.TreeDataProvider<ProjectRepoItem> {
-    private _onDidChangeTreeData = new vscode.EventEmitter<ProjectRepoItem | undefined | null | void>();
-    readonly onDidChangeTreeData: vscode.Event<ProjectRepoItem | undefined | null | void> = this._onDidChangeTreeData.event;
+export class ProjectReposProvider extends BaseTreeProvider<ProjectRepoItem> {
 
-    constructor(private readonly sortPreferences: SortPreferences) {}
-
-    refresh(): void {
-        this._onDidChangeTreeData.fire();
+    constructor(private readonly sortPreferences: SortPreferences) {
+        super();
     }
 
     getTreeItem(element: ProjectRepoItem): vscode.TreeItem {
@@ -205,10 +203,10 @@ export class ProjectReposProvider implements vscode.TreeDataProvider<ProjectRepo
     }
 }
 
-export async function revealProjectRepo(repo: RepoModel): Promise<void> {
+export async function revealProjectRepo(repo: { path: string }): Promise<void> {
     try {
         await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(repo.path));
-    } catch (error: any) {
-        showError(`Unable to reveal repository: ${error?.message ?? error}`);
+    } catch (error) {
+        showError(`Unable to reveal repository: ${errorMessage(error)}`);
     }
 }

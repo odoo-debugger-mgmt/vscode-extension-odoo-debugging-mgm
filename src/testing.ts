@@ -9,17 +9,12 @@ import { setupDebugger } from './debugger';
 import { getInstalledModules } from './services/database';
 import { logger } from './services/logger';
 import { showModalWarning } from './services/notifications';
+import { BaseTreeProvider } from './views/baseTreeProvider';
 
-export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-    private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
-    readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
-
-    refresh(): void {
-        this._onDidChangeTreeData.fire();
-    }
+export class TestingTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
     constructor(private context: vscode.ExtensionContext) {
-        this.context = context;
+        super();
     }
 
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {

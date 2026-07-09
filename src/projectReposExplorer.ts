@@ -8,6 +8,7 @@ import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } fr
 import { createFilesExcludeMatcher } from './services/filesExclude';
 import { showWarning } from './services/notifications';
 import { showModalWarning } from './services/notifications';
+import { BaseTreeProvider } from './views/baseTreeProvider';
 
 type NodeKind = 'placeholder' | 'repo' | 'folder' | 'file';
 
@@ -39,19 +40,10 @@ interface PlaceholderNode extends BaseNode {
 
 type ExplorerNode = RepoNode | FolderNode | FileNode | PlaceholderNode;
 
-export class ProjectReposExplorerProvider implements vscode.TreeDataProvider<ExplorerNode> {
-    private readonly _onDidChangeTreeData = new vscode.EventEmitter<ExplorerNode | undefined | null | void>();
-    readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
-
+export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode> {
     private watchers: vscode.FileSystemWatcher[] = [];
     private watcherKey = '';
     private refreshDebounceTimer: NodeJS.Timeout | undefined;
-
-    constructor() {}
-
-    refresh(): void {
-        this._onDidChangeTreeData.fire();
-    }
 
     private scheduleRefresh(): void {
         if (this.refreshDebounceTimer) {
@@ -91,9 +83,9 @@ export class ProjectReposExplorerProvider implements vscode.TreeDataProvider<Exp
         }
     }
 
-    dispose(): void {
+    override dispose(): void {
         this.disposeWatchers();
-        this._onDidChangeTreeData.dispose();
+        super.dispose();
     }
 
     getTreeItem(element: ExplorerNode): vscode.TreeItem {

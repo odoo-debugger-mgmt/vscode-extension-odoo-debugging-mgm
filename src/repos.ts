@@ -9,6 +9,7 @@ import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { getRepoBranch } from './services/branches';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
+import { BaseTreeProvider } from './views/baseTreeProvider';
 
 interface RepoEntry {
     name: string;
@@ -43,16 +44,10 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item
 }
 
 
-export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-    private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
-    readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
-
-    refresh(): void {
-        this._onDidChangeTreeData.fire();
-    }
+export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
     constructor(private context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
-        this.context = context;
+        super();
     }
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
         return element;

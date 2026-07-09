@@ -19,6 +19,7 @@ import { clearInstalledModuleCache, detectOdooSeries } from './services/database
 import { SettingsModel } from './models/settings';
 import { logger } from './services/logger';
 import { showModalWarning } from './services/notifications';
+import { BaseTreeProvider } from './views/baseTreeProvider';
 import {
     alignEnvironment,
     buildDatabaseEnvironmentTarget,
@@ -281,14 +282,10 @@ function extractDatabaseFromEvent(event: any): DatabaseModel | null {
 }
 
 
-export class DbsTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-    private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
-    readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
+export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
-    constructor(private readonly sortPreferences: SortPreferences) {}
-
-    refresh(): void {
-        this._onDidChangeTreeData.fire();
+    constructor(private readonly sortPreferences: SortPreferences) {
+        super();
     }
     getTreeItem(item: vscode.TreeItem): vscode.TreeItem {
         return item;
