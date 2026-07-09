@@ -3,7 +3,7 @@ import { readFromFile, DebuggerData, showError, getWorkspacePath, stripSettings,
 import { ProjectModel } from './models/project';
 import { DatabaseTemplateModel } from './models/dbTemplate';
 import { modify, applyEdits, parse } from 'jsonc-parser';
-import fs from 'fs';
+import * as fs from 'node:fs/promises';
 import path from 'path';
 import { logger } from './services/logger';
 
@@ -42,14 +42,10 @@ export class SettingsStore {
         return path.join(workspacePath, '.vscode', fileName);
     }
 
-    private static updateCache(fileName: string, filePath: string, raw: string, data: DebuggerData): void {
-        let mtimeMs = Date.now();
-        try {
-            const stats = fs.statSync(filePath);
-            mtimeMs = stats.mtimeMs;
-        } catch {
-            // Keep fallback timestamp when stat fails.
-        }
+    private static async updateCache(fileName: string, filePath: string, raw: string, data: DebuggerData): Promise<void> {
+        // Fall back to "now" when stat fails (e.g. file not written yet).
+        const stats = await fs.stat(filePath).catch(() => undefined);
+        const mtimeMs = stats?.mtimeMs ?? Date.now();
 
         this.cache.set(fileName, {
             mtimeMs,
@@ -64,8 +60,8 @@ export class SettingsStore {
             throw new Error(`Error reading file: ${fileName}`);
         }
 
-        const raw = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : JSON.stringify(loaded, null, 4);
-        this.updateCache(fileName, filePath, raw, loaded);
+        const raw = await fs.readFile(filePath, 'utf-8').catch(() => JSON.stringify(loaded, null, 4));
+        await this.updateCache(fileName, filePath, raw, loaded);
         return this.cloneData(loaded);
     }
 
@@ -83,8 +79,8 @@ export class SettingsStore {
 
         try {
             const jsonString = JSON.stringify(pending.data, null, 4);
-            fs.writeFileSync(pending.filePath, jsonString, 'utf8');
-            this.updateCache(fileName, pending.filePath, jsonString, pending.data);
+            await fs.writeFile(pending.filePath, jsonString, 'utf8');
+            await this.updateCache(fileName, pending.filePath, jsonString, pending.data);
             pending.waiters.forEach(waiter => waiter.resolve());
         } catch (error) {
             pending.waiters.forEach(waiter => waiter.reject(error));
@@ -102,19 +98,19 @@ export class SettingsStore {
         }
 
         try {
-            if (!fs.existsSync(filePath)) {
+            const stats = await fs.stat(filePath).catch(() => undefined);
+            if (!stats) {
                 return null;
             }
 
-            const stats = fs.statSync(filePath);
             const cached = this.cache.get(fileName);
             if (cached && cached.mtimeMs === stats.mtimeMs) {
                 return cached.raw;
             }
 
-            const raw = fs.readFileSync(filePath, 'utf-8');
+            const raw = await fs.readFile(filePath, 'utf-8');
             const parsed = parse(raw) as DebuggerData;
-            this.updateCache(fileName, filePath, raw, parsed ?? {});
+            await this.updateCache(fileName, filePath, raw, parsed ?? {});
             return raw;
         } catch (error) {
             showError(`Failed to read raw content from ${fileName}: ${error}`);
@@ -130,8 +126,8 @@ export class SettingsStore {
 
         await this.flushPendingWrite(fileName);
 
-        if (fs.existsSync(filePath)) {
-            const stats = fs.statSync(filePath);
+        const stats = await fs.stat(filePath).catch(() => undefined);
+        if (stats) {
             const cached = this.cache.get(fileName);
             if (cached && cached.mtimeMs === stats.mtimeMs) {
                 return this.cloneData(cached.data);
@@ -156,9 +152,9 @@ export class SettingsStore {
 
         const edits = modify(rawData, jsonPath, value, options);
         const updatedJson = applyEdits(rawData, edits);
-        fs.writeFileSync(filePath, updatedJson, 'utf8');
+        await fs.writeFile(filePath, updatedJson, 'utf8');
         const parsed = parse(updatedJson) as DebuggerData;
-        this.updateCache(fileName, filePath, updatedJson, parsed ?? {});
+        await this.updateCache(fileName, filePath, updatedJson, parsed ?? {});
     }
 
     /**

@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as childProcess from 'child_process';
 import { SettingsModel } from './models/settings';
 import { ProjectModel } from './models/project';
 import { RepoModel } from './models/repo';
@@ -9,6 +8,7 @@ import { DatabaseTemplateModel } from './models/dbTemplate';
 import { getBranchesViaSourceControl } from './services/gitService';
 import { runtimeCache } from './services/runtimeCache';
 import { showError, showInfo, showWarning } from './services/notifications';
+import { runCommand } from './services/process';
 
 import { parse } from 'jsonc-parser';
 import { logger } from './services/logger';
@@ -741,52 +741,17 @@ export async function getGitBranches(repoPath: string | undefined): Promise<stri
             return [];
         }
 
-        return new Promise<string[]>((resolve) => {
-            childProcess.exec(
-                'git branch -a --format="%(refname:short)"',
-                { cwd: normalizedPath },
-                (error, stdout, stderr) => {
-                    if (error) {
-                        logger.warn(`Failed to get branches for ${normalizedPath}: ${error.message}`);
-                        resolve([]);
-                        return;
-                    }
-
-                    if (stderr) {
-                        logger.warn(`Git branch warning for ${normalizedPath}: ${stderr}`);
-                    }
-
-                    const branches = stdout
-                        .split('\n')
-                        .map(branch => branch.trim())
-                        .filter(branch => {
-                            // Filter out empty lines and HEAD reference
-                            if (!branch || branch === 'HEAD') {
-                                return false;
-                            }
-                            // Remove remote prefix for remote branches
-                            return true;
-                        })
-                        .map(branch => {
-                            // Clean up branch names
-                            if (branch.startsWith('origin/')) {
-                                return branch.replace('origin/', '');
-                            }
-                            if (branch.startsWith('remotes/origin/')) {
-                                return branch.replace('remotes/origin/', '');
-                            }
-                            return branch;
-                        })
-                        .filter((branch, index, array) => {
-                            // Remove duplicates (local and remote of same branch)
-                            return array.indexOf(branch) === index;
-                        })
-                        .sort((a, b) => a.localeCompare(b)); // Sort alphabetically
-
-                    resolve(branches);
-                }
-            );
-        });
+        const { stdout } = await runCommand('git', ['branch', '-a', '--format=%(refname:short)'], { cwd: normalizedPath });
+        return stdout
+            .split('\n')
+            .map(branch => branch.trim())
+            // Filter out empty lines and HEAD reference
+            .filter(branch => !!branch && branch !== 'HEAD')
+            // Strip remote prefixes
+            .map(branch => branch.replace(/^remotes\/origin\//, '').replace(/^origin\//, ''))
+            // Remove duplicates (local and remote of same branch)
+            .filter((branch, index, array) => array.indexOf(branch) === index)
+            .sort((a, b) => a.localeCompare(b));
     } catch (err) {
         logger.warn(`Failed to get branches for ${normalizedPath}: ${err}`);
         return [];

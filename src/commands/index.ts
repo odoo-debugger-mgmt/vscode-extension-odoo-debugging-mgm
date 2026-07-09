@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { ProjectTreeProvider } from '../project';
 import type { RepoTreeProvider } from '../repos';
-import type { DbsTreeProvider } from '../dbs';
+import type { DbsTreeProvider } from '../views/dbsView';
 import type { ModuleTreeProvider } from '../module';
 import type { TestingTreeProvider } from '../testing';
 import type { VersionsTreeProvider } from '../versionsTreeProvider';

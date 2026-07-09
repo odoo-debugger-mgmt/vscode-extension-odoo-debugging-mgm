@@ -4,7 +4,7 @@ import { ProjectModel } from "./models/project";
 import { RepoModel } from "./models/repo";
 import * as vscode from "vscode";
 import { discoverModulesInRepos, showError, showInfo, showAutoInfo, stripSettings, createInfoTreeItem, ModuleDiscoveryResult, getDatabaseLabel, normalizePath } from './utils';
-import { spawn, execFileSync } from 'child_process';
+
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -20,6 +20,8 @@ import { VersionsService } from './versionsService';
 import { showWarning } from './services/notifications';
 import { showModalWarning } from './services/notifications';
 import { BaseTreeProvider } from './views/baseTreeProvider';
+import { runCommand, tryRunCommand } from './services/process';
+import { errorMessage } from './services/logger';
 
 export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
@@ -358,56 +360,22 @@ async function runScaffoldCommand(
     moduleName: string,
     targetPath: string
 ): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-        const child = spawn(
-            pythonPath,
-            [odooBinPath, 'scaffold', moduleName, targetPath],
-            { stdio: ['ignore', 'pipe', 'pipe'] }
-        );
-
-        let stderr = '';
-        let stdout = '';
-
-        child.stderr?.on('data', chunk => {
-            stderr += chunk.toString();
-        });
-        child.stdout?.on('data', chunk => {
-            stdout += chunk.toString();
-        });
-
-        child.on('error', error => {
-            reject(new Error(`Failed to start scaffold command: ${error.message}`));
-        });
-
-        child.on('close', code => {
-            if (code === 0) {
-                resolve();
-                return;
-            }
-
-            const details = stderr.trim() || stdout.trim();
-            reject(new Error(details || `Scaffold command exited with code ${code ?? 'unknown'}`));
-        });
-    });
+    try {
+        await runCommand(pythonPath, [odooBinPath, 'scaffold', moduleName, targetPath]);
+    } catch (error) {
+        throw new Error(`Scaffold command failed: ${errorMessage(error)}`);
+    }
 }
 
-function resolveRepositoryRoot(repoPath: string): string {
-    try {
-        const resolved = execFileSync(
-            'git',
-            ['-C', repoPath, 'rev-parse', '--show-toplevel'],
-            { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
-        ).trim();
-
-        if (resolved && fs.existsSync(resolved)) {
-            return resolved;
-        }
-    } catch {
-        // Fall back to the selected path if git resolution is unavailable.
+async function resolveRepositoryRoot(repoPath: string): Promise<string> {
+    const resolved = await tryRunCommand('git', ['-C', repoPath, 'rev-parse', '--show-toplevel']);
+    if (resolved && fs.existsSync(resolved)) {
+        return resolved;
     }
-
+    // Fall back to the selected path if git resolution is unavailable.
     return repoPath;
 }
+
 
 export async function createModuleFromScaffold(): Promise<void> {
     const projectResult = await SettingsStore.getSelectedProject();
@@ -456,7 +424,7 @@ export async function createModuleFromScaffold(): Promise<void> {
     const normalizedPythonPath = normalizePath(settings.pythonPath);
     const normalizedOdooPath = normalizePath(settings.odooPath);
     const destinationPath = normalizePath(targetRepo.path);
-    const repositoryRootPath = resolveRepositoryRoot(destinationPath);
+    const repositoryRootPath = await resolveRepositoryRoot(destinationPath);
     const odooBinPath = path.join(normalizedOdooPath, 'odoo-bin');
 
     if (!normalizedPythonPath || !fs.existsSync(normalizedPythonPath)) {

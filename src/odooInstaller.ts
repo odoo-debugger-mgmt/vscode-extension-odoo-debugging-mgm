@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { getWorkspacePath, showInfo, showError } from './utils';
-import { execSync } from 'child_process';
+import { tryRunCommand } from './services/process';
 import { logger } from './services/logger';
 import { showWarning } from './services/notifications';
 import { showModalWarning } from './services/notifications';
@@ -138,13 +138,10 @@ Continue?`;
             logger.debug('🐍 Checking Python installation');
 
             let pythonCmd = 'python3';
-            try {
-                execSync('python3 --version', { stdio: 'ignore' });
-            } catch {
-                try {
-                    execSync('python --version', { stdio: 'ignore' });
+            if (await tryRunCommand('python3', ['--version']) === undefined) {
+                if (await tryRunCommand('python', ['--version']) !== undefined) {
                     pythonCmd = 'python';
-                } catch {
+                } else {
                     throw new Error('Python not found. Please install Python 3.8+ first.');
                 }
             }

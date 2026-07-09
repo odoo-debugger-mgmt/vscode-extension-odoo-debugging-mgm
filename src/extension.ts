@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-import { DbsTreeProvider } from './dbs';
+import { DbsTreeProvider } from './views/dbsView';
 import { migrateLegacySwitchBehaviorSetting } from './services/environment';
 import { migrateDebuggerData } from './services/dataMigration';
 import { ProjectTreeProvider } from './project';

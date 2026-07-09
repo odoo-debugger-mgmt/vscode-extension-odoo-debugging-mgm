@@ -42,23 +42,23 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = __importStar(__webpack_require__(1));
-const dbs_1 = __webpack_require__(2);
-const environment_1 = __webpack_require__(34);
-const dataMigration_1 = __webpack_require__(36);
-const project_1 = __webpack_require__(37);
-const repos_1 = __webpack_require__(41);
-const projectRepos_1 = __webpack_require__(42);
-const module_1 = __webpack_require__(45);
-const testing_1 = __webpack_require__(47);
-const debugger_1 = __webpack_require__(49);
-const settingsStore_1 = __webpack_require__(7);
-const versionsTreeProvider_1 = __webpack_require__(50);
-const versionsService_1 = __webpack_require__(4);
-const context_1 = __webpack_require__(48);
-const sortPreferences_1 = __webpack_require__(51);
-const projectReposExplorer_1 = __webpack_require__(52);
-const logger_1 = __webpack_require__(15);
-const commands_1 = __webpack_require__(53);
+const dbsView_1 = __webpack_require__(2);
+const environment_1 = __webpack_require__(27);
+const dataMigration_1 = __webpack_require__(44);
+const project_1 = __webpack_require__(45);
+const repos_1 = __webpack_require__(50);
+const projectRepos_1 = __webpack_require__(51);
+const module_1 = __webpack_require__(53);
+const testing_1 = __webpack_require__(55);
+const debugger_1 = __webpack_require__(57);
+const settingsStore_1 = __webpack_require__(5);
+const versionsTreeProvider_1 = __webpack_require__(58);
+const versionsService_1 = __webpack_require__(23);
+const context_1 = __webpack_require__(56);
+const sortPreferences_1 = __webpack_require__(59);
+const projectReposExplorer_1 = __webpack_require__(60);
+const logger_1 = __webpack_require__(11);
+const commands_1 = __webpack_require__(61);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -88,7 +88,7 @@ async function activate(context) {
     const providers = {
         project: new project_1.ProjectTreeProvider(context, sortPreferences),
         repo: new repos_1.RepoTreeProvider(context, sortPreferences),
-        db: new dbs_1.DbsTreeProvider(sortPreferences),
+        db: new dbsView_1.DbsTreeProvider(sortPreferences),
         module: new module_1.ModuleTreeProvider(context, sortPreferences),
         testing: new testing_1.TestingTreeProvider(context),
         versions: new versionsTreeProvider_1.VersionsTreeProvider(sortPreferences),
@@ -227,256 +227,17 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.DbsTreeProvider = void 0;
-exports.getDbDumpFolder = getDbDumpFolder;
-exports.createDb = createDb;
-exports.manageDatabaseTemplates = manageDatabaseTemplates;
-exports.restoreDb = restoreDb;
-exports.setupDatabase = setupDatabase;
-exports.selectDatabase = selectDatabase;
-exports.deleteDb = deleteDb;
-exports.changeDatabaseVersion = changeDatabaseVersion;
-exports.changeDatabaseProjectRepoBranches = changeDatabaseProjectRepoBranches;
 const vscode = __importStar(__webpack_require__(1));
-const db_1 = __webpack_require__(3);
-const utils_1 = __webpack_require__(9);
-const branches_1 = __webpack_require__(24);
-const settingsStore_1 = __webpack_require__(7);
-const versionsService_1 = __webpack_require__(4);
-const child_process_1 = __webpack_require__(12);
-const fs = __importStar(__webpack_require__(10));
-const path = __importStar(__webpack_require__(11));
-const crypto_1 = __webpack_require__(6);
-const dbNaming_1 = __webpack_require__(26);
-const os = __importStar(__webpack_require__(27));
-const sortOptions_1 = __webpack_require__(28);
-const stream_1 = __webpack_require__(29);
-const database_1 = __webpack_require__(30);
-const logger_1 = __webpack_require__(15);
-const notifications_1 = __webpack_require__(17);
-const baseTreeProvider_1 = __webpack_require__(33);
-const environment_1 = __webpack_require__(34);
-/**
- * Gets the effective Odoo version for a database object.
- * Works with both DatabaseModel instances and plain database objects.
- */
-function getEffectiveOdooVersion(db) {
-    // If it's a DatabaseModel instance, use its method
-    if (db && typeof db.getEffectiveOdooVersion === 'function') {
-        return db.getEffectiveOdooVersion();
-    }
-    // For plain objects, implement the same logic
-    if (db && db.versionId) {
-        try {
-            const versionsService = versionsService_1.VersionsService.getInstance();
-            const version = versionsService.getVersion(db.versionId);
-            if (version) {
-                return version.odooVersion;
-            }
-        }
-        catch (error) {
-            logger_1.logger.warn(`Failed to get version for database ${(0, utils_1.getDatabaseLabel)(db)}:`, error);
-        }
-    }
-    // Fall back to legacy odooVersion property
-    return db?.odooVersion || undefined;
-}
-async function collectExistingDatabaseIdentifiers() {
-    const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
-    const identifiers = new Set();
-    for (const project of data.projects ?? []) {
-        for (const db of project.dbs ?? []) {
-            if (db && typeof db.id === 'string') {
-                identifiers.add(db.id.toLowerCase());
-            }
-        }
-    }
-    return identifiers;
-}
-async function promptProjectRepoBranchAssignments(repos, existingAssignments = [], mode = 'create') {
-    if (repos.length === 0) {
-        return [];
-    }
-    const normalizedExisting = (0, environment_1.sanitizeProjectRepoBranchAssignments)(existingAssignments);
-    const existingByPath = new Map();
-    const existingByName = new Map();
-    for (const entry of normalizedExisting) {
-        if (entry.repoPath) {
-            existingByPath.set((0, utils_1.normalizePath)(entry.repoPath), entry);
-        }
-        if (entry.repoName) {
-            existingByName.set(entry.repoName.toLowerCase(), entry);
-        }
-    }
-    const setupChoices = [
-        {
-            label: 'Use current branches for all project repos',
-            description: 'Capture each selected repo current branch and attach it to this DB',
-            action: 'use-current'
-        },
-        {
-            label: 'Choose branch per repository',
-            description: 'Select an explicit branch for each selected repo',
-            action: 'choose-per-repo'
-        },
-        {
-            label: mode === 'edit' ? 'Clear project repo branch mapping' : 'Skip project repo branch mapping',
-            description: mode === 'edit'
-                ? 'Remove all project repo branch assignments from this DB'
-                : 'Do not attach project repo branch assignments to this DB',
-            action: 'clear'
-        }
-    ];
-    if (mode === 'edit') {
-        setupChoices.unshift({
-            label: 'Keep existing project repo branch mapping',
-            description: `Keep ${normalizedExisting.length} currently mapped repo branch assignment(s)`,
-            action: 'keep'
-        });
-    }
-    const setupChoice = await vscode.window.showQuickPick(setupChoices, {
-        placeHolder: mode === 'edit'
-            ? 'Edit project repository branches for this database'
-            : 'Attach project repository branches to this database?',
-        ignoreFocusOut: true
-    });
-    if (!setupChoice) {
-        return undefined;
-    }
-    if (setupChoice.action === 'keep') {
-        return normalizedExisting;
-    }
-    if (setupChoice.action === 'clear') {
-        return [];
-    }
-    if (setupChoice.action === 'use-current') {
-        const mapped = await Promise.all(repos.map(async (repo) => {
-            const repoPath = (0, utils_1.normalizePath)(repo.path);
-            const branch = await (0, branches_1.getRepoBranch)(repoPath);
-            if (!branch) {
-                return undefined;
-            }
-            return {
-                repoName: repo.name,
-                repoPath,
-                branch
-            };
-        }));
-        return mapped.filter((entry) => !!entry);
-    }
-    const assignments = [];
-    for (let i = 0; i < repos.length; i++) {
-        const repo = repos[i];
-        const repoPath = (0, utils_1.normalizePath)(repo.path);
-        const existing = existingByPath.get(repoPath) ?? existingByName.get(repo.name.toLowerCase());
-        const existingBranch = existing?.branch;
-        const currentBranch = await (0, branches_1.getRepoBranch)(repoPath);
-        const branches = await (0, utils_1.getGitBranches)(repoPath);
-        const uniqueBranches = Array.from(new Set([
-            ...(existingBranch ? [existingBranch] : []),
-            ...(currentBranch ? [currentBranch] : []),
-            ...branches
-        ]));
-        const selectableBranches = uniqueBranches.filter(branch => branch !== currentBranch && branch !== existingBranch);
-        const options = [
-            ...(existingBranch ? [{
-                    label: `$(bookmark) Keep mapped branch (${existingBranch})`,
-                    description: repo.name,
-                    action: 'use',
-                    branch: existingBranch
-                }] : []),
-            ...(currentBranch ? [{
-                    label: `$(git-branch) Keep current branch (${currentBranch})`,
-                    description: repo.name,
-                    action: 'use',
-                    branch: currentBranch
-                }] : []),
-            ...selectableBranches.map(branch => ({
-                label: branch,
-                description: repo.name,
-                action: 'use',
-                branch
-            })),
-            {
-                label: '$(pencil) Enter a custom branch',
-                description: repo.name,
-                action: 'custom'
-            },
-            {
-                label: mode === 'edit' && existingBranch
-                    ? '$(close) Keep existing mapping for this repository'
-                    : '$(close) Skip this repository',
-                description: repo.name,
-                action: 'skip'
-            }
-        ];
-        const picked = await vscode.window.showQuickPick(options, {
-            placeHolder: `[${i + 1}/${repos.length}] Select branch for repository "${repo.name}"${existingBranch ? ` (mapped: ${existingBranch})` : ''}`,
-            ignoreFocusOut: true
-        });
-        if (!picked) {
-            return undefined;
-        }
-        if (picked.action === 'skip') {
-            if (mode === 'edit' && existingBranch) {
-                assignments.push({
-                    repoName: repo.name,
-                    repoPath,
-                    branch: existingBranch
-                });
-            }
-            continue;
-        }
-        let branch = picked.branch;
-        if (picked.action === 'custom') {
-            const customBranchInput = await vscode.window.showInputBox({
-                placeHolder: existingBranch ?? currentBranch ?? 'Enter branch name',
-                value: existingBranch ?? currentBranch ?? '',
-                prompt: `Enter the branch to checkout for "${repo.name}" when this DB is selected`,
-                ignoreFocusOut: true
-            });
-            if (customBranchInput === undefined) {
-                return undefined;
-            }
-            branch = customBranchInput.trim();
-        }
-        if (!branch) {
-            continue;
-        }
-        assignments.push({
-            repoName: repo.name,
-            repoPath,
-            branch
-        });
-    }
-    return assignments;
-}
-/**
- * Helper function to extract DatabaseModel from various event sources
- * (direct database object, VS Code TreeItem, or command arguments)
- */
-function extractDatabaseFromEvent(event) {
-    if (!event) {
-        return null;
-    }
-    // Check if we received a VS Code TreeItem (context menu call)
-    // TreeItems have properties like collapsibleState, label, id, and our custom database property
-    if (typeof event === 'object' &&
-        'collapsibleState' in event &&
-        'label' in event &&
-        'database' in event &&
-        event.database) {
-        return event.database;
-    }
-    // Check if it's a direct database object (has required DatabaseModel properties)
-    if (typeof event === 'object' &&
-        event.name &&
-        event.id &&
-        typeof event.name === 'string' &&
-        typeof event.id === 'string') {
-        return event;
-    }
-    return null;
-}
+const path = __importStar(__webpack_require__(3));
+const baseTreeProvider_1 = __webpack_require__(4);
+const settingsStore_1 = __webpack_require__(5);
+const versionsService_1 = __webpack_require__(23);
+const sortOptions_1 = __webpack_require__(26);
+const utils_1 = __webpack_require__(7);
+const notifications_1 = __webpack_require__(13);
+const environment_1 = __webpack_require__(27);
+const dbs_1 = __webpack_require__(31);
+/** Tree provider for the Databases view of the selected project. */
 class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     sortPreferences;
     constructor(sortPreferences) {
@@ -494,166 +255,120 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         const { project } = result;
         const dbs = project.dbs;
         if (!dbs) {
-            (0, utils_1.showError)('No databases are configured for this project.');
+            (0, notifications_1.showError)('No databases are configured for this project.');
             return [];
         }
         const sortId = this.sortPreferences.get('dbSelector', (0, sortOptions_1.getDefaultSortOption)('dbSelector'));
         const sortedDbs = [...dbs].sort((a, b) => this.compareDatabases(a, b, sortId));
-        return sortedDbs.map(db => {
-            // Handle date parsing defensively
-            let editedDate;
-            try {
-                editedDate = new Date(db.createdAt);
-                if (isNaN(editedDate.getTime())) {
-                    // If date is invalid, use current date
-                    editedDate = new Date();
-                }
+        return sortedDbs.map(db => this.buildDatabaseItem(db));
+    }
+    buildDatabaseItem(db) {
+        // Handle date parsing defensively
+        let editedDate = new Date(db.createdAt);
+        if (isNaN(editedDate.getTime())) {
+            editedDate = new Date();
+        }
+        const formattedDate = `${editedDate.toISOString().split('T')[0]} ${editedDate.toTimeString().split(' ')[0]}`;
+        const dbLabel = (0, utils_1.getDatabaseLabel)(db);
+        const badges = `${db.isItABackup ? ' ☁️' : ''}${db.isExisting ? ' 📂' : ''}`;
+        const mainLabel = (0, utils_1.addActiveIndicator)(dbLabel, db.isSelected) + badges;
+        const treeItem = new vscode.TreeItem(mainLabel, vscode.TreeItemCollapsibleState.None);
+        treeItem.id = db.id;
+        treeItem.description = this.buildDescription(db);
+        treeItem.tooltip = new vscode.MarkdownString(this.buildTooltip(db, dbLabel, formattedDate));
+        treeItem.contextValue = 'database';
+        // Store the database object for commands that need it
+        treeItem.database = db;
+        treeItem.command = {
+            command: 'dbSelector.selectDb',
+            title: 'Select DB',
+            arguments: [db]
+        };
+        return treeItem;
+    }
+    /** Description shows branch and version info as subtext. */
+    buildDescription(db) {
+        if (db.versionId) {
+            const version = this.lookupVersion(db.versionId);
+            const versionLabel = version ? version.name : `${db.versionId.substring(0, 8)}...`;
+            if (db.branchName && db.branchName !== version?.odooVersion) {
+                return `🌿 ${db.branchName} • 📦 ${versionLabel}`;
             }
-            catch {
-                // If date parsing fails, use current date
-                editedDate = new Date();
+            return `📦 ${versionLabel}`;
+        }
+        if (db.branchName && db.branchName.trim() !== '') {
+            let description = `🌿 ${db.branchName}`;
+            const effectiveOdooVersion = (0, dbs_1.getEffectiveOdooVersion)(db);
+            if (effectiveOdooVersion && effectiveOdooVersion !== db.branchName) {
+                description += ` • 🛠️ ${effectiveOdooVersion}`;
             }
-            const formattedDate = `${editedDate.toISOString().split('T')[0]} ${editedDate.toTimeString().split(' ')[0]}`;
-            const dbLabel = (0, utils_1.getDatabaseLabel)(db);
-            const badges = `${db.isItABackup ? ' ☁️' : ''}${db.isExisting ? ' 📂' : ''}`;
-            const mainLabel = (0, utils_1.addActiveIndicator)(dbLabel, db.isSelected) + badges;
-            // Description shows branch and version info as subtext
-            let description = '';
-            if (db.versionId) {
-                // Try to get version name from versions service
-                try {
-                    const versionsService = versionsService_1.VersionsService.getInstance();
-                    const version = versionsService.getVersion(db.versionId);
-                    if (version) {
-                        // Show branch first if different from version's odoo version, then version
-                        if (db.branchName && db.branchName !== version.odooVersion) {
-                            description = `🌿 ${db.branchName} • 📦 ${version.name}`;
-                        }
-                        else {
-                            description = `📦 ${version.name}`;
-                        }
-                    }
-                    else {
-                        // Fallback to version ID if version not found
-                        if (db.branchName) {
-                            description = `🌿 ${db.branchName} • 📦 ${db.versionId.substring(0, 8)}...`;
-                        }
-                        else {
-                            description = `📦 ${db.versionId.substring(0, 8)}...`;
-                        }
-                    }
-                }
-                catch (error) {
-                    // Fallback to version ID if versions service fails
-                    if (db.branchName) {
-                        description = `🌿 ${db.branchName} • 📦 ${db.versionId.substring(0, 8)}...`;
-                    }
-                    else {
-                        description = `📦 ${db.versionId.substring(0, 8)}...`;
-                    }
-                }
-            }
-            else if (db.branchName && db.branchName.trim() !== '') {
-                // Show branch when no version is selected
-                description = `🌿 ${db.branchName}`;
-                const effectiveOdooVersion = getEffectiveOdooVersion(db);
-                if (effectiveOdooVersion && effectiveOdooVersion !== db.branchName) {
-                    description += ` • 🛠️ ${effectiveOdooVersion}`;
-                }
+            return description;
+        }
+        const effectiveOdooVersion = (0, dbs_1.getEffectiveOdooVersion)(db);
+        return effectiveOdooVersion && effectiveOdooVersion.trim() !== '' ? `🛠️ ${effectiveOdooVersion}` : '';
+    }
+    buildTooltip(db, dbLabel, formattedDate) {
+        const tooltipDetails = [];
+        tooltipDetails.push(`**${dbLabel}**`);
+        tooltipDetails.push(`**Internal name:** ${db.id}`);
+        if (db.versionId) {
+            const version = this.lookupVersion(db.versionId);
+            if (version) {
+                tooltipDetails.push(`**Version:** ${version.name}`);
+                tooltipDetails.push(`**Odoo Version:** ${version.odooVersion}`);
             }
             else {
-                const effectiveOdooVersion = getEffectiveOdooVersion(db);
-                if (effectiveOdooVersion && effectiveOdooVersion.trim() !== '') {
-                    description = `🛠️ ${effectiveOdooVersion}`;
-                }
-                else {
-                    description = '';
-                }
+                tooltipDetails.push(`**Version ID:** ${db.versionId}`);
             }
-            const treeItem = new vscode.TreeItem(mainLabel, vscode.TreeItemCollapsibleState.None);
-            treeItem.id = `${db.id}-${formattedDate}`;
-            treeItem.description = description;
-            // Create tooltip - push each detail into array, join with \n\n at the end
-            const tooltipDetails = [];
-            // Database name header
-            tooltipDetails.push(`**${dbLabel}**`);
-            tooltipDetails.push(`**Internal name:** ${db.id}`);
-            // Version information
-            if (db.versionId) {
-                try {
-                    const versionsService = versionsService_1.VersionsService.getInstance();
-                    const version = versionsService.getVersion(db.versionId);
-                    if (version) {
-                        tooltipDetails.push(`**Version:** ${version.name}`);
-                        tooltipDetails.push(`**Odoo Version:** ${version.odooVersion}`);
-                    }
-                    else {
-                        tooltipDetails.push(`**Version ID:** ${db.versionId}`);
-                    }
-                }
-                catch (error) {
-                    tooltipDetails.push(`**Version ID:** ${db.versionId}`);
-                }
+        }
+        else {
+            tooltipDetails.push(`**Version:** None`);
+            const effectiveOdooVersion = (0, dbs_1.getEffectiveOdooVersion)(db);
+            if (effectiveOdooVersion) {
+                tooltipDetails.push(`**Odoo Version:** ${effectiveOdooVersion}`);
             }
-            else {
-                tooltipDetails.push(`**Version:** None`);
-                // Get Odoo version from effective lookup (legacy odooVersion property)
-                const effectiveOdooVersion = getEffectiveOdooVersion(db);
-                if (effectiveOdooVersion) {
-                    tooltipDetails.push(`**Odoo Version:** ${effectiveOdooVersion}`);
-                }
+        }
+        if (db.branchName) {
+            tooltipDetails.push(`**Branch:** ${db.branchName}`);
+        }
+        const projectRepoBranches = (0, environment_1.sanitizeProjectRepoBranchAssignments)(db.projectRepoBranches);
+        if (projectRepoBranches.length > 0) {
+            const formattedRepoBranches = projectRepoBranches
+                .map(entry => `- ${entry.repoName || path.basename(entry.repoPath)}: \`${entry.branch}\``)
+                .join('\n');
+            tooltipDetails.push(`**Project Repo Branches:**\n${formattedRepoBranches}`);
+        }
+        tooltipDetails.push(`**Created:** ${formattedDate}`);
+        if (db.kind === 'template') {
+            tooltipDetails.push(`**Type:** Created from template`);
+        }
+        else if (db.isItABackup) {
+            tooltipDetails.push(`**Type:** Restored from backup`);
+            if (db.sqlFilePath) {
+                tooltipDetails.push(`**Backup Path:** ${db.sqlFilePath}`);
             }
-            // Branch information
-            if (db.branchName) {
-                tooltipDetails.push(`**Branch:** ${db.branchName}`);
-            }
-            const projectRepoBranches = (0, environment_1.sanitizeProjectRepoBranchAssignments)(db.projectRepoBranches);
-            if (projectRepoBranches.length > 0) {
-                const formattedRepoBranches = projectRepoBranches
-                    .map(entry => `- ${entry.repoName || path.basename(entry.repoPath)}: \`${entry.branch}\``)
-                    .join('\n');
-                tooltipDetails.push(`**Project Repo Branches:**\n${formattedRepoBranches}`);
-            }
-            // Database details
-            tooltipDetails.push(`**Created:** ${formattedDate}`);
-            // Database type
-            if (db.kind === 'template') {
-                tooltipDetails.push(`**Type:** Created from template`);
-            }
-            else if (db.isItABackup) {
-                tooltipDetails.push(`**Type:** Restored from backup`);
-                if (db.sqlFilePath) {
-                    tooltipDetails.push(`**Backup Path:** ${db.sqlFilePath}`);
-                }
-            }
-            else if (db.isExisting) {
-                tooltipDetails.push(`**Type:** Connected to existing database`);
-            }
-            else {
-                tooltipDetails.push(`**Type:** Fresh database`);
-            }
-            // Status
-            if (db.isSelected) {
-                tooltipDetails.push(`**Status:** Currently selected`);
-            }
-            // Module information
-            if (db.modules && db.modules.length > 0) {
-                tooltipDetails.push(`**Modules:** ${db.modules.length} installed`);
-            }
-            // Join all details with double newlines
-            const tooltip = tooltipDetails.join('\n\n');
-            treeItem.tooltip = new vscode.MarkdownString(tooltip);
-            // Set contextValue to enable right-click context menu
-            treeItem.contextValue = 'database';
-            // Store the database object for commands that need it
-            treeItem.database = db;
-            treeItem.command = {
-                command: 'dbSelector.selectDb',
-                title: 'Select DB',
-                arguments: [db]
-            };
-            return treeItem;
-        });
+        }
+        else if (db.isExisting) {
+            tooltipDetails.push(`**Type:** Connected to existing database`);
+        }
+        else {
+            tooltipDetails.push(`**Type:** Fresh database`);
+        }
+        if (db.isSelected) {
+            tooltipDetails.push(`**Status:** Currently selected`);
+        }
+        if (db.modules && db.modules.length > 0) {
+            tooltipDetails.push(`**Modules:** ${db.modules.length} installed`);
+        }
+        return tooltipDetails.join('\n\n');
+    }
+    lookupVersion(versionId) {
+        try {
+            return versionsService_1.VersionsService.getInstance().getVersion(versionId);
+        }
+        catch {
+            return undefined;
+        }
     }
     compareDatabases(a, b, sortId) {
         const activeDelta = Number(b.isSelected) - Number(a.isSelected);
@@ -688,7 +403,7 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         if (db.branchName && db.branchName.trim() !== '') {
             return db.branchName.toLowerCase();
         }
-        const effective = getEffectiveOdooVersion(db);
+        const effective = (0, dbs_1.getEffectiveOdooVersion)(db);
         return effective ? effective.toLowerCase() : '';
     }
     getNameValue(db) {
@@ -710,1574 +425,13 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     }
 }
 exports.DbsTreeProvider = DbsTreeProvider;
-function collectDumpSources(root, maxDepth = 2) {
-    const results = [];
-    const stack = [{ dir: root, depth: 0 }];
-    while (stack.length > 0) {
-        const { dir, depth } = stack.pop();
-        let entries;
-        try {
-            entries = fs.readdirSync(dir, { withFileTypes: true });
-        }
-        catch (error) {
-            logger_1.logger.warn(`Failed to read dumps directory ${dir}:`, error);
-            continue;
-        }
-        for (const entry of entries) {
-            const fullPath = path.join(dir, entry.name);
-            const relativeLabel = path.relative(root, fullPath) || entry.name;
-            if (entry.isDirectory()) {
-                const dumpSqlPath = path.join(fullPath, 'dump.sql');
-                if (fs.existsSync(dumpSqlPath)) {
-                    results.push({
-                        label: relativeLabel,
-                        kind: 'folder',
-                        path: fullPath
-                    });
-                }
-                if (depth < maxDepth) {
-                    stack.push({ dir: fullPath, depth: depth + 1 });
-                }
-            }
-            else if (entry.isFile() && entry.name.toLowerCase().endsWith('.zip')) {
-                results.push({
-                    label: relativeLabel,
-                    kind: 'zip',
-                    path: fullPath
-                });
-            }
-            else if (entry.isFile() && (entry.name.toLowerCase().endsWith('.sql') || entry.name.toLowerCase().endsWith('.gz'))) {
-                results.push({
-                    label: relativeLabel,
-                    kind: 'file',
-                    path: fullPath
-                });
-            }
-        }
-    }
-    return results;
-}
-async function getDbDumpFolder(dumpsFolder, searchFilter) {
-    dumpsFolder = (0, utils_1.normalizePath)(dumpsFolder);
-    if (!fs.existsSync(dumpsFolder)) {
-        (0, utils_1.showError)(`Dumps folder not found: ${dumpsFolder}`);
-        return undefined;
-    }
-    const matches = collectDumpSources(dumpsFolder);
-    if (matches.length === 0) {
-        (0, utils_1.showInfo)(`No dump directories or zip archives found in ${path.basename(dumpsFolder)}.`);
-        return undefined;
-    }
-    let foldersToShow = matches.map(item => ({
-        label: item.label,
-        description: item.path,
-        detail: item.kind === 'zip' ? 'Zip archive' : item.kind === 'file' ? 'SQL dump file' : 'Folder',
-        item
-    }));
-    if (searchFilter && searchFilter.trim() !== '') {
-        const filterTerm = searchFilter.toLowerCase();
-        const exact = foldersToShow.filter(item => item.label.toLowerCase() === filterTerm);
-        const partial = foldersToShow.filter(item => item.label.toLowerCase().includes(filterTerm) && item.label.toLowerCase() !== filterTerm);
-        const rest = foldersToShow.filter(item => !item.label.toLowerCase().includes(filterTerm));
-        foldersToShow = [...exact, ...partial, ...rest];
-    }
-    const selected = await vscode.window.showQuickPick(foldersToShow, {
-        placeHolder: searchFilter
-            ? `Select a dump source (showing "${searchFilter}" matches first)`
-            : 'Select a folder or zip archive containing dump.sql',
-        ignoreFocusOut: true
-    });
-    return selected?.item;
-}
-const TEMPLATE_DB_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/;
-const RESERVED_DATABASE_NAMES = new Set(['postgres', 'template0', 'template1']);
-function sanitizeDatabaseTemplates(source) {
-    if (!Array.isArray(source)) {
-        return [];
-    }
-    const seenTemplateDbNames = new Set();
-    const normalized = [];
-    for (const entry of source) {
-        if (!entry || typeof entry !== 'object') {
-            continue;
-        }
-        const candidate = entry;
-        const templateDbName = typeof candidate.templateDbName === 'string'
-            ? candidate.templateDbName.trim()
-            : typeof candidate.name === 'string'
-                ? candidate.name.trim()
-                : '';
-        if (!templateDbName) {
-            continue;
-        }
-        const dedupeKey = templateDbName.toLowerCase();
-        if (seenTemplateDbNames.has(dedupeKey)) {
-            continue;
-        }
-        seenTemplateDbNames.add(dedupeKey);
-        const name = typeof candidate.name === 'string' && candidate.name.trim() !== ''
-            ? candidate.name.trim()
-            : templateDbName;
-        const sourceDbName = typeof candidate.sourceDbName === 'string' && candidate.sourceDbName.trim() !== ''
-            ? candidate.sourceDbName.trim()
-            : undefined;
-        const createdAt = typeof candidate.createdAt === 'string' && candidate.createdAt.trim() !== ''
-            ? candidate.createdAt
-            : new Date().toISOString();
-        const updatedAt = typeof candidate.updatedAt === 'string' && candidate.updatedAt.trim() !== ''
-            ? candidate.updatedAt
-            : undefined;
-        normalized.push({
-            name,
-            templateDbName,
-            sourceDbName,
-            createdAt,
-            updatedAt
-        });
-    }
-    return normalized.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-}
-function validateTemplateDatabaseName(value, existingTemplateNames, originalName) {
-    const trimmed = value.trim();
-    if (trimmed.length === 0) {
-        return 'Template name cannot be empty.';
-    }
-    if (!TEMPLATE_DB_NAME_PATTERN.test(trimmed)) {
-        return 'Use letters, numbers, "-" or "_" only. The name must not start with "-".';
-    }
-    if (RESERVED_DATABASE_NAMES.has(trimmed.toLowerCase())) {
-        return `"${trimmed}" is reserved and cannot be used as a template name.`;
-    }
-    const isRenamingSameTemplate = originalName && originalName.toLowerCase() === trimmed.toLowerCase();
-    if (!isRenamingSameTemplate && existingTemplateNames.has(trimmed.toLowerCase())) {
-        return 'A template with this PostgreSQL name already exists.';
-    }
-    return null;
-}
-function queryPostgresDatabases() {
-    try {
-        const output = (0, child_process_1.execSync)(`psql -d postgres -tAc "SELECT datname FROM pg_database ORDER BY datname;"`, {
-            stdio: ['ignore', 'pipe', 'pipe']
-        }).toString('utf8');
-        return output
-            .split('\n')
-            .map(name => name.trim())
-            .filter(name => name.length > 0);
-    }
-    catch (error) {
-        logger_1.logger.warn('Failed to query PostgreSQL database list:', error);
-        return [];
-    }
-}
-function quotePgIdentifier(identifier) {
-    return `"${identifier.replace(/"/g, '""')}"`;
-}
-function quotePgLiteral(value) {
-    return `'${value.replace(/'/g, "''")}'`;
-}
-async function runSpawnCommand(command, args, cwd) {
-    await new Promise((resolve, reject) => {
-        const child = (0, child_process_1.spawn)(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-        let stderr = '';
-        child.stderr?.on('data', chunk => {
-            stderr += chunk.toString();
-        });
-        child.on('error', error => {
-            reject(new Error(`Failed to execute "${command}": ${error.message}`));
-        });
-        child.on('close', code => {
-            if (code === 0) {
-                resolve();
-                return;
-            }
-            const details = stderr.trim();
-            reject(new Error(details || `${command} exited with code ${code ?? 'unknown'}`));
-        });
-    });
-}
-async function cloneDatabaseFromTemplate(targetDbName, templateDbName) {
-    await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: `Setting up database ${targetDbName}`,
-        cancellable: false
-    }, async (progress) => {
-        progress.report({ message: 'Checking database existence...', increment: 20 });
-        const checkCommand = `psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname=${quotePgLiteral(targetDbName)}"`;
-        const exists = (0, child_process_1.execSync)(checkCommand).toString().trim() === '1';
-        if (exists) {
-            progress.report({ message: 'Dropping existing database...', increment: 20 });
-            (0, child_process_1.execSync)(`dropdb ${targetDbName}`, { stdio: 'inherit' });
-        }
-        (0, database_1.clearInstalledModuleCache)(targetDbName);
-        progress.report({ message: `Cloning from template "${templateDbName}"...`, increment: 50 });
-        await runSpawnCommand('createdb', ['-T', templateDbName, targetDbName]);
-        (0, database_1.clearInstalledModuleCache)(targetDbName);
-        progress.report({ message: 'Complete!', increment: 30 });
-    });
-}
-function getTemplateQuickPickItems(templates) {
-    return templates.map(template => ({
-        label: template.name,
-        description: template.templateDbName,
-        detail: template.sourceDbName ? `Source DB: ${template.sourceDbName}` : 'Source DB not recorded',
-        template
-    }));
-}
-async function promptTemplateSelection(templates, placeHolder) {
-    if (templates.length === 0) {
-        return undefined;
-    }
-    const selected = await vscode.window.showQuickPick(getTemplateQuickPickItems(templates), {
-        placeHolder,
-        ignoreFocusOut: true
-    });
-    return selected?.template;
-}
-const CREATION_METHOD_ITEMS = {
-    fresh: {
-        label: 'Fresh Database',
-        description: 'Create a new empty database and install modules',
-        detail: 'Start with a clean Odoo installation',
-        method: 'fresh'
-    },
-    dump: {
-        label: 'From Dump File',
-        description: 'Restore database from a dump/backup file',
-        detail: 'Import an existing database backup',
-        method: 'dump'
-    },
-    existing: {
-        label: 'Connect to Existing',
-        description: 'Reference an already existing database',
-        detail: 'Use a database that already exists in PostgreSQL',
-        method: 'existing'
-    },
-    template: {
-        label: 'From Template',
-        description: 'Create a database by cloning a saved template',
-        detail: 'Fast DB creation using createdb -T <template>',
-        method: 'template'
-    }
-};
-const NEW_DB_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/;
-async function pickExistingPostgresDatabase() {
-    const linkedIdentifiers = await collectExistingDatabaseIdentifiers();
-    const candidates = queryPostgresDatabases()
-        .filter(name => !RESERVED_DATABASE_NAMES.has(name.toLowerCase()));
-    const choices = [
-        ...candidates.map(name => ({
-            label: name,
-            description: linkedIdentifiers.has(name.toLowerCase()) ? 'Already linked to a project' : undefined,
-            action: 'select',
-            dbName: name
-        })),
-        {
-            label: '$(pencil) Enter database name manually',
-            detail: 'Use this if the database is not listed.',
-            action: 'manual'
-        }
-    ];
-    const selection = await vscode.window.showQuickPick(choices, {
-        placeHolder: 'Select the existing PostgreSQL database to connect',
-        ignoreFocusOut: true
-    });
-    if (!selection) {
-        return undefined;
-    }
-    if (selection.action === 'select') {
-        return selection.dbName;
-    }
-    const manual = await vscode.window.showInputBox({
-        placeHolder: 'Enter the name of the existing PostgreSQL database',
-        prompt: 'Make sure the database exists in your PostgreSQL instance',
-        ignoreFocusOut: true,
-        validateInput: value => value.trim() ? null : 'Enter a database name to continue.'
-    });
-    return manual?.trim() || undefined;
-}
-async function linkDatabaseToVersion(dbId, versionId) {
-    const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
-    let changed = false;
-    for (const project of data.projects ?? []) {
-        for (const db of project.dbs ?? []) {
-            if (db?.id === dbId && !db.versionId) {
-                db.versionId = versionId;
-                changed = true;
-            }
-        }
-    }
-    if (changed) {
-        await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-    }
-}
-/**
- * Resolves which version profile a new database should use, without prompting:
- * fresh databases inherit the active version; restored/connected databases are
- * probed for their Odoo series (base module version) and matched to a version.
- */
-async function resolveVersionForNewDatabase(dbName, method) {
-    const versionsService = versionsService_1.VersionsService.getInstance();
-    await versionsService.initialize();
-    const activeVersion = versionsService.getActiveVersion();
-    if (method === 'fresh') {
-        return { versionId: activeVersion?.id, branchLabel: activeVersion?.odooVersion };
-    }
-    const series = await (0, database_1.detectOdooSeries)(dbName);
-    if (!series) {
-        return { versionId: activeVersion?.id, branchLabel: activeVersion?.odooVersion };
-    }
-    const match = versionsService.getVersions().find(version => (version.odooVersion ?? '').trim() === series);
-    if (match) {
-        return { versionId: match.id, branchLabel: series };
-    }
-    // Non-blocking offer to create the missing version profile.
-    void (0, utils_1.showInfo)(`Database "${dbName}" runs Odoo ${series}, but no matching version profile exists.`, 'Create Version', 'Ignore').then(async (choice) => {
-        if (choice !== 'Create Version') {
-            return;
-        }
-        try {
-            const created = await versionsService.createVersion(`Odoo ${series}`, series);
-            await linkDatabaseToVersion(dbName, created.id);
-            (0, utils_1.showAutoInfo)(`Created version "Odoo ${series}" and linked it to "${dbName}"`, 3000);
-            await vscode.commands.executeCommand('dbSelector.refresh');
-        }
-        catch (error) {
-            (0, utils_1.showError)(`Failed to create version for Odoo ${series}: ${error.message}`);
-        }
-    });
-    return { versionId: undefined, branchLabel: series };
-}
-async function createDb(projectName, repos, dumpFolderPath, _settings, options = {}) {
-    // Step 1: creation method — the only decision that cannot be inferred.
-    let creationMethod;
-    if (options.initialMethod) {
-        creationMethod = options.initialMethod;
-    }
-    else {
-        const methodItems = Object.values(CREATION_METHOD_ITEMS)
-            .filter(item => options.allowExistingOption !== false || item.method !== 'existing');
-        const selection = await vscode.window.showQuickPick(methodItems, {
-            placeHolder: 'How do you want to create this database?',
-            ignoreFocusOut: true
-        });
-        if (!selection) {
-            return undefined;
-        }
-        creationMethod = selection.method;
-    }
-    // Step 2: method-specific source.
-    let sqlDumpPath;
-    let selectedTemplate;
-    let existingDbName;
-    switch (creationMethod) {
-        case 'dump': {
-            const selection = await getDbDumpFolder(dumpFolderPath, projectName);
-            if (!selection) {
-                return undefined;
-            }
-            if (selection.kind === 'folder') {
-                const candidate = path.join(selection.path, 'dump.sql');
-                if (!fs.existsSync(candidate)) {
-                    (0, utils_1.showError)(`dump.sql not found inside ${selection.path}`);
-                    return undefined;
-                }
-                sqlDumpPath = candidate;
-            }
-            else {
-                sqlDumpPath = selection.path;
-            }
-            break;
-        }
-        case 'template': {
-            const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
-            const templates = sanitizeDatabaseTemplates(data.dbTemplates);
-            if (templates.length === 0) {
-                (0, utils_1.showInfo)('No database templates found. Use "Manage Database Templates" to create one first.');
-                return undefined;
-            }
-            selectedTemplate = await promptTemplateSelection(templates, 'Select a template to clone into the new database');
-            if (!selectedTemplate) {
-                return undefined;
-            }
-            break;
-        }
-        case 'existing': {
-            existingDbName = await pickExistingPostgresDatabase();
-            if (!existingDbName) {
-                return undefined;
-            }
-            break;
-        }
-        case 'fresh':
-            break;
-    }
-    // Step 3: database name — pre-filled suggestion, one Enter to accept.
-    const creationTimestamp = new Date();
-    const existingIdentifiers = await collectExistingDatabaseIdentifiers();
-    const dbKind = creationMethod;
-    let dbName;
-    if (existingDbName) {
-        dbName = existingDbName;
-    }
-    else {
-        const suggestion = (0, dbNaming_1.generateDatabaseIdentifiers)({
-            projectName,
-            kind: dbKind,
-            timestamp: creationTimestamp,
-            existingInternalNames: existingIdentifiers
-        }).internalName;
-        const nameInput = await vscode.window.showInputBox({
-            prompt: 'Database name (used as the PostgreSQL identifier)',
-            value: suggestion,
-            ignoreFocusOut: true,
-            validateInput: value => {
-                const trimmed = value.trim();
-                if (!trimmed) {
-                    return 'Database name cannot be empty.';
-                }
-                if (!NEW_DB_NAME_PATTERN.test(trimmed)) {
-                    return 'Use letters, numbers, "-" or "_" only. The name must not start with "-".';
-                }
-                if (RESERVED_DATABASE_NAMES.has(trimmed.toLowerCase())) {
-                    return `"${trimmed}" is a reserved database name.`;
-                }
-                if (existingIdentifiers.has(trimmed.toLowerCase())) {
-                    return 'A database with this name is already linked to a project.';
-                }
-                return null;
-            }
-        });
-        if (nameInput === undefined) {
-            return undefined;
-        }
-        dbName = nameInput.trim();
-    }
-    // Step 4: create/restore the PostgreSQL database.
-    if (creationMethod === 'dump' && sqlDumpPath) {
-        await setupDatabase(dbName, sqlDumpPath);
-    }
-    else if (creationMethod === 'template' && selectedTemplate) {
-        await cloneDatabaseFromTemplate(dbName, selectedTemplate.templateDbName);
-    }
-    else if (creationMethod === 'fresh') {
-        await setupDatabase(dbName, undefined);
-    }
-    // Step 5: infer the environment instead of prompting for it. The version is
-    // auto-detected from the database itself; the current branch of every
-    // project repo is captured as the database's working state.
-    const { versionId, branchLabel } = await resolveVersionForNewDatabase(dbName, creationMethod);
-    const projectRepoBranches = await (0, environment_1.captureCurrentRepoBranches)(repos);
-    return new db_1.DatabaseModel(dbName, creationTimestamp, {
-        isSelected: true,
-        isItABackup: creationMethod === 'dump',
-        sqlFilePath: sqlDumpPath,
-        isExisting: creationMethod === 'existing',
-        branchName: branchLabel ?? '',
-        versionId,
-        displayName: dbName,
-        internalName: dbName,
-        kind: dbKind,
-        projectRepoBranches
-    });
-}
-async function persistDatabaseTemplates(data, templates) {
-    const normalized = sanitizeDatabaseTemplates(templates);
-    data.dbTemplates = normalized;
-    await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-    return normalized;
-}
-function collectProjectDatabaseNames(data) {
-    if (!Array.isArray(data.projects)) {
-        return [];
-    }
-    const projectDbNames = data.projects.flatMap(project => Array.isArray(project?.dbs)
-        ? project.dbs
-            .map((db) => typeof db?.id === 'string' ? db.id.trim() : '')
-            .filter((name) => name.length > 0)
-        : []);
-    return Array.from(new Set(projectDbNames)).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-}
-async function promptTemplateSourceDatabase(data) {
-    const projectDbNames = collectProjectDatabaseNames(data);
-    const postgresDbNames = queryPostgresDatabases()
-        .filter(name => !RESERVED_DATABASE_NAMES.has(name.toLowerCase()));
-    const mergedNames = Array.from(new Set([
-        ...projectDbNames,
-        ...postgresDbNames
-    ])).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-    const choices = [
-        ...mergedNames.map(dbName => ({
-            label: dbName,
-            description: projectDbNames.includes(dbName) ? 'Linked project database' : 'PostgreSQL database',
-            action: 'select',
-            dbName
-        })),
-        {
-            label: '$(pencil) Enter database name manually',
-            detail: 'Use this if the source database is not listed.',
-            action: 'manual'
-        }
-    ];
-    const selection = await vscode.window.showQuickPick(choices, {
-        placeHolder: 'Select the source database to clone into a template',
-        ignoreFocusOut: true
-    });
-    if (!selection) {
-        return undefined;
-    }
-    if (selection.action === 'select') {
-        return selection.dbName;
-    }
-    const customInput = await vscode.window.showInputBox({
-        prompt: 'Enter source PostgreSQL database name',
-        placeHolder: 'e.g. my_migrated_dump',
-        ignoreFocusOut: true,
-        validateInput: (value) => {
-            if (!value || value.trim().length === 0) {
-                return 'Database name cannot be empty.';
-            }
-            if (value.trim().startsWith('-')) {
-                return 'Database name cannot start with "-".';
-            }
-            return null;
-        }
-    });
-    if (customInput === undefined) {
-        return undefined;
-    }
-    return customInput.trim();
-}
-async function manageDatabaseTemplates() {
-    const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
-    let templates = sanitizeDatabaseTemplates(data.dbTemplates);
-    while (true) {
-        const templateCount = templates.length;
-        const actions = [
-            {
-                label: '$(add) Create New Template from Existing DB',
-                description: 'Clone a source DB into a new template database',
-                action: 'create'
-            },
-            {
-                label: '$(cloud-download) Import Existing Template DB',
-                description: 'Register an already-created template database (no cloning)',
-                action: 'importDb'
-            },
-            {
-                label: '$(folder-opened) Import Templates from JSON',
-                description: 'Merge templates from an exported template file',
-                action: 'importFile'
-            },
-            {
-                label: '$(export) Export Templates to JSON',
-                description: templateCount > 0 ? `${templateCount} template(s) will be exported` : 'No templates to export',
-                action: 'exportFile'
-            },
-            ...templates.map(template => ({
-                label: `$(database) ${template.name}`,
-                description: template.templateDbName,
-                detail: template.sourceDbName ? `Source DB: ${template.sourceDbName}` : 'No source DB metadata',
-                action: 'template',
-                template
-            })),
-            {
-                label: '$(check) Done',
-                action: 'done'
-            }
-        ];
-        const selectedAction = await vscode.window.showQuickPick(actions, {
-            placeHolder: 'Manage database templates',
-            ignoreFocusOut: true
-        });
-        if (!selectedAction || selectedAction.action === 'done') {
-            return;
-        }
-        if (selectedAction.action === 'create') {
-            const sourceDbName = await promptTemplateSourceDatabase(data);
-            if (!sourceDbName) {
-                continue;
-            }
-            const templateDbNames = new Set(templates.map(template => template.templateDbName.toLowerCase()));
-            const suggestedName = sourceDbName.startsWith('tpl_') ? sourceDbName : `tpl_${sourceDbName}`;
-            const templateNameInput = await vscode.window.showInputBox({
-                prompt: `Enter template database name cloned from "${sourceDbName}"`,
-                placeHolder: 'e.g. tpl_migration_base',
-                value: suggestedName,
-                ignoreFocusOut: true,
-                validateInput: (value) => validateTemplateDatabaseName(value, templateDbNames)
-            });
-            if (templateNameInput === undefined) {
-                continue;
-            }
-            const templateDbName = templateNameInput.trim();
-            await vscode.window.withProgress({
-                location: vscode.ProgressLocation.Notification,
-                title: `Creating template ${templateDbName}`,
-                cancellable: false
-            }, async (progress) => {
-                progress.report({ message: `Cloning "${sourceDbName}"...`, increment: 30 });
-                await runSpawnCommand('createdb', [templateDbName, '-T', sourceDbName]);
-                progress.report({ message: 'Saving template metadata...', increment: 70 });
-            });
-            const now = new Date().toISOString();
-            templates = await persistDatabaseTemplates(data, [
-                ...templates,
-                {
-                    name: templateDbName,
-                    templateDbName,
-                    sourceDbName,
-                    createdAt: now,
-                    updatedAt: now
-                }
-            ]);
-            (0, utils_1.showAutoInfo)(`Template "${templateDbName}" created from "${sourceDbName}"`, 3000);
-            continue;
-        }
-        if (selectedAction.action === 'importDb') {
-            const postgresDbNames = queryPostgresDatabases()
-                .filter(name => !RESERVED_DATABASE_NAMES.has(name.toLowerCase()));
-            const existingTemplateDbNames = new Set(templates.map(template => template.templateDbName.toLowerCase()));
-            const importCandidates = postgresDbNames.filter(name => !existingTemplateDbNames.has(name.toLowerCase()));
-            if (importCandidates.length === 0) {
-                (0, utils_1.showInfo)('No PostgreSQL databases available to import as templates.');
-                continue;
-            }
-            const selectedCandidates = await vscode.window.showQuickPick(importCandidates.map(name => ({
-                label: name,
-                description: 'PostgreSQL database',
-                dbName: name
-            })), {
-                placeHolder: 'Select database(s) to register as templates',
-                canPickMany: true,
-                ignoreFocusOut: true
-            });
-            if (selectedCandidates === undefined) {
-                continue;
-            }
-            if (selectedCandidates.length === 0) {
-                (0, utils_1.showInfo)('No templates selected for import.');
-                continue;
-            }
-            const now = new Date().toISOString();
-            templates = await persistDatabaseTemplates(data, [
-                ...templates,
-                ...selectedCandidates.map(candidate => ({
-                    name: candidate.dbName,
-                    templateDbName: candidate.dbName,
-                    createdAt: now,
-                    updatedAt: now
-                }))
-            ]);
-            (0, utils_1.showAutoInfo)(`Imported ${selectedCandidates.length} template(s)`, 2500);
-            continue;
-        }
-        if (selectedAction.action === 'importFile') {
-            const selectedFiles = await vscode.window.showOpenDialog({
-                canSelectFiles: true,
-                canSelectFolders: false,
-                canSelectMany: false,
-                filters: {
-                    'JSON Files': ['json'],
-                    'All Files': ['*']
-                },
-                openLabel: 'Import Templates'
-            });
-            if (!selectedFiles || selectedFiles.length === 0) {
-                continue;
-            }
-            try {
-                const content = await vscode.workspace.fs.readFile(selectedFiles[0]);
-                const parsed = JSON.parse(Buffer.from(content).toString('utf8'));
-                const imported = Array.isArray(parsed) ? parsed : parsed.templates;
-                const sanitizedImported = sanitizeDatabaseTemplates(imported);
-                if (sanitizedImported.length === 0) {
-                    (0, utils_1.showInfo)('No valid templates found in the selected file.');
-                    continue;
-                }
-                const existingTemplateDbNames = new Set(templates.map(template => template.templateDbName.toLowerCase()));
-                const toAdd = sanitizedImported.filter(template => !existingTemplateDbNames.has(template.templateDbName.toLowerCase()));
-                if (toAdd.length === 0) {
-                    (0, utils_1.showInfo)('All templates in the selected file already exist.');
-                    continue;
-                }
-                templates = await persistDatabaseTemplates(data, [...templates, ...toAdd]);
-                (0, utils_1.showAutoInfo)(`Imported ${toAdd.length} template(s) from JSON`, 2500);
-            }
-            catch (error) {
-                (0, utils_1.showError)(`Failed to import templates: ${error.message}`);
-            }
-            continue;
-        }
-        if (selectedAction.action === 'exportFile') {
-            if (templates.length === 0) {
-                (0, utils_1.showInfo)('No templates available to export.');
-                continue;
-            }
-            const saveUri = await vscode.window.showSaveDialog({
-                defaultUri: vscode.Uri.file(path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(), 'odoo-db-templates.json')),
-                filters: {
-                    'JSON Files': ['json'],
-                    'All Files': ['*']
-                },
-                saveLabel: 'Export Templates'
-            });
-            if (!saveUri) {
-                continue;
-            }
-            const payload = {
-                exportedAt: new Date().toISOString(),
-                templates
-            };
-            await vscode.workspace.fs.writeFile(saveUri, Buffer.from(JSON.stringify(payload, null, 2), 'utf8'));
-            (0, utils_1.showAutoInfo)(`Exported ${templates.length} template(s)`, 2500);
-            continue;
-        }
-        if (selectedAction.action === 'template') {
-            const selectedTemplate = selectedAction.template;
-            if (!selectedTemplate) {
-                continue;
-            }
-            const templateAction = await vscode.window.showQuickPick([
-                {
-                    label: '$(edit) Rename Template',
-                    description: `Current DB name: ${selectedTemplate.templateDbName}`,
-                    action: 'rename'
-                },
-                {
-                    label: '$(trash) Delete Template',
-                    description: `Remove "${selectedTemplate.name}"`,
-                    action: 'delete'
-                },
-                {
-                    label: '$(arrow-left) Back',
-                    action: 'back'
-                }
-            ], {
-                placeHolder: `Manage template "${selectedTemplate.name}"`,
-                ignoreFocusOut: true
-            });
-            if (!templateAction || templateAction.action === 'back') {
-                continue;
-            }
-            if (templateAction.action === 'rename') {
-                const templateDbNames = new Set(templates.map(template => template.templateDbName.toLowerCase()));
-                const newNameInput = await vscode.window.showInputBox({
-                    prompt: `Rename template "${selectedTemplate.templateDbName}"`,
-                    value: selectedTemplate.templateDbName,
-                    ignoreFocusOut: true,
-                    validateInput: (value) => validateTemplateDatabaseName(value, templateDbNames, selectedTemplate.templateDbName)
-                });
-                if (newNameInput === undefined) {
-                    continue;
-                }
-                const newTemplateDbName = newNameInput.trim();
-                if (newTemplateDbName.toLowerCase() === selectedTemplate.templateDbName.toLowerCase()) {
-                    continue;
-                }
-                const renameSql = `ALTER DATABASE ${quotePgIdentifier(selectedTemplate.templateDbName)} RENAME TO ${quotePgIdentifier(newTemplateDbName)};`;
-                await runSpawnCommand('psql', ['-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-c', renameSql]);
-                const now = new Date().toISOString();
-                templates = await persistDatabaseTemplates(data, templates.map(template => template.templateDbName.toLowerCase() === selectedTemplate.templateDbName.toLowerCase()
-                    ? {
-                        ...template,
-                        name: template.name === selectedTemplate.templateDbName ? newTemplateDbName : template.name,
-                        templateDbName: newTemplateDbName,
-                        updatedAt: now
-                    }
-                    : template));
-                (0, utils_1.showAutoInfo)(`Template renamed to "${newTemplateDbName}"`, 2500);
-                continue;
-            }
-            const deleteChoice = await (0, notifications_1.showModalWarning)(`Delete template "${selectedTemplate.name}" (${selectedTemplate.templateDbName})?`, 'Delete Template DB + Metadata', 'Delete Metadata Only');
-            if (!deleteChoice) {
-                continue;
-            }
-            if (deleteChoice === 'Delete Template DB + Metadata') {
-                await runSpawnCommand('dropdb', ['--if-exists', selectedTemplate.templateDbName]);
-            }
-            templates = await persistDatabaseTemplates(data, templates.filter(template => template.templateDbName.toLowerCase() !== selectedTemplate.templateDbName.toLowerCase()));
-            (0, utils_1.showAutoInfo)(`Template "${selectedTemplate.name}" deleted`, 2500);
-            continue;
-        }
-    }
-}
-async function restoreDb(event) {
-    const database = extractDatabaseFromEvent(event);
-    if (!database) {
-        throw new Error('Invalid database object for restoration');
-    }
-    const databaseLabel = (0, utils_1.getDatabaseLabel)(database);
-    // Check if database has a backup file path
-    if (!database.sqlFilePath || database.sqlFilePath.trim() === '') {
-        throw new Error('No backup file path defined for this database');
-    }
-    // Ask for confirmation
-    const confirm = await (0, notifications_1.showModalWarning)(`Are you sure you want to restore the database "${databaseLabel}"? This will overwrite the existing database.`, 'Restore');
-    if (confirm !== 'Restore') {
-        return; // User cancelled
-    }
-    await setupDatabase(database.id, database.sqlFilePath);
-    (0, utils_1.showAutoInfo)(`Database "${databaseLabel}" restored successfully`, 3000);
-}
-async function setupDatabase(dbName, dumpPath, remove = false) {
-    if (dumpPath && !fs.existsSync(dumpPath)) {
-        logger_1.logger.error(`❌ Dump file not found at: ${dumpPath}`);
-        return;
-    }
-    let preparedDump;
-    try {
-        preparedDump = dumpPath ? await prepareDumpForImport(dumpPath) : undefined;
-    }
-    catch (error) {
-        (0, utils_1.showError)(`Unable to read dump file: ${error.message ?? error}`);
-        return;
-    }
-    const operation = remove ? 'Removing' : preparedDump ? 'Setting up' : 'Creating';
-    try {
-        await vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: `${operation} database ${dbName}`,
-            cancellable: false
-        }, async (progress) => {
-            try {
-                progress.report({ message: 'Checking database existence...', increment: 10 });
-                const checkCommand = `psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${dbName}'"`;
-                const result = (0, child_process_1.execSync)(checkCommand).toString().trim();
-                if (result === '1') {
-                    progress.report({ message: 'Dropping existing database...', increment: 20 });
-                    logger_1.logger.debug(`🗑️ Dropping existing database: ${dbName}`);
-                    (0, child_process_1.execSync)(`dropdb ${dbName}`, { stdio: 'inherit' });
-                }
-                (0, database_1.clearInstalledModuleCache)(dbName);
-                if (!remove) {
-                    progress.report({ message: 'Creating database...', increment: 40 });
-                    logger_1.logger.debug(`🚀 Creating database: ${dbName}`);
-                    (0, child_process_1.execSync)(`createdb ${dbName}`, { stdio: 'inherit' });
-                    if (preparedDump) {
-                        progress.report({
-                            message: preparedDump.progressMessage ?? 'Importing dump file...',
-                            increment: 50
-                        });
-                        logger_1.logger.debug(`📥 Importing SQL dump into ${dbName}`);
-                        try {
-                            await importPreparedDump(dbName, preparedDump);
-                        }
-                        catch (error) {
-                            if (dumpPath && preparedDump.kind === 'stream' && isToolchainUnavailableError(error)) {
-                                logger_1.logger.warn('Streaming import unavailable. Falling back to temporary dump extraction.');
-                                progress.report({
-                                    message: dumpPath.toLowerCase().endsWith('.zip')
-                                        ? 'Streaming unavailable. Extracting archive to temporary SQL file...'
-                                        : 'Streaming unavailable. Decompressing dump to temporary SQL file...'
-                                });
-                                const fallbackDump = prepareDumpViaTempFile(dumpPath);
-                                try {
-                                    progress.report({ message: 'Importing extracted SQL dump...' });
-                                    await importPreparedDump(dbName, fallbackDump);
-                                }
-                                finally {
-                                    fallbackDump.cleanup?.();
-                                }
-                            }
-                            else {
-                                throw error;
-                            }
-                        }
-                        (0, database_1.clearInstalledModuleCache)(dbName);
-                        progress.report({ message: 'Configuring database...', increment: 70 });
-                        logger_1.logger.debug(`⚙️ Configuring database for development use`);
-                        const newUuid = (0, crypto_1.randomUUID)();
-                        logger_1.logger.debug(`⏸️ Disabling cron jobs`);
-                        (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE ir_cron SET active='f';"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        logger_1.logger.debug(`📧 Disabling mail servers`);
-                        (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE ir_mail_server SET active=false;"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        logger_1.logger.debug(`⏰ Extending database expiry`);
-                        (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE ir_config_parameter SET value = '2090-09-21 00:00:00' WHERE key = 'database.expiration_date';"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        logger_1.logger.debug(`🔑 Updating database UUID`);
-                        (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE ir_config_parameter SET value = '${newUuid}' WHERE key = 'database.uuid';"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        logger_1.logger.debug(`📨 Adding mailcatcher server`);
-                        try {
-                            (0, child_process_1.execSync)(`psql ${dbName} -c "INSERT INTO ir_mail_server(active,name,smtp_host,smtp_port,smtp_encryption) VALUES (true,'mailcatcher','localhost',1025,false);"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        }
-                        catch (error) {
-                            logger_1.logger.warn(`⚠️ Failed to add mailcatcher server (continuing setup): ${error}`);
-                        }
-                        logger_1.logger.debug(`👤 Resetting user passwords to login names`);
-                        (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE res_users SET password=login;"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        logger_1.logger.debug(`🔐 Configuring admin user`);
-                        (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE res_users SET password='admin' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE res_users SET login='admin' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE res_users SET totp_secret='' WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE res_users SET active=true WHERE id=2;"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        logger_1.logger.debug(`🏢 Clearing employee PINs`);
-                        (0, child_process_1.execSync)(`psql ${dbName} -c "UPDATE hr_employee SET pin = '';"`, { stdio: 'inherit', shell: '/bin/sh' });
-                        progress.report({ message: 'Database configured for development', increment: 90 });
-                    }
-                    else {
-                        progress.report({ message: 'Database created (empty)...', increment: 90 });
-                        logger_1.logger.debug(`📝 Empty database created: ${dbName}`);
-                    }
-                }
-                progress.report({ message: 'Complete!', increment: 100 });
-                logger_1.logger.debug(`✅ Database "${dbName}" is ready.`);
-            }
-            catch (error) {
-                logger_1.logger.error(`❌ Error: ${error.message}`);
-                (0, utils_1.showError)(`Failed to setup database: ${error.message}`);
-            }
-        });
-    }
-    finally {
-        if (preparedDump?.cleanup) {
-            try {
-                preparedDump.cleanup();
-            }
-            catch (cleanupError) {
-                logger_1.logger.warn('Failed to cleanup temporary dump files:', cleanupError);
-            }
-        }
-    }
-}
-async function selectDatabase(event) {
-    const database = extractDatabaseFromEvent(event);
-    if (!database) {
-        (0, utils_1.showError)('Could not identify the database to select.');
-        return;
-    }
-    const databaseLabel = (0, utils_1.getDatabaseLabel)(database);
-    const result = await settingsStore_1.SettingsStore.getSelectedProject();
-    if (!result) {
-        return;
-    }
-    const { data, project } = result;
-    const projectIndex = data.projects.findIndex((p) => p.uid === project.uid);
-    if (projectIndex === -1) {
-        (0, utils_1.showError)('The selected project could not be found.');
-        return;
-    }
-    // Update database selection
-    const oldSelectedDbIndex = project.dbs.findIndex((db) => db.isSelected);
-    if (oldSelectedDbIndex !== -1) {
-        project.dbs[oldSelectedDbIndex].isSelected = false;
-    }
-    const newSelectedDbIndex = project.dbs.findIndex((db) => db.id === database.id);
-    if (newSelectedDbIndex !== -1) {
-        project.dbs[newSelectedDbIndex].isSelected = true;
-    }
-    const selectedDatabase = newSelectedDbIndex !== -1 ? project.dbs[newSelectedDbIndex] : database;
-    await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-    // Align the workbench (active version, core branches, project repo
-    // branches) to the database through the single switch pipeline.
-    try {
-        await (0, environment_1.alignEnvironment)((0, environment_1.buildDatabaseEnvironmentTarget)(selectedDatabase, project.repos ?? []), { label: `Database "${databaseLabel}"` });
-    }
-    catch (error) {
-        logger_1.logger.error('Error while aligning environment for database selection:', error);
-        (0, utils_1.showWarning)(`Database selected, but environment switching failed: ${error.message}`);
-    }
-    (0, utils_1.showBriefStatus)(`Database switched to: ${databaseLabel}`, 2000);
-}
-async function deleteDb(event) {
-    const db = extractDatabaseFromEvent(event);
-    if (!db) {
-        (0, utils_1.showError)('Could not identify the database to delete.');
-        return;
-    }
-    const dbLabel = (0, utils_1.getDatabaseLabel)(db);
-    const result = await settingsStore_1.SettingsStore.getSelectedProject();
-    if (!result) {
-        return;
-    }
-    const { data, project } = result;
-    // Find the project index in the projects array
-    const projectIndex = data.projects.findIndex((p) => p.uid === project.uid);
-    if (projectIndex === -1) {
-        (0, utils_1.showError)('The selected project could not be found.');
-        return;
-    }
-    // Ask for confirmation
-    const confirm = await (0, notifications_1.showModalWarning)(`Are you sure you want to delete the database "${dbLabel}"?`, 'Delete');
-    if (confirm !== 'Delete') {
-        return; // User cancelled
-    }
-    // Delete the database from PostgreSQL
-    await setupDatabase(db.id, undefined, true);
-    // Remove from project data
-    project.dbs = project.dbs.filter((database) => database.id !== db.id);
-    // If the deleted database was selected and there are other databases, select the first one
-    if (db.isSelected && project.dbs.length > 0) {
-        project.dbs[0].isSelected = true;
-    }
-    // Save the updated data without settings
-    const updatedData = (0, utils_1.stripSettings)(data);
-    await settingsStore_1.SettingsStore.saveWithoutComments(updatedData);
-    (0, utils_1.showAutoInfo)(`Database "${dbLabel}" deleted successfully`, 2500);
-    if (db.isSelected && project.dbs.length > 0) {
-        (0, utils_1.showBriefStatus)(`Switched to database: ${(0, utils_1.getDatabaseLabel)(project.dbs[0])}`, 2000);
-    }
-}
-async function changeDatabaseVersion(event) {
-    try {
-        const db = extractDatabaseFromEvent(event);
-        if (!db) {
-            (0, utils_1.showError)('Could not identify the database whose version should change.');
-            return;
-        }
-        const dbLabel = (0, utils_1.getDatabaseLabel)(db);
-        const result = await settingsStore_1.SettingsStore.getSelectedProject();
-        if (!result) {
-            return;
-        }
-        const { data, project } = result;
-        // Find the project index in the projects array
-        const projectIndex = data.projects.findIndex((p) => p.uid === project.uid);
-        if (projectIndex === -1) {
-            (0, utils_1.showError)('The selected project could not be found.');
-            return;
-        }
-        // Find the database index
-        const dbIndex = project.dbs.findIndex((database) => database.id === db.id);
-        if (dbIndex === -1) {
-            (0, utils_1.showError)('The selected database could not be found.');
-            return;
-        }
-        // Get available versions
-        const versionsService = versionsService_1.VersionsService.getInstance();
-        await versionsService.initialize();
-        const availableVersions = versionsService.getVersions();
-        // Create version choices including "No Version" option
-        const versionChoices = [
-            {
-                label: "$(close) No Version",
-                description: "Remove version association",
-                detail: "Database will use current branch settings without version",
-                versionId: undefined
-            },
-            ...availableVersions.map(version => ({
-                label: `$(versions) ${version.name}`,
-                description: `Odoo ${version.odooVersion}`,
-                detail: `Use settings and configuration from ${version.name}`,
-                versionId: version.id
-            }))
-        ];
-        // Show current version in the placeholder
-        let currentVersionText = "No version";
-        if (db.versionId) {
-            const currentVersion = versionsService.getVersion(db.versionId);
-            currentVersionText = currentVersion ? currentVersion.name : "Unknown version";
-        }
-        else {
-            const effectiveOdooVersion = getEffectiveOdooVersion(db);
-            if (effectiveOdooVersion) {
-                currentVersionText = `Branch: ${effectiveOdooVersion}`;
-            }
-        }
-        const selectedChoice = await vscode.window.showQuickPick(versionChoices, {
-            placeHolder: `Current: ${currentVersionText}. Select a new version for database "${dbLabel}"`,
-            ignoreFocusOut: true
-        });
-        if (!selectedChoice) {
-            return; // User cancelled
-        }
-        // Update the database version - modify the existing database object in place
-        // to avoid date serialization issues
-        if (selectedChoice.versionId) {
-            const selectedVersion = versionsService.getVersion(selectedChoice.versionId);
-            if (selectedVersion) {
-                project.dbs[dbIndex].versionId = selectedChoice.versionId;
-                // Don't set odooVersion when version is assigned - it should come from the version
-                project.dbs[dbIndex].odooVersion = undefined;
-            }
-        }
-        else {
-            // Remove version association but preserve original branch name
-            project.dbs[dbIndex].versionId = undefined;
-            // When no version, we can fall back to empty odooVersion (will use branchName if available)
-            project.dbs[dbIndex].odooVersion = undefined;
-            // Keep branchName - it's independent of version management
-        }
-        // Save only the databases array to avoid touching settings
-        const updatedData = (0, utils_1.stripSettings)(data);
-        await settingsStore_1.SettingsStore.saveWithoutComments(updatedData);
-        // Show confirmation message
-        const updatedDb = project.dbs[dbIndex]; // Use the updated database object
-        const dbNameForMessage = (0, utils_1.getDatabaseLabel)(updatedDb) || dbLabel;
-        const newVersionText = selectedChoice.versionId
-            ? `version "${availableVersions.find(v => v.id === selectedChoice.versionId)?.name}"`
-            : "no version";
-        (0, utils_1.showAutoInfo)(`Database "${dbNameForMessage}" updated to use ${newVersionText}`, 3000);
-        // If this is the currently selected database, align the workbench to the new version.
-        if (db.isSelected && selectedChoice.versionId) {
-            await (0, environment_1.alignEnvironment)((0, environment_1.buildDatabaseEnvironmentTarget)(project.dbs[dbIndex], project.repos ?? []), { label: `Database "${dbNameForMessage}"` });
-        }
-    }
-    catch (error) {
-        (0, utils_1.showError)(`Failed to change database version: ${error.message}`);
-        logger_1.logger.error('Error in changeDatabaseVersion:', error);
-    }
-}
-async function changeDatabaseProjectRepoBranches(event) {
-    try {
-        const db = extractDatabaseFromEvent(event);
-        if (!db) {
-            (0, utils_1.showError)('Could not identify the database whose project repo branches should change.');
-            return;
-        }
-        const dbLabel = (0, utils_1.getDatabaseLabel)(db);
-        const result = await settingsStore_1.SettingsStore.getSelectedProject();
-        if (!result) {
-            return;
-        }
-        const { data, project } = result;
-        const projectIndex = data.projects.findIndex((p) => p.uid === project.uid);
-        if (projectIndex === -1) {
-            (0, utils_1.showError)('The selected project could not be found.');
-            return;
-        }
-        const dbIndex = project.dbs.findIndex((database) => database.id === db.id);
-        if (dbIndex === -1) {
-            (0, utils_1.showError)('The selected database could not be found.');
-            return;
-        }
-        const existingAssignments = (0, environment_1.sanitizeProjectRepoBranchAssignments)(project.dbs[dbIndex].projectRepoBranches);
-        const updatedAssignments = await promptProjectRepoBranchAssignments(project.repos ?? [], existingAssignments, 'edit');
-        if (updatedAssignments === undefined) {
-            return;
-        }
-        project.dbs[dbIndex].projectRepoBranches = updatedAssignments;
-        const updatedData = (0, utils_1.stripSettings)(data);
-        await settingsStore_1.SettingsStore.saveWithoutComments(updatedData);
-        if (updatedAssignments.length > 0) {
-            (0, utils_1.showAutoInfo)(`Updated project repo branch mapping for "${dbLabel}" (${updatedAssignments.length} repo(s))`, 3000);
-        }
-        else {
-            (0, utils_1.showAutoInfo)(`Cleared project repo branch mapping for "${dbLabel}"`, 3000);
-        }
-        if (project.dbs[dbIndex].isSelected && updatedAssignments.length > 0) {
-            // The user explicitly configured this mapping; apply it right away.
-            await (0, environment_1.alignEnvironment)({ repoAssignments: (0, environment_1.resolveProjectRepoBranchAssignments)(project.dbs[dbIndex], project.repos ?? []) }, { label: `Database "${dbLabel}"`, behavior: 'auto' });
-        }
-    }
-    catch (error) {
-        (0, utils_1.showError)(`Failed to update project repo branch mapping: ${error.message}`);
-        logger_1.logger.error('Error in changeDatabaseProjectRepoBranches:', error);
-    }
-}
-function normalizeErrorMessage(error) {
-    if (error instanceof Error) {
-        return error.message;
-    }
-    return String(error);
-}
-function isToolchainUnavailableError(error) {
-    const message = normalizeErrorMessage(error).toLowerCase();
-    return message.includes('enoent') || message.includes('not found') || message.includes('failed to start unzip') || message.includes('failed to start gunzip');
-}
-function createProcessStream(process, label) {
-    if (!process.stdout || !process.stderr) {
-        throw new Error(`${label} process did not expose readable stdio streams.`);
-    }
-    const output = new stream_1.PassThrough();
-    let stderr = '';
-    process.stderr.on('data', chunk => {
-        stderr += chunk.toString();
-    });
-    process.stdout.pipe(output);
-    process.on('error', error => {
-        output.destroy(new Error(`Failed to start ${label}: ${normalizeErrorMessage(error)}`));
-    });
-    process.on('close', code => {
-        if (code !== 0) {
-            const details = stderr.trim();
-            output.destroy(new Error(`${label} exited with code ${code}${details ? `: ${details}` : ''}`));
-        }
-    });
-    return {
-        stream: output,
-        dispose: () => {
-            if (!process.killed) {
-                process.kill('SIGTERM');
-            }
-            output.destroy();
-        }
-    };
-}
-function createCommandStream(command, args, label) {
-    const process = (0, child_process_1.spawn)(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    return createProcessStream(process, label);
-}
-function createZipGzipStream(dumpPath, entry) {
-    const unzipProcess = (0, child_process_1.spawn)('unzip', ['-p', dumpPath, entry], { stdio: ['ignore', 'pipe', 'pipe'] });
-    const gunzipProcess = (0, child_process_1.spawn)('gunzip', ['-c'], { stdio: ['pipe', 'pipe', 'pipe'] });
-    const output = new stream_1.PassThrough();
-    let unzipStderr = '';
-    let gunzipStderr = '';
-    unzipProcess.stderr.on('data', chunk => {
-        unzipStderr += chunk.toString();
-    });
-    gunzipProcess.stderr.on('data', chunk => {
-        gunzipStderr += chunk.toString();
-    });
-    unzipProcess.stdout.pipe(gunzipProcess.stdin);
-    gunzipProcess.stdout.pipe(output);
-    unzipProcess.on('error', error => {
-        output.destroy(new Error(`Failed to start unzip: ${normalizeErrorMessage(error)}`));
-    });
-    gunzipProcess.on('error', error => {
-        output.destroy(new Error(`Failed to start gunzip: ${normalizeErrorMessage(error)}`));
-    });
-    unzipProcess.on('close', code => {
-        if (code !== 0) {
-            const details = unzipStderr.trim();
-            output.destroy(new Error(`unzip exited with code ${code}${details ? `: ${details}` : ''}`));
-            if (!gunzipProcess.killed) {
-                gunzipProcess.kill('SIGTERM');
-            }
-        }
-    });
-    gunzipProcess.on('close', code => {
-        if (code !== 0) {
-            const details = gunzipStderr.trim();
-            output.destroy(new Error(`gunzip exited with code ${code}${details ? `: ${details}` : ''}`));
-        }
-    });
-    return {
-        stream: output,
-        dispose: () => {
-            if (!unzipProcess.killed) {
-                unzipProcess.kill('SIGTERM');
-            }
-            if (!gunzipProcess.killed) {
-                gunzipProcess.kill('SIGTERM');
-            }
-            output.destroy();
-        }
-    };
-}
-async function inspectZipEntries(dumpPath) {
-    return new Promise((resolve, reject) => {
-        const inspectProcess = (0, child_process_1.spawn)('unzip', ['-Z1', dumpPath], { stdio: ['ignore', 'pipe', 'pipe'] });
-        let stderr = '';
-        let lineBuffer = '';
-        let firstEntry;
-        let sqlEntry;
-        let gzEntry;
-        let entriesCount = 0;
-        const processLine = (line) => {
-            const entry = line.trim();
-            if (!entry) {
-                return;
-            }
-            entriesCount++;
-            if (!firstEntry) {
-                firstEntry = entry;
-            }
-            const lower = entry.toLowerCase();
-            if (!sqlEntry && lower.endsWith('.sql') && !lower.endsWith('.sql.gz')) {
-                sqlEntry = entry;
-            }
-            if (!gzEntry && lower.endsWith('.sql.gz')) {
-                gzEntry = entry;
-            }
-        };
-        inspectProcess.stdout.on('data', chunk => {
-            lineBuffer += chunk.toString();
-            let newlineIndex = lineBuffer.indexOf('\n');
-            while (newlineIndex !== -1) {
-                processLine(lineBuffer.slice(0, newlineIndex));
-                lineBuffer = lineBuffer.slice(newlineIndex + 1);
-                newlineIndex = lineBuffer.indexOf('\n');
-            }
-        });
-        inspectProcess.stderr.on('data', chunk => {
-            stderr += chunk.toString();
-        });
-        inspectProcess.on('error', error => {
-            reject(new Error(`Failed to start unzip: ${normalizeErrorMessage(error)}`));
-        });
-        inspectProcess.on('close', code => {
-            if (lineBuffer.trim().length > 0) {
-                processLine(lineBuffer);
-            }
-            if (code !== 0) {
-                const details = stderr.trim();
-                reject(new Error(`unzip exited with code ${code}${details ? `: ${details}` : ''}`));
-                return;
-            }
-            if (entriesCount === 0) {
-                reject(new Error('Archive is empty.'));
-                return;
-            }
-            resolve({ firstEntry, sqlEntry, gzEntry });
-        });
-    });
-}
-async function prepareDumpForImport(dumpPath) {
-    if (dumpPath.endsWith('.zip')) {
-        const inspection = await inspectZipEntries(dumpPath);
-        const selectedEntry = inspection.sqlEntry ?? inspection.gzEntry ?? inspection.firstEntry;
-        if (!selectedEntry) {
-            throw new Error('Archive does not contain any files.');
-        }
-        if (selectedEntry.toLowerCase().endsWith('.sql.gz')) {
-            return {
-                kind: 'stream',
-                originalPath: dumpPath,
-                progressMessage: 'Unzipping, decompressing, and importing dump archive...',
-                openStream: () => createZipGzipStream(dumpPath, selectedEntry)
-            };
-        }
-        return {
-            kind: 'stream',
-            originalPath: dumpPath,
-            progressMessage: 'Unzipping and importing dump archive...',
-            openStream: () => createCommandStream('unzip', ['-p', dumpPath, selectedEntry], 'unzip')
-        };
-    }
-    if (dumpPath.endsWith('.gz')) {
-        return {
-            kind: 'stream',
-            originalPath: dumpPath,
-            progressMessage: 'Decompressing and importing dump file...',
-            openStream: () => createCommandStream('gunzip', ['-c', dumpPath], 'gunzip')
-        };
-    }
-    return {
-        kind: 'file',
-        originalPath: dumpPath,
-        progressMessage: 'Importing dump file...',
-        sqlPath: dumpPath
-    };
-}
-async function importDumpStream(dbName, stream) {
-    await new Promise((resolve, reject) => {
-        const psqlProcess = (0, child_process_1.spawn)('psql', ['-d', dbName], { stdio: ['pipe', 'inherit', 'pipe'] });
-        let stderr = '';
-        let settled = false;
-        const finish = (error) => {
-            if (settled) {
-                return;
-            }
-            settled = true;
-            if (error) {
-                reject(error);
-                return;
-            }
-            resolve();
-        };
-        psqlProcess.stderr.on('data', chunk => {
-            stderr += chunk.toString();
-            process.stderr.write(chunk);
-        });
-        psqlProcess.on('error', error => {
-            finish(new Error(`Failed to start psql: ${normalizeErrorMessage(error)}`));
-        });
-        psqlProcess.on('close', code => {
-            if (code === 0) {
-                finish();
-                return;
-            }
-            const details = stderr.trim();
-            finish(new Error(`psql exited with code ${code}${details ? `: ${details}` : ''}`));
-        });
-        stream.on('error', error => {
-            if (!psqlProcess.killed) {
-                psqlProcess.kill('SIGTERM');
-            }
-            finish(error);
-        });
-        psqlProcess.stdin.on('error', error => {
-            const ioError = error;
-            if (ioError.code !== 'EPIPE') {
-                finish(error);
-            }
-        });
-        stream.pipe(psqlProcess.stdin);
-    });
-}
-async function importPreparedDump(dbName, preparedDump) {
-    if (preparedDump.kind === 'file') {
-        if (!preparedDump.sqlPath) {
-            throw new Error('No dump path available for file-based import.');
-        }
-        (0, child_process_1.execSync)(`psql ${dbName} < "${preparedDump.sqlPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
-        return;
-    }
-    if (!preparedDump.openStream) {
-        throw new Error('No stream provider configured for this dump source.');
-    }
-    const openedStream = preparedDump.openStream();
-    try {
-        await importDumpStream(dbName, openedStream.stream);
-    }
-    finally {
-        openedStream.dispose();
-    }
-}
-function prepareDumpViaTempFile(dumpPath) {
-    if (dumpPath.endsWith('.zip')) {
-        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odoo-dump-'));
-        const tempSqlPath = path.join(tempDir, 'dump.sql');
-        try {
-            const listOutput = (0, child_process_1.execSync)(`unzip -Z1 "${dumpPath}"`, { encoding: 'utf8', shell: '/bin/sh' });
-            const entries = listOutput.split('\n').map(line => line.trim()).filter(Boolean);
-            if (entries.length === 0) {
-                throw new Error('Archive is empty.');
-            }
-            const sqlEntry = entries.find(entry => entry.toLowerCase().endsWith('.sql') && !entry.toLowerCase().endsWith('.sql.gz'));
-            const gzEntry = entries.find(entry => entry.toLowerCase().endsWith('.sql.gz'));
-            if (sqlEntry) {
-                (0, child_process_1.execSync)(`unzip -p "${dumpPath}" "${sqlEntry}" > "${tempSqlPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
-            }
-            else if (gzEntry) {
-                (0, child_process_1.execSync)(`unzip -p "${dumpPath}" "${gzEntry}" | gunzip -c > "${tempSqlPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
-            }
-            else {
-                (0, child_process_1.execSync)(`unzip -p "${dumpPath}" > "${tempSqlPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
-            }
-            return {
-                kind: 'file',
-                originalPath: dumpPath,
-                sqlPath: tempSqlPath,
-                cleanup: () => {
-                    try {
-                        fs.rmSync(tempDir, { recursive: true, force: true });
-                    }
-                    catch (cleanupError) {
-                        logger_1.logger.warn('Failed to cleanup temporary unzip folder:', cleanupError);
-                    }
-                }
-            };
-        }
-        catch (error) {
-            try {
-                fs.rmSync(tempDir, { recursive: true, force: true });
-            }
-            catch {
-                // ignore
-            }
-            throw error;
-        }
-    }
-    if (dumpPath.endsWith('.gz')) {
-        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odoo-dump-'));
-        const tempSqlPath = path.join(tempDir, 'dump.sql');
-        try {
-            (0, child_process_1.execSync)(`gunzip -c "${dumpPath}" > "${tempSqlPath}"`, { stdio: 'inherit', shell: '/bin/sh' });
-            return {
-                kind: 'file',
-                originalPath: dumpPath,
-                sqlPath: tempSqlPath,
-                cleanup: () => {
-                    try {
-                        fs.rmSync(tempDir, { recursive: true, force: true });
-                    }
-                    catch (cleanupError) {
-                        logger_1.logger.warn('Failed to cleanup temporary gunzip folder:', cleanupError);
-                    }
-                }
-            };
-        }
-        catch (error) {
-            try {
-                fs.rmSync(tempDir, { recursive: true, force: true });
-            }
-            catch {
-                // ignore
-            }
-            throw error;
-        }
-    }
-    return {
-        kind: 'file',
-        originalPath: dumpPath,
-        sqlPath: dumpPath
-    };
-}
 
 
 /***/ }),
 /* 3 */
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+/***/ ((module) => {
 
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.DatabaseModel = void 0;
-const versionsService_1 = __webpack_require__(4);
-const logger_1 = __webpack_require__(15);
-class DatabaseModel {
-    name;
-    isItABackup;
-    createdAt;
-    modules;
-    isSelected = false;
-    sqlFilePath = '';
-    id = '';
-    isExisting = false;
-    branchName = '';
-    odooVersion; // Optional - only used when no version is assigned
-    versionId; // Reference to the VersionModel
-    displayName;
-    internalName;
-    kind;
-    projectRepoBranches = [];
-    constructor(name, createdAt, options = {}) {
-        this.displayName = options.displayName || name;
-        this.name = this.displayName;
-        this.createdAt = createdAt;
-        this.modules = options.modules || [];
-        this.isItABackup = options.isItABackup || false;
-        this.isSelected = options.isSelected || false;
-        this.sqlFilePath = options.sqlFilePath || '';
-        this.isExisting = options.isExisting || false;
-        this.branchName = options.branchName || '';
-        this.odooVersion = options.odooVersion; // Optional - undefined when version is assigned
-        this.versionId = options.versionId;
-        this.kind = options.kind;
-        this.projectRepoBranches = Array.isArray(options.projectRepoBranches)
-            ? options.projectRepoBranches
-                .filter(entry => !!entry && typeof entry.branch === 'string' && entry.branch.trim() !== '')
-                .map(entry => ({
-                repoName: entry.repoName || '',
-                repoPath: entry.repoPath || '',
-                branch: entry.branch.trim()
-            }))
-            : [];
-        if (options.internalName) {
-            this.internalName = options.internalName;
-        }
-        else if (this.isExisting) {
-            this.internalName = name;
-        }
-        else {
-            this.internalName = `${name}-${createdAt.toISOString().split('T')[0]}`;
-        }
-        this.id = this.internalName;
-    }
-    /**
-     * Gets the effective Odoo version for this database.
-     * First checks if there's a version assigned, then falls back to legacy odooVersion property.
-     */
-    getEffectiveOdooVersion() {
-        if (this.versionId) {
-            try {
-                const versionsService = versionsService_1.VersionsService.getInstance();
-                const version = versionsService.getVersion(this.versionId);
-                if (version) {
-                    return version.odooVersion;
-                }
-            }
-            catch (error) {
-                logger_1.logger.warn(`Failed to get version for database ${this.name}:`, error);
-                // Fall through to legacy property
-            }
-        }
-        // Fall back to legacy odooVersion property for backward compatibility
-        return this.odooVersion || undefined;
-    }
-}
-exports.DatabaseModel = DatabaseModel;
-
+module.exports = require("node:path");
 
 /***/ }),
 /* 4 */
@@ -2318,733 +472,77 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.VersionsService = void 0;
+exports.BaseTreeProvider = void 0;
 const vscode = __importStar(__webpack_require__(1));
-const version_1 = __webpack_require__(5);
-const settingsStore_1 = __webpack_require__(7);
-const utils_1 = __webpack_require__(9);
-const logger_1 = __webpack_require__(15);
-const notifications_1 = __webpack_require__(17);
-class VersionsService {
-    static instance;
-    versions = new Map();
-    activeVersionId;
-    initialized = false;
-    constructor() {
-        // Initialization will be done via initialize() method
-    }
-    static getInstance() {
-        if (!VersionsService.instance) {
-            VersionsService.instance = new VersionsService();
-        }
-        return VersionsService.instance;
-    }
-    /**
-     * Initialize the service by loading versions
-     */
-    async initialize() {
-        if (!this.initialized) {
-            await this.loadVersions();
-            await this.validateAndRepairVersions();
-            this.initialized = true;
-        }
-    }
-    /**
-     * Load versions from odoo-debugger-data.json
-     */
-    async loadVersions() {
-        try {
-            const data = await settingsStore_1.SettingsStore.load();
-            const versionsData = data.versions || {};
-            const activeVersionId = data.activeVersion;
-            this.versions.clear();
-            // Load existing versions
-            Object.entries(versionsData).forEach(([id, versionData]) => {
-                const version = version_1.VersionModel.fromJSON(versionData);
-                if (version) {
-                    this.versions.set(id, version);
-                }
-            });
-            // Check if legacy settings exist - if so, skip auto-saving to preserve them for migration
-            const hasLegacySettings = await this.hasLegacySettings();
-            // Create default version if none exist
-            if (this.versions.size === 0) {
-                const defaultVersion = new version_1.VersionModel('Default Version', '17.0', // Odoo version
-                (0, utils_1.getDefaultVersionSettings)());
-                defaultVersion.isActive = true;
-                this.versions.set(defaultVersion.id, defaultVersion);
-                this.activeVersionId = defaultVersion.id;
-                // Only save if no legacy settings exist (to avoid destroying them before migration)
-                if (!hasLegacySettings) {
-                    await this.saveVersions();
-                }
-            }
-            else {
-                this.activeVersionId = activeVersionId;
-                // Ensure active version exists and update isActive flags
-                if (!this.activeVersionId || !this.versions.has(this.activeVersionId)) {
-                    this.activeVersionId = this.versions.keys().next().value;
-                }
-                // Update isActive flags for all versions
-                this.versions.forEach((version, id) => {
-                    version.isActive = (id === this.activeVersionId);
-                });
-                // Only save if no legacy settings exist (to avoid destroying them before migration)
-                if (!hasLegacySettings) {
-                    await this.saveVersions();
-                }
-            }
-        }
-        catch (error) {
-            logger_1.logger.error('Failed to load versions:', error);
-            // Create default version on error
-            const defaultVersion = new version_1.VersionModel('Default Version', '17.0', (0, utils_1.getDefaultVersionSettings)());
-            defaultVersion.isActive = true;
-            this.versions.set(defaultVersion.id, defaultVersion);
-            this.activeVersionId = defaultVersion.id;
-        }
-    }
-    /**
-     * Save all versions to odoo-debugger-data.json
-     */
-    async saveVersions() {
-        try {
-            const data = await settingsStore_1.SettingsStore.load();
-            const versionsData = {};
-            this.versions.forEach((version, id) => {
-                versionsData[id] = version.toJSON();
-            });
-            data.versions = versionsData;
-            data.activeVersion = this.activeVersionId;
-            await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-            logger_1.logger.debug(`Saved ${this.versions.size} versions successfully`);
-        }
-        catch (error) {
-            logger_1.logger.error('Failed to save versions:', error);
-            throw error; // Re-throw to propagate error up the chain
-        }
-    }
-    /**
-     * Save versions during migration without stripping settings (they'll be cleared separately)
-     */
-    async saveVersionsDuringMigration() {
-        try {
-            const data = await settingsStore_1.SettingsStore.load();
-            const versionsData = {};
-            this.versions.forEach((version, id) => {
-                versionsData[id] = version.toJSON();
-            });
-            data.versions = versionsData;
-            data.activeVersion = this.activeVersionId;
-            // During migration, don't strip settings - they'll be cleared by clearLegacySettings
-            await settingsStore_1.SettingsStore.saveWithoutComments(data);
-            logger_1.logger.debug(`Saved ${this.versions.size} versions during migration`);
-        }
-        catch (error) {
-            logger_1.logger.error('Failed to save versions during migration:', error);
-            throw error;
-        }
-    }
-    /**
- * Get all versions
+/**
+ * Shared base for the extension's tree data providers: owns the change
+ * emitter (and disposes it), and exposes refresh() supporting both full and
+ * element-scoped updates. Register instances in context.subscriptions so the
+ * emitter is cleaned up on deactivation.
  */
-    getVersions() {
-        return Array.from(this.versions.values());
+class BaseTreeProvider {
+    _onDidChangeTreeData = new vscode.EventEmitter();
+    onDidChangeTreeData = this._onDidChangeTreeData.event;
+    /** Refreshes the whole tree, or only `element` when provided. */
+    refresh(element) {
+        this._onDidChangeTreeData.fire(element);
     }
-    /**
-     * Get a specific version by ID
-     */
-    getVersion(id) {
-        return this.versions.get(id);
-    }
-    /**
-     * Get the currently active version
-     */
-    getActiveVersion() {
-        if (!this.activeVersionId) {
-            return undefined;
-        }
-        return this.versions.get(this.activeVersionId);
-    }
-    /**
-     * Get settings from the currently active version
-     * Falls back to default settings if no active version
-     */
-    async getActiveVersionSettings() {
-        await this.initialize(); // Ensure initialization
-        const activeVersion = this.getActiveVersion();
-        if (activeVersion?.settings) {
-            logger_1.logger.debug(`Using settings from active version: ${activeVersion.name}`);
-            return activeVersion.settings;
-        }
-        // Fallback: if no active version or no settings, create a temporary default
-        logger_1.logger.warn('No active version or settings found, creating temporary default settings');
-        // Create a version with default settings if none exists
-        if (this.versions.size === 0) {
-            const defaultVersion = new version_1.VersionModel('Default Version', '17.0', (0, utils_1.getDefaultVersionSettings)());
-            defaultVersion.isActive = true;
-            this.versions.set(defaultVersion.id, defaultVersion);
-            this.activeVersionId = defaultVersion.id;
-            await this.saveVersions();
-            return defaultVersion.settings;
-        }
-        // Return configuration-backed defaults as fallback
-        return (0, utils_1.getDefaultVersionSettings)();
-    }
-    /**
-     * Set active version
-     */
-    async setActiveVersion(id) {
-        await this.initialize(); // Ensure initialization
-        if (!this.versions.has(id)) {
-            logger_1.logger.error(`Version with id ${id} not found`);
-            return false;
-        }
-        const oldActiveVersionId = this.activeVersionId;
-        // Update isActive properties on all versions
-        this.versions.forEach((version, versionId) => {
-            version.isActive = (versionId === id);
-        });
-        this.activeVersionId = id;
-        try {
-            await this.saveVersions(); // Save all versions to update isActive flags
-            // Fire event for UI updates
-            vscode.commands.executeCommand('odoo.versionsChanged');
-            logger_1.logger.debug(`Successfully set active version from ${oldActiveVersionId} to ${id}`);
-            return true;
-        }
-        catch (error) {
-            logger_1.logger.error('Error saving active version:', error);
-            // Revert on error
-            this.activeVersionId = oldActiveVersionId;
-            this.versions.forEach((version, versionId) => {
-                version.isActive = (versionId === oldActiveVersionId);
-            });
-            return false;
-        }
-    }
-    /**
-     * Create a new version
-     */
-    async createVersion(name, odooVersion, settingsOverrides = {}) {
-        await this.initialize(); // Ensure initialization
-        // Get default settings from VS Code configuration
-        const defaultSettings = (0, utils_1.getDefaultVersionSettings)();
-        const mergedSettings = { ...defaultSettings, ...settingsOverrides };
-        const version = new version_1.VersionModel(name, odooVersion, mergedSettings);
-        this.versions.set(version.id, version);
-        await this.saveVersions();
-        vscode.commands.executeCommand('odoo.versionsChanged');
-        return version;
-    }
-    /**
-     * Update an existing version
-     */
-    async updateVersion(id, updates) {
-        await this.initialize(); // Ensure initialization
-        const version = this.versions.get(id);
-        if (!version) {
-            return false;
-        }
-        const updatesCopy = { ...updates };
-        let settingsPatch = updatesCopy.settings ? { ...updatesCopy.settings } : undefined;
-        if (settingsPatch) {
-            Object.assign(version.settings, settingsPatch);
-        }
-        const { settings, ...otherUpdates } = updatesCopy;
-        Object.assign(version, otherUpdates);
-        // Update the updatedAt timestamp
-        version.updatedAt = new Date();
-        await this.saveVersions();
-        vscode.commands.executeCommand('odoo.versionsChanged');
-        return true;
-    }
-    /**
-     * Delete a version
-     */
-    async deleteVersion(id) {
-        await this.initialize(); // Ensure initialization
-        if (!this.versions.has(id)) {
-            return false;
-        }
-        // Don't allow deleting the last version
-        if (this.versions.size <= 1) {
-            (0, notifications_1.showWarning)('Cannot delete the last version. At least one version must exist.');
-            return false;
-        }
-        // Clean up any database references to this version before deleting
-        await this.cleanupDatabaseVersionReferences(id);
-        this.versions.delete(id);
-        // If this was the active version, switch to another one
-        if (this.activeVersionId === id) {
-            this.activeVersionId = this.versions.keys().next().value;
-            // Update isActive flags for all versions
-            this.versions.forEach((version, versionId) => {
-                version.isActive = (versionId === this.activeVersionId);
-            });
-        }
-        await this.saveVersions();
-        vscode.commands.executeCommand('odoo.versionsChanged');
-        return true;
-    }
-    /**
-     * Clean up database references when a version is deleted
-     */
-    async cleanupDatabaseVersionReferences(deletedVersionId) {
-        try {
-            const data = await settingsStore_1.SettingsStore.load();
-            let needsSave = false;
-            if (data.projects && Array.isArray(data.projects)) {
-                for (const project of data.projects) {
-                    if (project.dbs && Array.isArray(project.dbs)) {
-                        for (const db of project.dbs) {
-                            if (db.versionId === deletedVersionId) {
-                                logger_1.logger.debug(`Clearing version reference from database "${(0, utils_1.getDatabaseLabel)(db)}" (was using deleted version)`);
-                                db.versionId = undefined;
-                                // Don't touch odooVersion - let it remain as is for backward compatibility
-                                needsSave = true;
-                            }
-                        }
-                    }
-                }
-            }
-            if (needsSave) {
-                logger_1.logger.debug('Saving cleaned database references after version deletion');
-                await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-            }
-        }
-        catch (error) {
-            logger_1.logger.warn('Failed to clean up database version references:', error);
-            // Don't throw - this shouldn't prevent version deletion
-        }
-    }
-    /**
-     * Clone a version
-     */
-    async cloneVersion(sourceId, newName) {
-        await this.initialize(); // Ensure initialization
-        const sourceVersion = this.versions.get(sourceId);
-        if (!sourceVersion) {
-            logger_1.logger.error(`Source version with id ${sourceId} not found`);
-            return undefined;
-        }
-        try {
-            const clonedVersion = sourceVersion.clone(newName);
-            this.versions.set(clonedVersion.id, clonedVersion);
-            await this.saveVersions();
-            vscode.commands.executeCommand('odoo.versionsChanged');
-            logger_1.logger.debug(`Successfully cloned version ${sourceVersion.name} to ${newName}`);
-            return clonedVersion;
-        }
-        catch (error) {
-            logger_1.logger.error('Error cloning version:', error);
-            return undefined;
-        }
-    }
-    /**
-     * Update settings for active version
-     */
-    async updateActiveSettings(settings) {
-        await this.initialize(); // Ensure initialization
-        const activeVersion = this.getActiveVersion();
-        if (!activeVersion) {
-            logger_1.logger.warn('No active version is configured, cannot update settings');
-            return;
-        }
-        Object.assign(activeVersion.settings, settings);
-        activeVersion.updatedAt = new Date();
-        await this.saveVersions();
-        vscode.commands.executeCommand('odoo.versionsChanged');
-    }
-    /**
-     * Refresh from odoo-debugger-data.json (useful when data changes externally)
-     */
-    async refresh() {
-        await this.loadVersions();
-        await this.validateAndRepairVersions();
-        // Also attempt migration in case legacy settings were added externally
-        await this.migrateFromLegacySettings().catch(error => {
-            logger_1.logger.warn('Settings migration during refresh failed (this is non-critical):', error);
-        });
-        vscode.commands.executeCommand('odoo.versionsChanged');
-    }
-    /**
-     * Validate and repair versions data structure
-     */
-    async validateAndRepairVersions() {
-        let needsRepair = false;
-        // Ensure we have at least one version
-        if (this.versions.size === 0) {
-            logger_1.logger.debug('No versions found, creating default version');
-            const defaultVersion = new version_1.VersionModel('Default Version', '17.0', (0, utils_1.getDefaultVersionSettings)());
-            defaultVersion.isActive = true;
-            this.versions.set(defaultVersion.id, defaultVersion);
-            this.activeVersionId = defaultVersion.id;
-            needsRepair = true;
-        }
-        // Ensure we have an active version
-        if (!this.activeVersionId || !this.versions.has(this.activeVersionId)) {
-            logger_1.logger.debug('Invalid active version, selecting first available version');
-            this.activeVersionId = this.versions.keys().next().value;
-            needsRepair = true;
-        }
-        // Ensure only one version is marked as active
-        let activeCount = 0;
-        this.versions.forEach((version, id) => {
-            if (version.isActive) {
-                activeCount++;
-                if (id !== this.activeVersionId) {
-                    version.isActive = false;
-                    needsRepair = true;
-                }
-            }
-            else if (id === this.activeVersionId) {
-                version.isActive = true;
-                needsRepair = true;
-            }
-        });
-        if (activeCount === 0) {
-            const activeVersion = this.versions.get(this.activeVersionId);
-            if (activeVersion) {
-                activeVersion.isActive = true;
-                needsRepair = true;
-            }
-        }
-        // Save if repairs were needed
-        if (needsRepair) {
-            logger_1.logger.debug('Version data repaired, saving...');
-            await this.saveVersions();
-        }
-    }
-    /**
- * Migrate existing settings from SettingsStore to a new version for backwards compatibility
- */
-    async migrateFromLegacySettings() {
-        try {
-            logger_1.logger.debug('Starting migration check...');
-            // Check if legacy settings actually exist in the file
-            if (!(await this.hasLegacySettings())) {
-                logger_1.logger.debug('No legacy settings found, migration not needed');
-                return;
-            }
-            logger_1.logger.debug('Legacy settings found, proceeding with migration...');
-            // Read raw legacy settings without model-default inflation so workspace defaults
-            // can still apply for missing keys during migration.
-            const rawData = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
-            const existingSettings = rawData.settings;
-            if (!existingSettings || Object.keys(existingSettings).length === 0) {
-                logger_1.logger.debug('Legacy settings exist but are empty, clearing them');
-                await this.clearLegacySettings();
-                return;
-            }
-            logger_1.logger.debug('Retrieved legacy settings:', existingSettings);
-            // Check if we already have a migrated version (avoid duplicate migration)
-            if (this.getVersion('migrated-version')) {
-                logger_1.logger.debug('Migration already completed, clearing legacy settings');
-                await this.clearLegacySettings();
-                return;
-            }
-            logger_1.logger.debug('Migrating legacy settings to version management...');
-            const defaultSettings = (0, utils_1.getDefaultVersionSettings)();
-            // Convert SettingsModel to VersionSettings format
-            const versionSettings = {
-                debuggerName: existingSettings.debuggerName ?? defaultSettings.debuggerName,
-                debuggerVersion: existingSettings.debuggerVersion ?? defaultSettings.debuggerVersion,
-                portNumber: existingSettings.portNumber ?? defaultSettings.portNumber,
-                shellPortNumber: existingSettings.shellPortNumber ?? defaultSettings.shellPortNumber,
-                limitTimeReal: existingSettings.limitTimeReal ?? defaultSettings.limitTimeReal,
-                limitTimeCpu: existingSettings.limitTimeCpu ?? defaultSettings.limitTimeCpu,
-                maxCronThreads: existingSettings.maxCronThreads ?? defaultSettings.maxCronThreads,
-                extraParams: existingSettings.extraParams ?? defaultSettings.extraParams,
-                devMode: existingSettings.devMode ?? defaultSettings.devMode,
-                dumpsFolder: existingSettings.dumpsFolder ?? defaultSettings.dumpsFolder,
-                odooPath: existingSettings.odooPath ?? defaultSettings.odooPath,
-                enterprisePath: existingSettings.enterprisePath ?? defaultSettings.enterprisePath,
-                designThemesPath: existingSettings.designThemesPath ?? defaultSettings.designThemesPath,
-                customAddonsPath: existingSettings.customAddonsPath ?? defaultSettings.customAddonsPath,
-                pythonPath: existingSettings.pythonPath ?? defaultSettings.pythonPath,
-                subModulesPaths: existingSettings.subModulesPaths ?? defaultSettings.subModulesPaths,
-                installApps: existingSettings.installApps ?? defaultSettings.installApps,
-                upgradeApps: existingSettings.upgradeApps ?? defaultSettings.upgradeApps,
-                preCheckoutCommands: Array.isArray(existingSettings.preCheckoutCommands)
-                    ? existingSettings.preCheckoutCommands
-                    : defaultSettings.preCheckoutCommands,
-                postCheckoutCommands: Array.isArray(existingSettings.postCheckoutCommands)
-                    ? existingSettings.postCheckoutCommands
-                    : defaultSettings.postCheckoutCommands
-            };
-            // Create a new version with migrated settings
-            const migratedVersion = new version_1.VersionModel('Migrated Settings', '17.0', // Default Odoo version
-            versionSettings);
-            migratedVersion.id = 'migrated-version';
-            // Clear existing default version if it exists and replace with migrated version
-            if (this.versions.size === 1) {
-                const existingVersion = Array.from(this.versions.values())[0];
-                if (existingVersion.name === 'Default Version') {
-                    this.versions.clear();
-                }
-            }
-            // Add the migrated version and set as active
-            migratedVersion.isActive = true;
-            this.versions.set(migratedVersion.id, migratedVersion);
-            this.activeVersionId = migratedVersion.id;
-            logger_1.logger.debug('Saving migrated version to versions system...');
-            await this.saveVersionsDuringMigration();
-            logger_1.logger.debug('Clearing legacy settings after successful version save...');
-            // Clear the legacy settings to prevent repeated migration
-            await this.clearLegacySettings();
-            // Now that legacy settings are cleared, save versions normally to ensure proper state
-            logger_1.logger.debug('Final save of versions with settings properly cleared...');
-            await this.saveVersions();
-            logger_1.logger.debug('Successfully migrated legacy settings to version management');
-        }
-        catch (error) {
-            logger_1.logger.warn('Failed to migrate legacy settings:', error);
-            // Don't throw - migration failure shouldn't break the extension
-        }
-    }
-    /**
-     * Clear legacy settings from odoo-debugger-data.json after successful migration
-     */
-    async clearLegacySettings() {
-        try {
-            const data = await settingsStore_1.SettingsStore.load();
-            // Remove the settings property but keep projects
-            if (data.settings) {
-                delete data.settings;
-                await settingsStore_1.SettingsStore.saveWithoutComments(data);
-                logger_1.logger.debug('Legacy settings cleared after successful migration');
-            }
-        }
-        catch (error) {
-            logger_1.logger.warn('Failed to clear legacy settings:', error);
-            // Don't throw - clearing failure shouldn't break anything
-        }
-    }
-    /**
-     * Check if legacy settings exist in the odoo-debugger-data.json file
-     */
-    async hasLegacySettings() {
-        try {
-            const data = await settingsStore_1.SettingsStore.load();
-            return !!(data.settings && Object.keys(data.settings).length > 0);
-        }
-        catch (error) {
-            logger_1.logger.warn('Failed to check for legacy settings:', error);
-            return false;
-        }
-    }
-    /**
-     * Set a specific setting to its default value for a version
-     */
-    async setSettingToDefault(versionId, settingKey) {
-        const version = this.versions.get(versionId);
-        if (!version) {
-            (0, notifications_1.showError)('The selected version could not be found.');
-            return false;
-        }
-        try {
-            // Get the default value for this setting
-            const defaultSettings = (0, utils_1.getDefaultVersionSettings)();
-            const defaultValue = defaultSettings[settingKey];
-            if (defaultValue === undefined) {
-                (0, notifications_1.showError)('Default value not found for this setting.');
-                return false;
-            }
-            // Update the setting
-            const updatedSettings = { ...version.settings, [settingKey]: defaultValue };
-            version.updateSettings(updatedSettings);
-            await this.saveVersions();
-            vscode.commands.executeCommand('odoo.versionsChanged');
-            (0, notifications_1.showInfo)(`Setting "${settingKey}" reset to default value.`);
-            return true;
-        }
-        catch (error) {
-            logger_1.logger.error('Failed to set setting to default:', error);
-            (0, notifications_1.showError)('Failed to set setting to default value.');
-            return false;
-        }
-    }
-    /**
-     * Set a specific setting's current value as the new default
-     */
-    async setSettingAsDefault(versionId, settingKey) {
-        const version = this.versions.get(versionId);
-        if (!version) {
-            (0, notifications_1.showError)('The selected version could not be found.');
-            return false;
-        }
-        try {
-            const currentValue = version.settings[settingKey];
-            if (currentValue === undefined) {
-                (0, notifications_1.showError)('Setting value not found.');
-                return false;
-            }
-            // Update the VS Code configuration
-            const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
-            await config.update(settingKey, currentValue, vscode.ConfigurationTarget.Workspace);
-            (0, notifications_1.showInfo)(`Setting "${settingKey}" value saved as new default.`);
-            return true;
-        }
-        catch (error) {
-            logger_1.logger.error('Unable to save this setting as the default:', error);
-            (0, notifications_1.showError)('Unable to save this setting as the default.');
-            return false;
-        }
-    }
-    /**
-     * Set all settings to their default values for a version
-     */
-    async setAllSettingsToDefault(versionId) {
-        const version = this.versions.get(versionId);
-        if (!version) {
-            (0, notifications_1.showError)('The selected version could not be found.');
-            return false;
-        }
-        try {
-            // Get all default settings from VS Code configuration
-            const defaultSettings = (0, utils_1.getDefaultVersionSettings)();
-            version.updateSettings(defaultSettings);
-            await this.saveVersions();
-            vscode.commands.executeCommand('odoo.versionsChanged');
-            (0, notifications_1.showInfo)(`All settings reset to default values for version "${version.name}".`);
-            return true;
-        }
-        catch (error) {
-            logger_1.logger.error('Failed to set all settings to default:', error);
-            (0, notifications_1.showError)('Unable to reset all settings to their default values.');
-            return false;
-        }
-    }
-    /**
-     * Set all current settings as new defaults
-     */
-    async setAllSettingsAsDefault(versionId) {
-        const version = this.versions.get(versionId);
-        if (!version) {
-            (0, notifications_1.showError)('The selected version could not be found.');
-            return false;
-        }
-        try {
-            const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
-            const settings = version.settings;
-            // Update all settings in configuration
-            for (const [key, value] of Object.entries(settings)) {
-                await config.update(key, value, vscode.ConfigurationTarget.Workspace);
-            }
-            (0, notifications_1.showInfo)(`All settings from version "${version.name}" saved as new defaults.`);
-            return true;
-        }
-        catch (error) {
-            logger_1.logger.error('Failed to set all settings as default:', error);
-            (0, notifications_1.showError)('Unable to save these settings as the new defaults.');
-            return false;
-        }
+    dispose() {
+        this._onDidChangeTreeData.dispose();
     }
 }
-exports.VersionsService = VersionsService;
+exports.BaseTreeProvider = BaseTreeProvider;
 
 
 /***/ }),
 /* 5 */
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.VersionModel = void 0;
-const crypto_1 = __webpack_require__(6);
-class VersionModel {
-    id;
-    name; // User-friendly name like "Odoo 17.0", "Saas 17.4"
-    odooVersion; // Branch name like "17.0", "saas-17.4", "master"
-    settings;
-    isActive = false; // Currently active version
-    createdAt;
-    updatedAt;
-    constructor(name, odooVersion, settings = {}, id = (0, crypto_1.randomUUID)(), isActive = false) {
-        this.id = id;
-        this.name = name;
-        this.odooVersion = odooVersion;
-        this.isActive = isActive;
-        this.createdAt = new Date();
-        this.updatedAt = new Date();
-        // Baseline settings for partial payloads (full defaults are managed by VersionsService/config).
-        this.settings = {
-            debuggerName: 'odoo:18.0',
-            debuggerVersion: "1.0.0",
-            portNumber: 8018,
-            shellPortNumber: 5018,
-            limitTimeReal: 0,
-            limitTimeCpu: 0,
-            maxCronThreads: 0,
-            extraParams: "--log-handler,odoo.addons.base.models.ir_attachment:WARNING",
-            devMode: "--dev=all",
-            dumpsFolder: "/dumps",
-            odooPath: "./odoo",
-            enterprisePath: "./enterprise",
-            designThemesPath: "./design-themes",
-            customAddonsPath: "./custom-addons",
-            pythonPath: "./venv/bin/python",
-            subModulesPaths: "",
-            installApps: "",
-            upgradeApps: "",
-            preCheckoutCommands: [],
-            postCheckoutCommands: [],
-            ...settings
-        };
-        this.settings.preCheckoutCommands = Array.isArray(this.settings.preCheckoutCommands) ? this.settings.preCheckoutCommands : [];
-        this.settings.postCheckoutCommands = Array.isArray(this.settings.postCheckoutCommands) ? this.settings.postCheckoutCommands : [];
-    }
-    updateSettings(newSettings) {
-        this.settings = { ...this.settings, ...newSettings };
-        this.updatedAt = new Date();
-    }
-    clone(newName) {
-        return new VersionModel(newName || `${this.name} (Copy)`, this.odooVersion, { ...this.settings }, (0, crypto_1.randomUUID)(), false);
-    }
-    toJSON() {
-        return {
-            id: this.id,
-            name: this.name,
-            odooVersion: this.odooVersion,
-            settings: this.settings,
-            isActive: this.isActive,
-            createdAt: this.createdAt.toISOString(),
-            updatedAt: this.updatedAt.toISOString()
-        };
-    }
-    static fromJSON(data) {
-        const version = new VersionModel(data.name, data.odooVersion, data.settings, data.id, data.isActive);
-        version.createdAt = new Date(data.createdAt);
-        version.updatedAt = new Date(data.updatedAt);
-        return version;
-    }
-}
-exports.VersionModel = VersionModel;
-
-
-/***/ }),
-/* 6 */
-/***/ ((module) => {
-
-module.exports = require("crypto");
-
-/***/ }),
-/* 7 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SettingsStore = void 0;
-const settings_1 = __webpack_require__(8);
-const utils_1 = __webpack_require__(9);
-const jsonc_parser_1 = __webpack_require__(18);
-const fs_1 = __importDefault(__webpack_require__(10));
-const path_1 = __importDefault(__webpack_require__(11));
-const logger_1 = __webpack_require__(15);
+const settings_1 = __webpack_require__(6);
+const utils_1 = __webpack_require__(7);
+const jsonc_parser_1 = __webpack_require__(16);
+const fs = __importStar(__webpack_require__(22));
+const path_1 = __importDefault(__webpack_require__(9));
+const logger_1 = __webpack_require__(11);
 const WRITE_DEBOUNCE_MS = 25;
 class SettingsStore {
     static cache = new Map();
@@ -3062,15 +560,10 @@ class SettingsStore {
         }
         return path_1.default.join(workspacePath, '.vscode', fileName);
     }
-    static updateCache(fileName, filePath, raw, data) {
-        let mtimeMs = Date.now();
-        try {
-            const stats = fs_1.default.statSync(filePath);
-            mtimeMs = stats.mtimeMs;
-        }
-        catch {
-            // Keep fallback timestamp when stat fails.
-        }
+    static async updateCache(fileName, filePath, raw, data) {
+        // Fall back to "now" when stat fails (e.g. file not written yet).
+        const stats = await fs.stat(filePath).catch(() => undefined);
+        const mtimeMs = stats?.mtimeMs ?? Date.now();
         this.cache.set(fileName, {
             mtimeMs,
             raw,
@@ -3082,8 +575,8 @@ class SettingsStore {
         if (!loaded) {
             throw new Error(`Error reading file: ${fileName}`);
         }
-        const raw = fs_1.default.existsSync(filePath) ? fs_1.default.readFileSync(filePath, 'utf-8') : JSON.stringify(loaded, null, 4);
-        this.updateCache(fileName, filePath, raw, loaded);
+        const raw = await fs.readFile(filePath, 'utf-8').catch(() => JSON.stringify(loaded, null, 4));
+        await this.updateCache(fileName, filePath, raw, loaded);
         return this.cloneData(loaded);
     }
     static async flushPendingWrite(fileName) {
@@ -3098,8 +591,8 @@ class SettingsStore {
         }
         try {
             const jsonString = JSON.stringify(pending.data, null, 4);
-            fs_1.default.writeFileSync(pending.filePath, jsonString, 'utf8');
-            this.updateCache(fileName, pending.filePath, jsonString, pending.data);
+            await fs.writeFile(pending.filePath, jsonString, 'utf8');
+            await this.updateCache(fileName, pending.filePath, jsonString, pending.data);
             pending.waiters.forEach(waiter => waiter.resolve());
         }
         catch (error) {
@@ -3116,17 +609,17 @@ class SettingsStore {
             return null;
         }
         try {
-            if (!fs_1.default.existsSync(filePath)) {
+            const stats = await fs.stat(filePath).catch(() => undefined);
+            if (!stats) {
                 return null;
             }
-            const stats = fs_1.default.statSync(filePath);
             const cached = this.cache.get(fileName);
             if (cached && cached.mtimeMs === stats.mtimeMs) {
                 return cached.raw;
             }
-            const raw = fs_1.default.readFileSync(filePath, 'utf-8');
+            const raw = await fs.readFile(filePath, 'utf-8');
             const parsed = (0, jsonc_parser_1.parse)(raw);
-            this.updateCache(fileName, filePath, raw, parsed ?? {});
+            await this.updateCache(fileName, filePath, raw, parsed ?? {});
             return raw;
         }
         catch (error) {
@@ -3140,8 +633,8 @@ class SettingsStore {
             throw new Error(`Open a workspace before reading ${fileName}.`);
         }
         await this.flushPendingWrite(fileName);
-        if (fs_1.default.existsSync(filePath)) {
-            const stats = fs_1.default.statSync(filePath);
+        const stats = await fs.stat(filePath).catch(() => undefined);
+        if (stats) {
             const cached = this.cache.get(fileName);
             if (cached && cached.mtimeMs === stats.mtimeMs) {
                 return this.cloneData(cached.data);
@@ -3161,9 +654,9 @@ class SettingsStore {
         }
         const edits = (0, jsonc_parser_1.modify)(rawData, jsonPath, value, options);
         const updatedJson = (0, jsonc_parser_1.applyEdits)(rawData, edits);
-        fs_1.default.writeFileSync(filePath, updatedJson, 'utf8');
+        await fs.writeFile(filePath, updatedJson, 'utf8');
         const parsed = (0, jsonc_parser_1.parse)(updatedJson);
-        this.updateCache(fileName, filePath, updatedJson, parsed ?? {});
+        await this.updateCache(fileName, filePath, updatedJson, parsed ?? {});
     }
     /**
      * Saves the entire data object to file
@@ -3251,7 +744,7 @@ exports.SettingsStore = SettingsStore;
 
 
 /***/ }),
-/* 8 */
+/* 6 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -3290,7 +783,7 @@ exports.SettingsModel = SettingsModel;
 
 
 /***/ }),
-/* 9 */
+/* 7 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -3345,18 +838,18 @@ exports.getSettingDisplayValue = getSettingDisplayValue;
 exports.getGitBranches = getGitBranches;
 exports.getDefaultVersionSettings = getDefaultVersionSettings;
 const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(10));
-const path = __importStar(__webpack_require__(11));
-const childProcess = __importStar(__webpack_require__(12));
-const settings_1 = __webpack_require__(8);
-const gitService_1 = __webpack_require__(13);
-const runtimeCache_1 = __webpack_require__(16);
-const notifications_1 = __webpack_require__(17);
-const jsonc_parser_1 = __webpack_require__(18);
-const logger_1 = __webpack_require__(15);
+const fs = __importStar(__webpack_require__(8));
+const path = __importStar(__webpack_require__(9));
+const settings_1 = __webpack_require__(6);
+const gitService_1 = __webpack_require__(10);
+const runtimeCache_1 = __webpack_require__(12);
+const notifications_1 = __webpack_require__(13);
+const process_1 = __webpack_require__(14);
+const jsonc_parser_1 = __webpack_require__(16);
+const logger_1 = __webpack_require__(11);
 // Re-exported so existing `from './utils'` imports keep working; new code
 // should import these from './services/notifications' directly.
-var notifications_2 = __webpack_require__(17);
+var notifications_2 = __webpack_require__(13);
 Object.defineProperty(exports, "MessageType", ({ enumerable: true, get: function () { return notifications_2.MessageType; } }));
 Object.defineProperty(exports, "showMessage", ({ enumerable: true, get: function () { return notifications_2.showMessage; } }));
 Object.defineProperty(exports, "showError", ({ enumerable: true, get: function () { return notifications_2.showError; } }));
@@ -3936,45 +1429,17 @@ async function getGitBranches(repoPath) {
             logger_1.logger.warn(`Not a git repository: ${normalizedPath}`);
             return [];
         }
-        return new Promise((resolve) => {
-            childProcess.exec('git branch -a --format="%(refname:short)"', { cwd: normalizedPath }, (error, stdout, stderr) => {
-                if (error) {
-                    logger_1.logger.warn(`Failed to get branches for ${normalizedPath}: ${error.message}`);
-                    resolve([]);
-                    return;
-                }
-                if (stderr) {
-                    logger_1.logger.warn(`Git branch warning for ${normalizedPath}: ${stderr}`);
-                }
-                const branches = stdout
-                    .split('\n')
-                    .map(branch => branch.trim())
-                    .filter(branch => {
-                    // Filter out empty lines and HEAD reference
-                    if (!branch || branch === 'HEAD') {
-                        return false;
-                    }
-                    // Remove remote prefix for remote branches
-                    return true;
-                })
-                    .map(branch => {
-                    // Clean up branch names
-                    if (branch.startsWith('origin/')) {
-                        return branch.replace('origin/', '');
-                    }
-                    if (branch.startsWith('remotes/origin/')) {
-                        return branch.replace('remotes/origin/', '');
-                    }
-                    return branch;
-                })
-                    .filter((branch, index, array) => {
-                    // Remove duplicates (local and remote of same branch)
-                    return array.indexOf(branch) === index;
-                })
-                    .sort((a, b) => a.localeCompare(b)); // Sort alphabetically
-                resolve(branches);
-            });
-        });
+        const { stdout } = await (0, process_1.runCommand)('git', ['branch', '-a', '--format=%(refname:short)'], { cwd: normalizedPath });
+        return stdout
+            .split('\n')
+            .map(branch => branch.trim())
+            // Filter out empty lines and HEAD reference
+            .filter(branch => !!branch && branch !== 'HEAD')
+            // Strip remote prefixes
+            .map(branch => branch.replace(/^remotes\/origin\//, '').replace(/^origin\//, ''))
+            // Remove duplicates (local and remote of same branch)
+            .filter((branch, index, array) => array.indexOf(branch) === index)
+            .sort((a, b) => a.localeCompare(b));
     }
     catch (err) {
         logger_1.logger.warn(`Failed to get branches for ${normalizedPath}: ${err}`);
@@ -4014,25 +1479,19 @@ function getDefaultVersionSettings() {
 
 
 /***/ }),
-/* 10 */
+/* 8 */
 /***/ ((module) => {
 
 module.exports = require("fs");
 
 /***/ }),
-/* 11 */
+/* 9 */
 /***/ ((module) => {
 
 module.exports = require("path");
 
 /***/ }),
-/* 12 */
-/***/ ((module) => {
-
-module.exports = require("child_process");
-
-/***/ }),
-/* 13 */
+/* 10 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -4075,8 +1534,8 @@ exports.getCurrentBranchViaSourceControl = getCurrentBranchViaSourceControl;
 exports.getBranchesWithMetadata = getBranchesWithMetadata;
 exports.getBranchesViaSourceControl = getBranchesViaSourceControl;
 const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(14));
-const logger_1 = __webpack_require__(15);
+const path = __importStar(__webpack_require__(3));
+const logger_1 = __webpack_require__(11);
 function resolveRepoPath(repoPath) {
     if (path.isAbsolute(repoPath)) {
         return path.normalize(repoPath);
@@ -4179,13 +1638,7 @@ async function getBranchesViaSourceControl(repoPath) {
 
 
 /***/ }),
-/* 14 */
-/***/ ((module) => {
-
-module.exports = require("node:path");
-
-/***/ }),
-/* 15 */
+/* 11 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -4308,7 +1761,7 @@ exports.logger = {
 
 
 /***/ }),
-/* 16 */
+/* 12 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -4423,7 +1876,7 @@ function invalidateAllRuntimeCaches() {
 
 
 /***/ }),
-/* 17 */
+/* 13 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -4471,7 +1924,7 @@ exports.showModalInfo = showModalInfo;
 exports.showAutoInfo = showAutoInfo;
 exports.showBriefStatus = showBriefStatus;
 const vscode = __importStar(__webpack_require__(1));
-const logger_1 = __webpack_require__(15);
+const logger_1 = __webpack_require__(11);
 /**
  * User-facing messaging helpers. Every notification shown through these is
  * also logged to the "Odoo DevTools" output channel, which is why direct
@@ -4554,7 +2007,139 @@ function showBriefStatus(message, timeoutMs = 2000) {
 
 
 /***/ }),
-/* 18 */
+/* 14 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CommandError = void 0;
+exports.runCommand = runCommand;
+exports.tryRunCommand = tryRunCommand;
+const node_child_process_1 = __webpack_require__(15);
+/** Error thrown when a command exits non-zero, fails to spawn, or is killed. */
+class CommandError extends Error {
+    command;
+    args;
+    exitCode;
+    stderr;
+    stdout;
+    constructor(command, args, exitCode, stderr, stdout, cause) {
+        const detail = stderr.trim() || stdout.trim() || (cause instanceof Error ? cause.message : '');
+        super(`${command} ${args.join(' ')} failed${exitCode === null ? '' : ` (exit code ${exitCode})`}${detail ? `: ${detail}` : ''}`);
+        this.command = command;
+        this.args = args;
+        this.exitCode = exitCode;
+        this.stderr = stderr;
+        this.stdout = stdout;
+        this.name = 'CommandError';
+    }
+}
+exports.CommandError = CommandError;
+function makeLineForwarder(forward) {
+    let buffer = '';
+    return (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+            forward(line);
+        }
+    };
+}
+/**
+ * Runs a command (no shell) and resolves with its collected output.
+ * Rejects with {@link CommandError} on spawn failure, non-zero exit,
+ * timeout, or cancellation.
+ */
+function runCommand(command, args, options = {}) {
+    return new Promise((resolve, reject) => {
+        const child = (0, node_child_process_1.spawn)(command, args, {
+            cwd: options.cwd,
+            env: options.env,
+            shell: false
+        });
+        let stdout = '';
+        let stderr = '';
+        let settled = false;
+        let timer;
+        let cancellation;
+        const finish = (fn) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            if (timer) {
+                clearTimeout(timer);
+            }
+            cancellation?.dispose();
+            fn();
+        };
+        const forwardStdout = options.onStdoutLine ? makeLineForwarder(options.onStdoutLine) : undefined;
+        const forwardStderr = options.onStderrLine ? makeLineForwarder(options.onStderrLine) : undefined;
+        child.stdout.setEncoding('utf-8');
+        child.stderr.setEncoding('utf-8');
+        child.stdout.on('data', (chunk) => {
+            stdout += chunk;
+            forwardStdout?.(chunk);
+        });
+        child.stderr.on('data', (chunk) => {
+            stderr += chunk;
+            forwardStderr?.(chunk);
+        });
+        child.on('error', error => {
+            finish(() => reject(new CommandError(command, args, null, stderr, stdout, error)));
+        });
+        child.on('close', code => {
+            finish(() => {
+                if (code === 0) {
+                    resolve({ stdout, stderr });
+                }
+                else {
+                    reject(new CommandError(command, args, code, stderr, stdout));
+                }
+            });
+        });
+        if (options.timeoutMs && options.timeoutMs > 0) {
+            timer = setTimeout(() => {
+                child.kill();
+                finish(() => reject(new CommandError(command, args, null, stderr || 'Command timed out', stdout)));
+            }, options.timeoutMs);
+        }
+        if (options.token) {
+            cancellation = options.token.onCancellationRequested(() => {
+                child.kill();
+                finish(() => reject(new CommandError(command, args, null, stderr || 'Command was cancelled', stdout)));
+            });
+        }
+        if (options.input !== undefined) {
+            child.stdin.write(options.input);
+        }
+        child.stdin.end();
+    });
+}
+/**
+ * Runs a command and returns its trimmed stdout, or undefined on any failure.
+ * For best-effort probes where the caller has a fallback.
+ */
+async function tryRunCommand(command, args, options = {}) {
+    try {
+        const { stdout } = await runCommand(command, args, options);
+        return stdout.trim();
+    }
+    catch {
+        return undefined;
+    }
+}
+
+
+/***/ }),
+/* 15 */
+/***/ ((module) => {
+
+module.exports = require("node:child_process");
+
+/***/ }),
+/* 16 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -4577,10 +2162,10 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   stripComments: () => (/* binding */ stripComments),
 /* harmony export */   visit: () => (/* binding */ visit)
 /* harmony export */ });
-/* harmony import */ var _impl_format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(19);
-/* harmony import */ var _impl_edit__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(22);
-/* harmony import */ var _impl_scanner__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(20);
-/* harmony import */ var _impl_parser__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(23);
+/* harmony import */ var _impl_format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(17);
+/* harmony import */ var _impl_edit__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(20);
+/* harmony import */ var _impl_scanner__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(18);
+/* harmony import */ var _impl_parser__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(21);
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -4762,7 +2347,7 @@ function applyEdits(text, edits) {
 
 
 /***/ }),
-/* 19 */
+/* 17 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -4770,8 +2355,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   format: () => (/* binding */ format),
 /* harmony export */   isEOL: () => (/* binding */ isEOL)
 /* harmony export */ });
-/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(20);
-/* harmony import */ var _string_intern__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(21);
+/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(18);
+/* harmony import */ var _string_intern__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(19);
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -5036,7 +2621,7 @@ function isEOL(text, offset) {
 
 
 /***/ }),
-/* 20 */
+/* 18 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -5489,7 +3074,7 @@ var CharacterCodes;
 
 
 /***/ }),
-/* 21 */
+/* 19 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -5530,7 +3115,7 @@ const supportedEols = ['\n', '\r', '\r\n'];
 
 
 /***/ }),
-/* 22 */
+/* 20 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -5540,8 +3125,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   removeProperty: () => (/* binding */ removeProperty),
 /* harmony export */   setProperty: () => (/* binding */ setProperty)
 /* harmony export */ });
-/* harmony import */ var _format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(19);
-/* harmony import */ var _parser__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(23);
+/* harmony import */ var _format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(17);
+/* harmony import */ var _parser__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(21);
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -5730,7 +3315,7 @@ function isWS(text, offset) {
 
 
 /***/ }),
-/* 23 */
+/* 21 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -5747,7 +3332,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   stripComments: () => (/* binding */ stripComments),
 /* harmony export */   visit: () => (/* binding */ visit)
 /* harmony export */ });
-/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(20);
+/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(18);
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -6410,7 +3995,13 @@ function getNodeType(value) {
 
 
 /***/ }),
-/* 24 */
+/* 22 */
+/***/ ((module) => {
+
+module.exports = require("node:fs/promises");
+
+/***/ }),
+/* 23 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -6448,205 +4039,719 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getRepoBranch = getRepoBranch;
+exports.VersionsService = void 0;
 const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(14));
-const fs = __importStar(__webpack_require__(25));
-const gitService_1 = __webpack_require__(13);
-const runtimeCache_1 = __webpack_require__(16);
-const logger_1 = __webpack_require__(15);
-/**
- * The single branch reader for the extension. Prefers the built-in git
- * extension's API (accurate for worktrees, detached heads, etc.), falls back
- * to reading .git/HEAD directly, and caches results briefly via runtimeCache.
- * Checkout flows invalidate the cache through invalidateGitBranchCache.
- */
-function resolveRepoPath(repoPath) {
-    if (path.isAbsolute(repoPath)) {
-        return path.normalize(repoPath);
+const version_1 = __webpack_require__(24);
+const settingsStore_1 = __webpack_require__(5);
+const utils_1 = __webpack_require__(7);
+const logger_1 = __webpack_require__(11);
+const notifications_1 = __webpack_require__(13);
+class VersionsService {
+    static instance;
+    versions = new Map();
+    activeVersionId;
+    initialized = false;
+    constructor() {
+        // Initialization will be done via initialize() method
     }
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (workspaceRoot) {
-        return path.normalize(path.join(workspaceRoot, repoPath));
-    }
-    return path.normalize(path.resolve(repoPath));
-}
-async function readBranchFromHeadFile(repoPath) {
-    const gitHeadPath = path.join(repoPath, '.git', 'HEAD');
-    try {
-        const headContent = (await fs.readFile(gitHeadPath, 'utf-8')).trim();
-        const match = /^ref: refs\/heads\/(.+)$/.exec(headContent);
-        return match ? match[1] : headContent;
-    }
-    catch (error) {
-        logger_1.logger.debug(`Failed to read branch for ${repoPath}`, error);
-        return null;
-    }
-}
-/**
- * Returns the current branch of the repository at `repoPath` (relative paths
- * resolve against the first workspace folder), or null when unavailable.
- */
-async function getRepoBranch(repoPath) {
-    if (!repoPath) {
-        return null;
-    }
-    const resolved = resolveRepoPath(repoPath);
-    return runtimeCache_1.runtimeCache.getGitBranch(resolved, async () => {
-        const sourceControlBranch = await (0, gitService_1.getCurrentBranchViaSourceControl)(resolved);
-        if (sourceControlBranch) {
-            return sourceControlBranch;
+    static getInstance() {
+        if (!VersionsService.instance) {
+            VersionsService.instance = new VersionsService();
         }
-        return readBranchFromHeadFile(resolved);
-    });
+        return VersionsService.instance;
+    }
+    /**
+     * Initialize the service by loading versions
+     */
+    async initialize() {
+        if (!this.initialized) {
+            await this.loadVersions();
+            await this.validateAndRepairVersions();
+            this.initialized = true;
+        }
+    }
+    /**
+     * Load versions from odoo-debugger-data.json
+     */
+    async loadVersions() {
+        try {
+            const data = await settingsStore_1.SettingsStore.load();
+            const versionsData = data.versions || {};
+            const activeVersionId = data.activeVersion;
+            this.versions.clear();
+            // Load existing versions
+            Object.entries(versionsData).forEach(([id, versionData]) => {
+                const version = version_1.VersionModel.fromJSON(versionData);
+                if (version) {
+                    this.versions.set(id, version);
+                }
+            });
+            // Check if legacy settings exist - if so, skip auto-saving to preserve them for migration
+            const hasLegacySettings = await this.hasLegacySettings();
+            // Create default version if none exist
+            if (this.versions.size === 0) {
+                const defaultVersion = new version_1.VersionModel('Default Version', '17.0', // Odoo version
+                (0, utils_1.getDefaultVersionSettings)());
+                defaultVersion.isActive = true;
+                this.versions.set(defaultVersion.id, defaultVersion);
+                this.activeVersionId = defaultVersion.id;
+                // Only save if no legacy settings exist (to avoid destroying them before migration)
+                if (!hasLegacySettings) {
+                    await this.saveVersions();
+                }
+            }
+            else {
+                this.activeVersionId = activeVersionId;
+                // Ensure active version exists and update isActive flags
+                if (!this.activeVersionId || !this.versions.has(this.activeVersionId)) {
+                    this.activeVersionId = this.versions.keys().next().value;
+                }
+                // Update isActive flags for all versions
+                this.versions.forEach((version, id) => {
+                    version.isActive = (id === this.activeVersionId);
+                });
+                // Only save if no legacy settings exist (to avoid destroying them before migration)
+                if (!hasLegacySettings) {
+                    await this.saveVersions();
+                }
+            }
+        }
+        catch (error) {
+            logger_1.logger.error('Failed to load versions:', error);
+            // Create default version on error
+            const defaultVersion = new version_1.VersionModel('Default Version', '17.0', (0, utils_1.getDefaultVersionSettings)());
+            defaultVersion.isActive = true;
+            this.versions.set(defaultVersion.id, defaultVersion);
+            this.activeVersionId = defaultVersion.id;
+        }
+    }
+    /**
+     * Save all versions to odoo-debugger-data.json
+     */
+    async saveVersions() {
+        try {
+            const data = await settingsStore_1.SettingsStore.load();
+            const versionsData = {};
+            this.versions.forEach((version, id) => {
+                versionsData[id] = version.toJSON();
+            });
+            data.versions = versionsData;
+            data.activeVersion = this.activeVersionId;
+            await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+            logger_1.logger.debug(`Saved ${this.versions.size} versions successfully`);
+        }
+        catch (error) {
+            logger_1.logger.error('Failed to save versions:', error);
+            throw error; // Re-throw to propagate error up the chain
+        }
+    }
+    /**
+     * Save versions during migration without stripping settings (they'll be cleared separately)
+     */
+    async saveVersionsDuringMigration() {
+        try {
+            const data = await settingsStore_1.SettingsStore.load();
+            const versionsData = {};
+            this.versions.forEach((version, id) => {
+                versionsData[id] = version.toJSON();
+            });
+            data.versions = versionsData;
+            data.activeVersion = this.activeVersionId;
+            // During migration, don't strip settings - they'll be cleared by clearLegacySettings
+            await settingsStore_1.SettingsStore.saveWithoutComments(data);
+            logger_1.logger.debug(`Saved ${this.versions.size} versions during migration`);
+        }
+        catch (error) {
+            logger_1.logger.error('Failed to save versions during migration:', error);
+            throw error;
+        }
+    }
+    /**
+ * Get all versions
+ */
+    getVersions() {
+        return Array.from(this.versions.values());
+    }
+    /**
+     * Get a specific version by ID
+     */
+    getVersion(id) {
+        return this.versions.get(id);
+    }
+    /**
+     * Get the currently active version
+     */
+    getActiveVersion() {
+        if (!this.activeVersionId) {
+            return undefined;
+        }
+        return this.versions.get(this.activeVersionId);
+    }
+    /**
+     * Get settings from the currently active version
+     * Falls back to default settings if no active version
+     */
+    async getActiveVersionSettings() {
+        await this.initialize(); // Ensure initialization
+        const activeVersion = this.getActiveVersion();
+        if (activeVersion?.settings) {
+            logger_1.logger.debug(`Using settings from active version: ${activeVersion.name}`);
+            return activeVersion.settings;
+        }
+        // Fallback: if no active version or no settings, create a temporary default
+        logger_1.logger.warn('No active version or settings found, creating temporary default settings');
+        // Create a version with default settings if none exists
+        if (this.versions.size === 0) {
+            const defaultVersion = new version_1.VersionModel('Default Version', '17.0', (0, utils_1.getDefaultVersionSettings)());
+            defaultVersion.isActive = true;
+            this.versions.set(defaultVersion.id, defaultVersion);
+            this.activeVersionId = defaultVersion.id;
+            await this.saveVersions();
+            return defaultVersion.settings;
+        }
+        // Return configuration-backed defaults as fallback
+        return (0, utils_1.getDefaultVersionSettings)();
+    }
+    /**
+     * Set active version
+     */
+    async setActiveVersion(id) {
+        await this.initialize(); // Ensure initialization
+        if (!this.versions.has(id)) {
+            logger_1.logger.error(`Version with id ${id} not found`);
+            return false;
+        }
+        const oldActiveVersionId = this.activeVersionId;
+        // Update isActive properties on all versions
+        this.versions.forEach((version, versionId) => {
+            version.isActive = (versionId === id);
+        });
+        this.activeVersionId = id;
+        try {
+            await this.saveVersions(); // Save all versions to update isActive flags
+            // Fire event for UI updates
+            vscode.commands.executeCommand('odoo.versionsChanged');
+            logger_1.logger.debug(`Successfully set active version from ${oldActiveVersionId} to ${id}`);
+            return true;
+        }
+        catch (error) {
+            logger_1.logger.error('Error saving active version:', error);
+            // Revert on error
+            this.activeVersionId = oldActiveVersionId;
+            this.versions.forEach((version, versionId) => {
+                version.isActive = (versionId === oldActiveVersionId);
+            });
+            return false;
+        }
+    }
+    /**
+     * Create a new version
+     */
+    async createVersion(name, odooVersion, settingsOverrides = {}) {
+        await this.initialize(); // Ensure initialization
+        // Get default settings from VS Code configuration
+        const defaultSettings = (0, utils_1.getDefaultVersionSettings)();
+        const mergedSettings = { ...defaultSettings, ...settingsOverrides };
+        const version = new version_1.VersionModel(name, odooVersion, mergedSettings);
+        this.versions.set(version.id, version);
+        await this.saveVersions();
+        vscode.commands.executeCommand('odoo.versionsChanged');
+        return version;
+    }
+    /**
+     * Update an existing version
+     */
+    async updateVersion(id, updates) {
+        await this.initialize(); // Ensure initialization
+        const version = this.versions.get(id);
+        if (!version) {
+            return false;
+        }
+        const updatesCopy = { ...updates };
+        let settingsPatch = updatesCopy.settings ? { ...updatesCopy.settings } : undefined;
+        if (settingsPatch) {
+            Object.assign(version.settings, settingsPatch);
+        }
+        const { settings, ...otherUpdates } = updatesCopy;
+        Object.assign(version, otherUpdates);
+        // Update the updatedAt timestamp
+        version.updatedAt = new Date();
+        await this.saveVersions();
+        vscode.commands.executeCommand('odoo.versionsChanged');
+        return true;
+    }
+    /**
+     * Delete a version
+     */
+    async deleteVersion(id) {
+        await this.initialize(); // Ensure initialization
+        if (!this.versions.has(id)) {
+            return false;
+        }
+        // Don't allow deleting the last version
+        if (this.versions.size <= 1) {
+            (0, notifications_1.showWarning)('Cannot delete the last version. At least one version must exist.');
+            return false;
+        }
+        // Clean up any database references to this version before deleting
+        await this.cleanupDatabaseVersionReferences(id);
+        this.versions.delete(id);
+        // If this was the active version, switch to another one
+        if (this.activeVersionId === id) {
+            this.activeVersionId = this.versions.keys().next().value;
+            // Update isActive flags for all versions
+            this.versions.forEach((version, versionId) => {
+                version.isActive = (versionId === this.activeVersionId);
+            });
+        }
+        await this.saveVersions();
+        vscode.commands.executeCommand('odoo.versionsChanged');
+        return true;
+    }
+    /**
+     * Clean up database references when a version is deleted
+     */
+    async cleanupDatabaseVersionReferences(deletedVersionId) {
+        try {
+            const data = await settingsStore_1.SettingsStore.load();
+            let needsSave = false;
+            if (data.projects && Array.isArray(data.projects)) {
+                for (const project of data.projects) {
+                    if (project.dbs && Array.isArray(project.dbs)) {
+                        for (const db of project.dbs) {
+                            if (db.versionId === deletedVersionId) {
+                                logger_1.logger.debug(`Clearing version reference from database "${(0, utils_1.getDatabaseLabel)(db)}" (was using deleted version)`);
+                                db.versionId = undefined;
+                                // Don't touch odooVersion - let it remain as is for backward compatibility
+                                needsSave = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if (needsSave) {
+                logger_1.logger.debug('Saving cleaned database references after version deletion');
+                await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+            }
+        }
+        catch (error) {
+            logger_1.logger.warn('Failed to clean up database version references:', error);
+            // Don't throw - this shouldn't prevent version deletion
+        }
+    }
+    /**
+     * Clone a version
+     */
+    async cloneVersion(sourceId, newName) {
+        await this.initialize(); // Ensure initialization
+        const sourceVersion = this.versions.get(sourceId);
+        if (!sourceVersion) {
+            logger_1.logger.error(`Source version with id ${sourceId} not found`);
+            return undefined;
+        }
+        try {
+            const clonedVersion = sourceVersion.clone(newName);
+            this.versions.set(clonedVersion.id, clonedVersion);
+            await this.saveVersions();
+            vscode.commands.executeCommand('odoo.versionsChanged');
+            logger_1.logger.debug(`Successfully cloned version ${sourceVersion.name} to ${newName}`);
+            return clonedVersion;
+        }
+        catch (error) {
+            logger_1.logger.error('Error cloning version:', error);
+            return undefined;
+        }
+    }
+    /**
+     * Update settings for active version
+     */
+    async updateActiveSettings(settings) {
+        await this.initialize(); // Ensure initialization
+        const activeVersion = this.getActiveVersion();
+        if (!activeVersion) {
+            logger_1.logger.warn('No active version is configured, cannot update settings');
+            return;
+        }
+        Object.assign(activeVersion.settings, settings);
+        activeVersion.updatedAt = new Date();
+        await this.saveVersions();
+        vscode.commands.executeCommand('odoo.versionsChanged');
+    }
+    /**
+     * Refresh from odoo-debugger-data.json (useful when data changes externally)
+     */
+    async refresh() {
+        await this.loadVersions();
+        await this.validateAndRepairVersions();
+        // Also attempt migration in case legacy settings were added externally
+        await this.migrateFromLegacySettings().catch(error => {
+            logger_1.logger.warn('Settings migration during refresh failed (this is non-critical):', error);
+        });
+        vscode.commands.executeCommand('odoo.versionsChanged');
+    }
+    /**
+     * Validate and repair versions data structure
+     */
+    async validateAndRepairVersions() {
+        let needsRepair = false;
+        // Ensure we have at least one version
+        if (this.versions.size === 0) {
+            logger_1.logger.debug('No versions found, creating default version');
+            const defaultVersion = new version_1.VersionModel('Default Version', '17.0', (0, utils_1.getDefaultVersionSettings)());
+            defaultVersion.isActive = true;
+            this.versions.set(defaultVersion.id, defaultVersion);
+            this.activeVersionId = defaultVersion.id;
+            needsRepair = true;
+        }
+        // Ensure we have an active version
+        if (!this.activeVersionId || !this.versions.has(this.activeVersionId)) {
+            logger_1.logger.debug('Invalid active version, selecting first available version');
+            this.activeVersionId = this.versions.keys().next().value;
+            needsRepair = true;
+        }
+        // Ensure only one version is marked as active
+        let activeCount = 0;
+        this.versions.forEach((version, id) => {
+            if (version.isActive) {
+                activeCount++;
+                if (id !== this.activeVersionId) {
+                    version.isActive = false;
+                    needsRepair = true;
+                }
+            }
+            else if (id === this.activeVersionId) {
+                version.isActive = true;
+                needsRepair = true;
+            }
+        });
+        if (activeCount === 0) {
+            const activeVersion = this.versions.get(this.activeVersionId);
+            if (activeVersion) {
+                activeVersion.isActive = true;
+                needsRepair = true;
+            }
+        }
+        // Save if repairs were needed
+        if (needsRepair) {
+            logger_1.logger.debug('Version data repaired, saving...');
+            await this.saveVersions();
+        }
+    }
+    /**
+ * Migrate existing settings from SettingsStore to a new version for backwards compatibility
+ */
+    async migrateFromLegacySettings() {
+        try {
+            logger_1.logger.debug('Starting migration check...');
+            // Check if legacy settings actually exist in the file
+            if (!(await this.hasLegacySettings())) {
+                logger_1.logger.debug('No legacy settings found, migration not needed');
+                return;
+            }
+            logger_1.logger.debug('Legacy settings found, proceeding with migration...');
+            // Read raw legacy settings without model-default inflation so workspace defaults
+            // can still apply for missing keys during migration.
+            const rawData = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
+            const existingSettings = rawData.settings;
+            if (!existingSettings || Object.keys(existingSettings).length === 0) {
+                logger_1.logger.debug('Legacy settings exist but are empty, clearing them');
+                await this.clearLegacySettings();
+                return;
+            }
+            logger_1.logger.debug('Retrieved legacy settings:', existingSettings);
+            // Check if we already have a migrated version (avoid duplicate migration)
+            if (this.getVersion('migrated-version')) {
+                logger_1.logger.debug('Migration already completed, clearing legacy settings');
+                await this.clearLegacySettings();
+                return;
+            }
+            logger_1.logger.debug('Migrating legacy settings to version management...');
+            const defaultSettings = (0, utils_1.getDefaultVersionSettings)();
+            // Convert SettingsModel to VersionSettings format
+            const versionSettings = {
+                debuggerName: existingSettings.debuggerName ?? defaultSettings.debuggerName,
+                debuggerVersion: existingSettings.debuggerVersion ?? defaultSettings.debuggerVersion,
+                portNumber: existingSettings.portNumber ?? defaultSettings.portNumber,
+                shellPortNumber: existingSettings.shellPortNumber ?? defaultSettings.shellPortNumber,
+                limitTimeReal: existingSettings.limitTimeReal ?? defaultSettings.limitTimeReal,
+                limitTimeCpu: existingSettings.limitTimeCpu ?? defaultSettings.limitTimeCpu,
+                maxCronThreads: existingSettings.maxCronThreads ?? defaultSettings.maxCronThreads,
+                extraParams: existingSettings.extraParams ?? defaultSettings.extraParams,
+                devMode: existingSettings.devMode ?? defaultSettings.devMode,
+                dumpsFolder: existingSettings.dumpsFolder ?? defaultSettings.dumpsFolder,
+                odooPath: existingSettings.odooPath ?? defaultSettings.odooPath,
+                enterprisePath: existingSettings.enterprisePath ?? defaultSettings.enterprisePath,
+                designThemesPath: existingSettings.designThemesPath ?? defaultSettings.designThemesPath,
+                customAddonsPath: existingSettings.customAddonsPath ?? defaultSettings.customAddonsPath,
+                pythonPath: existingSettings.pythonPath ?? defaultSettings.pythonPath,
+                subModulesPaths: existingSettings.subModulesPaths ?? defaultSettings.subModulesPaths,
+                installApps: existingSettings.installApps ?? defaultSettings.installApps,
+                upgradeApps: existingSettings.upgradeApps ?? defaultSettings.upgradeApps,
+                preCheckoutCommands: Array.isArray(existingSettings.preCheckoutCommands)
+                    ? existingSettings.preCheckoutCommands
+                    : defaultSettings.preCheckoutCommands,
+                postCheckoutCommands: Array.isArray(existingSettings.postCheckoutCommands)
+                    ? existingSettings.postCheckoutCommands
+                    : defaultSettings.postCheckoutCommands
+            };
+            // Create a new version with migrated settings
+            const migratedVersion = new version_1.VersionModel('Migrated Settings', '17.0', // Default Odoo version
+            versionSettings);
+            migratedVersion.id = 'migrated-version';
+            // Clear existing default version if it exists and replace with migrated version
+            if (this.versions.size === 1) {
+                const existingVersion = Array.from(this.versions.values())[0];
+                if (existingVersion.name === 'Default Version') {
+                    this.versions.clear();
+                }
+            }
+            // Add the migrated version and set as active
+            migratedVersion.isActive = true;
+            this.versions.set(migratedVersion.id, migratedVersion);
+            this.activeVersionId = migratedVersion.id;
+            logger_1.logger.debug('Saving migrated version to versions system...');
+            await this.saveVersionsDuringMigration();
+            logger_1.logger.debug('Clearing legacy settings after successful version save...');
+            // Clear the legacy settings to prevent repeated migration
+            await this.clearLegacySettings();
+            // Now that legacy settings are cleared, save versions normally to ensure proper state
+            logger_1.logger.debug('Final save of versions with settings properly cleared...');
+            await this.saveVersions();
+            logger_1.logger.debug('Successfully migrated legacy settings to version management');
+        }
+        catch (error) {
+            logger_1.logger.warn('Failed to migrate legacy settings:', error);
+            // Don't throw - migration failure shouldn't break the extension
+        }
+    }
+    /**
+     * Clear legacy settings from odoo-debugger-data.json after successful migration
+     */
+    async clearLegacySettings() {
+        try {
+            const data = await settingsStore_1.SettingsStore.load();
+            // Remove the settings property but keep projects
+            if (data.settings) {
+                delete data.settings;
+                await settingsStore_1.SettingsStore.saveWithoutComments(data);
+                logger_1.logger.debug('Legacy settings cleared after successful migration');
+            }
+        }
+        catch (error) {
+            logger_1.logger.warn('Failed to clear legacy settings:', error);
+            // Don't throw - clearing failure shouldn't break anything
+        }
+    }
+    /**
+     * Check if legacy settings exist in the odoo-debugger-data.json file
+     */
+    async hasLegacySettings() {
+        try {
+            const data = await settingsStore_1.SettingsStore.load();
+            return !!(data.settings && Object.keys(data.settings).length > 0);
+        }
+        catch (error) {
+            logger_1.logger.warn('Failed to check for legacy settings:', error);
+            return false;
+        }
+    }
+    /**
+     * Set a specific setting to its default value for a version
+     */
+    async setSettingToDefault(versionId, settingKey) {
+        const version = this.versions.get(versionId);
+        if (!version) {
+            (0, notifications_1.showError)('The selected version could not be found.');
+            return false;
+        }
+        try {
+            // Get the default value for this setting
+            const defaultSettings = (0, utils_1.getDefaultVersionSettings)();
+            const defaultValue = defaultSettings[settingKey];
+            if (defaultValue === undefined) {
+                (0, notifications_1.showError)('Default value not found for this setting.');
+                return false;
+            }
+            // Update the setting
+            const updatedSettings = { ...version.settings, [settingKey]: defaultValue };
+            version.updateSettings(updatedSettings);
+            await this.saveVersions();
+            vscode.commands.executeCommand('odoo.versionsChanged');
+            (0, notifications_1.showInfo)(`Setting "${settingKey}" reset to default value.`);
+            return true;
+        }
+        catch (error) {
+            logger_1.logger.error('Failed to set setting to default:', error);
+            (0, notifications_1.showError)('Failed to set setting to default value.');
+            return false;
+        }
+    }
+    /**
+     * Set a specific setting's current value as the new default
+     */
+    async setSettingAsDefault(versionId, settingKey) {
+        const version = this.versions.get(versionId);
+        if (!version) {
+            (0, notifications_1.showError)('The selected version could not be found.');
+            return false;
+        }
+        try {
+            const currentValue = version.settings[settingKey];
+            if (currentValue === undefined) {
+                (0, notifications_1.showError)('Setting value not found.');
+                return false;
+            }
+            // Update the VS Code configuration
+            const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
+            await config.update(settingKey, currentValue, vscode.ConfigurationTarget.Workspace);
+            (0, notifications_1.showInfo)(`Setting "${settingKey}" value saved as new default.`);
+            return true;
+        }
+        catch (error) {
+            logger_1.logger.error('Unable to save this setting as the default:', error);
+            (0, notifications_1.showError)('Unable to save this setting as the default.');
+            return false;
+        }
+    }
+    /**
+     * Set all settings to their default values for a version
+     */
+    async setAllSettingsToDefault(versionId) {
+        const version = this.versions.get(versionId);
+        if (!version) {
+            (0, notifications_1.showError)('The selected version could not be found.');
+            return false;
+        }
+        try {
+            // Get all default settings from VS Code configuration
+            const defaultSettings = (0, utils_1.getDefaultVersionSettings)();
+            version.updateSettings(defaultSettings);
+            await this.saveVersions();
+            vscode.commands.executeCommand('odoo.versionsChanged');
+            (0, notifications_1.showInfo)(`All settings reset to default values for version "${version.name}".`);
+            return true;
+        }
+        catch (error) {
+            logger_1.logger.error('Failed to set all settings to default:', error);
+            (0, notifications_1.showError)('Unable to reset all settings to their default values.');
+            return false;
+        }
+    }
+    /**
+     * Set all current settings as new defaults
+     */
+    async setAllSettingsAsDefault(versionId) {
+        const version = this.versions.get(versionId);
+        if (!version) {
+            (0, notifications_1.showError)('The selected version could not be found.');
+            return false;
+        }
+        try {
+            const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
+            const settings = version.settings;
+            // Update all settings in configuration
+            for (const [key, value] of Object.entries(settings)) {
+                await config.update(key, value, vscode.ConfigurationTarget.Workspace);
+            }
+            (0, notifications_1.showInfo)(`All settings from version "${version.name}" saved as new defaults.`);
+            return true;
+        }
+        catch (error) {
+            logger_1.logger.error('Failed to set all settings as default:', error);
+            (0, notifications_1.showError)('Unable to save these settings as the new defaults.');
+            return false;
+        }
+    }
 }
+exports.VersionsService = VersionsService;
+
+
+/***/ }),
+/* 24 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.VersionModel = void 0;
+const crypto_1 = __webpack_require__(25);
+class VersionModel {
+    id;
+    name; // User-friendly name like "Odoo 17.0", "Saas 17.4"
+    odooVersion; // Branch name like "17.0", "saas-17.4", "master"
+    settings;
+    isActive = false; // Currently active version
+    createdAt;
+    updatedAt;
+    constructor(name, odooVersion, settings = {}, id = (0, crypto_1.randomUUID)(), isActive = false) {
+        this.id = id;
+        this.name = name;
+        this.odooVersion = odooVersion;
+        this.isActive = isActive;
+        this.createdAt = new Date();
+        this.updatedAt = new Date();
+        // Baseline settings for partial payloads (full defaults are managed by VersionsService/config).
+        this.settings = {
+            debuggerName: 'odoo:18.0',
+            debuggerVersion: "1.0.0",
+            portNumber: 8018,
+            shellPortNumber: 5018,
+            limitTimeReal: 0,
+            limitTimeCpu: 0,
+            maxCronThreads: 0,
+            extraParams: "--log-handler,odoo.addons.base.models.ir_attachment:WARNING",
+            devMode: "--dev=all",
+            dumpsFolder: "/dumps",
+            odooPath: "./odoo",
+            enterprisePath: "./enterprise",
+            designThemesPath: "./design-themes",
+            customAddonsPath: "./custom-addons",
+            pythonPath: "./venv/bin/python",
+            subModulesPaths: "",
+            installApps: "",
+            upgradeApps: "",
+            preCheckoutCommands: [],
+            postCheckoutCommands: [],
+            ...settings
+        };
+        this.settings.preCheckoutCommands = Array.isArray(this.settings.preCheckoutCommands) ? this.settings.preCheckoutCommands : [];
+        this.settings.postCheckoutCommands = Array.isArray(this.settings.postCheckoutCommands) ? this.settings.postCheckoutCommands : [];
+    }
+    updateSettings(newSettings) {
+        this.settings = { ...this.settings, ...newSettings };
+        this.updatedAt = new Date();
+    }
+    clone(newName) {
+        return new VersionModel(newName || `${this.name} (Copy)`, this.odooVersion, { ...this.settings }, (0, crypto_1.randomUUID)(), false);
+    }
+    toJSON() {
+        return {
+            id: this.id,
+            name: this.name,
+            odooVersion: this.odooVersion,
+            settings: this.settings,
+            isActive: this.isActive,
+            createdAt: this.createdAt.toISOString(),
+            updatedAt: this.updatedAt.toISOString()
+        };
+    }
+    static fromJSON(data) {
+        const version = new VersionModel(data.name, data.odooVersion, data.settings, data.id, data.isActive);
+        version.createdAt = new Date(data.createdAt);
+        version.updatedAt = new Date(data.updatedAt);
+        return version;
+    }
+}
+exports.VersionModel = VersionModel;
 
 
 /***/ }),
 /* 25 */
 /***/ ((module) => {
 
-module.exports = require("node:fs/promises");
+module.exports = require("crypto");
 
 /***/ }),
 /* 26 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.generateDatabaseIdentifiers = generateDatabaseIdentifiers;
-const crypto = __importStar(__webpack_require__(6));
-const MAX_IDENTIFIER_LENGTH = 63;
-const KIND_LABELS = {
-    dump: 'Dump',
-    fresh: 'Fresh',
-    dev: 'Dev',
-    test: 'Test',
-    feature: 'Feature',
-    clone: 'Clone',
-    temp: 'Temp',
-    shell: 'Shell',
-    existing: 'Existing',
-    template: 'Template'
-};
-function slugifySegment(value, fallback) {
-    if (!value || value.trim().length === 0) {
-        return fallback;
-    }
-    const normalized = value
-        .normalize('NFKD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/_+/g, '_')
-        .replace(/^_+|_+$/g, '');
-    return normalized || fallback;
-}
-function shortHash(input) {
-    return crypto.createHash('sha1').update(input).digest('hex').slice(0, 6);
-}
-function formatDateStamp(date) {
-    const day = `${date.getUTCDate()}`.padStart(2, '0');
-    const month = `${date.getUTCMonth() + 1}`.padStart(2, '0');
-    const year = `${date.getUTCFullYear()}`;
-    return `${day}${month}${year}`;
-}
-function formatDisplayDate(date) {
-    try {
-        return new Intl.DateTimeFormat(undefined, {
-            year: 'numeric',
-            month: 'short',
-            day: '2-digit'
-        }).format(date);
-    }
-    catch {
-        return date.toISOString().split('T')[0];
-    }
-}
-function buildInternalIdentifier(projectSlug, kindSlug, dateStamp, hash) {
-    const suffix = `_${hash}`;
-    let prefix = `${projectSlug}_${kindSlug}_${dateStamp}`;
-    if (prefix.length + suffix.length > MAX_IDENTIFIER_LENGTH) {
-        const allowed = MAX_IDENTIFIER_LENGTH - suffix.length;
-        prefix = prefix.slice(0, Math.max(1, allowed));
-        prefix = prefix.replace(/_+$/g, '');
-        if (!prefix) {
-            prefix = 'db';
-        }
-    }
-    return `${prefix}${suffix}`;
-}
-function buildDisplayName(projectName, kindSlug, date, hash) {
-    const trimmedName = projectName.trim() || 'Odoo Database';
-    const kindLabel = KIND_LABELS[kindSlug] || kindSlug.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
-    const prettyDate = formatDisplayDate(date);
-    return `${trimmedName} • ${kindLabel} • ${prettyDate} • #${hash}`;
-}
-function generateDatabaseIdentifiers(options) {
-    const timestamp = options.timestamp ?? new Date();
-    const projectSlug = slugifySegment(options.projectName, 'project');
-    const kindSlug = slugifySegment(options.kind, 'db');
-    const dateStamp = formatDateStamp(timestamp);
-    const existing = options.existingInternalNames ?? new Set();
-    const baseSeed = options.deterministicSeed ?? `${projectSlug}|${kindSlug}|${timestamp.toISOString()}|${crypto.randomUUID()}`;
-    let attempt = 0;
-    let internalName;
-    let hash;
-    do {
-        const attemptSeed = attempt === 0 ? baseSeed : `${baseSeed}|${attempt}`;
-        hash = shortHash(attemptSeed);
-        internalName = buildInternalIdentifier(projectSlug, kindSlug, dateStamp, hash);
-        attempt++;
-    } while (existing.has(internalName.toLowerCase()));
-    return {
-        internalName,
-        displayName: buildDisplayName(options.projectName, kindSlug, timestamp, hash),
-        hash
-    };
-}
-
-
-/***/ }),
-/* 27 */
-/***/ ((module) => {
-
-module.exports = require("os");
-
-/***/ }),
-/* 28 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -6707,307 +4812,7 @@ function getSortOptions(viewId) {
 
 
 /***/ }),
-/* 29 */
-/***/ ((module) => {
-
-module.exports = require("stream");
-
-/***/ }),
-/* 30 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.databaseHasModuleTable = databaseHasModuleTable;
-exports.getInstalledModules = getInstalledModules;
-exports.getInstalledModuleNames = getInstalledModuleNames;
-exports.clearInstalledModuleCache = clearInstalledModuleCache;
-exports.parseOdooSeries = parseOdooSeries;
-exports.detectOdooSeries = detectOdooSeries;
-const node_child_process_1 = __webpack_require__(31);
-const util = __importStar(__webpack_require__(32));
-const runtimeCache_1 = __webpack_require__(16);
-const logger_1 = __webpack_require__(15);
-const execFileAsync = util.promisify(node_child_process_1.execFile);
-const INSTALLED_MODULES_QUERY = `
-    SELECT id, name, shortdesc, latest_version, state, application
-    FROM ir_module_module
-    WHERE state IN ('installed', 'to upgrade')
-    ORDER BY name;
-`.trim();
-const INSTALLED_MODULE_NAMES_QUERY = `
-    SELECT name
-    FROM ir_module_module
-    WHERE state IN ('installed', 'to upgrade')
-    ORDER BY name;
-`.trim();
-const TABLE_EXISTS_QUERY = `
-    SELECT EXISTS (
-        SELECT FROM information_schema.tables
-        WHERE table_name = 'ir_module_module'
-    );
-`.trim();
-const BASE_MODULE_VERSION_QUERY = `
-    SELECT latest_version
-    FROM ir_module_module
-    WHERE name = 'base';
-`.trim();
-function validateDatabaseName(dbName) {
-    // Basic sanity check to avoid shell injection when invoking psql
-    if (!/^[\w\-.:]+$/.test(dbName)) {
-        throw new Error(`Invalid database identifier: ${dbName}`);
-    }
-}
-async function runPsqlQuery(dbName, query, fieldSeparator = '|') {
-    validateDatabaseName(dbName);
-    try {
-        const args = [
-            '--no-psqlrc',
-            '--no-align',
-            '--tuples-only',
-            '-F',
-            fieldSeparator,
-            '-d',
-            dbName,
-            '-c',
-            query
-        ];
-        const { stdout } = await execFileAsync('psql', args, {
-            encoding: 'utf-8',
-            maxBuffer: 10 * 1024 * 1024 // Allow reasonably large result sets
-        });
-        return stdout.trim();
-    }
-    catch (error) {
-        logger_1.logger.warn(`psql command failed for database "${dbName}":`, error);
-        throw error;
-    }
-}
-async function databaseHasModuleTable(dbName) {
-    try {
-        const result = await runPsqlQuery(dbName, TABLE_EXISTS_QUERY);
-        return result === 't';
-    }
-    catch {
-        return false;
-    }
-}
-async function getInstalledModules(dbName) {
-    return runtimeCache_1.runtimeCache.getInstalledModules(dbName, async () => {
-        const modules = [];
-        if (!(await databaseHasModuleTable(dbName))) {
-            logger_1.logger.debug(`Database ${dbName} does not contain Odoo tables yet.`);
-            return modules;
-        }
-        let output;
-        try {
-            output = await runPsqlQuery(dbName, INSTALLED_MODULES_QUERY);
-        }
-        catch (error) {
-            logger_1.logger.warn(`Failed to fetch installed modules for database "${dbName}":`, error);
-            return modules;
-        }
-        if (!output) {
-            return modules;
-        }
-        for (const line of output.split('\n').map(entry => entry.trim()).filter(Boolean)) {
-            const [id, name, shortdesc, latestVersion, state, application] = line.split('|');
-            let description = shortdesc || '';
-            if (shortdesc) {
-                try {
-                    const parsed = JSON.parse(shortdesc);
-                    const locales = Object.keys(parsed);
-                    if (locales.length > 0) {
-                        description = parsed.en_US ?? parsed[locales[0]] ?? '';
-                    }
-                }
-                catch {
-                    // Keep original string when JSON parsing fails
-                    description = shortdesc;
-                }
-            }
-            modules.push({
-                id: Number.parseInt(id ?? '', 10),
-                name: name ?? '',
-                shortdesc: description ?? '',
-                installed_version: latestVersion || null,
-                latest_version: latestVersion || null,
-                state: state ?? '',
-                application: application === 't'
-            });
-        }
-        return modules;
-    });
-}
-async function getInstalledModuleNames(dbName) {
-    const names = await runtimeCache_1.runtimeCache.getInstalledModuleNames(dbName, async () => {
-        if (!(await databaseHasModuleTable(dbName))) {
-            return [];
-        }
-        let output;
-        try {
-            output = await runPsqlQuery(dbName, INSTALLED_MODULE_NAMES_QUERY);
-        }
-        catch (error) {
-            logger_1.logger.warn(`Failed to fetch installed module names for database "${dbName}":`, error);
-            return [];
-        }
-        if (!output) {
-            return [];
-        }
-        return output
-            .split('\n')
-            .map(entry => entry.trim())
-            .filter(Boolean);
-    });
-    return new Set(names);
-}
-function clearInstalledModuleCache(dbName) {
-    (0, runtimeCache_1.invalidateInstalledModulesCache)(dbName);
-}
-/**
- * Extracts the Odoo series (branch name) from a base module version string:
- * "17.0.1.3" -> "17.0", "saas~17.4.1.2" -> "saas-17.4".
- */
-function parseOdooSeries(baseModuleVersion) {
-    if (!baseModuleVersion) {
-        return undefined;
-    }
-    const match = /^(saas[~-])?(\d+)\.(\d+)/.exec(baseModuleVersion.trim());
-    if (!match) {
-        return undefined;
-    }
-    const series = `${match[2]}.${match[3]}`;
-    return match[1] ? `saas-${series}` : series;
-}
-/**
- * Detects which Odoo series (e.g. "17.0", "saas-17.4") a database runs by
- * reading the base module's version. Best-effort: returns undefined for
- * non-Odoo databases or when psql is unavailable.
- */
-async function detectOdooSeries(dbName) {
-    try {
-        if (!(await databaseHasModuleTable(dbName))) {
-            return undefined;
-        }
-        const output = await runPsqlQuery(dbName, BASE_MODULE_VERSION_QUERY);
-        return parseOdooSeries(output);
-    }
-    catch (error) {
-        logger_1.logger.warn(`Failed to detect Odoo series for database "${dbName}":`, error);
-        return undefined;
-    }
-}
-
-
-/***/ }),
-/* 31 */
-/***/ ((module) => {
-
-module.exports = require("node:child_process");
-
-/***/ }),
-/* 32 */
-/***/ ((module) => {
-
-module.exports = require("node:util");
-
-/***/ }),
-/* 33 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.BaseTreeProvider = void 0;
-const vscode = __importStar(__webpack_require__(1));
-/**
- * Shared base for the extension's tree data providers: owns the change
- * emitter (and disposes it), and exposes refresh() supporting both full and
- * element-scoped updates. Register instances in context.subscriptions so the
- * emitter is cleaned up on deactivation.
- */
-class BaseTreeProvider {
-    _onDidChangeTreeData = new vscode.EventEmitter();
-    onDidChangeTreeData = this._onDidChangeTreeData.event;
-    /** Refreshes the whole tree, or only `element` when provided. */
-    refresh(element) {
-        this._onDidChangeTreeData.fire(element);
-    }
-    dispose() {
-        this._onDidChangeTreeData.dispose();
-    }
-}
-exports.BaseTreeProvider = BaseTreeProvider;
-
-
-/***/ }),
-/* 34 */
+/* 27 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -7053,15 +4858,15 @@ exports.captureCurrentRepoBranches = captureCurrentRepoBranches;
 exports.buildDatabaseEnvironmentTarget = buildDatabaseEnvironmentTarget;
 exports.alignEnvironment = alignEnvironment;
 const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(10));
-const path = __importStar(__webpack_require__(11));
-const settings_1 = __webpack_require__(8);
-const versionsService_1 = __webpack_require__(4);
-const utils_1 = __webpack_require__(9);
-const branches_1 = __webpack_require__(24);
-const checkout_1 = __webpack_require__(35);
-const logger_1 = __webpack_require__(15);
-const notifications_1 = __webpack_require__(17);
+const fs = __importStar(__webpack_require__(8));
+const path = __importStar(__webpack_require__(9));
+const settings_1 = __webpack_require__(6);
+const versionsService_1 = __webpack_require__(23);
+const utils_1 = __webpack_require__(7);
+const branches_1 = __webpack_require__(28);
+const checkout_1 = __webpack_require__(29);
+const logger_1 = __webpack_require__(11);
+const notifications_1 = __webpack_require__(13);
 const LEGACY_BEHAVIOR_MAP = {
     'auto-both': 'auto',
     'auto-version-only': 'auto',
@@ -7353,7 +5158,100 @@ async function applyEnvironmentDiff(diff, label) {
 
 
 /***/ }),
-/* 35 */
+/* 28 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getRepoBranch = getRepoBranch;
+const vscode = __importStar(__webpack_require__(1));
+const path = __importStar(__webpack_require__(3));
+const fs = __importStar(__webpack_require__(22));
+const gitService_1 = __webpack_require__(10);
+const runtimeCache_1 = __webpack_require__(12);
+const logger_1 = __webpack_require__(11);
+/**
+ * The single branch reader for the extension. Prefers the built-in git
+ * extension's API (accurate for worktrees, detached heads, etc.), falls back
+ * to reading .git/HEAD directly, and caches results briefly via runtimeCache.
+ * Checkout flows invalidate the cache through invalidateGitBranchCache.
+ */
+function resolveRepoPath(repoPath) {
+    if (path.isAbsolute(repoPath)) {
+        return path.normalize(repoPath);
+    }
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (workspaceRoot) {
+        return path.normalize(path.join(workspaceRoot, repoPath));
+    }
+    return path.normalize(path.resolve(repoPath));
+}
+async function readBranchFromHeadFile(repoPath) {
+    const gitHeadPath = path.join(repoPath, '.git', 'HEAD');
+    try {
+        const headContent = (await fs.readFile(gitHeadPath, 'utf-8')).trim();
+        const match = /^ref: refs\/heads\/(.+)$/.exec(headContent);
+        return match ? match[1] : headContent;
+    }
+    catch (error) {
+        logger_1.logger.debug(`Failed to read branch for ${repoPath}`, error);
+        return null;
+    }
+}
+/**
+ * Returns the current branch of the repository at `repoPath` (relative paths
+ * resolve against the first workspace folder), or null when unavailable.
+ */
+async function getRepoBranch(repoPath) {
+    if (!repoPath) {
+        return null;
+    }
+    const resolved = resolveRepoPath(repoPath);
+    return runtimeCache_1.runtimeCache.getGitBranch(resolved, async () => {
+        const sourceControlBranch = await (0, gitService_1.getCurrentBranchViaSourceControl)(resolved);
+        if (sourceControlBranch) {
+            return sourceControlBranch;
+        }
+        return readBranchFromHeadFile(resolved);
+    });
+}
+
+
+/***/ }),
+/* 29 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -7394,11 +5292,11 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.checkoutRepoBranch = checkoutRepoBranch;
 exports.checkoutCoreRepos = checkoutCoreRepos;
 const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(10));
-const child_process_1 = __webpack_require__(12);
-const utils_1 = __webpack_require__(9);
-const gitService_1 = __webpack_require__(13);
-const runtimeCache_1 = __webpack_require__(16);
+const fs = __importStar(__webpack_require__(8));
+const child_process_1 = __webpack_require__(30);
+const utils_1 = __webpack_require__(7);
+const gitService_1 = __webpack_require__(10);
+const runtimeCache_1 = __webpack_require__(12);
 const checkoutHooksOutput = vscode.window.createOutputChannel('Odoo Debugger: Branch Hooks');
 function quoteForSingleQuotedShell(value) {
     return `'${value.replace(/'/g, `'\"'\"'`)}'`;
@@ -7630,7 +5528,2310 @@ async function checkoutCoreRepos(settings, branch) {
 
 
 /***/ }),
+/* 30 */
+/***/ ((module) => {
+
+module.exports = require("child_process");
+
+/***/ }),
+/* 31 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getEffectiveOdooVersion = getEffectiveOdooVersion;
+exports.promptProjectRepoBranchAssignments = promptProjectRepoBranchAssignments;
+exports.createDb = createDb;
+exports.cloneDatabaseFromTemplate = cloneDatabaseFromTemplate;
+exports.restoreDb = restoreDb;
+exports.selectDatabase = selectDatabase;
+exports.deleteDb = deleteDb;
+exports.changeDatabaseVersion = changeDatabaseVersion;
+exports.changeDatabaseProjectRepoBranches = changeDatabaseProjectRepoBranches;
+exports.manageDatabaseTemplates = manageDatabaseTemplates;
+const vscode = __importStar(__webpack_require__(1));
+const path = __importStar(__webpack_require__(3));
+const os = __importStar(__webpack_require__(32));
+const node_crypto_1 = __webpack_require__(33);
+const db_1 = __webpack_require__(34);
+const utils_1 = __webpack_require__(7);
+const notifications_1 = __webpack_require__(13);
+const logger_1 = __webpack_require__(11);
+const branches_1 = __webpack_require__(28);
+const settingsStore_1 = __webpack_require__(5);
+const versionsService_1 = __webpack_require__(23);
+const dbNaming_1 = __webpack_require__(35);
+const database_1 = __webpack_require__(36);
+const postgres_1 = __webpack_require__(38);
+const dumpImport_1 = __webpack_require__(39);
+const templates_1 = __webpack_require__(43);
+const environment_1 = __webpack_require__(27);
+/**
+ * Database UI flows: creation wizard, selection, deletion, restore, version
+ * and branch-mapping edits, and template management. All PostgreSQL / dump
+ * work is delegated to services/postgres.ts and services/dumpImport.ts.
+ */
+/**
+ * Gets the effective Odoo version for a database object.
+ * Works with both DatabaseModel instances and plain database objects.
+ */
+function getEffectiveOdooVersion(db) {
+    if (db && typeof db.getEffectiveOdooVersion === 'function') {
+        return db.getEffectiveOdooVersion();
+    }
+    if (db && db.versionId) {
+        try {
+            const versionsService = versionsService_1.VersionsService.getInstance();
+            const version = versionsService.getVersion(db.versionId);
+            if (version) {
+                return version.odooVersion;
+            }
+        }
+        catch (error) {
+            logger_1.logger.warn(`Failed to get version for database ${(0, utils_1.getDatabaseLabel)(db)}:`, error);
+        }
+    }
+    // Fall back to legacy odooVersion property
+    return db?.odooVersion || undefined;
+}
+async function collectExistingDatabaseIdentifiers() {
+    const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
+    const identifiers = new Set();
+    for (const project of data.projects ?? []) {
+        for (const db of project.dbs ?? []) {
+            if (db && typeof db.id === 'string') {
+                identifiers.add(db.id.toLowerCase());
+            }
+        }
+    }
+    return identifiers;
+}
+async function promptProjectRepoBranchAssignments(repos, existingAssignments = [], mode = 'create') {
+    if (repos.length === 0) {
+        return [];
+    }
+    const normalizedExisting = (0, environment_1.sanitizeProjectRepoBranchAssignments)(existingAssignments);
+    const existingByPath = new Map();
+    const existingByName = new Map();
+    for (const entry of normalizedExisting) {
+        if (entry.repoPath) {
+            existingByPath.set((0, utils_1.normalizePath)(entry.repoPath), entry);
+        }
+        if (entry.repoName) {
+            existingByName.set(entry.repoName.toLowerCase(), entry);
+        }
+    }
+    const setupChoices = [
+        {
+            label: 'Use current branches for all project repos',
+            description: 'Capture each selected repo current branch and attach it to this DB',
+            action: 'use-current'
+        },
+        {
+            label: 'Choose branch per repository',
+            description: 'Select an explicit branch for each selected repo',
+            action: 'choose-per-repo'
+        },
+        {
+            label: mode === 'edit' ? 'Clear project repo branch mapping' : 'Skip project repo branch mapping',
+            description: mode === 'edit'
+                ? 'Remove all project repo branch assignments from this DB'
+                : 'Do not attach project repo branch assignments to this DB',
+            action: 'clear'
+        }
+    ];
+    if (mode === 'edit') {
+        setupChoices.unshift({
+            label: 'Keep existing project repo branch mapping',
+            description: `Keep ${normalizedExisting.length} currently mapped repo branch assignment(s)`,
+            action: 'keep'
+        });
+    }
+    const setupChoice = await vscode.window.showQuickPick(setupChoices, {
+        placeHolder: mode === 'edit'
+            ? 'Edit project repository branches for this database'
+            : 'Attach project repository branches to this database?',
+        ignoreFocusOut: true
+    });
+    if (!setupChoice) {
+        return undefined;
+    }
+    if (setupChoice.action === 'keep') {
+        return normalizedExisting;
+    }
+    if (setupChoice.action === 'clear') {
+        return [];
+    }
+    if (setupChoice.action === 'use-current') {
+        const mapped = await Promise.all(repos.map(async (repo) => {
+            const repoPath = (0, utils_1.normalizePath)(repo.path);
+            const branch = await (0, branches_1.getRepoBranch)(repoPath);
+            if (!branch) {
+                return undefined;
+            }
+            return {
+                repoName: repo.name,
+                repoPath,
+                branch
+            };
+        }));
+        return mapped.filter((entry) => !!entry);
+    }
+    const assignments = [];
+    for (let i = 0; i < repos.length; i++) {
+        const repo = repos[i];
+        const repoPath = (0, utils_1.normalizePath)(repo.path);
+        const existing = existingByPath.get(repoPath) ?? existingByName.get(repo.name.toLowerCase());
+        const existingBranch = existing?.branch;
+        const currentBranch = await (0, branches_1.getRepoBranch)(repoPath);
+        const branches = await (0, utils_1.getGitBranches)(repoPath);
+        const uniqueBranches = Array.from(new Set([
+            ...(existingBranch ? [existingBranch] : []),
+            ...(currentBranch ? [currentBranch] : []),
+            ...branches
+        ]));
+        const selectableBranches = uniqueBranches.filter(branch => branch !== currentBranch && branch !== existingBranch);
+        const options = [
+            ...(existingBranch ? [{
+                    label: `$(bookmark) Keep mapped branch (${existingBranch})`,
+                    description: repo.name,
+                    action: 'use',
+                    branch: existingBranch
+                }] : []),
+            ...(currentBranch ? [{
+                    label: `$(git-branch) Keep current branch (${currentBranch})`,
+                    description: repo.name,
+                    action: 'use',
+                    branch: currentBranch
+                }] : []),
+            ...selectableBranches.map(branch => ({
+                label: branch,
+                description: repo.name,
+                action: 'use',
+                branch
+            })),
+            {
+                label: '$(pencil) Enter a custom branch',
+                description: repo.name,
+                action: 'custom'
+            },
+            {
+                label: mode === 'edit' && existingBranch
+                    ? '$(close) Keep existing mapping for this repository'
+                    : '$(close) Skip this repository',
+                description: repo.name,
+                action: 'skip'
+            }
+        ];
+        const picked = await vscode.window.showQuickPick(options, {
+            placeHolder: `[${i + 1}/${repos.length}] Select branch for repository "${repo.name}"${existingBranch ? ` (mapped: ${existingBranch})` : ''}`,
+            ignoreFocusOut: true
+        });
+        if (!picked) {
+            return undefined;
+        }
+        if (picked.action === 'skip') {
+            if (mode === 'edit' && existingBranch) {
+                assignments.push({
+                    repoName: repo.name,
+                    repoPath,
+                    branch: existingBranch
+                });
+            }
+            continue;
+        }
+        let branch = picked.branch;
+        if (picked.action === 'custom') {
+            const customBranchInput = await vscode.window.showInputBox({
+                placeHolder: existingBranch ?? currentBranch ?? 'Enter branch name',
+                value: existingBranch ?? currentBranch ?? '',
+                prompt: `Enter the branch to checkout for "${repo.name}" when this DB is selected`,
+                ignoreFocusOut: true
+            });
+            if (customBranchInput === undefined) {
+                return undefined;
+            }
+            branch = customBranchInput.trim();
+        }
+        if (!branch) {
+            continue;
+        }
+        assignments.push({
+            repoName: repo.name,
+            repoPath,
+            branch
+        });
+    }
+    return assignments;
+}
+/**
+ * Helper function to extract DatabaseModel from various event sources
+ * (direct database object, VS Code TreeItem, or command arguments)
+ */
+function extractDatabaseFromEvent(event) {
+    if (!event || typeof event !== 'object') {
+        return null;
+    }
+    const candidate = event;
+    // Check if we received a VS Code TreeItem (context menu call)
+    // TreeItems have properties like collapsibleState, label, and our custom database property
+    if ('collapsibleState' in candidate && 'label' in candidate && candidate.database) {
+        return candidate.database;
+    }
+    // Check if it's a direct database object (has required DatabaseModel properties)
+    if (typeof candidate.name === 'string' && typeof candidate.id === 'string') {
+        return event;
+    }
+    return null;
+}
+async function getDbDumpFolder(dumpsFolder, searchFilter) {
+    dumpsFolder = (0, utils_1.normalizePath)(dumpsFolder);
+    if (!(await (0, dumpImport_1.pathExists)(dumpsFolder))) {
+        (0, notifications_1.showError)(`Dumps folder not found: ${dumpsFolder}`);
+        return undefined;
+    }
+    const matches = await (0, dumpImport_1.collectDumpSources)(dumpsFolder);
+    if (matches.length === 0) {
+        (0, notifications_1.showInfo)(`No dump directories or zip archives found in ${path.basename(dumpsFolder)}.`);
+        return undefined;
+    }
+    let foldersToShow = matches.map(item => ({
+        label: item.label,
+        description: item.path,
+        detail: item.kind === 'zip' ? 'Zip archive' : item.kind === 'file' ? 'SQL dump file' : 'Folder',
+        item
+    }));
+    if (searchFilter && searchFilter.trim() !== '') {
+        const filterTerm = searchFilter.toLowerCase();
+        const exact = foldersToShow.filter(item => item.label.toLowerCase() === filterTerm);
+        const partial = foldersToShow.filter(item => item.label.toLowerCase().includes(filterTerm) && item.label.toLowerCase() !== filterTerm);
+        const rest = foldersToShow.filter(item => !item.label.toLowerCase().includes(filterTerm));
+        foldersToShow = [...exact, ...partial, ...rest];
+    }
+    const selected = await vscode.window.showQuickPick(foldersToShow, {
+        placeHolder: searchFilter
+            ? `Select a dump source (showing "${searchFilter}" matches first)`
+            : 'Select a folder or zip archive containing dump.sql',
+        ignoreFocusOut: true
+    });
+    return selected?.item;
+}
+const CREATION_METHOD_ITEMS = {
+    fresh: {
+        label: 'Fresh Database',
+        description: 'Create a new empty database and install modules',
+        detail: 'Start with a clean Odoo installation',
+        method: 'fresh'
+    },
+    dump: {
+        label: 'From Dump File',
+        description: 'Restore database from a dump/backup file',
+        detail: 'Import an existing database backup',
+        method: 'dump'
+    },
+    existing: {
+        label: 'Connect to Existing',
+        description: 'Reference an already existing database',
+        detail: 'Use a database that already exists in PostgreSQL',
+        method: 'existing'
+    },
+    template: {
+        label: 'From Template',
+        description: 'Create a database by cloning a saved template',
+        detail: 'Fast DB creation using createdb -T <template>',
+        method: 'template'
+    }
+};
+const NEW_DB_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/;
+async function pickExistingPostgresDatabase() {
+    const linkedIdentifiers = await collectExistingDatabaseIdentifiers();
+    const candidates = (await (0, postgres_1.listPostgresDatabases)())
+        .filter(name => !postgres_1.RESERVED_DATABASE_NAMES.has(name.toLowerCase()));
+    const choices = [
+        ...candidates.map(name => ({
+            label: name,
+            description: linkedIdentifiers.has(name.toLowerCase()) ? 'Already linked to a project' : undefined,
+            action: 'select',
+            dbName: name
+        })),
+        {
+            label: '$(pencil) Enter database name manually',
+            detail: 'Use this if the database is not listed.',
+            action: 'manual'
+        }
+    ];
+    const selection = await vscode.window.showQuickPick(choices, {
+        placeHolder: 'Select the existing PostgreSQL database to connect',
+        ignoreFocusOut: true
+    });
+    if (!selection) {
+        return undefined;
+    }
+    if (selection.action === 'select') {
+        return selection.dbName;
+    }
+    const manual = await vscode.window.showInputBox({
+        placeHolder: 'Enter the name of the existing PostgreSQL database',
+        prompt: 'Make sure the database exists in your PostgreSQL instance',
+        ignoreFocusOut: true,
+        validateInput: value => value.trim() ? null : 'Enter a database name to continue.'
+    });
+    return manual?.trim() || undefined;
+}
+async function linkDatabaseToVersion(dbId, versionId) {
+    const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
+    let changed = false;
+    for (const project of data.projects ?? []) {
+        for (const db of project.dbs ?? []) {
+            if (db?.id === dbId && !db.versionId) {
+                db.versionId = versionId;
+                changed = true;
+            }
+        }
+    }
+    if (changed) {
+        await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+    }
+}
+/**
+ * Resolves which version profile a new database should use, without prompting:
+ * fresh databases inherit the active version; restored/connected databases are
+ * probed for their Odoo series (base module version) and matched to a version.
+ */
+async function resolveVersionForNewDatabase(dbName, method) {
+    const versionsService = versionsService_1.VersionsService.getInstance();
+    await versionsService.initialize();
+    const activeVersion = versionsService.getActiveVersion();
+    if (method === 'fresh') {
+        return { versionId: activeVersion?.id, branchLabel: activeVersion?.odooVersion };
+    }
+    const series = await (0, database_1.detectOdooSeries)(dbName);
+    if (!series) {
+        return { versionId: activeVersion?.id, branchLabel: activeVersion?.odooVersion };
+    }
+    const match = versionsService.getVersions().find(version => (version.odooVersion ?? '').trim() === series);
+    if (match) {
+        return { versionId: match.id, branchLabel: series };
+    }
+    // Non-blocking offer to create the missing version profile.
+    void (0, notifications_1.showInfo)(`Database "${dbName}" runs Odoo ${series}, but no matching version profile exists.`, 'Create Version', 'Ignore').then(async (choice) => {
+        if (choice !== 'Create Version') {
+            return;
+        }
+        try {
+            const created = await versionsService.createVersion(`Odoo ${series}`, series);
+            await linkDatabaseToVersion(dbName, created.id);
+            (0, notifications_1.showAutoInfo)(`Created version "Odoo ${series}" and linked it to "${dbName}"`, 3000);
+            await vscode.commands.executeCommand('dbSelector.refresh');
+        }
+        catch (error) {
+            (0, notifications_1.showError)(`Failed to create version for Odoo ${series}: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    });
+    return { versionId: undefined, branchLabel: series };
+}
+async function createDb(projectName, repos, dumpFolderPath, _settings, options = {}) {
+    // Step 1: creation method — the only decision that cannot be inferred.
+    let creationMethod;
+    if (options.initialMethod) {
+        creationMethod = options.initialMethod;
+    }
+    else {
+        const methodItems = Object.values(CREATION_METHOD_ITEMS)
+            .filter(item => options.allowExistingOption !== false || item.method !== 'existing');
+        const selection = await vscode.window.showQuickPick(methodItems, {
+            placeHolder: 'How do you want to create this database?',
+            ignoreFocusOut: true
+        });
+        if (!selection) {
+            return undefined;
+        }
+        creationMethod = selection.method;
+    }
+    // Step 2: method-specific source.
+    let sqlDumpPath;
+    let selectedTemplate;
+    let existingDbName;
+    switch (creationMethod) {
+        case 'dump': {
+            const selection = await getDbDumpFolder(dumpFolderPath, projectName);
+            if (!selection) {
+                return undefined;
+            }
+            if (selection.kind === 'folder') {
+                const candidate = path.join(selection.path, 'dump.sql');
+                if (!(await (0, dumpImport_1.pathExists)(candidate))) {
+                    (0, notifications_1.showError)(`dump.sql not found inside ${selection.path}`);
+                    return undefined;
+                }
+                sqlDumpPath = candidate;
+            }
+            else {
+                sqlDumpPath = selection.path;
+            }
+            break;
+        }
+        case 'template': {
+            const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
+            const templates = (0, templates_1.sanitizeDatabaseTemplates)(data.dbTemplates);
+            if (templates.length === 0) {
+                (0, notifications_1.showInfo)('No database templates found. Use "Manage Database Templates" to create one first.');
+                return undefined;
+            }
+            selectedTemplate = await promptTemplateSelection(templates, 'Select a template to clone into the new database');
+            if (!selectedTemplate) {
+                return undefined;
+            }
+            break;
+        }
+        case 'existing': {
+            existingDbName = await pickExistingPostgresDatabase();
+            if (!existingDbName) {
+                return undefined;
+            }
+            break;
+        }
+        case 'fresh':
+            break;
+    }
+    // Step 3: database name — pre-filled suggestion, one Enter to accept.
+    const creationTimestamp = new Date();
+    const existingIdentifiers = await collectExistingDatabaseIdentifiers();
+    const dbKind = creationMethod;
+    let dbName;
+    if (existingDbName) {
+        dbName = existingDbName;
+    }
+    else {
+        const suggestion = (0, dbNaming_1.generateDatabaseIdentifiers)({
+            projectName,
+            kind: dbKind,
+            timestamp: creationTimestamp,
+            existingInternalNames: existingIdentifiers
+        }).internalName;
+        const nameInput = await vscode.window.showInputBox({
+            prompt: 'Database name (used as the PostgreSQL identifier)',
+            value: suggestion,
+            ignoreFocusOut: true,
+            validateInput: value => {
+                const trimmed = value.trim();
+                if (!trimmed) {
+                    return 'Database name cannot be empty.';
+                }
+                if (!NEW_DB_NAME_PATTERN.test(trimmed)) {
+                    return 'Use letters, numbers, "-" or "_" only. The name must not start with "-".';
+                }
+                if (postgres_1.RESERVED_DATABASE_NAMES.has(trimmed.toLowerCase())) {
+                    return `"${trimmed}" is a reserved database name.`;
+                }
+                if (existingIdentifiers.has(trimmed.toLowerCase())) {
+                    return 'A database with this name is already linked to a project.';
+                }
+                return null;
+            }
+        });
+        if (nameInput === undefined) {
+            return undefined;
+        }
+        dbName = nameInput.trim();
+    }
+    // Step 4: create/restore the PostgreSQL database.
+    if (creationMethod === 'dump' && sqlDumpPath) {
+        await setupDatabase(dbName, sqlDumpPath);
+    }
+    else if (creationMethod === 'template' && selectedTemplate) {
+        await cloneDatabaseFromTemplate(dbName, selectedTemplate.templateDbName);
+    }
+    else if (creationMethod === 'fresh') {
+        await setupDatabase(dbName, undefined);
+    }
+    // Step 5: infer the environment instead of prompting for it. The version is
+    // auto-detected from the database itself; the current branch of every
+    // project repo is captured as the database's working state.
+    const { versionId, branchLabel } = await resolveVersionForNewDatabase(dbName, creationMethod);
+    const projectRepoBranches = await (0, environment_1.captureCurrentRepoBranches)(repos);
+    return new db_1.DatabaseModel(dbName, creationTimestamp, {
+        isSelected: true,
+        isItABackup: creationMethod === 'dump',
+        sqlFilePath: sqlDumpPath,
+        isExisting: creationMethod === 'existing',
+        branchName: branchLabel ?? '',
+        versionId,
+        displayName: dbName,
+        internalName: dbName,
+        kind: dbKind,
+        projectRepoBranches
+    });
+}
+/** Clones `templateDbName` into `targetDbName`, replacing any existing DB. */
+async function cloneDatabaseFromTemplate(targetDbName, templateDbName) {
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Setting up database ${targetDbName}`,
+        cancellable: false
+    }, async (progress) => {
+        progress.report({ message: 'Checking database existence...', increment: 20 });
+        if (await (0, postgres_1.databaseExists)(targetDbName)) {
+            progress.report({ message: 'Dropping existing database...', increment: 20 });
+            await (0, postgres_1.dropDatabase)(targetDbName);
+        }
+        progress.report({ message: `Cloning from template "${templateDbName}"...`, increment: 50 });
+        await (0, postgres_1.createDatabase)(targetDbName, templateDbName);
+        progress.report({ message: 'Complete!', increment: 30 });
+    });
+}
+/**
+ * Creates (or drops, with `remove`) the PostgreSQL database, importing and
+ * neutralizing a dump when one is provided.
+ */
+async function setupDatabase(dbName, dumpPath, remove = false) {
+    if (dumpPath && !(await (0, dumpImport_1.pathExists)(dumpPath))) {
+        (0, notifications_1.showError)(`Dump file not found at: ${dumpPath}`);
+        return;
+    }
+    let preparedDump;
+    try {
+        preparedDump = dumpPath ? await (0, dumpImport_1.prepareDumpForImport)(dumpPath) : undefined;
+    }
+    catch (error) {
+        (0, notifications_1.showError)(`Unable to read dump file: ${(0, logger_1.errorMessage)(error)}`);
+        return;
+    }
+    const operation = remove ? 'Removing' : preparedDump ? 'Setting up' : 'Creating';
+    try {
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: `${operation} database ${dbName}`,
+            cancellable: false
+        }, async (progress) => {
+            try {
+                progress.report({ message: 'Checking database existence...', increment: 10 });
+                if (await (0, postgres_1.databaseExists)(dbName)) {
+                    progress.report({ message: 'Dropping existing database...', increment: 20 });
+                    logger_1.logger.debug(`Dropping existing database: ${dbName}`);
+                    await (0, postgres_1.dropDatabase)(dbName);
+                }
+                if (remove) {
+                    progress.report({ message: 'Complete!', increment: 100 });
+                    return;
+                }
+                progress.report({ message: 'Creating database...', increment: 40 });
+                logger_1.logger.debug(`Creating database: ${dbName}`);
+                await (0, postgres_1.createDatabase)(dbName);
+                if (preparedDump) {
+                    progress.report({
+                        message: preparedDump.progressMessage ?? 'Importing dump file...',
+                        increment: 50
+                    });
+                    logger_1.logger.debug(`Importing SQL dump into ${dbName}`);
+                    try {
+                        await (0, dumpImport_1.importPreparedDump)(dbName, preparedDump);
+                    }
+                    catch (error) {
+                        if (dumpPath && preparedDump.kind === 'stream' && (0, dumpImport_1.isToolchainUnavailableError)(error)) {
+                            logger_1.logger.warn('Streaming import unavailable. Falling back to temporary dump extraction.');
+                            progress.report({
+                                message: dumpPath.toLowerCase().endsWith('.zip')
+                                    ? 'Streaming unavailable. Extracting archive to temporary SQL file...'
+                                    : 'Streaming unavailable. Decompressing dump to temporary SQL file...'
+                            });
+                            const fallbackDump = await (0, dumpImport_1.prepareDumpViaTempFile)(dumpPath);
+                            try {
+                                progress.report({ message: 'Importing extracted SQL dump...' });
+                                await (0, dumpImport_1.importPreparedDump)(dbName, fallbackDump);
+                            }
+                            finally {
+                                fallbackDump.cleanup?.();
+                            }
+                        }
+                        else {
+                            throw error;
+                        }
+                    }
+                    progress.report({ message: 'Configuring database for development...', increment: 70 });
+                    await (0, postgres_1.neutralizeDatabase)(dbName, (0, node_crypto_1.randomUUID)());
+                    progress.report({ message: 'Database configured for development', increment: 90 });
+                }
+                else {
+                    progress.report({ message: 'Database created (empty)...', increment: 90 });
+                    logger_1.logger.debug(`Empty database created: ${dbName}`);
+                }
+                progress.report({ message: 'Complete!', increment: 100 });
+                logger_1.logger.debug(`Database "${dbName}" is ready.`);
+            }
+            catch (error) {
+                logger_1.logger.error(`Database setup failed for ${dbName}:`, error);
+                (0, notifications_1.showError)(`Failed to setup database: ${(0, logger_1.errorMessage)(error)}`);
+            }
+        });
+    }
+    finally {
+        if (preparedDump?.cleanup) {
+            try {
+                preparedDump.cleanup();
+            }
+            catch (cleanupError) {
+                logger_1.logger.warn('Failed to cleanup temporary dump files:', cleanupError);
+            }
+        }
+    }
+}
+async function restoreDb(event) {
+    const database = extractDatabaseFromEvent(event);
+    if (!database) {
+        throw new Error('Invalid database object for restoration');
+    }
+    const databaseLabel = (0, utils_1.getDatabaseLabel)(database);
+    // Check if database has a backup file path
+    if (!database.sqlFilePath || database.sqlFilePath.trim() === '') {
+        throw new Error('No backup file path defined for this database');
+    }
+    // Ask for confirmation
+    const confirm = await (0, notifications_1.showModalWarning)(`Are you sure you want to restore the database "${databaseLabel}"? This will overwrite the existing database.`, 'Restore');
+    if (confirm !== 'Restore') {
+        return; // User cancelled
+    }
+    await setupDatabase(database.id, database.sqlFilePath);
+    (0, notifications_1.showAutoInfo)(`Database "${databaseLabel}" restored successfully`, 3000);
+}
+async function selectDatabase(event) {
+    const database = extractDatabaseFromEvent(event);
+    if (!database) {
+        (0, notifications_1.showError)('Could not identify the database to select.');
+        return;
+    }
+    const databaseLabel = (0, utils_1.getDatabaseLabel)(database);
+    const result = await settingsStore_1.SettingsStore.getSelectedProject();
+    if (!result) {
+        return;
+    }
+    const { data, project } = result;
+    const projectIndex = data.projects.findIndex(p => p.uid === project.uid);
+    if (projectIndex === -1) {
+        (0, notifications_1.showError)('The selected project could not be found.');
+        return;
+    }
+    // Update database selection
+    const oldSelectedDbIndex = project.dbs.findIndex((db) => db.isSelected);
+    if (oldSelectedDbIndex !== -1) {
+        project.dbs[oldSelectedDbIndex].isSelected = false;
+    }
+    const newSelectedDbIndex = project.dbs.findIndex((db) => db.id === database.id);
+    if (newSelectedDbIndex !== -1) {
+        project.dbs[newSelectedDbIndex].isSelected = true;
+    }
+    const selectedDatabase = newSelectedDbIndex !== -1 ? project.dbs[newSelectedDbIndex] : database;
+    await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+    // Align the workbench (active version, core branches, project repo
+    // branches) to the database through the single switch pipeline.
+    try {
+        await (0, environment_1.alignEnvironment)((0, environment_1.buildDatabaseEnvironmentTarget)(selectedDatabase, project.repos ?? []), { label: `Database "${databaseLabel}"` });
+    }
+    catch (error) {
+        logger_1.logger.error('Error while aligning environment for database selection:', error);
+        (0, notifications_1.showWarning)(`Database selected, but environment switching failed: ${(0, logger_1.errorMessage)(error)}`);
+    }
+    (0, notifications_1.showBriefStatus)(`Database switched to: ${databaseLabel}`, 2000);
+}
+async function deleteDb(event) {
+    const db = extractDatabaseFromEvent(event);
+    if (!db) {
+        (0, notifications_1.showError)('Could not identify the database to delete.');
+        return;
+    }
+    const dbLabel = (0, utils_1.getDatabaseLabel)(db);
+    const result = await settingsStore_1.SettingsStore.getSelectedProject();
+    if (!result) {
+        return;
+    }
+    const { data, project } = result;
+    // Find the project index in the projects array
+    const projectIndex = data.projects.findIndex(p => p.uid === project.uid);
+    if (projectIndex === -1) {
+        (0, notifications_1.showError)('The selected project could not be found.');
+        return;
+    }
+    // Ask for confirmation
+    const confirm = await (0, notifications_1.showModalWarning)(`Are you sure you want to delete the database "${dbLabel}"?`, 'Delete');
+    if (confirm !== 'Delete') {
+        return; // User cancelled
+    }
+    // Delete the database from PostgreSQL
+    await setupDatabase(db.id, undefined, true);
+    // Remove from project data
+    project.dbs = project.dbs.filter((database) => database.id !== db.id);
+    // If the deleted database was selected and there are other databases, select the first one
+    if (db.isSelected && project.dbs.length > 0) {
+        project.dbs[0].isSelected = true;
+    }
+    // Save the updated data without settings
+    const updatedData = (0, utils_1.stripSettings)(data);
+    await settingsStore_1.SettingsStore.saveWithoutComments(updatedData);
+    (0, notifications_1.showAutoInfo)(`Database "${dbLabel}" deleted successfully`, 2500);
+    if (db.isSelected && project.dbs.length > 0) {
+        (0, notifications_1.showBriefStatus)(`Switched to database: ${(0, utils_1.getDatabaseLabel)(project.dbs[0])}`, 2000);
+    }
+}
+async function changeDatabaseVersion(event) {
+    try {
+        const db = extractDatabaseFromEvent(event);
+        if (!db) {
+            (0, notifications_1.showError)('Could not identify the database whose version should change.');
+            return;
+        }
+        const dbLabel = (0, utils_1.getDatabaseLabel)(db);
+        const result = await settingsStore_1.SettingsStore.getSelectedProject();
+        if (!result) {
+            return;
+        }
+        const { data, project } = result;
+        // Find the project index in the projects array
+        const projectIndex = data.projects.findIndex(p => p.uid === project.uid);
+        if (projectIndex === -1) {
+            (0, notifications_1.showError)('The selected project could not be found.');
+            return;
+        }
+        // Find the database index
+        const dbIndex = project.dbs.findIndex((database) => database.id === db.id);
+        if (dbIndex === -1) {
+            (0, notifications_1.showError)('The selected database could not be found.');
+            return;
+        }
+        // Get available versions
+        const versionsService = versionsService_1.VersionsService.getInstance();
+        await versionsService.initialize();
+        const availableVersions = versionsService.getVersions();
+        // Create version choices including "No Version" option
+        const versionChoices = [
+            {
+                label: '$(close) No Version',
+                description: 'Remove version association',
+                detail: 'Database will use current branch settings without version',
+                versionId: undefined
+            },
+            ...availableVersions.map(version => ({
+                label: `$(versions) ${version.name}`,
+                description: `Odoo ${version.odooVersion}`,
+                detail: `Use settings and configuration from ${version.name}`,
+                versionId: version.id
+            }))
+        ];
+        // Show current version in the placeholder
+        let currentVersionText = 'No version';
+        if (db.versionId) {
+            const currentVersion = versionsService.getVersion(db.versionId);
+            currentVersionText = currentVersion ? currentVersion.name : 'Unknown version';
+        }
+        else {
+            const effectiveOdooVersion = getEffectiveOdooVersion(db);
+            if (effectiveOdooVersion) {
+                currentVersionText = `Branch: ${effectiveOdooVersion}`;
+            }
+        }
+        const selectedChoice = await vscode.window.showQuickPick(versionChoices, {
+            placeHolder: `Current: ${currentVersionText}. Select a new version for database "${dbLabel}"`,
+            ignoreFocusOut: true
+        });
+        if (!selectedChoice) {
+            return; // User cancelled
+        }
+        // Update the database version - modify the existing database object in place
+        // to avoid date serialization issues
+        if (selectedChoice.versionId) {
+            const selectedVersion = versionsService.getVersion(selectedChoice.versionId);
+            if (selectedVersion) {
+                project.dbs[dbIndex].versionId = selectedChoice.versionId;
+                // Don't set odooVersion when version is assigned - it should come from the version
+                project.dbs[dbIndex].odooVersion = undefined;
+            }
+        }
+        else {
+            // Remove version association but preserve original branch name
+            project.dbs[dbIndex].versionId = undefined;
+            // When no version, we can fall back to empty odooVersion (will use branchName if available)
+            project.dbs[dbIndex].odooVersion = undefined;
+            // Keep branchName - it's independent of version management
+        }
+        // Save only the databases array to avoid touching settings
+        const updatedData = (0, utils_1.stripSettings)(data);
+        await settingsStore_1.SettingsStore.saveWithoutComments(updatedData);
+        // Show confirmation message
+        const updatedDb = project.dbs[dbIndex]; // Use the updated database object
+        const dbNameForMessage = (0, utils_1.getDatabaseLabel)(updatedDb) || dbLabel;
+        const newVersionText = selectedChoice.versionId
+            ? `version "${availableVersions.find(v => v.id === selectedChoice.versionId)?.name}"`
+            : 'no version';
+        (0, notifications_1.showAutoInfo)(`Database "${dbNameForMessage}" updated to use ${newVersionText}`, 3000);
+        // If this is the currently selected database, align the workbench to the new version.
+        if (db.isSelected && selectedChoice.versionId) {
+            await (0, environment_1.alignEnvironment)((0, environment_1.buildDatabaseEnvironmentTarget)(project.dbs[dbIndex], project.repos ?? []), { label: `Database "${dbNameForMessage}"` });
+        }
+    }
+    catch (error) {
+        (0, notifications_1.showError)(`Failed to change database version: ${(0, logger_1.errorMessage)(error)}`);
+        logger_1.logger.error('Error in changeDatabaseVersion:', error);
+    }
+}
+async function changeDatabaseProjectRepoBranches(event) {
+    try {
+        const db = extractDatabaseFromEvent(event);
+        if (!db) {
+            (0, notifications_1.showError)('Could not identify the database whose project repo branches should change.');
+            return;
+        }
+        const dbLabel = (0, utils_1.getDatabaseLabel)(db);
+        const result = await settingsStore_1.SettingsStore.getSelectedProject();
+        if (!result) {
+            return;
+        }
+        const { data, project } = result;
+        const projectIndex = data.projects.findIndex(p => p.uid === project.uid);
+        if (projectIndex === -1) {
+            (0, notifications_1.showError)('The selected project could not be found.');
+            return;
+        }
+        const dbIndex = project.dbs.findIndex((database) => database.id === db.id);
+        if (dbIndex === -1) {
+            (0, notifications_1.showError)('The selected database could not be found.');
+            return;
+        }
+        const existingAssignments = (0, environment_1.sanitizeProjectRepoBranchAssignments)(project.dbs[dbIndex].projectRepoBranches);
+        const updatedAssignments = await promptProjectRepoBranchAssignments(project.repos ?? [], existingAssignments, 'edit');
+        if (updatedAssignments === undefined) {
+            return;
+        }
+        project.dbs[dbIndex].projectRepoBranches = updatedAssignments;
+        const updatedData = (0, utils_1.stripSettings)(data);
+        await settingsStore_1.SettingsStore.saveWithoutComments(updatedData);
+        if (updatedAssignments.length > 0) {
+            (0, notifications_1.showAutoInfo)(`Updated project repo branch mapping for "${dbLabel}" (${updatedAssignments.length} repo(s))`, 3000);
+        }
+        else {
+            (0, notifications_1.showAutoInfo)(`Cleared project repo branch mapping for "${dbLabel}"`, 3000);
+        }
+        if (project.dbs[dbIndex].isSelected && updatedAssignments.length > 0) {
+            // The user explicitly configured this mapping; apply it right away.
+            await (0, environment_1.alignEnvironment)({ repoAssignments: (0, environment_1.resolveProjectRepoBranchAssignments)(project.dbs[dbIndex], project.repos ?? []) }, { label: `Database "${dbLabel}"`, behavior: 'auto' });
+        }
+    }
+    catch (error) {
+        (0, notifications_1.showError)(`Failed to update project repo branch mapping: ${(0, logger_1.errorMessage)(error)}`);
+        logger_1.logger.error('Error in changeDatabaseProjectRepoBranches:', error);
+    }
+}
+// ---------------------------------------------------------------------------
+// Database templates
+// ---------------------------------------------------------------------------
+function getTemplateQuickPickItems(templates) {
+    return templates.map(template => ({
+        label: template.name,
+        description: template.templateDbName,
+        detail: template.sourceDbName ? `Source DB: ${template.sourceDbName}` : 'Source DB not recorded',
+        template
+    }));
+}
+async function promptTemplateSelection(templates, placeHolder) {
+    if (templates.length === 0) {
+        return undefined;
+    }
+    const selected = await vscode.window.showQuickPick(getTemplateQuickPickItems(templates), {
+        placeHolder,
+        ignoreFocusOut: true
+    });
+    return selected?.template;
+}
+function collectProjectDatabaseNames(data) {
+    if (!Array.isArray(data.projects)) {
+        return [];
+    }
+    const projectDbNames = data.projects.flatMap(project => Array.isArray(project?.dbs)
+        ? project.dbs
+            .map(db => typeof db?.id === 'string' ? db.id.trim() : '')
+            .filter((name) => name.length > 0)
+        : []);
+    return Array.from(new Set(projectDbNames)).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+async function promptTemplateSourceDatabase(data) {
+    const projectDbNames = collectProjectDatabaseNames(data);
+    const postgresDbNames = (await (0, postgres_1.listPostgresDatabases)())
+        .filter(name => !postgres_1.RESERVED_DATABASE_NAMES.has(name.toLowerCase()));
+    const mergedNames = Array.from(new Set([
+        ...projectDbNames,
+        ...postgresDbNames
+    ])).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    const choices = [
+        ...mergedNames.map(dbName => ({
+            label: dbName,
+            description: projectDbNames.includes(dbName) ? 'Linked project database' : 'PostgreSQL database',
+            action: 'select',
+            dbName
+        })),
+        {
+            label: '$(pencil) Enter database name manually',
+            detail: 'Use this if the source database is not listed.',
+            action: 'manual'
+        }
+    ];
+    const selection = await vscode.window.showQuickPick(choices, {
+        placeHolder: 'Select the source database to clone into a template',
+        ignoreFocusOut: true
+    });
+    if (!selection) {
+        return undefined;
+    }
+    if (selection.action === 'select') {
+        return selection.dbName;
+    }
+    const customInput = await vscode.window.showInputBox({
+        prompt: 'Enter source PostgreSQL database name',
+        placeHolder: 'e.g. my_migrated_dump',
+        ignoreFocusOut: true,
+        validateInput: (value) => {
+            if (!value || value.trim().length === 0) {
+                return 'Database name cannot be empty.';
+            }
+            if (value.trim().startsWith('-')) {
+                return 'Database name cannot start with "-".';
+            }
+            return null;
+        }
+    });
+    if (customInput === undefined) {
+        return undefined;
+    }
+    return customInput.trim();
+}
+async function createTemplateFromSource(data, templates) {
+    const sourceDbName = await promptTemplateSourceDatabase(data);
+    if (!sourceDbName) {
+        return templates;
+    }
+    const templateDbNames = new Set(templates.map(template => template.templateDbName.toLowerCase()));
+    const suggestedName = sourceDbName.startsWith('tpl_') ? sourceDbName : `tpl_${sourceDbName}`;
+    const templateNameInput = await vscode.window.showInputBox({
+        prompt: `Enter template database name cloned from "${sourceDbName}"`,
+        placeHolder: 'e.g. tpl_migration_base',
+        value: suggestedName,
+        ignoreFocusOut: true,
+        validateInput: (value) => (0, templates_1.validateTemplateDatabaseName)(value, templateDbNames)
+    });
+    if (templateNameInput === undefined) {
+        return templates;
+    }
+    const templateDbName = templateNameInput.trim();
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Creating template ${templateDbName}`,
+        cancellable: false
+    }, async (progress) => {
+        progress.report({ message: `Cloning "${sourceDbName}"...`, increment: 30 });
+        await (0, postgres_1.createDatabase)(templateDbName, sourceDbName);
+        progress.report({ message: 'Saving template metadata...', increment: 70 });
+    });
+    const now = new Date().toISOString();
+    const updated = await (0, templates_1.persistDatabaseTemplates)(data, [
+        ...templates,
+        {
+            name: templateDbName,
+            templateDbName,
+            sourceDbName,
+            createdAt: now,
+            updatedAt: now
+        }
+    ]);
+    (0, notifications_1.showAutoInfo)(`Template "${templateDbName}" created from "${sourceDbName}"`, 3000);
+    return updated;
+}
+async function importTemplatesFromPostgres(data, templates) {
+    const postgresDbNames = (await (0, postgres_1.listPostgresDatabases)())
+        .filter(name => !postgres_1.RESERVED_DATABASE_NAMES.has(name.toLowerCase()));
+    const existingTemplateDbNames = new Set(templates.map(template => template.templateDbName.toLowerCase()));
+    const importCandidates = postgresDbNames.filter(name => !existingTemplateDbNames.has(name.toLowerCase()));
+    if (importCandidates.length === 0) {
+        (0, notifications_1.showInfo)('No PostgreSQL databases available to import as templates.');
+        return templates;
+    }
+    const selectedCandidates = await vscode.window.showQuickPick(importCandidates.map(name => ({
+        label: name,
+        description: 'PostgreSQL database',
+        dbName: name
+    })), {
+        placeHolder: 'Select database(s) to register as templates',
+        canPickMany: true,
+        ignoreFocusOut: true
+    });
+    if (!selectedCandidates || selectedCandidates.length === 0) {
+        return templates;
+    }
+    const now = new Date().toISOString();
+    const updated = await (0, templates_1.persistDatabaseTemplates)(data, [
+        ...templates,
+        ...selectedCandidates.map(candidate => ({
+            name: candidate.dbName,
+            templateDbName: candidate.dbName,
+            createdAt: now,
+            updatedAt: now
+        }))
+    ]);
+    (0, notifications_1.showAutoInfo)(`Imported ${selectedCandidates.length} template(s)`, 2500);
+    return updated;
+}
+async function importTemplatesFromJson(data, templates) {
+    const selectedFiles = await vscode.window.showOpenDialog({
+        canSelectFiles: true,
+        canSelectFolders: false,
+        canSelectMany: false,
+        filters: {
+            'JSON Files': ['json'],
+            'All Files': ['*']
+        },
+        openLabel: 'Import Templates'
+    });
+    if (!selectedFiles || selectedFiles.length === 0) {
+        return templates;
+    }
+    try {
+        const content = await vscode.workspace.fs.readFile(selectedFiles[0]);
+        const parsed = JSON.parse(Buffer.from(content).toString('utf8'));
+        const imported = Array.isArray(parsed) ? parsed : parsed.templates;
+        const sanitizedImported = (0, templates_1.sanitizeDatabaseTemplates)(imported);
+        if (sanitizedImported.length === 0) {
+            (0, notifications_1.showInfo)('No valid templates found in the selected file.');
+            return templates;
+        }
+        const existingTemplateDbNames = new Set(templates.map(template => template.templateDbName.toLowerCase()));
+        const toAdd = sanitizedImported.filter(template => !existingTemplateDbNames.has(template.templateDbName.toLowerCase()));
+        if (toAdd.length === 0) {
+            (0, notifications_1.showInfo)('All templates in the selected file already exist.');
+            return templates;
+        }
+        const updated = await (0, templates_1.persistDatabaseTemplates)(data, [...templates, ...toAdd]);
+        (0, notifications_1.showAutoInfo)(`Imported ${toAdd.length} template(s) from JSON`, 2500);
+        return updated;
+    }
+    catch (error) {
+        (0, notifications_1.showError)(`Failed to import templates: ${(0, logger_1.errorMessage)(error)}`);
+        return templates;
+    }
+}
+async function exportTemplatesToJson(templates) {
+    if (templates.length === 0) {
+        (0, notifications_1.showInfo)('No templates available to export.');
+        return;
+    }
+    const saveUri = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(), 'odoo-db-templates.json')),
+        filters: {
+            'JSON Files': ['json'],
+            'All Files': ['*']
+        },
+        saveLabel: 'Export Templates'
+    });
+    if (!saveUri) {
+        return;
+    }
+    const payload = {
+        exportedAt: new Date().toISOString(),
+        templates
+    };
+    await vscode.workspace.fs.writeFile(saveUri, Buffer.from(JSON.stringify(payload, null, 2), 'utf8'));
+    (0, notifications_1.showAutoInfo)(`Exported ${templates.length} template(s)`, 2500);
+}
+async function manageSingleTemplate(data, templates, selectedTemplate) {
+    const templateAction = await vscode.window.showQuickPick([
+        {
+            label: '$(edit) Rename Template',
+            description: `Current DB name: ${selectedTemplate.templateDbName}`,
+            action: 'rename'
+        },
+        {
+            label: '$(trash) Delete Template',
+            description: `Remove "${selectedTemplate.name}"`,
+            action: 'delete'
+        },
+        {
+            label: '$(arrow-left) Back',
+            action: 'back'
+        }
+    ], {
+        placeHolder: `Manage template "${selectedTemplate.name}"`,
+        ignoreFocusOut: true
+    });
+    if (!templateAction || templateAction.action === 'back') {
+        return templates;
+    }
+    if (templateAction.action === 'rename') {
+        const templateDbNames = new Set(templates.map(template => template.templateDbName.toLowerCase()));
+        const newNameInput = await vscode.window.showInputBox({
+            prompt: `Rename template "${selectedTemplate.templateDbName}"`,
+            value: selectedTemplate.templateDbName,
+            ignoreFocusOut: true,
+            validateInput: (value) => (0, templates_1.validateTemplateDatabaseName)(value, templateDbNames, selectedTemplate.templateDbName)
+        });
+        if (newNameInput === undefined) {
+            return templates;
+        }
+        const newTemplateDbName = newNameInput.trim();
+        if (newTemplateDbName.toLowerCase() === selectedTemplate.templateDbName.toLowerCase()) {
+            return templates;
+        }
+        await (0, postgres_1.renameDatabase)(selectedTemplate.templateDbName, newTemplateDbName);
+        const now = new Date().toISOString();
+        const updated = await (0, templates_1.persistDatabaseTemplates)(data, templates.map(template => template.templateDbName.toLowerCase() === selectedTemplate.templateDbName.toLowerCase()
+            ? {
+                ...template,
+                name: newTemplateDbName,
+                templateDbName: newTemplateDbName,
+                updatedAt: now
+            }
+            : template));
+        (0, notifications_1.showAutoInfo)(`Template renamed to "${newTemplateDbName}"`, 2500);
+        return updated;
+    }
+    const deleteChoice = await (0, notifications_1.showModalWarning)(`Delete template "${selectedTemplate.name}" (${selectedTemplate.templateDbName})?`, 'Delete Template DB + Metadata', 'Delete Metadata Only');
+    if (!deleteChoice) {
+        return templates;
+    }
+    if (deleteChoice === 'Delete Template DB + Metadata') {
+        await (0, postgres_1.dropDatabaseIfExists)(selectedTemplate.templateDbName);
+    }
+    const updated = await (0, templates_1.persistDatabaseTemplates)(data, templates.filter(template => template.templateDbName.toLowerCase() !== selectedTemplate.templateDbName.toLowerCase()));
+    (0, notifications_1.showAutoInfo)(`Template "${selectedTemplate.name}" deleted`, 2500);
+    return updated;
+}
+async function manageDatabaseTemplates() {
+    const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
+    let templates = (0, templates_1.sanitizeDatabaseTemplates)(data.dbTemplates);
+    while (true) {
+        const templateCount = templates.length;
+        const actions = [
+            {
+                label: '$(add) Create New Template from Existing DB',
+                description: 'Clone a source DB into a new template database',
+                action: 'create'
+            },
+            {
+                label: '$(cloud-download) Import Existing Template DB',
+                description: 'Register an already-created template database (no cloning)',
+                action: 'importDb'
+            },
+            {
+                label: '$(folder-opened) Import Templates from JSON',
+                description: 'Merge templates from an exported template file',
+                action: 'importFile'
+            },
+            {
+                label: '$(export) Export Templates to JSON',
+                description: templateCount > 0 ? `${templateCount} template(s) will be exported` : 'No templates to export',
+                action: 'exportFile'
+            },
+            ...templates.map(template => ({
+                label: `$(database) ${template.name}`,
+                description: template.templateDbName,
+                detail: template.sourceDbName ? `Source DB: ${template.sourceDbName}` : 'No source DB metadata',
+                action: 'template',
+                template
+            })),
+            {
+                label: '$(check) Done',
+                action: 'done'
+            }
+        ];
+        const selectedAction = await vscode.window.showQuickPick(actions, {
+            placeHolder: 'Manage database templates',
+            ignoreFocusOut: true
+        });
+        if (!selectedAction || selectedAction.action === 'done') {
+            return;
+        }
+        switch (selectedAction.action) {
+            case 'create':
+                templates = await createTemplateFromSource(data, templates);
+                break;
+            case 'importDb':
+                templates = await importTemplatesFromPostgres(data, templates);
+                break;
+            case 'importFile':
+                templates = await importTemplatesFromJson(data, templates);
+                break;
+            case 'exportFile':
+                await exportTemplatesToJson(templates);
+                break;
+            case 'template':
+                if (selectedAction.template) {
+                    templates = await manageSingleTemplate(data, templates, selectedAction.template);
+                }
+                break;
+        }
+    }
+}
+
+
+/***/ }),
+/* 32 */
+/***/ ((module) => {
+
+module.exports = require("node:os");
+
+/***/ }),
+/* 33 */
+/***/ ((module) => {
+
+module.exports = require("node:crypto");
+
+/***/ }),
+/* 34 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DatabaseModel = void 0;
+const versionsService_1 = __webpack_require__(23);
+const logger_1 = __webpack_require__(11);
+class DatabaseModel {
+    name;
+    isItABackup;
+    createdAt;
+    modules;
+    isSelected = false;
+    sqlFilePath = '';
+    id = '';
+    isExisting = false;
+    branchName = '';
+    odooVersion; // Optional - only used when no version is assigned
+    versionId; // Reference to the VersionModel
+    displayName;
+    internalName;
+    kind;
+    projectRepoBranches = [];
+    constructor(name, createdAt, options = {}) {
+        this.displayName = options.displayName || name;
+        this.name = this.displayName;
+        this.createdAt = createdAt;
+        this.modules = options.modules || [];
+        this.isItABackup = options.isItABackup || false;
+        this.isSelected = options.isSelected || false;
+        this.sqlFilePath = options.sqlFilePath || '';
+        this.isExisting = options.isExisting || false;
+        this.branchName = options.branchName || '';
+        this.odooVersion = options.odooVersion; // Optional - undefined when version is assigned
+        this.versionId = options.versionId;
+        this.kind = options.kind;
+        this.projectRepoBranches = Array.isArray(options.projectRepoBranches)
+            ? options.projectRepoBranches
+                .filter(entry => !!entry && typeof entry.branch === 'string' && entry.branch.trim() !== '')
+                .map(entry => ({
+                repoName: entry.repoName || '',
+                repoPath: entry.repoPath || '',
+                branch: entry.branch.trim()
+            }))
+            : [];
+        if (options.internalName) {
+            this.internalName = options.internalName;
+        }
+        else if (this.isExisting) {
+            this.internalName = name;
+        }
+        else {
+            this.internalName = `${name}-${createdAt.toISOString().split('T')[0]}`;
+        }
+        this.id = this.internalName;
+    }
+    /**
+     * Gets the effective Odoo version for this database.
+     * First checks if there's a version assigned, then falls back to legacy odooVersion property.
+     */
+    getEffectiveOdooVersion() {
+        if (this.versionId) {
+            try {
+                const versionsService = versionsService_1.VersionsService.getInstance();
+                const version = versionsService.getVersion(this.versionId);
+                if (version) {
+                    return version.odooVersion;
+                }
+            }
+            catch (error) {
+                logger_1.logger.warn(`Failed to get version for database ${this.name}:`, error);
+                // Fall through to legacy property
+            }
+        }
+        // Fall back to legacy odooVersion property for backward compatibility
+        return this.odooVersion || undefined;
+    }
+}
+exports.DatabaseModel = DatabaseModel;
+
+
+/***/ }),
+/* 35 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.generateDatabaseIdentifiers = generateDatabaseIdentifiers;
+const crypto = __importStar(__webpack_require__(25));
+const MAX_IDENTIFIER_LENGTH = 63;
+const KIND_LABELS = {
+    dump: 'Dump',
+    fresh: 'Fresh',
+    dev: 'Dev',
+    test: 'Test',
+    feature: 'Feature',
+    clone: 'Clone',
+    temp: 'Temp',
+    shell: 'Shell',
+    existing: 'Existing',
+    template: 'Template'
+};
+function slugifySegment(value, fallback) {
+    if (!value || value.trim().length === 0) {
+        return fallback;
+    }
+    const normalized = value
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    return normalized || fallback;
+}
+function shortHash(input) {
+    return crypto.createHash('sha1').update(input).digest('hex').slice(0, 6);
+}
+function formatDateStamp(date) {
+    const day = `${date.getUTCDate()}`.padStart(2, '0');
+    const month = `${date.getUTCMonth() + 1}`.padStart(2, '0');
+    const year = `${date.getUTCFullYear()}`;
+    return `${day}${month}${year}`;
+}
+function formatDisplayDate(date) {
+    try {
+        return new Intl.DateTimeFormat(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit'
+        }).format(date);
+    }
+    catch {
+        return date.toISOString().split('T')[0];
+    }
+}
+function buildInternalIdentifier(projectSlug, kindSlug, dateStamp, hash) {
+    const suffix = `_${hash}`;
+    let prefix = `${projectSlug}_${kindSlug}_${dateStamp}`;
+    if (prefix.length + suffix.length > MAX_IDENTIFIER_LENGTH) {
+        const allowed = MAX_IDENTIFIER_LENGTH - suffix.length;
+        prefix = prefix.slice(0, Math.max(1, allowed));
+        prefix = prefix.replace(/_+$/g, '');
+        if (!prefix) {
+            prefix = 'db';
+        }
+    }
+    return `${prefix}${suffix}`;
+}
+function buildDisplayName(projectName, kindSlug, date, hash) {
+    const trimmedName = projectName.trim() || 'Odoo Database';
+    const kindLabel = KIND_LABELS[kindSlug] || kindSlug.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+    const prettyDate = formatDisplayDate(date);
+    return `${trimmedName} • ${kindLabel} • ${prettyDate} • #${hash}`;
+}
+function generateDatabaseIdentifiers(options) {
+    const timestamp = options.timestamp ?? new Date();
+    const projectSlug = slugifySegment(options.projectName, 'project');
+    const kindSlug = slugifySegment(options.kind, 'db');
+    const dateStamp = formatDateStamp(timestamp);
+    const existing = options.existingInternalNames ?? new Set();
+    const baseSeed = options.deterministicSeed ?? `${projectSlug}|${kindSlug}|${timestamp.toISOString()}|${crypto.randomUUID()}`;
+    let attempt = 0;
+    let internalName;
+    let hash;
+    do {
+        const attemptSeed = attempt === 0 ? baseSeed : `${baseSeed}|${attempt}`;
+        hash = shortHash(attemptSeed);
+        internalName = buildInternalIdentifier(projectSlug, kindSlug, dateStamp, hash);
+        attempt++;
+    } while (existing.has(internalName.toLowerCase()));
+    return {
+        internalName,
+        displayName: buildDisplayName(options.projectName, kindSlug, timestamp, hash),
+        hash
+    };
+}
+
+
+/***/ }),
 /* 36 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.databaseHasModuleTable = databaseHasModuleTable;
+exports.getInstalledModules = getInstalledModules;
+exports.getInstalledModuleNames = getInstalledModuleNames;
+exports.clearInstalledModuleCache = clearInstalledModuleCache;
+exports.parseOdooSeries = parseOdooSeries;
+exports.detectOdooSeries = detectOdooSeries;
+const node_child_process_1 = __webpack_require__(15);
+const util = __importStar(__webpack_require__(37));
+const runtimeCache_1 = __webpack_require__(12);
+const logger_1 = __webpack_require__(11);
+const execFileAsync = util.promisify(node_child_process_1.execFile);
+const INSTALLED_MODULES_QUERY = `
+    SELECT id, name, shortdesc, latest_version, state, application
+    FROM ir_module_module
+    WHERE state IN ('installed', 'to upgrade')
+    ORDER BY name;
+`.trim();
+const INSTALLED_MODULE_NAMES_QUERY = `
+    SELECT name
+    FROM ir_module_module
+    WHERE state IN ('installed', 'to upgrade')
+    ORDER BY name;
+`.trim();
+const TABLE_EXISTS_QUERY = `
+    SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_name = 'ir_module_module'
+    );
+`.trim();
+const BASE_MODULE_VERSION_QUERY = `
+    SELECT latest_version
+    FROM ir_module_module
+    WHERE name = 'base';
+`.trim();
+function validateDatabaseName(dbName) {
+    // Basic sanity check to avoid shell injection when invoking psql
+    if (!/^[\w\-.:]+$/.test(dbName)) {
+        throw new Error(`Invalid database identifier: ${dbName}`);
+    }
+}
+async function runPsqlQuery(dbName, query, fieldSeparator = '|') {
+    validateDatabaseName(dbName);
+    try {
+        const args = [
+            '--no-psqlrc',
+            '--no-align',
+            '--tuples-only',
+            '-F',
+            fieldSeparator,
+            '-d',
+            dbName,
+            '-c',
+            query
+        ];
+        const { stdout } = await execFileAsync('psql', args, {
+            encoding: 'utf-8',
+            maxBuffer: 10 * 1024 * 1024 // Allow reasonably large result sets
+        });
+        return stdout.trim();
+    }
+    catch (error) {
+        logger_1.logger.warn(`psql command failed for database "${dbName}":`, error);
+        throw error;
+    }
+}
+async function databaseHasModuleTable(dbName) {
+    try {
+        const result = await runPsqlQuery(dbName, TABLE_EXISTS_QUERY);
+        return result === 't';
+    }
+    catch {
+        return false;
+    }
+}
+async function getInstalledModules(dbName) {
+    return runtimeCache_1.runtimeCache.getInstalledModules(dbName, async () => {
+        const modules = [];
+        if (!(await databaseHasModuleTable(dbName))) {
+            logger_1.logger.debug(`Database ${dbName} does not contain Odoo tables yet.`);
+            return modules;
+        }
+        let output;
+        try {
+            output = await runPsqlQuery(dbName, INSTALLED_MODULES_QUERY);
+        }
+        catch (error) {
+            logger_1.logger.warn(`Failed to fetch installed modules for database "${dbName}":`, error);
+            return modules;
+        }
+        if (!output) {
+            return modules;
+        }
+        for (const line of output.split('\n').map(entry => entry.trim()).filter(Boolean)) {
+            const [id, name, shortdesc, latestVersion, state, application] = line.split('|');
+            let description = shortdesc || '';
+            if (shortdesc) {
+                try {
+                    const parsed = JSON.parse(shortdesc);
+                    const locales = Object.keys(parsed);
+                    if (locales.length > 0) {
+                        description = parsed.en_US ?? parsed[locales[0]] ?? '';
+                    }
+                }
+                catch {
+                    // Keep original string when JSON parsing fails
+                    description = shortdesc;
+                }
+            }
+            modules.push({
+                id: Number.parseInt(id ?? '', 10),
+                name: name ?? '',
+                shortdesc: description ?? '',
+                installed_version: latestVersion || null,
+                latest_version: latestVersion || null,
+                state: state ?? '',
+                application: application === 't'
+            });
+        }
+        return modules;
+    });
+}
+async function getInstalledModuleNames(dbName) {
+    const names = await runtimeCache_1.runtimeCache.getInstalledModuleNames(dbName, async () => {
+        if (!(await databaseHasModuleTable(dbName))) {
+            return [];
+        }
+        let output;
+        try {
+            output = await runPsqlQuery(dbName, INSTALLED_MODULE_NAMES_QUERY);
+        }
+        catch (error) {
+            logger_1.logger.warn(`Failed to fetch installed module names for database "${dbName}":`, error);
+            return [];
+        }
+        if (!output) {
+            return [];
+        }
+        return output
+            .split('\n')
+            .map(entry => entry.trim())
+            .filter(Boolean);
+    });
+    return new Set(names);
+}
+function clearInstalledModuleCache(dbName) {
+    (0, runtimeCache_1.invalidateInstalledModulesCache)(dbName);
+}
+/**
+ * Extracts the Odoo series (branch name) from a base module version string:
+ * "17.0.1.3" -> "17.0", "saas~17.4.1.2" -> "saas-17.4".
+ */
+function parseOdooSeries(baseModuleVersion) {
+    if (!baseModuleVersion) {
+        return undefined;
+    }
+    const match = /^(saas[~-])?(\d+)\.(\d+)/.exec(baseModuleVersion.trim());
+    if (!match) {
+        return undefined;
+    }
+    const series = `${match[2]}.${match[3]}`;
+    return match[1] ? `saas-${series}` : series;
+}
+/**
+ * Detects which Odoo series (e.g. "17.0", "saas-17.4") a database runs by
+ * reading the base module's version. Best-effort: returns undefined for
+ * non-Odoo databases or when psql is unavailable.
+ */
+async function detectOdooSeries(dbName) {
+    try {
+        if (!(await databaseHasModuleTable(dbName))) {
+            return undefined;
+        }
+        const output = await runPsqlQuery(dbName, BASE_MODULE_VERSION_QUERY);
+        return parseOdooSeries(output);
+    }
+    catch (error) {
+        logger_1.logger.warn(`Failed to detect Odoo series for database "${dbName}":`, error);
+        return undefined;
+    }
+}
+
+
+/***/ }),
+/* 37 */
+/***/ ((module) => {
+
+module.exports = require("node:util");
+
+/***/ }),
+/* 38 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.RESERVED_DATABASE_NAMES = void 0;
+exports.quotePgIdentifier = quotePgIdentifier;
+exports.runSql = runSql;
+exports.listPostgresDatabases = listPostgresDatabases;
+exports.databaseExists = databaseExists;
+exports.createDatabase = createDatabase;
+exports.dropDatabase = dropDatabase;
+exports.dropDatabaseIfExists = dropDatabaseIfExists;
+exports.renameDatabase = renameDatabase;
+exports.neutralizeDatabase = neutralizeDatabase;
+const process_1 = __webpack_require__(14);
+const database_1 = __webpack_require__(36);
+const logger_1 = __webpack_require__(11);
+/**
+ * All PostgreSQL CLI operations (psql/createdb/dropdb). Every call passes
+ * arguments as arrays with no shell, so database names and paths can never be
+ * interpreted by a shell regardless of their content.
+ */
+exports.RESERVED_DATABASE_NAMES = new Set(['postgres', 'template0', 'template1']);
+/** Quotes a PostgreSQL identifier for embedding in SQL text. */
+function quotePgIdentifier(identifier) {
+    return `"${identifier.replace(/"/g, '""')}"`;
+}
+/** Runs a single SQL statement against `dbName` and returns trimmed stdout. */
+async function runSql(dbName, sql) {
+    const { stdout } = await (0, process_1.runCommand)('psql', [
+        '--no-psqlrc',
+        '-v', 'ON_ERROR_STOP=1',
+        '-d', dbName,
+        '-tAc', sql
+    ]);
+    return stdout.trim();
+}
+/** Lists all databases on the local PostgreSQL instance. */
+async function listPostgresDatabases() {
+    try {
+        const output = await runSql('postgres', 'SELECT datname FROM pg_database ORDER BY datname;');
+        return output
+            .split('\n')
+            .map(name => name.trim())
+            .filter(name => name.length > 0);
+    }
+    catch (error) {
+        logger_1.logger.warn('Failed to query PostgreSQL database list:', error);
+        return [];
+    }
+}
+async function databaseExists(dbName) {
+    const result = await runSql('postgres', `SELECT 1 FROM pg_database WHERE datname = '${dbName.replace(/'/g, "''")}'`);
+    return result === '1';
+}
+/** Creates a database, optionally cloning from a template (createdb -T). */
+async function createDatabase(dbName, templateDbName) {
+    const args = templateDbName ? ['-T', templateDbName, dbName] : [dbName];
+    await (0, process_1.runCommand)('createdb', args);
+    (0, database_1.clearInstalledModuleCache)(dbName);
+}
+async function dropDatabase(dbName, options = {}) {
+    const args = options.ifExists ? ['--if-exists', dbName] : [dbName];
+    await (0, process_1.runCommand)('dropdb', args);
+    (0, database_1.clearInstalledModuleCache)(dbName);
+}
+/** Drops `dbName` if it exists (no error when missing). */
+async function dropDatabaseIfExists(dbName) {
+    await dropDatabase(dbName, { ifExists: true });
+}
+async function renameDatabase(oldName, newName) {
+    const sql = `ALTER DATABASE ${quotePgIdentifier(oldName)} RENAME TO ${quotePgIdentifier(newName)};`;
+    await (0, process_1.runCommand)('psql', ['-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-c', sql]);
+    (0, database_1.clearInstalledModuleCache)(oldName);
+    (0, database_1.clearInstalledModuleCache)(newName);
+}
+/**
+ * Development-mode neutralization applied after restoring a dump: disables
+ * crons and outgoing mail, resets logins/passwords, regenerates the database
+ * UUID and extends the enterprise expiration date.
+ */
+async function neutralizeDatabase(dbName, newUuid) {
+    const statements = [
+        { description: 'Disabling cron jobs', sql: "UPDATE ir_cron SET active='f';" },
+        { description: 'Disabling mail servers', sql: 'UPDATE ir_mail_server SET active=false;' },
+        { description: 'Extending database expiry', sql: "UPDATE ir_config_parameter SET value = '2090-09-21 00:00:00' WHERE key = 'database.expiration_date';" },
+        { description: 'Updating database UUID', sql: `UPDATE ir_config_parameter SET value = '${newUuid}' WHERE key = 'database.uuid';` },
+        { description: 'Adding mailcatcher server', sql: "INSERT INTO ir_mail_server(active,name,smtp_host,smtp_port,smtp_encryption) VALUES (true,'mailcatcher','localhost',1025,false);" },
+        { description: 'Resetting user passwords to login names', sql: 'UPDATE res_users SET password=login;' },
+        { description: 'Configuring admin password', sql: "UPDATE res_users SET password='admin' WHERE id=2;" },
+        { description: 'Configuring admin login', sql: "UPDATE res_users SET login='admin' WHERE id=2;" },
+        { description: 'Clearing admin TOTP', sql: "UPDATE res_users SET totp_secret='' WHERE id=2;" },
+        { description: 'Activating admin user', sql: 'UPDATE res_users SET active=true WHERE id=2;' },
+        { description: 'Clearing employee PINs', sql: "UPDATE hr_employee SET pin = '';" }
+    ];
+    // Every statement is tolerant: dumps vary (e.g. no hr_employee without the
+    // hr module), and a failed tweak must never abort the whole restore.
+    for (const statement of statements) {
+        logger_1.logger.debug(`${statement.description} on ${dbName}`);
+        try {
+            await runSql(dbName, statement.sql);
+        }
+        catch (error) {
+            logger_1.logger.warn(`${statement.description} failed (continuing setup):`, error);
+        }
+    }
+}
+
+
+/***/ }),
+/* 39 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.collectDumpSources = collectDumpSources;
+exports.pathExists = pathExists;
+exports.isToolchainUnavailableError = isToolchainUnavailableError;
+exports.prepareDumpForImport = prepareDumpForImport;
+exports.importPreparedDump = importPreparedDump;
+exports.prepareDumpViaTempFile = prepareDumpViaTempFile;
+const fs = __importStar(__webpack_require__(40));
+const fsp = __importStar(__webpack_require__(22));
+const path = __importStar(__webpack_require__(3));
+const os = __importStar(__webpack_require__(32));
+const node_child_process_1 = __webpack_require__(15);
+const node_stream_1 = __webpack_require__(41);
+const promises_1 = __webpack_require__(42);
+const process_1 = __webpack_require__(14);
+const logger_1 = __webpack_require__(11);
+/** Recursively finds restorable dump sources under `root` (bounded depth). */
+async function collectDumpSources(root, maxDepth = 2) {
+    const results = [];
+    const stack = [{ dir: root, depth: 0 }];
+    while (stack.length > 0) {
+        const { dir, depth } = stack.pop();
+        let entries;
+        try {
+            entries = await fsp.readdir(dir, { withFileTypes: true });
+        }
+        catch (error) {
+            logger_1.logger.warn(`Failed to read dumps directory ${dir}:`, error);
+            continue;
+        }
+        for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            const relativeLabel = path.relative(root, fullPath) || entry.name;
+            if (entry.isDirectory()) {
+                const dumpSqlPath = path.join(fullPath, 'dump.sql');
+                if (await pathExists(dumpSqlPath)) {
+                    results.push({ label: relativeLabel, kind: 'folder', path: fullPath });
+                }
+                if (depth < maxDepth) {
+                    stack.push({ dir: fullPath, depth: depth + 1 });
+                }
+            }
+            else if (entry.isFile() && entry.name.toLowerCase().endsWith('.zip')) {
+                results.push({ label: relativeLabel, kind: 'zip', path: fullPath });
+            }
+            else if (entry.isFile() && (entry.name.toLowerCase().endsWith('.sql') || entry.name.toLowerCase().endsWith('.gz'))) {
+                results.push({ label: relativeLabel, kind: 'file', path: fullPath });
+            }
+        }
+    }
+    return results;
+}
+async function pathExists(target) {
+    try {
+        await fsp.access(target);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+function isToolchainUnavailableError(error) {
+    const message = (0, logger_1.errorMessage)(error).toLowerCase();
+    return message.includes('enoent')
+        || message.includes('not found')
+        || message.includes('failed to start unzip')
+        || message.includes('failed to start gunzip');
+}
+function createProcessStream(child, label) {
+    if (!child.stdout || !child.stderr) {
+        throw new Error(`${label} process did not expose readable stdio streams.`);
+    }
+    const output = new node_stream_1.PassThrough();
+    let stderr = '';
+    child.stderr.on('data', chunk => {
+        stderr += chunk.toString();
+    });
+    child.stdout.pipe(output);
+    child.on('error', error => {
+        output.destroy(new Error(`Failed to start ${label}: ${(0, logger_1.errorMessage)(error)}`));
+    });
+    child.on('close', code => {
+        if (code !== 0) {
+            const details = stderr.trim();
+            output.destroy(new Error(`${label} exited with code ${code}${details ? `: ${details}` : ''}`));
+        }
+    });
+    return {
+        stream: output,
+        dispose: () => {
+            if (!child.killed) {
+                child.kill('SIGTERM');
+            }
+            output.destroy();
+        }
+    };
+}
+function createCommandStream(command, args, label) {
+    const child = (0, node_child_process_1.spawn)(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    return createProcessStream(child, label);
+}
+function createZipGzipStream(dumpPath, entry) {
+    const unzipProcess = (0, node_child_process_1.spawn)('unzip', ['-p', dumpPath, entry], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const gunzipProcess = (0, node_child_process_1.spawn)('gunzip', ['-c'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const output = new node_stream_1.PassThrough();
+    let unzipStderr = '';
+    let gunzipStderr = '';
+    unzipProcess.stderr.on('data', chunk => {
+        unzipStderr += chunk.toString();
+    });
+    gunzipProcess.stderr.on('data', chunk => {
+        gunzipStderr += chunk.toString();
+    });
+    unzipProcess.stdout.pipe(gunzipProcess.stdin);
+    gunzipProcess.stdout.pipe(output);
+    unzipProcess.on('error', error => {
+        output.destroy(new Error(`Failed to start unzip: ${(0, logger_1.errorMessage)(error)}`));
+    });
+    gunzipProcess.on('error', error => {
+        output.destroy(new Error(`Failed to start gunzip: ${(0, logger_1.errorMessage)(error)}`));
+    });
+    unzipProcess.on('close', code => {
+        if (code !== 0) {
+            const details = unzipStderr.trim();
+            output.destroy(new Error(`unzip exited with code ${code}${details ? `: ${details}` : ''}`));
+            if (!gunzipProcess.killed) {
+                gunzipProcess.kill('SIGTERM');
+            }
+        }
+    });
+    gunzipProcess.on('close', code => {
+        if (code !== 0) {
+            const details = gunzipStderr.trim();
+            output.destroy(new Error(`gunzip exited with code ${code}${details ? `: ${details}` : ''}`));
+        }
+    });
+    return {
+        stream: output,
+        dispose: () => {
+            if (!unzipProcess.killed) {
+                unzipProcess.kill('SIGTERM');
+            }
+            if (!gunzipProcess.killed) {
+                gunzipProcess.kill('SIGTERM');
+            }
+            output.destroy();
+        }
+    };
+}
+async function listZipEntries(dumpPath) {
+    const { stdout } = await (0, process_1.runCommand)('unzip', ['-Z1', dumpPath]);
+    return stdout.split('\n').map(line => line.trim()).filter(Boolean);
+}
+/** Prepares a dump source for import, preferring streaming pipelines. */
+async function prepareDumpForImport(dumpPath) {
+    if (dumpPath.endsWith('.zip')) {
+        const entries = await listZipEntries(dumpPath);
+        if (entries.length === 0) {
+            throw new Error('Archive is empty.');
+        }
+        const sqlEntry = entries.find(entry => entry.toLowerCase().endsWith('.sql') && !entry.toLowerCase().endsWith('.sql.gz'));
+        const gzEntry = entries.find(entry => entry.toLowerCase().endsWith('.sql.gz'));
+        const selectedEntry = sqlEntry ?? gzEntry ?? entries[0];
+        if (selectedEntry.toLowerCase().endsWith('.sql.gz')) {
+            return {
+                kind: 'stream',
+                originalPath: dumpPath,
+                progressMessage: 'Unzipping, decompressing, and importing dump archive...',
+                openStream: () => createZipGzipStream(dumpPath, selectedEntry)
+            };
+        }
+        return {
+            kind: 'stream',
+            originalPath: dumpPath,
+            progressMessage: 'Unzipping and importing dump archive...',
+            openStream: () => createCommandStream('unzip', ['-p', dumpPath, selectedEntry], 'unzip')
+        };
+    }
+    if (dumpPath.endsWith('.gz')) {
+        return {
+            kind: 'stream',
+            originalPath: dumpPath,
+            progressMessage: 'Decompressing and importing dump file...',
+            openStream: () => createCommandStream('gunzip', ['-c', dumpPath], 'gunzip')
+        };
+    }
+    return {
+        kind: 'file',
+        originalPath: dumpPath,
+        progressMessage: 'Importing dump file...',
+        sqlPath: dumpPath
+    };
+}
+async function importDumpStream(dbName, stream) {
+    await new Promise((resolve, reject) => {
+        const psqlProcess = (0, node_child_process_1.spawn)('psql', ['-d', dbName], { stdio: ['pipe', 'ignore', 'pipe'] });
+        let stderr = '';
+        let settled = false;
+        const finish = (error) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            if (error) {
+                reject(error instanceof Error ? error : new Error(String(error)));
+                return;
+            }
+            resolve();
+        };
+        psqlProcess.stderr.on('data', chunk => {
+            stderr += chunk.toString();
+        });
+        psqlProcess.on('error', error => {
+            finish(new Error(`Failed to start psql: ${(0, logger_1.errorMessage)(error)}`));
+        });
+        psqlProcess.on('close', code => {
+            if (code === 0) {
+                finish();
+                return;
+            }
+            const details = stderr.trim();
+            finish(new Error(`psql exited with code ${code}${details ? `: ${details}` : ''}`));
+        });
+        stream.on('error', error => {
+            if (!psqlProcess.killed) {
+                psqlProcess.kill('SIGTERM');
+            }
+            finish(error);
+        });
+        psqlProcess.stdin.on('error', error => {
+            const ioError = error;
+            if (ioError.code !== 'EPIPE') {
+                finish(error);
+            }
+        });
+        stream.pipe(psqlProcess.stdin);
+    });
+}
+/** Imports a prepared dump into `dbName` (file via psql -f, or streamed). */
+async function importPreparedDump(dbName, preparedDump) {
+    if (preparedDump.kind === 'file') {
+        if (!preparedDump.sqlPath) {
+            throw new Error('No dump path available for file-based import.');
+        }
+        await (0, process_1.runCommand)('psql', ['-d', dbName, '-q', '-f', preparedDump.sqlPath]);
+        return;
+    }
+    if (!preparedDump.openStream) {
+        throw new Error('No stream provider configured for this dump source.');
+    }
+    const openedStream = preparedDump.openStream();
+    try {
+        await importDumpStream(dbName, openedStream.stream);
+    }
+    finally {
+        openedStream.dispose();
+    }
+}
+async function extractStreamToFile(opened, targetPath) {
+    try {
+        await (0, promises_1.pipeline)(opened.stream, fs.createWriteStream(targetPath));
+    }
+    finally {
+        opened.dispose();
+    }
+}
+/**
+ * Fallback used when the streaming pipeline is unavailable: extracts the dump
+ * into a temporary SQL file and imports from there. The returned PreparedDump
+ * owns the temp directory via cleanup().
+ */
+async function prepareDumpViaTempFile(dumpPath) {
+    if (!dumpPath.endsWith('.zip') && !dumpPath.endsWith('.gz')) {
+        return { kind: 'file', originalPath: dumpPath, sqlPath: dumpPath };
+    }
+    const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'odoo-dump-'));
+    const tempSqlPath = path.join(tempDir, 'dump.sql');
+    const cleanup = () => {
+        try {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+        catch (cleanupError) {
+            logger_1.logger.warn('Failed to cleanup temporary dump folder:', cleanupError);
+        }
+    };
+    try {
+        if (dumpPath.endsWith('.zip')) {
+            const entries = await listZipEntries(dumpPath);
+            if (entries.length === 0) {
+                throw new Error('Archive is empty.');
+            }
+            const sqlEntry = entries.find(entry => entry.toLowerCase().endsWith('.sql') && !entry.toLowerCase().endsWith('.sql.gz'));
+            const gzEntry = entries.find(entry => entry.toLowerCase().endsWith('.sql.gz'));
+            if (sqlEntry) {
+                await extractStreamToFile(createCommandStream('unzip', ['-p', dumpPath, sqlEntry], 'unzip'), tempSqlPath);
+            }
+            else if (gzEntry) {
+                await extractStreamToFile(createZipGzipStream(dumpPath, gzEntry), tempSqlPath);
+            }
+            else {
+                await extractStreamToFile(createCommandStream('unzip', ['-p', dumpPath], 'unzip'), tempSqlPath);
+            }
+        }
+        else {
+            await extractStreamToFile(createCommandStream('gunzip', ['-c', dumpPath], 'gunzip'), tempSqlPath);
+        }
+        return { kind: 'file', originalPath: dumpPath, sqlPath: tempSqlPath, cleanup };
+    }
+    catch (error) {
+        cleanup();
+        throw error;
+    }
+}
+
+
+/***/ }),
+/* 40 */
+/***/ ((module) => {
+
+module.exports = require("node:fs");
+
+/***/ }),
+/* 41 */
+/***/ ((module) => {
+
+module.exports = require("node:stream");
+
+/***/ }),
+/* 42 */
+/***/ ((module) => {
+
+module.exports = require("node:stream/promises");
+
+/***/ }),
+/* 43 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.TEMPLATE_DB_NAME_PATTERN = void 0;
+exports.sanitizeDatabaseTemplates = sanitizeDatabaseTemplates;
+exports.validateTemplateDatabaseName = validateTemplateDatabaseName;
+exports.persistDatabaseTemplates = persistDatabaseTemplates;
+const settingsStore_1 = __webpack_require__(5);
+const utils_1 = __webpack_require__(7);
+const postgres_1 = __webpack_require__(38);
+/**
+ * Database-template metadata management. A template is a PostgreSQL database
+ * (cloned via `createdb -T`) plus a metadata record stored in the workspace
+ * data file. `templateDbName` is the real PostgreSQL name; `name` is a label
+ * kept in sync with it (legacy records that only carry `name` are healed on
+ * load by sanitizeDatabaseTemplates).
+ */
+exports.TEMPLATE_DB_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/;
+/** Normalizes raw stored/imported template records, deduping by DB name. */
+function sanitizeDatabaseTemplates(source) {
+    if (!Array.isArray(source)) {
+        return [];
+    }
+    const seenTemplateDbNames = new Set();
+    const normalized = [];
+    for (const entry of source) {
+        if (!entry || typeof entry !== 'object') {
+            continue;
+        }
+        const candidate = entry;
+        const templateDbName = typeof candidate.templateDbName === 'string'
+            ? candidate.templateDbName.trim()
+            : typeof candidate.name === 'string'
+                ? candidate.name.trim()
+                : '';
+        if (!templateDbName) {
+            continue;
+        }
+        const dedupeKey = templateDbName.toLowerCase();
+        if (seenTemplateDbNames.has(dedupeKey)) {
+            continue;
+        }
+        seenTemplateDbNames.add(dedupeKey);
+        const name = typeof candidate.name === 'string' && candidate.name.trim() !== ''
+            ? candidate.name.trim()
+            : templateDbName;
+        const sourceDbName = typeof candidate.sourceDbName === 'string' && candidate.sourceDbName.trim() !== ''
+            ? candidate.sourceDbName.trim()
+            : undefined;
+        const createdAt = typeof candidate.createdAt === 'string' && candidate.createdAt.trim() !== ''
+            ? candidate.createdAt
+            : new Date().toISOString();
+        const updatedAt = typeof candidate.updatedAt === 'string' && candidate.updatedAt.trim() !== ''
+            ? candidate.updatedAt
+            : undefined;
+        normalized.push({
+            name,
+            templateDbName,
+            sourceDbName,
+            createdAt,
+            updatedAt
+        });
+    }
+    return normalized.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+}
+/** Input validation for template PostgreSQL names. */
+function validateTemplateDatabaseName(value, existingTemplateNames, originalName) {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+        return 'Template name cannot be empty.';
+    }
+    if (!exports.TEMPLATE_DB_NAME_PATTERN.test(trimmed)) {
+        return 'Use letters, numbers, "-" or "_" only. The name must not start with "-".';
+    }
+    if (postgres_1.RESERVED_DATABASE_NAMES.has(trimmed.toLowerCase())) {
+        return `"${trimmed}" is reserved and cannot be used as a template name.`;
+    }
+    const isRenamingSameTemplate = originalName && originalName.toLowerCase() === trimmed.toLowerCase();
+    if (!isRenamingSameTemplate && existingTemplateNames.has(trimmed.toLowerCase())) {
+        return 'A template with this PostgreSQL name already exists.';
+    }
+    return null;
+}
+/** Persists a normalized template list into the workspace data file. */
+async function persistDatabaseTemplates(data, templates) {
+    const normalized = sanitizeDatabaseTemplates(templates);
+    data.dbTemplates = normalized;
+    await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+    return normalized;
+}
+
+
+/***/ }),
+/* 44 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -7638,11 +7839,11 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.collectLegacyBranchesNeedingVersions = collectLegacyBranchesNeedingVersions;
 exports.applyDatabaseFieldMigration = applyDatabaseFieldMigration;
 exports.migrateDebuggerData = migrateDebuggerData;
-const settingsStore_1 = __webpack_require__(7);
-const versionsService_1 = __webpack_require__(4);
-const version_1 = __webpack_require__(5);
-const utils_1 = __webpack_require__(9);
-const logger_1 = __webpack_require__(15);
+const settingsStore_1 = __webpack_require__(5);
+const versionsService_1 = __webpack_require__(23);
+const version_1 = __webpack_require__(24);
+const utils_1 = __webpack_require__(7);
+const logger_1 = __webpack_require__(11);
 /** Branch names that denote a real Odoo series, e.g. "17.0", "saas-17.4", "master". */
 const ODOO_SERIES_PATTERN = /^((saas-)?\d+(\.\d+)?|master)$/i;
 function findMatchingVersionId(versions, branch) {
@@ -7737,7 +7938,7 @@ async function migrateDebuggerData() {
 
 
 /***/ }),
-/* 37 */
+/* 45 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -7789,19 +7990,19 @@ exports.exportProject = exportProject;
 exports.importProject = importProject;
 exports.quickProjectSearch = quickProjectSearch;
 const vscode = __importStar(__webpack_require__(1));
-const os = __importStar(__webpack_require__(27));
-const project_1 = __webpack_require__(38);
-const repo_1 = __webpack_require__(40);
-const utils_1 = __webpack_require__(9);
-const settingsStore_1 = __webpack_require__(7);
-const versionsService_1 = __webpack_require__(4);
-const crypto_1 = __webpack_require__(6);
-const environment_1 = __webpack_require__(34);
-const sortOptions_1 = __webpack_require__(28);
-const logger_1 = __webpack_require__(15);
-const notifications_1 = __webpack_require__(17);
-const notifications_2 = __webpack_require__(17);
-const baseTreeProvider_1 = __webpack_require__(33);
+const os = __importStar(__webpack_require__(46));
+const project_1 = __webpack_require__(47);
+const repo_1 = __webpack_require__(49);
+const utils_1 = __webpack_require__(7);
+const settingsStore_1 = __webpack_require__(5);
+const versionsService_1 = __webpack_require__(23);
+const crypto_1 = __webpack_require__(25);
+const environment_1 = __webpack_require__(27);
+const sortOptions_1 = __webpack_require__(26);
+const logger_1 = __webpack_require__(11);
+const notifications_1 = __webpack_require__(13);
+const notifications_2 = __webpack_require__(13);
+const baseTreeProvider_1 = __webpack_require__(4);
 let projectMetadataMigrationCompleted = false;
 function sanitizeProjectTickets(rawTickets) {
     if (!Array.isArray(rawTickets)) {
@@ -8714,14 +8915,20 @@ async function quickProjectSearch() {
 
 
 /***/ }),
-/* 38 */
+/* 46 */
+/***/ ((module) => {
+
+module.exports = require("os");
+
+/***/ }),
+/* 47 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectModel = void 0;
-const testing_1 = __webpack_require__(39);
-const crypto_1 = __webpack_require__(6);
+const testing_1 = __webpack_require__(48);
+const crypto_1 = __webpack_require__(25);
 class ProjectModel {
     name; // project sh name
     createdAt;
@@ -8748,14 +8955,14 @@ exports.ProjectModel = ProjectModel;
 
 
 /***/ }),
-/* 39 */
+/* 48 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.TestingConfigModel = void 0;
 exports.ensureTestingConfigModel = ensureTestingConfigModel;
-const logger_1 = __webpack_require__(15);
+const logger_1 = __webpack_require__(11);
 class TestingConfigModel {
     isEnabled;
     testTags;
@@ -8831,7 +9038,7 @@ function ensureTestingConfigModel(testingConfig) {
 
 
 /***/ }),
-/* 40 */
+/* 49 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -8853,7 +9060,7 @@ exports.RepoModel = RepoModel;
 
 
 /***/ }),
-/* 41 */
+/* 50 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -8893,17 +9100,17 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.RepoTreeProvider = void 0;
 exports.selectRepo = selectRepo;
-const repo_1 = __webpack_require__(40);
+const repo_1 = __webpack_require__(49);
 const vscode = __importStar(__webpack_require__(1));
-const utils_1 = __webpack_require__(9);
-const settingsStore_1 = __webpack_require__(7);
-const versionsService_1 = __webpack_require__(4);
-const path = __importStar(__webpack_require__(11));
-const fs = __importStar(__webpack_require__(10));
-const sortOptions_1 = __webpack_require__(28);
-const branches_1 = __webpack_require__(24);
-const runtimeCache_1 = __webpack_require__(16);
-const baseTreeProvider_1 = __webpack_require__(33);
+const utils_1 = __webpack_require__(7);
+const settingsStore_1 = __webpack_require__(5);
+const versionsService_1 = __webpack_require__(23);
+const path = __importStar(__webpack_require__(9));
+const fs = __importStar(__webpack_require__(8));
+const sortOptions_1 = __webpack_require__(26);
+const branches_1 = __webpack_require__(28);
+const runtimeCache_1 = __webpack_require__(12);
+const baseTreeProvider_1 = __webpack_require__(4);
 async function mapWithConcurrency(items, limit, worker) {
     if (items.length === 0) {
         return [];
@@ -9058,7 +9265,7 @@ async function selectRepo(event) {
 
 
 /***/ }),
-/* 42 */
+/* 51 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -9099,14 +9306,14 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectReposProvider = void 0;
 exports.revealProjectRepo = revealProjectRepo;
 const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(25));
-const path = __importStar(__webpack_require__(14));
-const settingsStore_1 = __webpack_require__(7);
-const utils_1 = __webpack_require__(9);
-const sortOptions_1 = __webpack_require__(28);
-const filesExclude_1 = __webpack_require__(43);
-const baseTreeProvider_1 = __webpack_require__(33);
-const logger_1 = __webpack_require__(15);
+const fs = __importStar(__webpack_require__(22));
+const path = __importStar(__webpack_require__(3));
+const settingsStore_1 = __webpack_require__(5);
+const utils_1 = __webpack_require__(7);
+const sortOptions_1 = __webpack_require__(26);
+const filesExclude_1 = __webpack_require__(52);
+const baseTreeProvider_1 = __webpack_require__(4);
+const logger_1 = __webpack_require__(11);
 class ProjectRepoItem extends vscode.TreeItem {
     metadata;
     constructor(metadata) {
@@ -9287,7 +9494,7 @@ async function revealProjectRepo(repo) {
 
 
 /***/ }),
-/* 43 */
+/* 52 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -9326,8 +9533,8 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.createFilesExcludeMatcher = createFilesExcludeMatcher;
-const fs = __importStar(__webpack_require__(44));
-const path = __importStar(__webpack_require__(14));
+const fs = __importStar(__webpack_require__(40));
+const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
 function globToRegExp(pattern) {
     const normalizedPattern = pattern.split(path.sep).join('/');
@@ -9430,13 +9637,7 @@ function createFilesExcludeMatcher(scopeUri) {
 
 
 /***/ }),
-/* 44 */
-/***/ ((module) => {
-
-module.exports = require("node:fs");
-
-/***/ }),
-/* 45 */
+/* 53 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -9486,22 +9687,23 @@ exports.updateInstalledModules = updateInstalledModules;
 exports.installAllModules = installAllModules;
 exports.clearAllModuleSelections = clearAllModuleSelections;
 exports.viewInstalledModules = viewInstalledModules;
-const module_1 = __webpack_require__(46);
+const module_1 = __webpack_require__(54);
 const vscode = __importStar(__webpack_require__(1));
-const utils_1 = __webpack_require__(9);
-const child_process_1 = __webpack_require__(12);
-const fs = __importStar(__webpack_require__(44));
-const path = __importStar(__webpack_require__(14));
+const utils_1 = __webpack_require__(7);
+const fs = __importStar(__webpack_require__(40));
+const path = __importStar(__webpack_require__(3));
 function collectModuleDiscovery(project) {
     const manualIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
     return (0, utils_1.discoverModulesInRepos)(project.repos, { manualIncludePaths: manualIncludes });
 }
-const settingsStore_1 = __webpack_require__(7);
-const database_1 = __webpack_require__(30);
-const sortOptions_1 = __webpack_require__(28);
-const versionsService_1 = __webpack_require__(4);
-const notifications_1 = __webpack_require__(17);
-const baseTreeProvider_1 = __webpack_require__(33);
+const settingsStore_1 = __webpack_require__(5);
+const database_1 = __webpack_require__(36);
+const sortOptions_1 = __webpack_require__(26);
+const versionsService_1 = __webpack_require__(23);
+const notifications_1 = __webpack_require__(13);
+const baseTreeProvider_1 = __webpack_require__(4);
+const process_1 = __webpack_require__(14);
+const logger_1 = __webpack_require__(11);
 class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     context;
     sortPreferences;
@@ -9802,39 +10004,19 @@ async function selectModule(event) {
     await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
 }
 async function runScaffoldCommand(pythonPath, odooBinPath, moduleName, targetPath) {
-    await new Promise((resolve, reject) => {
-        const child = (0, child_process_1.spawn)(pythonPath, [odooBinPath, 'scaffold', moduleName, targetPath], { stdio: ['ignore', 'pipe', 'pipe'] });
-        let stderr = '';
-        let stdout = '';
-        child.stderr?.on('data', chunk => {
-            stderr += chunk.toString();
-        });
-        child.stdout?.on('data', chunk => {
-            stdout += chunk.toString();
-        });
-        child.on('error', error => {
-            reject(new Error(`Failed to start scaffold command: ${error.message}`));
-        });
-        child.on('close', code => {
-            if (code === 0) {
-                resolve();
-                return;
-            }
-            const details = stderr.trim() || stdout.trim();
-            reject(new Error(details || `Scaffold command exited with code ${code ?? 'unknown'}`));
-        });
-    });
-}
-function resolveRepositoryRoot(repoPath) {
     try {
-        const resolved = (0, child_process_1.execFileSync)('git', ['-C', repoPath, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-        if (resolved && fs.existsSync(resolved)) {
-            return resolved;
-        }
+        await (0, process_1.runCommand)(pythonPath, [odooBinPath, 'scaffold', moduleName, targetPath]);
     }
-    catch {
-        // Fall back to the selected path if git resolution is unavailable.
+    catch (error) {
+        throw new Error(`Scaffold command failed: ${(0, logger_1.errorMessage)(error)}`);
     }
+}
+async function resolveRepositoryRoot(repoPath) {
+    const resolved = await (0, process_1.tryRunCommand)('git', ['-C', repoPath, 'rev-parse', '--show-toplevel']);
+    if (resolved && fs.existsSync(resolved)) {
+        return resolved;
+    }
+    // Fall back to the selected path if git resolution is unavailable.
     return repoPath;
 }
 async function createModuleFromScaffold() {
@@ -9876,7 +10058,7 @@ async function createModuleFromScaffold() {
     const normalizedPythonPath = (0, utils_1.normalizePath)(settings.pythonPath);
     const normalizedOdooPath = (0, utils_1.normalizePath)(settings.odooPath);
     const destinationPath = (0, utils_1.normalizePath)(targetRepo.path);
-    const repositoryRootPath = resolveRepositoryRoot(destinationPath);
+    const repositoryRootPath = await resolveRepositoryRoot(destinationPath);
     const odooBinPath = path.join(normalizedOdooPath, 'odoo-bin');
     if (!normalizedPythonPath || !fs.existsSync(normalizedPythonPath)) {
         (0, utils_1.showError)(`Python executable not found: ${normalizedPythonPath}`);
@@ -10317,7 +10499,7 @@ async function viewInstalledModules() {
 
 
 /***/ }),
-/* 46 */
+/* 54 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -10337,7 +10519,7 @@ exports.ModuleModel = ModuleModel;
 
 
 /***/ }),
-/* 47 */
+/* 55 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10385,16 +10567,16 @@ exports.removeTestTag = removeTestTag;
 exports.toggleLogLevel = toggleLogLevel;
 exports.setSpecificLogLevel = setSpecificLogLevel;
 const vscode = __importStar(__webpack_require__(1));
-const settingsStore_1 = __webpack_require__(7);
-const testing_1 = __webpack_require__(39);
-const module_1 = __webpack_require__(46);
-const utils_1 = __webpack_require__(9);
-const context_1 = __webpack_require__(48);
-const debugger_1 = __webpack_require__(49);
-const database_1 = __webpack_require__(30);
-const logger_1 = __webpack_require__(15);
-const notifications_1 = __webpack_require__(17);
-const baseTreeProvider_1 = __webpack_require__(33);
+const settingsStore_1 = __webpack_require__(5);
+const testing_1 = __webpack_require__(48);
+const module_1 = __webpack_require__(54);
+const utils_1 = __webpack_require__(7);
+const context_1 = __webpack_require__(56);
+const debugger_1 = __webpack_require__(57);
+const database_1 = __webpack_require__(36);
+const logger_1 = __webpack_require__(11);
+const notifications_1 = __webpack_require__(13);
+const baseTreeProvider_1 = __webpack_require__(4);
 class TestingTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     context;
     constructor(context) {
@@ -11020,7 +11202,7 @@ async function setSpecificLogLevel() {
 
 
 /***/ }),
-/* 48 */
+/* 56 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11074,7 +11256,7 @@ function updateActiveContext(isActive) {
 
 
 /***/ }),
-/* 49 */
+/* 57 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11116,15 +11298,15 @@ exports.setupDebugger = setupDebugger;
 exports.startDebugShell = startDebugShell;
 exports.startDebugServer = startDebugServer;
 const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(10));
-const path = __importStar(__webpack_require__(14));
-const utils_1 = __webpack_require__(9);
-const settingsStore_1 = __webpack_require__(7);
-const versionsService_1 = __webpack_require__(4);
-const testing_1 = __webpack_require__(39);
-const database_1 = __webpack_require__(30);
-const jsonc_parser_1 = __webpack_require__(18);
-const logger_1 = __webpack_require__(15);
+const fs = __importStar(__webpack_require__(8));
+const path = __importStar(__webpack_require__(3));
+const utils_1 = __webpack_require__(7);
+const settingsStore_1 = __webpack_require__(5);
+const versionsService_1 = __webpack_require__(23);
+const testing_1 = __webpack_require__(48);
+const database_1 = __webpack_require__(36);
+const jsonc_parser_1 = __webpack_require__(16);
+const logger_1 = __webpack_require__(11);
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
 const baseInstallNotifiedDbs = new Set();
@@ -11506,7 +11688,7 @@ async function startDebugServer() {
 
 
 /***/ }),
-/* 50 */
+/* 58 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11546,11 +11728,11 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VersionsTreeProvider = exports.VersionSettingTreeItem = exports.VersionTreeItem = void 0;
 const vscode = __importStar(__webpack_require__(1));
-const versionsService_1 = __webpack_require__(4);
-const utils_1 = __webpack_require__(9);
-const sortOptions_1 = __webpack_require__(28);
-const logger_1 = __webpack_require__(15);
-const baseTreeProvider_1 = __webpack_require__(33);
+const versionsService_1 = __webpack_require__(23);
+const utils_1 = __webpack_require__(7);
+const sortOptions_1 = __webpack_require__(26);
+const logger_1 = __webpack_require__(11);
+const baseTreeProvider_1 = __webpack_require__(4);
 class VersionTreeItem extends vscode.TreeItem {
     version;
     collapsibleState;
@@ -11702,7 +11884,7 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 
 /***/ }),
-/* 51 */
+/* 59 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -11725,7 +11907,7 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 52 */
+/* 60 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11773,13 +11955,13 @@ exports.selectProjectForExplorer = selectProjectForExplorer;
 exports.copyEntries = copyEntries;
 exports.pasteEntries = pasteEntries;
 const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(14));
-const settingsStore_1 = __webpack_require__(7);
-const utils_1 = __webpack_require__(9);
-const runtimeCache_1 = __webpack_require__(16);
-const filesExclude_1 = __webpack_require__(43);
-const notifications_1 = __webpack_require__(17);
-const baseTreeProvider_1 = __webpack_require__(33);
+const path = __importStar(__webpack_require__(3));
+const settingsStore_1 = __webpack_require__(5);
+const utils_1 = __webpack_require__(7);
+const runtimeCache_1 = __webpack_require__(12);
+const filesExclude_1 = __webpack_require__(52);
+const notifications_1 = __webpack_require__(13);
+const baseTreeProvider_1 = __webpack_require__(4);
 class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
     watchers = [];
     watcherKey = '';
@@ -12090,21 +12272,21 @@ async function pasteEntries(targetUri) {
 
 
 /***/ }),
-/* 53 */
+/* 61 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(54);
-const projectCommands_1 = __webpack_require__(56);
-const repoCommands_1 = __webpack_require__(59);
-const dbCommands_1 = __webpack_require__(60);
-const moduleCommands_1 = __webpack_require__(61);
-const testingCommands_1 = __webpack_require__(62);
-const versionCommands_1 = __webpack_require__(63);
-const debugCommands_1 = __webpack_require__(65);
-const reposExplorerCommands_1 = __webpack_require__(66);
+const viewCommands_1 = __webpack_require__(62);
+const projectCommands_1 = __webpack_require__(64);
+const repoCommands_1 = __webpack_require__(67);
+const dbCommands_1 = __webpack_require__(68);
+const moduleCommands_1 = __webpack_require__(69);
+const testingCommands_1 = __webpack_require__(70);
+const versionCommands_1 = __webpack_require__(71);
+const debugCommands_1 = __webpack_require__(73);
+const reposExplorerCommands_1 = __webpack_require__(74);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -12120,7 +12302,7 @@ function registerAllCommands(deps) {
 
 
 /***/ }),
-/* 54 */
+/* 62 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12160,11 +12342,11 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(55);
-const sortOptions_1 = __webpack_require__(28);
-const notifications_1 = __webpack_require__(17);
-const module_1 = __webpack_require__(45);
-const projectRepos_1 = __webpack_require__(42);
+const quickSearch_1 = __webpack_require__(63);
+const sortOptions_1 = __webpack_require__(26);
+const notifications_1 = __webpack_require__(13);
+const module_1 = __webpack_require__(53);
+const projectRepos_1 = __webpack_require__(51);
 /**
  * Generic per-view plumbing: refresh, sort, and quick-search commands.
  */
@@ -12291,7 +12473,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 55 */
+/* 63 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12332,7 +12514,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getTreeItemLabel = getTreeItemLabel;
 exports.quickSearchTreeItems = quickSearchTreeItems;
 const vscode = __importStar(__webpack_require__(1));
-const notifications_1 = __webpack_require__(17);
+const notifications_1 = __webpack_require__(13);
 /**
  * Shared quick-pick search over tree items, used by every view's
  * "search" title-bar action.
@@ -12403,7 +12585,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 56 */
+/* 64 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12443,13 +12625,13 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerProjectCommands = registerProjectCommands;
 const vscode = __importStar(__webpack_require__(1));
-const utils_1 = __webpack_require__(9);
-const notifications_1 = __webpack_require__(17);
-const logger_1 = __webpack_require__(15);
-const project_1 = __webpack_require__(37);
-const dbs_1 = __webpack_require__(2);
-const odooInstaller_1 = __webpack_require__(57);
-const projectWorkspace_1 = __webpack_require__(58);
+const utils_1 = __webpack_require__(7);
+const notifications_1 = __webpack_require__(13);
+const logger_1 = __webpack_require__(11);
+const project_1 = __webpack_require__(45);
+const dbs_1 = __webpack_require__(31);
+const odooInstaller_1 = __webpack_require__(65);
+const projectWorkspace_1 = __webpack_require__(66);
 function registerProjectCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('projectSelector.create', async () => {
@@ -12561,7 +12743,7 @@ function registerProjectCommands(deps) {
 
 
 /***/ }),
-/* 57 */
+/* 65 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12602,12 +12784,12 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.setupOdooBranch = setupOdooBranch;
 // VSCode Extension Utility: Clone Odoo & Enterprise for a selected branch and setup venv with progress
 const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(11));
-const fs = __importStar(__webpack_require__(10));
-const utils_1 = __webpack_require__(9);
-const child_process_1 = __webpack_require__(12);
-const logger_1 = __webpack_require__(15);
-const notifications_1 = __webpack_require__(17);
+const path = __importStar(__webpack_require__(9));
+const fs = __importStar(__webpack_require__(8));
+const utils_1 = __webpack_require__(7);
+const process_1 = __webpack_require__(14);
+const logger_1 = __webpack_require__(11);
+const notifications_1 = __webpack_require__(13);
 async function setupOdooBranch() {
     // Show confirmation dialog with detailed information
     const confirmMessage = `This will:
@@ -12709,15 +12891,11 @@ Continue?`;
             progress.report({ message: 'Checking Python installation…', increment: 55 });
             logger_1.logger.debug('🐍 Checking Python installation');
             let pythonCmd = 'python3';
-            try {
-                (0, child_process_1.execSync)('python3 --version', { stdio: 'ignore' });
-            }
-            catch {
-                try {
-                    (0, child_process_1.execSync)('python --version', { stdio: 'ignore' });
+            if (await (0, process_1.tryRunCommand)('python3', ['--version']) === undefined) {
+                if (await (0, process_1.tryRunCommand)('python', ['--version']) !== undefined) {
                     pythonCmd = 'python';
                 }
-                catch {
+                else {
                     throw new Error('Python not found. Please install Python 3.8+ first.');
                 }
             }
@@ -12760,7 +12938,7 @@ Continue?`;
 
 
 /***/ }),
-/* 58 */
+/* 66 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12802,8 +12980,8 @@ exports.rebuildProjectWorkspace = rebuildProjectWorkspace;
 exports.openProjectWorkspace = openProjectWorkspace;
 exports.quickSwitchProjectWorkspace = quickSwitchProjectWorkspace;
 const vscode = __importStar(__webpack_require__(1));
-const settingsStore_1 = __webpack_require__(7);
-const utils_1 = __webpack_require__(9);
+const settingsStore_1 = __webpack_require__(5);
+const utils_1 = __webpack_require__(7);
 async function getActiveProjectOrPrompt() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
@@ -12894,7 +13072,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 59 */
+/* 67 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12934,8 +13112,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerRepoCommands = registerRepoCommands;
 const vscode = __importStar(__webpack_require__(1));
-const repos_1 = __webpack_require__(41);
-const projectWorkspace_1 = __webpack_require__(58);
+const repos_1 = __webpack_require__(50);
+const projectWorkspace_1 = __webpack_require__(66);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
@@ -12947,7 +13125,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 60 */
+/* 68 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12987,10 +13165,10 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerDbCommands = registerDbCommands;
 const vscode = __importStar(__webpack_require__(1));
-const settingsStore_1 = __webpack_require__(7);
-const notifications_1 = __webpack_require__(17);
-const logger_1 = __webpack_require__(15);
-const dbs_1 = __webpack_require__(2);
+const settingsStore_1 = __webpack_require__(5);
+const notifications_1 = __webpack_require__(13);
+const logger_1 = __webpack_require__(11);
+const dbs_1 = __webpack_require__(31);
 function registerDbCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('dbSelector.create', async () => {
@@ -13086,7 +13264,7 @@ function registerDbCommands(deps) {
 
 
 /***/ }),
-/* 61 */
+/* 69 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13126,7 +13304,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerModuleCommands = registerModuleCommands;
 const vscode = __importStar(__webpack_require__(1));
-const module_1 = __webpack_require__(45);
+const module_1 = __webpack_require__(53);
 function registerModuleCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.select', async (event) => {
@@ -13176,7 +13354,7 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 62 */
+/* 70 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13216,7 +13394,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerTestingCommands = registerTestingCommands;
 const vscode = __importStar(__webpack_require__(1));
-const testing_1 = __webpack_require__(47);
+const testing_1 = __webpack_require__(55);
 function registerTestingCommands(deps) {
     const { context, providers, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleTesting', async (event) => {
@@ -13255,7 +13433,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 63 */
+/* 71 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13295,14 +13473,14 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerVersionCommands = registerVersionCommands;
 const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(44));
-const args_1 = __webpack_require__(64);
-const utils_1 = __webpack_require__(9);
-const notifications_1 = __webpack_require__(17);
-const logger_1 = __webpack_require__(15);
-const gitService_1 = __webpack_require__(13);
-const runtimeCache_1 = __webpack_require__(16);
-const environment_1 = __webpack_require__(34);
+const fs = __importStar(__webpack_require__(40));
+const args_1 = __webpack_require__(72);
+const utils_1 = __webpack_require__(7);
+const notifications_1 = __webpack_require__(13);
+const logger_1 = __webpack_require__(11);
+const gitService_1 = __webpack_require__(10);
+const runtimeCache_1 = __webpack_require__(12);
+const environment_1 = __webpack_require__(27);
 function registerVersionCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('odoo.createVersion', async () => {
@@ -13799,7 +13977,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 64 */
+/* 72 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13908,7 +14086,7 @@ function extractRepoFromMetadata(arg) {
 
 
 /***/ }),
-/* 65 */
+/* 73 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13948,7 +14126,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerDebugCommands = registerDebugCommands;
 const vscode = __importStar(__webpack_require__(1));
-const debugger_1 = __webpack_require__(49);
+const debugger_1 = __webpack_require__(57);
 function registerDebugCommands(deps) {
     const { context } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('odoo.startServer', async () => {
@@ -13961,7 +14139,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 66 */
+/* 74 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14001,12 +14179,12 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerReposExplorerCommands = registerReposExplorerCommands;
 const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(44));
-const path = __importStar(__webpack_require__(14));
-const args_1 = __webpack_require__(64);
-const notifications_1 = __webpack_require__(17);
-const projectRepos_1 = __webpack_require__(42);
-const projectReposExplorer_1 = __webpack_require__(52);
+const fs = __importStar(__webpack_require__(40));
+const path = __importStar(__webpack_require__(3));
+const args_1 = __webpack_require__(72);
+const notifications_1 = __webpack_require__(13);
+const projectRepos_1 = __webpack_require__(51);
+const projectReposExplorer_1 = __webpack_require__(60);
 async function copyPathToClipboard(uri, relative) {
     if (!uri) {
         (0, notifications_1.showInfo)('Select a file or folder first.');
