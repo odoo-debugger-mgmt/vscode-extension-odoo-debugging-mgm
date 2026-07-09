@@ -116,7 +116,7 @@ export function getDatabaseLabel(db: { displayName?: string; name?: string; id?:
 export function getWorkspacePath(): string | null {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
-        showError("Open a workspace to use this command.");
+        void showError("Open a workspace to use this command.");
         return null;
     }
     return workspaceFolders[0].uri.fsPath;
@@ -280,13 +280,13 @@ function buildDiscoveryCacheKey(kind: DiscoveryKind, targetPath: string, overrid
 
 function discoverDirectories(targetPath: string, kind: DiscoveryKind, options: SearchOptions): { path: string; name: string }[] {
     if (!targetPath) {
-        showError('Enter a target path to continue.');
+        void showError('Enter a target path to continue.');
         return [];
     }
 
     const normalizedRoot = normalizePath(targetPath);
     if (!fs.existsSync(normalizedRoot)) {
-        showError(`Path does not exist: ${normalizedRoot}`);
+        void showError(`Path does not exist: ${normalizedRoot}`);
         return [];
     }
 
@@ -324,7 +324,7 @@ function discoverDirectories(targetPath: string, kind: DiscoveryKind, options: S
         processed++;
         if (processed > options.maxEntries) {
             if (!limitWarningShown) {
-                showWarning(`Search limit reached while scanning ${targetPath}. Some folders may be skipped. Adjust "odooDebugger.search.maxEntries" to increase the limit.`);
+                void showWarning(`Search limit reached while scanning ${targetPath}. Some folders may be skipped. Adjust "odooDebugger.search.maxEntries" to increase the limit.`);
                 limitWarningShown = true;
             }
             break;
@@ -628,7 +628,7 @@ async function createOdooDebuggerFile(filePath: string, workspacePath: string, f
         fs.writeFileSync(filePath, content, 'utf-8');
         return data;
     } catch (error) {
-        showError(`Failed to create ${fileName}: ${error}`);
+        void showError(`Failed to create ${fileName}: ${error}`);
         throw error;
     }
 }
@@ -648,14 +648,14 @@ export async function readFromFile(fileName: string): Promise<any> {
         const filePath = path.join(workspacePath, '.vscode', fileName);
 
         if (!fs.existsSync(filePath)) {
-            showInfo(`Creating ${fileName} file...`);
+            void showInfo(`Creating ${fileName} file...`);
             return await createOdooDebuggerFile(filePath, workspacePath, fileName);
         }
 
         const data = fs.readFileSync(filePath, 'utf-8');
         return parse(data);
     } catch (error) {
-        showError(`Failed to read ${fileName}: ${error}`);
+        void showError(`Failed to read ${fileName}: ${error}`);
         return null;
     }
 }

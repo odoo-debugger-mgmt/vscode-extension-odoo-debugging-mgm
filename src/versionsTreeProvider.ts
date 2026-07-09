@@ -10,7 +10,7 @@ import { BaseTreeProvider } from './views/baseTreeProvider';
 export class VersionTreeItem extends vscode.TreeItem {
     constructor(
         public readonly version: VersionModel,
-        public readonly collapsibleState: vscode.TreeItemCollapsibleState
+        public override readonly collapsibleState: vscode.TreeItemCollapsibleState
     ) {
         // Use the same pattern as projects and databases - emoji in label
         super(addActiveIndicator(version.name, version.isActive), collapsibleState);

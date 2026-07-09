@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as path from 'node:path';
 import { SettingsStore } from './settingsStore';
 import { ProjectModel } from './models/project';
 import { RepoModel } from './models/repo';
@@ -14,7 +13,7 @@ interface ProjectSelectionResult {
 async function getActiveProjectOrPrompt(): Promise<ProjectSelectionResult | undefined> {
     const data = await SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
-        showInfo('No projects found. Create a project first.');
+        void showInfo('No projects found. Create a project first.');
         return undefined;
     }
 
@@ -41,7 +40,7 @@ async function getActiveProjectOrPrompt(): Promise<ProjectSelectionResult | unde
 
 async function buildWorkspaceFile(context: vscode.ExtensionContext, project: ProjectModel): Promise<vscode.Uri | undefined> {
     if (!project.repos || project.repos.length === 0) {
-        showInfo(`Project "${project.name}" has no repositories. Add repos first.`);
+        void showInfo(`Project "${project.name}" has no repositories. Add repos first.`);
         return undefined;
     }
 
@@ -102,7 +101,7 @@ export async function openProjectWorkspace(context: vscode.ExtensionContext): Pr
 export async function quickSwitchProjectWorkspace(context: vscode.ExtensionContext): Promise<void> {
     const data = await SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
-        showInfo('No projects found. Create a project first.');
+        void showInfo('No projects found. Create a project first.');
         return;
     }
 

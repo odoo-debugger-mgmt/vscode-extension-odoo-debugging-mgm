@@ -4,11 +4,10 @@ import * as path from 'node:path';
 
 import { SettingsStore } from './settingsStore';
 import { RepoModel } from './models/repo';
-import { showError, showInfo } from './utils';
+import { showError } from './utils';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { createFilesExcludeMatcher } from './services/filesExclude';
-import * as os from 'node:os';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 import { errorMessage } from './services/logger';
 
@@ -207,6 +206,6 @@ export async function revealProjectRepo(repo: { path: string }): Promise<void> {
     try {
         await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(repo.path));
     } catch (error) {
-        showError(`Unable to reveal repository: ${errorMessage(error)}`);
+        void showError(`Unable to reveal repository: ${errorMessage(error)}`);
     }
 }

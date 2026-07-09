@@ -113,7 +113,7 @@ export class SettingsStore {
             await this.updateCache(fileName, filePath, raw, parsed ?? {});
             return raw;
         } catch (error) {
-            showError(`Failed to read raw content from ${fileName}: ${error}`);
+            void showError(`Failed to read raw content from ${fileName}: ${error}`);
             return null;
         }
     }
@@ -234,18 +234,18 @@ export class SettingsStore {
 
         const projects: ProjectModel[] = data.projects;
         if (!projects || projects.length === 0) {
-            showError('Unable to load projects, please create a project first');
+            void showError('Unable to load projects, please create a project first');
             return null;
         }
 
         if (typeof projects !== 'object') {
-            showError('Unable to load projects.');
+            void showError('Unable to load projects.');
             return null;
         }
 
         const project = projects.find((p: ProjectModel) => p.isSelected === true);
         if (!project) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return null;
         }
 

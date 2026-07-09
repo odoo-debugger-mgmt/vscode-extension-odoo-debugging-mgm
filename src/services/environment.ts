@@ -303,7 +303,7 @@ export async function alignEnvironment(target: EnvironmentTarget, options: Align
                 }
                 await vscode.commands.executeCommand('projectSelector.refresh');
             } catch (error: any) {
-                showWarning(`${options.label}: environment switch failed: ${error.message}`);
+                void showWarning(`${options.label}: environment switch failed: ${error.message}`);
             }
         });
         return;
@@ -357,6 +357,6 @@ async function applyEnvironmentDiff(diff: EnvironmentDiff, label: string): Promi
         showAutoInfo(`${label}: switched ${applied.join(', ')}`, 3000);
     } else {
         failures.forEach(failure => logger.error(`[environment] ${label}: ${failure}`));
-        showWarning(`${label}: environment switch finished with issues — ${failures.join('; ')}`);
+        void showWarning(`${label}: environment switch finished with issues — ${failures.join('; ')}`);
     }
 }

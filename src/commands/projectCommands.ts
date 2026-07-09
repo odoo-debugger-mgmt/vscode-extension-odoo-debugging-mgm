@@ -79,7 +79,7 @@ export function registerProjectCommands(deps: CommandDeps): void {
             }
             await refreshAll();
         } catch (err) {
-            showError(errorMessage(err));
+            void showError(errorMessage(err));
         }
     }));
 

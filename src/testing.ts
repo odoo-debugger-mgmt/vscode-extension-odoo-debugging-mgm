@@ -13,7 +13,7 @@ import { BaseTreeProvider } from './views/baseTreeProvider';
 
 export class TestingTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
-    constructor(private context: vscode.ExtensionContext) {
+    constructor(_context: vscode.ExtensionContext) {
         super();
     }
 
@@ -230,14 +230,14 @@ export async function toggleTesting(event: any): Promise<void> {
         const { isEnabled } = event;
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return;
         }
 
         const { data, project } = result;
         const db = project.dbs.find(db => db.isSelected === true);
         if (!db) {
-            showError('Select a database before running this action.');
+            void showError('Select a database before running this action.');
             return;
         }
 
@@ -298,7 +298,7 @@ export async function toggleTesting(event: any): Promise<void> {
         }
     } catch (error) {
         logger.error('Error in toggleTesting:', error);
-        showError(`Failed to toggle testing: ${error}`);
+        void showError(`Failed to toggle testing: ${error}`);
     }
 }
 
@@ -306,7 +306,7 @@ export async function toggleStopAfterInit(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return;
         }
 
@@ -323,7 +323,7 @@ export async function toggleStopAfterInit(): Promise<void> {
         await setupDebugger();
     } catch (error) {
         logger.error('Error in toggleStopAfterInit:', error);
-        showError(`Failed to toggle stop after init: ${error}`);
+        void showError(`Failed to toggle stop after init: ${error}`);
     }
 }
 
@@ -331,7 +331,7 @@ export async function setTestFile(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return;
         }
 
@@ -360,7 +360,7 @@ export async function setTestFile(): Promise<void> {
         }
     } catch (error) {
         logger.error('Error in setTestFile:', error);
-        showError(`Failed to set test file: ${error}`);
+        void showError(`Failed to set test file: ${error}`);
     }
 }
 
@@ -368,7 +368,7 @@ export async function addTestTag(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return;
         }
 
@@ -376,13 +376,13 @@ export async function addTestTag(): Promise<void> {
         project.testingConfig = ensureTestingConfigModel(project.testingConfig);
 
         if (!project.testingConfig.isEnabled) {
-            showError('Enable testing before running this command.');
+            void showError('Enable testing before running this command.');
             return;
         }
 
         const db = project.dbs.find(db => db.isSelected === true);
         if (!db) {
-            showError('Select a database before running this action.');
+            void showError('Select a database before running this action.');
             return;
         }
 
@@ -429,7 +429,7 @@ export async function addTestTag(): Promise<void> {
             try {
                 const installedModules = await getInstalledModules(db.id);
                 if (installedModules.length === 0) {
-                    showInfo('No installed modules were found.');
+                    void showInfo('No installed modules were found.');
                     return;
                 }
 
@@ -468,7 +468,7 @@ export async function addTestTag(): Promise<void> {
                     await setupDebugger();
                 }
             } catch (error) {
-                showError(`Failed to get installed modules: ${error}`);
+                void showError(`Failed to get installed modules: ${error}`);
             }
         } else {
             // For other types, show a smart input with examples
@@ -535,14 +535,14 @@ export async function addTestTag(): Promise<void> {
 
                     // Show naming convention suggestion if applicable
                     if (!userInput.trim().startsWith('Test') && !userInput.trim().includes('Test')) {
-                        showWarning(`Warning: Class names typically start with "Test" (e.g., "TestSalesAccessRights").`);
+                        void showWarning(`Warning: Class names typically start with "Test" (e.g., "TestSalesAccessRights").`);
                     }
                 } else if (selectedType.value === 'method') {
                     formatInfo = ` (will be formatted as .${userInput.trim()})`;
 
                     // Show naming convention suggestion if applicable
                     if (!userInput.trim().startsWith('test_')) {
-                        showWarning(`Warning: Method names typically start with "test_" (e.g., "test_workflow_invoice").`);
+                        void showWarning(`Warning: Method names typically start with "test_" (e.g., "test_workflow_invoice").`);
                     }
                 }
 
@@ -554,7 +554,7 @@ export async function addTestTag(): Promise<void> {
         }
     } catch (error) {
         logger.error('Error in addTestTag:', error);
-        showError(`Failed to add test tag: ${error}`);
+        void showError(`Failed to add test tag: ${error}`);
     }
 }
 
@@ -562,7 +562,7 @@ export async function cycleTestTagState(tag: TestTag): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return;
         }
 
@@ -591,11 +591,11 @@ export async function cycleTestTagState(tag: TestTag): Promise<void> {
             // Update launch.json with new test configuration
             await setupDebugger();
         } else {
-            showError('Could not find that test tag.');
+            void showError('Could not find that test tag.');
         }
     } catch (error) {
         logger.error('Error in cycleTestTagState:', error);
-        showError(`Failed to cycle test tag state: ${error}`);
+        void showError(`Failed to cycle test tag state: ${error}`);
     }
 }
 
@@ -603,7 +603,7 @@ export async function removeTestTag(tagOrTreeItem: TestTag | vscode.TreeItem): P
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return;
         }
 
@@ -632,7 +632,7 @@ export async function removeTestTag(tagOrTreeItem: TestTag | vscode.TreeItem): P
             }
         } else {
             logger.error('Could not find the referenced test tag:', tagOrTreeItem);
-            showError('Could not find the referenced test tag.');
+            void showError('Could not find the referenced test tag.');
             return;
         }
 
@@ -645,11 +645,11 @@ export async function removeTestTag(tagOrTreeItem: TestTag | vscode.TreeItem): P
             // Update launch.json with new test configuration
             await setupDebugger();
         } else {
-            showError('Could not find that test tag.');
+            void showError('Could not find that test tag.');
         }
     } catch (error) {
         logger.error('Error in removeTestTag:', error);
-        showError(`Failed to remove test tag: ${error}`);
+        void showError(`Failed to remove test tag: ${error}`);
     }
 }
 
@@ -657,7 +657,7 @@ export async function toggleLogLevel(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return;
         }
 
@@ -679,7 +679,7 @@ export async function toggleLogLevel(): Promise<void> {
         await setupDebugger();
     } catch (error) {
         logger.error('Error in toggleLogLevel:', error);
-        showError(`Failed to toggle log level: ${error}`);
+        void showError(`Failed to toggle log level: ${error}`);
     }
 }
 
@@ -687,7 +687,7 @@ export async function setSpecificLogLevel(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return;
         }
 
@@ -740,6 +740,6 @@ export async function setSpecificLogLevel(): Promise<void> {
         }
     } catch (error) {
         logger.error('Error in setSpecificLogLevel:', error);
-        showError(`Failed to set log level: ${error}`);
+        void showError(`Failed to set log level: ${error}`);
     }
 }

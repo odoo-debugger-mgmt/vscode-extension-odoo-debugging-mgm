@@ -18,7 +18,7 @@ import {
 
 async function copyPathToClipboard(uri: vscode.Uri | undefined, relative: boolean): Promise<void> {
     if (!uri) {
-        showInfo('Select a file or folder first.');
+        void showInfo('Select a file or folder first.');
         return;
     }
 
@@ -44,7 +44,7 @@ async function copyPathToClipboard(uri: vscode.Uri | undefined, relative: boolea
 
 async function openUriInIntegratedTerminal(uri: vscode.Uri | undefined): Promise<void> {
     if (!uri) {
-        showInfo('Select a folder to open in terminal.');
+        void showInfo('Select a folder to open in terminal.');
         return;
     }
 
@@ -68,7 +68,7 @@ export function registerReposExplorerCommands(deps: CommandDeps): void {
 
         const uri = extractUri(arg);
         if (!uri) {
-            showInfo('Select a repository to reveal.');
+            void showInfo('Select a repository to reveal.');
             return;
         }
         await vscode.commands.executeCommand('revealInExplorer', uri);
@@ -128,7 +128,7 @@ export function registerReposExplorerCommands(deps: CommandDeps): void {
     context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.revealInExplorer', async (arg?: unknown) => {
         const uri = extractUri(arg);
         if (!uri) {
-            showInfo('Select a file or folder first.');
+            void showInfo('Select a file or folder first.');
             return;
         }
         await vscode.commands.executeCommand('revealInExplorer', uri);
@@ -136,7 +136,7 @@ export function registerReposExplorerCommands(deps: CommandDeps): void {
     context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.revealFileInOS', async (arg?: unknown) => {
         const uri = extractUri(arg);
         if (!uri) {
-            showInfo('Select a file or folder first.');
+            void showInfo('Select a file or folder first.');
             return;
         }
         await vscode.commands.executeCommand('revealFileInOS', uri);
@@ -154,7 +154,7 @@ export function registerReposExplorerCommands(deps: CommandDeps): void {
     context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyEntry', async (arg?: unknown) => {
         const uri = extractUri(arg);
         if (!uri) {
-            showInfo('Select a file or folder first.');
+            void showInfo('Select a file or folder first.');
             return;
         }
         explorerCopyEntries([uri], false);
@@ -162,7 +162,7 @@ export function registerReposExplorerCommands(deps: CommandDeps): void {
     context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.cutEntry', async (arg?: unknown) => {
         const uri = extractUri(arg);
         if (!uri) {
-            showInfo('Select a file or folder first.');
+            void showInfo('Select a file or folder first.');
             return;
         }
         explorerCopyEntries([uri], true);
@@ -170,7 +170,7 @@ export function registerReposExplorerCommands(deps: CommandDeps): void {
     context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.pasteEntry', async (arg?: unknown) => {
         const uri = extractUri(arg);
         if (!uri) {
-            showInfo('Select a folder to paste into.');
+            void showInfo('Select a folder to paste into.');
             return;
         }
 

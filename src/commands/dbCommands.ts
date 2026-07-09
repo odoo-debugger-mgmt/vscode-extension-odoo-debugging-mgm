@@ -42,7 +42,7 @@ export function registerDbCommands(deps: CommandDeps): void {
             }
             await refreshAll();
         } catch (err) {
-            showError(errorMessage(err));
+            void showError(errorMessage(err));
         }
     }));
 
@@ -51,7 +51,7 @@ export function registerDbCommands(deps: CommandDeps): void {
             await selectDatabase(event);
             await refreshAll();
         } catch (err) {
-            showError(`Failed to select database: ${errorMessage(err)}`);
+            void showError(`Failed to select database: ${errorMessage(err)}`);
             logger.error('Error in database selection:', err);
         }
     }));
@@ -61,7 +61,7 @@ export function registerDbCommands(deps: CommandDeps): void {
             await deleteDb(event);
             await refreshAll();
         } catch (err) {
-            showError(`Failed to delete database: ${errorMessage(err)}`);
+            void showError(`Failed to delete database: ${errorMessage(err)}`);
             logger.error('Error in database deletion:', err);
         }
     }));
@@ -72,7 +72,7 @@ export function registerDbCommands(deps: CommandDeps): void {
             await restoreDb(event);
             await refreshAll();
         } catch (err) {
-            showError(`Failed to restore database: ${errorMessage(err)}`);
+            void showError(`Failed to restore database: ${errorMessage(err)}`);
             logger.error('Error in database restoration:', err);
         }
     }));
@@ -82,7 +82,7 @@ export function registerDbCommands(deps: CommandDeps): void {
             await changeDatabaseVersion(event);
             await refreshAll();
         } catch (err) {
-            showError(`Failed to change database version: ${errorMessage(err)}`);
+            void showError(`Failed to change database version: ${errorMessage(err)}`);
             logger.error('Error in database version change:', err);
         }
     }));
@@ -92,7 +92,7 @@ export function registerDbCommands(deps: CommandDeps): void {
             await changeDatabaseProjectRepoBranches(event);
             await refreshAll({ reason: 'ui' });
         } catch (err) {
-            showError(`Failed to update project repo branch mapping: ${errorMessage(err)}`);
+            void showError(`Failed to update project repo branch mapping: ${errorMessage(err)}`);
             logger.error('Error in database project repo branch mapping update:', err);
         }
     }));
@@ -102,7 +102,7 @@ export function registerDbCommands(deps: CommandDeps): void {
             await manageDatabaseTemplates();
             await refreshAll({ reason: 'ui' });
         } catch (err) {
-            showError(`Failed to manage database templates: ${errorMessage(err)}`);
+            void showError(`Failed to manage database templates: ${errorMessage(err)}`);
             logger.error('Error in database template management:', err);
         }
     }));

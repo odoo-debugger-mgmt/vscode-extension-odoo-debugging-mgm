@@ -130,7 +130,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }
         debuggerSyncTimer = setTimeout(() => {
             debuggerSyncTimer = undefined;
-            runDebuggerSync()
+            void runDebuggerSync()
                 .finally(() => {
                     const waiters = debuggerSyncWaiters;
                     debuggerSyncWaiters = [];

@@ -17,7 +17,6 @@ import { getInstalledModuleNames, getInstalledModules } from './services/databas
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { VersionsService } from './versionsService';
-import { showWarning } from './services/notifications';
 import { showModalWarning } from './services/notifications';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 import { runCommand, tryRunCommand } from './services/process';
@@ -25,7 +24,7 @@ import { errorMessage } from './services/logger';
 
 export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
-    constructor(private context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
+    constructor(_context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
         super();
     }
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -332,13 +331,13 @@ export async function selectModule(event: any) {
     const { data, project } = result;
     const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
     const moduleExistsInDb = db.modules.find(mod => mod.name === module.name);
@@ -387,7 +386,7 @@ export async function createModuleFromScaffold(): Promise<void> {
 
     const projectRepos = (targetProject.repos ?? []) as RepoModel[];
     if (projectRepos.length === 0) {
-        showError(`Project "${targetProject.name}" has no selected repositories.`);
+        void showError(`Project "${targetProject.name}" has no selected repositories.`);
         return;
     }
 
@@ -414,7 +413,7 @@ export async function createModuleFromScaffold(): Promise<void> {
     }
 
     if (!targetRepo) {
-        showError('Select a destination repository.');
+        void showError('Select a destination repository.');
         return;
     }
 
@@ -428,22 +427,22 @@ export async function createModuleFromScaffold(): Promise<void> {
     const odooBinPath = path.join(normalizedOdooPath, 'odoo-bin');
 
     if (!normalizedPythonPath || !fs.existsSync(normalizedPythonPath)) {
-        showError(`Python executable not found: ${normalizedPythonPath}`);
+        void showError(`Python executable not found: ${normalizedPythonPath}`);
         return;
     }
 
     if (!normalizedOdooPath || !fs.existsSync(normalizedOdooPath)) {
-        showError(`Odoo path not found: ${normalizedOdooPath}`);
+        void showError(`Odoo path not found: ${normalizedOdooPath}`);
         return;
     }
 
     if (!fs.existsSync(odooBinPath)) {
-        showError(`odoo-bin not found at: ${odooBinPath}`);
+        void showError(`odoo-bin not found at: ${odooBinPath}`);
         return;
     }
 
     if (!repositoryRootPath || !fs.existsSync(repositoryRootPath)) {
-        showError(`Destination repository path not found: ${repositoryRootPath}`);
+        void showError(`Destination repository path not found: ${repositoryRootPath}`);
         return;
     }
 
@@ -493,7 +492,7 @@ export async function createModuleFromScaffold(): Promise<void> {
             3500
         );
     } catch (error: any) {
-        showError(`Failed to scaffold module "${sanitizedModuleName}": ${error.message}`);
+        void showError(`Failed to scaffold module "${sanitizedModuleName}": ${error.message}`);
     }
 }
 
@@ -509,13 +508,13 @@ export async function setModuleToInstall(event: any): Promise<void> {
     const { data, project } = result;
     const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -542,13 +541,13 @@ export async function setModuleToUpgrade(event: any): Promise<void> {
     const { data, project } = result;
     const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -575,13 +574,13 @@ export async function clearModuleState(event: any): Promise<void> {
     const { data, project } = result;
     const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -617,13 +616,13 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
     const { data, project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -649,10 +648,10 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
                 const moduleNamesToRemove = psaeModules.map((m: any) => m.name);
                 db.modules = db.modules.filter(dbModule => !moduleNamesToRemove.includes(dbModule.name));
                 await SettingsStore.saveWithoutComments(stripSettings(data));
-                showInfo(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
+                void showInfo(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
             } else {
                 await SettingsStore.saveWithoutComments(stripSettings(data));
-                showInfo(`Removed manual inclusion of ${dirName} (${repoName})`);
+                void showInfo(`Removed manual inclusion of ${dirName} (${repoName})`);
             }
         } else {
             // Currently auto-included - add manual exclusion to override and remove selected modules
@@ -661,7 +660,7 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
             const moduleNamesToRemove = psaeModules.map((m: any) => m.name);
             db.modules = db.modules.filter(dbModule => !moduleNamesToRemove.includes(dbModule.name));
             await SettingsStore.saveWithoutComments(stripSettings(data));
-            showInfo(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
+            void showInfo(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
         }
     } else {
         if (isManuallyExcluded) {
@@ -672,15 +671,15 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
             }
             await SettingsStore.saveWithoutComments(stripSettings(data));
             if (hasSelectedModules || hasInstalledOrDbModules) {
-                showInfo(`Removed manual exclusion of ${dirName} (${repoName}). Now auto-included due to modules.`);
+                void showInfo(`Removed manual exclusion of ${dirName} (${repoName}). Now auto-included due to modules.`);
             } else {
-                showInfo(`Removed manual exclusion of ${dirName} (${repoName})`);
+                void showInfo(`Removed manual exclusion of ${dirName} (${repoName})`);
             }
         } else {
             // Currently not included - add manual inclusion
             project.includedPsaeInternalPaths.push(psaeInternalPath);
             await SettingsStore.saveWithoutComments(stripSettings(data));
-            showInfo(`Manually included ${dirName} (${repoName}) in addons path`);
+            void showInfo(`Manually included ${dirName} (${repoName}) in addons path`);
         }
     }
 }
@@ -688,20 +687,20 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
 export async function updateAllModules(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        showError('Select a project before running this action.');
+        void showError('Select a project before running this action.');
         return;
     }
 
     const { data, project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -710,7 +709,7 @@ export async function updateAllModules(): Promise<void> {
     const availableModules = allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i));
 
     if (availableModules.length === 0) {
-        showInfo('No modules are available to update.');
+        void showInfo('No modules are available to update.');
         return;
     }
 
@@ -754,31 +753,31 @@ export async function updateAllModules(): Promise<void> {
 export async function updateInstalledModules(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        showError('Select a project before running this action.');
+        void showError('Select a project before running this action.');
         return;
     }
 
     const { data, project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
     if (!db.modules || db.modules.length === 0) {
-        showInfo('No modules are configured for this database to update');
+        void showInfo('No modules are configured for this database to update');
         return;
     }
 
     const installedModules = db.modules.filter(module => module.state === 'install');
     if (installedModules.length === 0) {
-        showInfo('No modules are currently marked with the "install" state.');
+        void showInfo('No modules are currently marked with the "install" state.');
         return;
     }
 
@@ -804,20 +803,20 @@ export async function updateInstalledModules(): Promise<void> {
 export async function installAllModules(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        showError('Select a project before running this action.');
+        void showError('Select a project before running this action.');
         return;
     }
 
     const { data, project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -826,7 +825,7 @@ export async function installAllModules(): Promise<void> {
     const availableModules = allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i));
 
     if (availableModules.length === 0) {
-        showInfo('No modules are available to install.');
+        void showInfo('No modules are available to install.');
         return;
     }
 
@@ -870,20 +869,20 @@ export async function installAllModules(): Promise<void> {
 export async function clearAllModuleSelections(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        showError('Select a project before running this action.');
+        void showError('Select a project before running this action.');
         return;
     }
 
     const { data, project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -911,14 +910,14 @@ export async function clearAllModuleSelections(): Promise<void> {
 export async function viewInstalledModules(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        showError('Select a project before running this action.');
+        void showError('Select a project before running this action.');
         return;
     }
 
     const { project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
@@ -927,7 +926,7 @@ export async function viewInstalledModules(): Promise<void> {
         const installedModules = await getInstalledModules(db.id);
 
         if (installedModules.length === 0) {
-            showInfo('No installed modules were found in the database');
+            void showInfo('No installed modules were found in the database');
             return;
         }
 
@@ -949,6 +948,6 @@ export async function viewInstalledModules(): Promise<void> {
         });
 
     } catch (error) {
-        showError(`Failed to retrieve installed modules: ${error}`);
+        void showError(`Failed to retrieve installed modules: ${error}`);
     }
 }

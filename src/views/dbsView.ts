@@ -31,7 +31,7 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         const { project } = result;
         const dbs: DatabaseModel[] = project.dbs;
         if (!dbs) {
-            showError('No databases are configured for this project.');
+            void showError('No databases are configured for this project.');
             return [];
         }
 

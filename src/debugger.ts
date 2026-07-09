@@ -94,12 +94,12 @@ export async function setupDebugger(): Promise<any> {
         logger.warn('Could not prepare debugger launch arguments:', error);
         if (error instanceof Error) {
             if (error.message === 'Select a database before running this action.') {
-                showInfo('Select a database before configuring the debugger.');
+                void showInfo('Select a database before configuring the debugger.');
             } else {
-                showError(error.message);
+                void showError(error.message);
             }
         } else {
-            showError('Could not prepare debugger launch arguments.');
+            void showError('Could not prepare debugger launch arguments.');
         }
         return undefined;
     }
@@ -129,7 +129,7 @@ export async function setupDebugger(): Promise<any> {
     try {
         fs.writeFileSync(launchPath, JSON.stringify(launchData, null, 2) + '\n', 'utf8');
     } catch (error) {
-        showError(`Unable to update launch.json: ${error}`);
+        void showError(`Unable to update launch.json: ${error}`);
     }
 
     await selectPythonInterpreter(settings.pythonPath);
@@ -389,12 +389,12 @@ export async function startDebugShell(): Promise<void> {
     } catch (error) {
         if (error instanceof Error) {
             if (error.message === 'Select a database before running this action.') {
-                showInfo('Select a database before opening the Odoo shell.');
+                void showInfo('Select a database before opening the Odoo shell.');
             } else {
-                showError(error.message);
+                void showError(error.message);
             }
         } else {
-            showError('Could not prepare shell arguments.');
+            void showError('Could not prepare shell arguments.');
         }
         return undefined;
     }
@@ -425,7 +425,7 @@ function quoteShellArg(value: string): string {
 export async function startDebugServer(): Promise<void> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
-        showError("Open a workspace to use this command.");
+        void showError("Open a workspace to use this command.");
         return undefined;
     }
     const result = await SettingsStore.getSelectedProject();

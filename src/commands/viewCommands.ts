@@ -81,7 +81,7 @@ export function registerViewCommands(deps: CommandDeps): void {
                 const moduleData = (item as vscode.TreeItem & { moduleData?: { name?: string } }).moduleData
                     ?? item.command?.arguments?.[0];
                 if (!moduleData?.name) {
-                    showInfo('Unable to read module details for this selection.');
+                    void showInfo('Unable to read module details for this selection.');
                     return;
                 }
 
@@ -137,7 +137,7 @@ export function registerViewCommands(deps: CommandDeps): void {
             onPick: async (item) => {
                 const repo = (item as { metadata?: { repo?: { path?: string } } })?.metadata?.repo;
                 if (!repo?.path) {
-                    showInfo('Select a repository to reveal.');
+                    void showInfo('Select a repository to reveal.');
                     return;
                 }
                 await revealProjectRepo(repo as { path: string });

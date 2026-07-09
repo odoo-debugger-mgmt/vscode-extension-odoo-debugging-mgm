@@ -65,7 +65,7 @@ function formatTicketLabel(ticket: ProjectTicketModel): string {
 }
 
 export class ProjectTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
-    constructor(private context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
+    constructor(_context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
         super();
     }
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -79,7 +79,7 @@ export class ProjectTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
         const projects: ProjectModel[] = data.projects;
         if (!projects) {
-            showError('Unable to load projects, please create a project first');
+            void showError('Unable to load projects, please create a project first');
             return [];
         }
 
@@ -220,7 +220,7 @@ export async function selectProject(projectUid: string) {
     const data = await SettingsStore.get('odoo-debugger-data.json');
     const projects: ProjectModel[] = data.projects;
     if (!projects) {
-        showError('Unable to load projects.');
+        void showError('Unable to load projects.');
         return;
     }
 
@@ -254,19 +254,19 @@ export async function selectProject(projectUid: string) {
             );
         }
 
-        showInfo(`Project switched to: ${selectedProject.name}`);
+        void showInfo(`Project switched to: ${selectedProject.name}`);
 
         // Force a small delay and refresh to ensure UI is updated
         await new Promise(resolve => setTimeout(resolve, 100));
     } else {
-        showError('The selected project could not be found.');
+        void showError('The selected project could not be found.');
     }
 }
 
 export async function getRepo(targetPath:string, searchFilter?: string): Promise<RepoModel[] > {
     const devsRepos = findRepositories(targetPath);
     if (devsRepos.length === 0) {
-        showInfo('No repositories found in the custom-addons path.');
+        void showInfo('No repositories found in the custom-addons path.');
         throw new Error('No repositories found in the custom-addons path.');
     }
 
@@ -311,7 +311,7 @@ export async function getRepo(targetPath:string, searchFilter?: string): Promise
             return new RepoModel(item.label, item.description, true);
         });
     }else{
-        showError("Select at least one folder to continue.");
+        void showError("Select at least one folder to continue.");
         throw new Error("Select at least one folder to continue.");
     }
 }
@@ -323,7 +323,7 @@ export async function getProjectName(_workspaceFolder?: vscode.WorkspaceFolder):
         placeHolder: "e.g., My Odoo Project"
     });
     if (!name) {
-        showError('Enter a project name to continue.');
+        void showError('Enter a project name to continue.');
         throw new Error('Enter a project name to continue.');
     }
     return name;
@@ -349,14 +349,14 @@ export async function deleteProject(event: any) {
         // Tree item with custom projectUid property
         projectUid = event.projectUid;
     } else {
-        showError('The project data is invalid for deletion');
+        void showError('The project data is invalid for deletion');
         return;
     }
 
     const data = await SettingsStore.get('odoo-debugger-data.json');
     const projects: ProjectModel[] = data.projects;
     if (!projects) {
-        showError('Unable to load projects.');
+        void showError('Unable to load projects.');
         return;
     }
 
@@ -379,7 +379,7 @@ export async function deleteProject(event: any) {
         data.projects.splice(projectIndex, 1);
         await SettingsStore.saveWithoutComments(stripSettings(data));
 
-        showInfo(`Project "${projectToDelete.name}" deleted successfully`);
+        void showInfo(`Project "${projectToDelete.name}" deleted successfully`);
 
         // If the deleted project was selected and there are other projects, select the first one
         if (projectToDelete.isSelected && data.projects.length > 0) {
@@ -387,7 +387,7 @@ export async function deleteProject(event: any) {
             await vscode.commands.executeCommand('projectSelector.selectProject', data.projects[0].uid);
         }
     } else {
-        showError('The selected project could not be found. It may have already been deleted.');
+        void showError('The selected project could not be found. It may have already been deleted.');
     }
 }
 
@@ -404,20 +404,20 @@ export async function duplicateProject(event: any) {
     } else if (event && event.projectUid) {
         projectUid = event.projectUid;
     } else {
-        showError('The project data is invalid.');
+        void showError('The project data is invalid.');
         return;
     }
 
     const data = await SettingsStore.get('odoo-debugger-data.json');
     const projects: ProjectModel[] = data.projects;
     if (!projects) {
-        showError('Unable to load projects.');
+        void showError('Unable to load projects.');
         return;
     }
 
     const projectIndex = projects.findIndex((p: ProjectModel) => p.uid === projectUid);
     if (projectIndex === -1) {
-        showError('The selected project could not be found.');
+        void showError('The selected project could not be found.');
         return;
     }
 
@@ -436,7 +436,7 @@ export async function duplicateProject(event: any) {
 
     // Check if name already exists
     if (projects.some(p => p.name === duplicateName)) {
-        showError('A project with this name already exists. Choose a different name.');
+        void showError('A project with this name already exists. Choose a different name.');
         return;
     }
 
@@ -459,7 +459,7 @@ export async function duplicateProject(event: any) {
     projects.push(duplicateProject);
 
     await SettingsStore.saveWithoutComments(stripSettings(data));
-    showInfo(`Project "${duplicateName}" created as a duplicate of "${sourceProject.name}"`);
+    void showInfo(`Project "${duplicateName}" created as a duplicate of "${sourceProject.name}"`);
 }
 
 async function getProjectContextFromEvent(event: any): Promise<{ data: any; project: ProjectModel; projectIndex: number } | null> {
@@ -478,14 +478,14 @@ async function getProjectContextFromEvent(event: any): Promise<{ data: any; proj
     const data = await SettingsStore.get('odoo-debugger-data.json');
     const projects: ProjectModel[] = data.projects ?? [];
     if (projects.length === 0) {
-        showError('No projects are configured.');
+        void showError('No projects are configured.');
         return null;
     }
 
     if (!projectUid) {
         const selectedProject = projects.find((p: ProjectModel) => p.isSelected);
         if (!selectedProject) {
-            showError('Select a project first.');
+            void showError('Select a project first.');
             return null;
         }
         projectUid = selectedProject.uid;
@@ -493,7 +493,7 @@ async function getProjectContextFromEvent(event: any): Promise<{ data: any; proj
 
     const projectIndex = projects.findIndex((p: ProjectModel) => p.uid === projectUid);
     if (projectIndex === -1) {
-        showError('The selected project could not be found.');
+        void showError('The selected project could not be found.');
         return null;
     }
 
@@ -590,7 +590,7 @@ async function editProjectName(project: ProjectModel, data: any) {
         const oldName = project.name;
         project.name = newName.trim();
         await SettingsStore.saveWithoutComments(stripSettings(data));
-        showInfo(`Project renamed from "${oldName}" to "${project.name}"`);
+        void showInfo(`Project renamed from "${oldName}" to "${project.name}"`);
     }
 }
 
@@ -683,7 +683,7 @@ async function manageProjectTicketsForProject(project: ProjectModel, data: any):
         }
 
         if (tickets.length === 0) {
-            showInfo('No project tickets available. Add one first.');
+            void showInfo('No project tickets available. Add one first.');
             continue;
         }
 
@@ -848,20 +848,20 @@ export async function exportProject(event: any): Promise<void> {
         } else if (event && event.projectUid) {
             projectUid = event.projectUid;
         } else {
-            showError('The project data is invalid.');
+            void showError('The project data is invalid.');
             return;
         }
 
         const data = await SettingsStore.get('odoo-debugger-data.json');
         const projects: ProjectModel[] = data.projects;
         if (!projects) {
-            showError('No projects are configured.');
+            void showError('No projects are configured.');
             return;
         }
 
         const project = projects.find(p => p.uid === projectUid);
         if (!project) {
-            showError('The selected project could not be found.');
+            void showError('The selected project could not be found.');
             return;
         }
 
@@ -917,7 +917,7 @@ Note: Repository paths use ~ for home directory and may need adjustment on diffe
 
     } catch (error) {
         logger.error('Error exporting project:', error);
-        showError(`Failed to export project: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        void showError(`Failed to export project: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 }
 
@@ -945,7 +945,7 @@ export async function importProject(): Promise<void> {
 
         // Validate import data
         if (!importData.name || !importData.repositories || !Array.isArray(importData.repositories)) {
-            showError('The selected file is not a valid project export.');
+            void showError('The selected file is not a valid project export.');
             return;
         }
         const importedTickets = sanitizeProjectTickets(importData.tickets);
@@ -1031,9 +1031,9 @@ export async function importProject(): Promise<void> {
     } catch (error) {
         logger.error('Error importing project:', error);
         if (error instanceof SyntaxError) {
-            showError('The selected file is not valid JSON.');
+            void showError('The selected file is not valid JSON.');
         } else {
-            showError(`Failed to import project: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            void showError(`Failed to import project: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
     }
 }
@@ -1044,7 +1044,7 @@ export async function quickProjectSearch(): Promise<void> {
         const projects: ProjectModel[] = data.projects;
 
         if (!projects || projects.length === 0) {
-            showError('No projects are configured. Create a project first.');
+            void showError('No projects are configured. Create a project first.');
             return;
         }
 
@@ -1079,6 +1079,6 @@ export async function quickProjectSearch(): Promise<void> {
 
     } catch (error) {
         logger.error('Error in quick project search:', error);
-        showError('Unable to load projects for search.');
+        void showError('Unable to load projects for search.');
     }
 }

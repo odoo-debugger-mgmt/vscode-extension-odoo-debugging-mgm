@@ -6,7 +6,6 @@ import { RepoModel } from './models/repo';
 import { showError, showInfo } from './utils';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
 import { createFilesExcludeMatcher } from './services/filesExclude';
-import { showWarning } from './services/notifications';
 import { showModalWarning } from './services/notifications';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 
@@ -216,7 +215,7 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
             });
             return nodes;
         } catch (error: any) {
-            showError(`Unable to read ${dir.fsPath}: ${error?.message ?? error}`);
+            void showError(`Unable to read ${dir.fsPath}: ${error?.message ?? error}`);
             return [];
         }
     }
@@ -233,7 +232,7 @@ async function promptName(placeHolder: string, value?: string): Promise<string |
 export async function createNewFile(folderUri?: vscode.Uri): Promise<void> {
     const baseUri = folderUri ?? (vscode.window.activeTextEditor?.document.uri);
     if (!baseUri) {
-        showInfo('Select a folder to create a file.');
+        void showInfo('Select a folder to create a file.');
         return;
     }
     const folderPath = baseUri.fsPath;
@@ -247,7 +246,7 @@ export async function createNewFile(folderUri?: vscode.Uri): Promise<void> {
 
 export async function createNewFolder(folderUri?: vscode.Uri): Promise<void> {
     if (!folderUri) {
-        showInfo('Select a folder to create a new folder.');
+        void showInfo('Select a folder to create a new folder.');
         return;
     }
     const name = await promptName('New folder name', 'new-folder');
@@ -260,7 +259,7 @@ export async function createNewFolder(folderUri?: vscode.Uri): Promise<void> {
 
 export async function renameEntry(uri?: vscode.Uri): Promise<void> {
     if (!uri) {
-        showInfo('Select a file or folder to rename.');
+        void showInfo('Select a file or folder to rename.');
         return;
     }
     const currentName = path.basename(uri.fsPath);
@@ -274,7 +273,7 @@ export async function renameEntry(uri?: vscode.Uri): Promise<void> {
 
 export async function deleteEntry(uri?: vscode.Uri): Promise<void> {
     if (!uri) {
-        showInfo('Select a file or folder to delete.');
+        void showInfo('Select a file or folder to delete.');
         return;
     }
     const choice = await showModalWarning(
@@ -289,7 +288,7 @@ export async function deleteEntry(uri?: vscode.Uri): Promise<void> {
 
 export async function openTerminalHere(uri?: vscode.Uri): Promise<void> {
     if (!uri) {
-        showInfo('Select a folder to open in terminal.');
+        void showInfo('Select a folder to open in terminal.');
         return;
     }
     const terminal = vscode.window.createTerminal({ cwd: uri.fsPath });
@@ -299,7 +298,7 @@ export async function openTerminalHere(uri?: vscode.Uri): Promise<void> {
 export async function selectProjectForExplorer(): Promise<void> {
     const data = await SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
-        showInfo('No projects found. Create a project first.');
+        void showInfo('No projects found. Create a project first.');
         return;
     }
 
@@ -346,13 +345,13 @@ async function pathExists(uri: vscode.Uri): Promise<boolean> {
 
 export async function pasteEntries(targetUri?: vscode.Uri): Promise<void> {
     if (!clipboard || clipboard.uris.length === 0) {
-        showInfo('Nothing to paste.');
+        void showInfo('Nothing to paste.');
         return;
     }
 
     const folderUri = getTargetFolderUri(targetUri);
     if (!folderUri) {
-        showInfo('Select a destination folder.');
+        void showInfo('Select a destination folder.');
         return;
     }
 
@@ -379,7 +378,7 @@ export async function pasteEntries(targetUri?: vscode.Uri): Promise<void> {
                 await vscode.workspace.fs.copy(source, destination, { overwrite: true });
             }
         } catch (error: any) {
-            showError(`Failed to paste "${base}": ${error?.message ?? error}`);
+            void showError(`Failed to paste "${base}": ${error?.message ?? error}`);
         }
     }
 

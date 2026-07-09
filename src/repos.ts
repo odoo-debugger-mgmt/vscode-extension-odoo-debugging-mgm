@@ -46,7 +46,7 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item
 
 export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
-    constructor(private context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
+    constructor(_context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
         super();
     }
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -73,18 +73,18 @@ export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
         // Check if path exists first
         if (!fs.existsSync(customAddonsPath)) {
-            showError(`Path does not exist: ${customAddonsPath}`);
+            void showError(`Path does not exist: ${customAddonsPath}`);
             return [];
         }
 
         const devsRepos = findRepositories(customAddonsPath);
         if (devsRepos.length === 0) {
-            showInfo('No repositories found in the custom addons directory.');
+            void showInfo('No repositories found in the custom addons directory.');
             return [];
         }
 
         if (!repos) {
-            showError('No modules are configured for this database.');
+            void showError('No modules are configured for this database.');
             return [];
         }
 

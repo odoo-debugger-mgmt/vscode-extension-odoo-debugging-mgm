@@ -85,7 +85,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
                 await vscode.commands.executeCommand('odoo.setActiveVersion', version.id);
             }
         } catch (error) {
-            showError(`Failed to create version: ${errorMessage(error)}`);
+            void showError(`Failed to create version: ${errorMessage(error)}`);
         }
     }));
 
@@ -97,13 +97,13 @@ export function registerVersionCommands(deps: CommandDeps): void {
         try {
             const versionId = extractVersionId(versionIdOrTreeItem);
             if (!versionId) {
-                showError('Select a version before continuing.');
+                void showError('Select a version before continuing.');
                 return;
             }
 
             const version = versionsService.getVersion(versionId);
             if (!version) {
-                showError('The selected version could not be found.');
+                void showError('The selected version could not be found.');
                 return;
             }
 
@@ -165,9 +165,9 @@ export function registerVersionCommands(deps: CommandDeps): void {
             }
 
             await versionsService.updateVersion(versionId, { odooVersion: newBranch });
-            showInfo(`Branch changed from "${version.odooVersion}" to "${newBranch}" for version "${version.name}"`);
+            void showInfo(`Branch changed from "${version.odooVersion}" to "${newBranch}" for version "${version.name}"`);
         } catch (error) {
-            showError(`Failed to change branch: ${errorMessage(error)}`);
+            void showError(`Failed to change branch: ${errorMessage(error)}`);
         }
     }));
 
@@ -197,7 +197,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
             const success = await versionsService.setActiveVersion(versionId);
             if (success) {
                 const version = versionsService.getVersion(versionId);
-                showInfo(`Activated version: ${version?.name}`);
+                void showInfo(`Activated version: ${version?.name}`);
                 if (version) {
                     // Align the core repos to the version's branch through the
                     // shared switch pipeline (honors databaseSwitchBehavior).
@@ -205,10 +205,10 @@ export function registerVersionCommands(deps: CommandDeps): void {
                 }
                 await refreshAll(); // Refresh all views to reflect new active version
             } else {
-                showError('Unable to activate the selected version.');
+                void showError('Unable to activate the selected version.');
             }
         } catch (error) {
-            showError(`Unable to activate the selected version: ${errorMessage(error)}`);
+            void showError(`Unable to activate the selected version: ${errorMessage(error)}`);
         }
     }));
 
@@ -292,7 +292,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
         try {
             const ref = extractVersionSettingRef(versionIdOrTreeItem, settingKey, currentValue);
             if (!ref) {
-                showError('This command was invoked with invalid parameters.');
+                void showError('This command was invoked with invalid parameters.');
                 return;
             }
             const { versionId, key, value } = ref;
@@ -330,10 +330,10 @@ export function registerVersionCommands(deps: CommandDeps): void {
                 invalidateModuleDiscoveryCache();
             }
 
-            showInfo(`Updated ${key} successfully`);
+            void showInfo(`Updated ${key} successfully`);
             await refreshAll();
         } catch (error) {
-            showError(`Failed to edit setting: ${errorMessage(error)}`);
+            void showError(`Failed to edit setting: ${errorMessage(error)}`);
         }
     }));
 
@@ -369,12 +369,12 @@ export function registerVersionCommands(deps: CommandDeps): void {
 
             const clonedVersion = await versionsService.cloneVersion(versionId, name);
             if (clonedVersion) {
-                showInfo(`Version "${name}" cloned successfully`);
+                void showInfo(`Version "${name}" cloned successfully`);
             } else {
-                showError('Failed to clone the selected version.');
+                void showError('Failed to clone the selected version.');
             }
         } catch (error) {
-            showError(`Failed to clone the selected version: ${errorMessage(error)}`);
+            void showError(`Failed to clone the selected version: ${errorMessage(error)}`);
         }
     }));
 
@@ -391,7 +391,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
                 }));
 
                 if (items.length === 0) {
-                    showInfo('There are no versions available to delete (the active version cannot be removed).');
+                    void showInfo('There are no versions available to delete (the active version cannot be removed).');
                     return;
                 }
 
@@ -407,7 +407,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
 
             const version = versionsService.getVersion(versionId);
             if (!version) {
-                showError('The selected version could not be found.');
+                void showError('The selected version could not be found.');
                 return;
             }
 
@@ -421,12 +421,12 @@ export function registerVersionCommands(deps: CommandDeps): void {
 
             const success = await versionsService.deleteVersion(versionId);
             if (success) {
-                showInfo(`Version "${version.name}" deleted successfully`);
+                void showInfo(`Version "${version.name}" deleted successfully`);
             } else {
-                showError('Failed to delete the selected version.');
+                void showError('Failed to delete the selected version.');
             }
         } catch (error) {
-            showError(`Failed to delete the selected version: ${errorMessage(error)}`);
+            void showError(`Failed to delete the selected version: ${errorMessage(error)}`);
         }
     }));
 
@@ -434,16 +434,16 @@ export function registerVersionCommands(deps: CommandDeps): void {
         try {
             const ref = extractVersionSettingRef(settingTreeItem);
             if (!ref) {
-                showError('Select a setting before continuing.');
+                void showError('Select a setting before continuing.');
                 return;
             }
 
             const success = await versionsService.setSettingToDefault(ref.versionId, ref.key);
             if (!success) {
-                showError('Unable to reset this setting to its default value.');
+                void showError('Unable to reset this setting to its default value.');
             }
         } catch (error) {
-            showError(`Failed to reset setting to default: ${errorMessage(error)}`);
+            void showError(`Failed to reset setting to default: ${errorMessage(error)}`);
         }
     }));
 
@@ -451,16 +451,16 @@ export function registerVersionCommands(deps: CommandDeps): void {
         try {
             const ref = extractVersionSettingRef(settingTreeItem);
             if (!ref) {
-                showError('Select a setting before continuing.');
+                void showError('Select a setting before continuing.');
                 return;
             }
 
             const success = await versionsService.setSettingAsDefault(ref.versionId, ref.key);
             if (!success) {
-                showError('Unable to save this setting as the default.');
+                void showError('Unable to save this setting as the default.');
             }
         } catch (error) {
-            showError(`Unable to save this setting as the default: ${errorMessage(error)}`);
+            void showError(`Unable to save this setting as the default: ${errorMessage(error)}`);
         }
     }));
 
@@ -468,13 +468,13 @@ export function registerVersionCommands(deps: CommandDeps): void {
         try {
             const versionId = extractVersionId(versionTreeItem);
             if (!versionId) {
-                showError('Select a version before continuing.');
+                void showError('Select a version before continuing.');
                 return;
             }
 
             const version = versionsService.getVersion(versionId);
             if (!version) {
-                showError('The selected version could not be found.');
+                void showError('The selected version could not be found.');
                 return;
             }
 
@@ -489,10 +489,10 @@ export function registerVersionCommands(deps: CommandDeps): void {
 
             const success = await versionsService.setAllSettingsToDefault(versionId);
             if (!success) {
-                showError('Unable to reset all settings to their default values.');
+                void showError('Unable to reset all settings to their default values.');
             }
         } catch (error) {
-            showError(`Failed to reset all settings to default: ${errorMessage(error)}`);
+            void showError(`Failed to reset all settings to default: ${errorMessage(error)}`);
         }
     }));
 
@@ -500,13 +500,13 @@ export function registerVersionCommands(deps: CommandDeps): void {
         try {
             const versionId = extractVersionId(versionTreeItem);
             if (!versionId) {
-                showError('Select a version before continuing.');
+                void showError('Select a version before continuing.');
                 return;
             }
 
             const version = versionsService.getVersion(versionId);
             if (!version) {
-                showError('The selected version could not be found.');
+                void showError('The selected version could not be found.');
                 return;
             }
 
@@ -521,10 +521,10 @@ export function registerVersionCommands(deps: CommandDeps): void {
 
             const success = await versionsService.setAllSettingsAsDefault(versionId);
             if (!success) {
-                showError('Unable to save these settings as the new defaults.');
+                void showError('Unable to save these settings as the new defaults.');
             }
         } catch (error) {
-            showError(`Unable to save these settings as the new defaults: ${errorMessage(error)}`);
+            void showError(`Unable to save these settings as the new defaults: ${errorMessage(error)}`);
         }
     }));
 

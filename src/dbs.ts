@@ -302,14 +302,14 @@ async function getDbDumpFolder(dumpsFolder: string, searchFilter?: string): Prom
     dumpsFolder = normalizePath(dumpsFolder);
 
     if (!(await pathExists(dumpsFolder))) {
-        showError(`Dumps folder not found: ${dumpsFolder}`);
+        void showError(`Dumps folder not found: ${dumpsFolder}`);
         return undefined;
     }
 
     const matches = await collectDumpSources(dumpsFolder);
 
     if (matches.length === 0) {
-        showInfo(`No dump directories or zip archives found in ${path.basename(dumpsFolder)}.`);
+        void showInfo(`No dump directories or zip archives found in ${path.basename(dumpsFolder)}.`);
         return undefined;
     }
 
@@ -468,7 +468,7 @@ async function resolveVersionForNewDatabase(dbName: string, method: CreationMeth
             showAutoInfo(`Created version "Odoo ${series}" and linked it to "${dbName}"`, 3000);
             await vscode.commands.executeCommand('dbSelector.refresh');
         } catch (error) {
-            showError(`Failed to create version for Odoo ${series}: ${errorMessage(error)}`);
+            void showError(`Failed to create version for Odoo ${series}: ${errorMessage(error)}`);
         }
     });
 
@@ -508,7 +508,7 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
             if (selection.kind === 'folder') {
                 const candidate = path.join(selection.path, 'dump.sql');
                 if (!(await pathExists(candidate))) {
-                    showError(`dump.sql not found inside ${selection.path}`);
+                    void showError(`dump.sql not found inside ${selection.path}`);
                     return undefined;
                 }
                 sqlDumpPath = candidate;
@@ -521,7 +521,7 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
             const data = await SettingsStore.get('odoo-debugger-data.json');
             const templates = sanitizeDatabaseTemplates(data.dbTemplates);
             if (templates.length === 0) {
-                showInfo('No database templates found. Use "Manage Database Templates" to create one first.');
+                void showInfo('No database templates found. Use "Manage Database Templates" to create one first.');
                 return undefined;
             }
             selectedTemplate = await promptTemplateSelection(templates, 'Select a template to clone into the new database');
@@ -639,7 +639,7 @@ export async function cloneDatabaseFromTemplate(targetDbName: string, templateDb
  */
 async function setupDatabase(dbName: string, dumpPath: string | undefined, remove: boolean = false): Promise<void> {
     if (dumpPath && !(await pathExists(dumpPath))) {
-        showError(`Dump file not found at: ${dumpPath}`);
+        void showError(`Dump file not found at: ${dumpPath}`);
         return;
     }
 
@@ -647,7 +647,7 @@ async function setupDatabase(dbName: string, dumpPath: string | undefined, remov
     try {
         preparedDump = dumpPath ? await prepareDumpForImport(dumpPath) : undefined;
     } catch (error) {
-        showError(`Unable to read dump file: ${errorMessage(error)}`);
+        void showError(`Unable to read dump file: ${errorMessage(error)}`);
         return;
     }
 
@@ -716,7 +716,7 @@ async function setupDatabase(dbName: string, dumpPath: string | undefined, remov
                 logger.debug(`Database "${dbName}" is ready.`);
             } catch (error) {
                 logger.error(`Database setup failed for ${dbName}:`, error);
-                showError(`Failed to setup database: ${errorMessage(error)}`);
+                void showError(`Failed to setup database: ${errorMessage(error)}`);
             }
         });
     } finally {
@@ -759,7 +759,7 @@ export async function restoreDb(event: unknown): Promise<void> {
 export async function selectDatabase(event: unknown) {
     const database = extractDatabaseFromEvent(event);
     if (!database) {
-        showError('Could not identify the database to select.');
+        void showError('Could not identify the database to select.');
         return;
     }
     const databaseLabel = getDatabaseLabel(database);
@@ -772,7 +772,7 @@ export async function selectDatabase(event: unknown) {
 
     const projectIndex = data.projects.findIndex(p => p.uid === project.uid);
     if (projectIndex === -1) {
-        showError('The selected project could not be found.');
+        void showError('The selected project could not be found.');
         return;
     }
 
@@ -798,7 +798,7 @@ export async function selectDatabase(event: unknown) {
         );
     } catch (error) {
         logger.error('Error while aligning environment for database selection:', error);
-        showWarning(`Database selected, but environment switching failed: ${errorMessage(error)}`);
+        void showWarning(`Database selected, but environment switching failed: ${errorMessage(error)}`);
     }
 
     showBriefStatus(`Database switched to: ${databaseLabel}`, 2000);
@@ -807,7 +807,7 @@ export async function selectDatabase(event: unknown) {
 export async function deleteDb(event: unknown) {
     const db = extractDatabaseFromEvent(event);
     if (!db) {
-        showError('Could not identify the database to delete.');
+        void showError('Could not identify the database to delete.');
         return;
     }
     const dbLabel = getDatabaseLabel(db);
@@ -821,7 +821,7 @@ export async function deleteDb(event: unknown) {
     // Find the project index in the projects array
     const projectIndex = data.projects.findIndex(p => p.uid === project.uid);
     if (projectIndex === -1) {
-        showError('The selected project could not be found.');
+        void showError('The selected project could not be found.');
         return;
     }
 
@@ -861,7 +861,7 @@ export async function changeDatabaseVersion(event: unknown) {
     try {
         const db = extractDatabaseFromEvent(event);
         if (!db) {
-            showError('Could not identify the database whose version should change.');
+            void showError('Could not identify the database whose version should change.');
             return;
         }
         const dbLabel = getDatabaseLabel(db);
@@ -875,14 +875,14 @@ export async function changeDatabaseVersion(event: unknown) {
         // Find the project index in the projects array
         const projectIndex = data.projects.findIndex(p => p.uid === project.uid);
         if (projectIndex === -1) {
-            showError('The selected project could not be found.');
+            void showError('The selected project could not be found.');
             return;
         }
 
         // Find the database index
         const dbIndex = project.dbs.findIndex((database: DatabaseModel) => database.id === db.id);
         if (dbIndex === -1) {
-            showError('The selected database could not be found.');
+            void showError('The selected database could not be found.');
             return;
         }
 
@@ -966,7 +966,7 @@ export async function changeDatabaseVersion(event: unknown) {
             );
         }
     } catch (error) {
-        showError(`Failed to change database version: ${errorMessage(error)}`);
+        void showError(`Failed to change database version: ${errorMessage(error)}`);
         logger.error('Error in changeDatabaseVersion:', error);
     }
 }
@@ -975,7 +975,7 @@ export async function changeDatabaseProjectRepoBranches(event: unknown): Promise
     try {
         const db = extractDatabaseFromEvent(event);
         if (!db) {
-            showError('Could not identify the database whose project repo branches should change.');
+            void showError('Could not identify the database whose project repo branches should change.');
             return;
         }
         const dbLabel = getDatabaseLabel(db);
@@ -988,13 +988,13 @@ export async function changeDatabaseProjectRepoBranches(event: unknown): Promise
 
         const projectIndex = data.projects.findIndex(p => p.uid === project.uid);
         if (projectIndex === -1) {
-            showError('The selected project could not be found.');
+            void showError('The selected project could not be found.');
             return;
         }
 
         const dbIndex = project.dbs.findIndex((database: DatabaseModel) => database.id === db.id);
         if (dbIndex === -1) {
-            showError('The selected database could not be found.');
+            void showError('The selected database could not be found.');
             return;
         }
 
@@ -1023,7 +1023,7 @@ export async function changeDatabaseProjectRepoBranches(event: unknown): Promise
             );
         }
     } catch (error) {
-        showError(`Failed to update project repo branch mapping: ${errorMessage(error)}`);
+        void showError(`Failed to update project repo branch mapping: ${errorMessage(error)}`);
         logger.error('Error in changeDatabaseProjectRepoBranches:', error);
     }
 }
@@ -1179,7 +1179,7 @@ async function importTemplatesFromPostgres(data: DebuggerData, templates: Databa
     const importCandidates = postgresDbNames.filter(name => !existingTemplateDbNames.has(name.toLowerCase()));
 
     if (importCandidates.length === 0) {
-        showInfo('No PostgreSQL databases available to import as templates.');
+        void showInfo('No PostgreSQL databases available to import as templates.');
         return templates;
     }
 
@@ -1240,14 +1240,14 @@ async function importTemplatesFromJson(data: DebuggerData, templates: DatabaseTe
         const imported = Array.isArray(parsed) ? parsed : parsed.templates;
         const sanitizedImported = sanitizeDatabaseTemplates(imported);
         if (sanitizedImported.length === 0) {
-            showInfo('No valid templates found in the selected file.');
+            void showInfo('No valid templates found in the selected file.');
             return templates;
         }
 
         const existingTemplateDbNames = new Set(templates.map(template => template.templateDbName.toLowerCase()));
         const toAdd = sanitizedImported.filter(template => !existingTemplateDbNames.has(template.templateDbName.toLowerCase()));
         if (toAdd.length === 0) {
-            showInfo('All templates in the selected file already exist.');
+            void showInfo('All templates in the selected file already exist.');
             return templates;
         }
 
@@ -1255,14 +1255,14 @@ async function importTemplatesFromJson(data: DebuggerData, templates: DatabaseTe
         showAutoInfo(`Imported ${toAdd.length} template(s) from JSON`, 2500);
         return updated;
     } catch (error) {
-        showError(`Failed to import templates: ${errorMessage(error)}`);
+        void showError(`Failed to import templates: ${errorMessage(error)}`);
         return templates;
     }
 }
 
 async function exportTemplatesToJson(templates: DatabaseTemplateModel[]): Promise<void> {
     if (templates.length === 0) {
-        showInfo('No templates available to export.');
+        void showInfo('No templates available to export.');
         return;
     }
 

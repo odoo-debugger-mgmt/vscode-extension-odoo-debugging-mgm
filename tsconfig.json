@@ -15,6 +15,9 @@
 			"mocha"
 		],
 		"noImplicitReturns": true,
-		"noUnusedParameters": true
+		"noUnusedParameters": true,
+		"noUnusedLocals": true,
+		"noImplicitOverride": true,
+		"forceConsistentCasingInFileNames": true
 	}
 }

@@ -157,7 +157,7 @@ async function activate(context) {
         }
         debuggerSyncTimer = setTimeout(() => {
             debuggerSyncTimer = undefined;
-            runDebuggerSync()
+            void runDebuggerSync()
                 .finally(() => {
                 const waiters = debuggerSyncWaiters;
                 debuggerSyncWaiters = [];
@@ -255,7 +255,7 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         const { project } = result;
         const dbs = project.dbs;
         if (!dbs) {
-            (0, notifications_1.showError)('No databases are configured for this project.');
+            void (0, notifications_1.showError)('No databases are configured for this project.');
             return [];
         }
         const sortId = this.sortPreferences.get('dbSelector', (0, sortOptions_1.getDefaultSortOption)('dbSelector'));
@@ -623,7 +623,7 @@ class SettingsStore {
             return raw;
         }
         catch (error) {
-            (0, utils_1.showError)(`Failed to read raw content from ${fileName}: ${error}`);
+            void (0, utils_1.showError)(`Failed to read raw content from ${fileName}: ${error}`);
             return null;
         }
     }
@@ -725,16 +725,16 @@ class SettingsStore {
         const data = await this.get('odoo-debugger-data.json');
         const projects = data.projects;
         if (!projects || projects.length === 0) {
-            (0, utils_1.showError)('Unable to load projects, please create a project first');
+            void (0, utils_1.showError)('Unable to load projects, please create a project first');
             return null;
         }
         if (typeof projects !== 'object') {
-            (0, utils_1.showError)('Unable to load projects.');
+            void (0, utils_1.showError)('Unable to load projects.');
             return null;
         }
         const project = projects.find((p) => p.isSelected === true);
         if (!project) {
-            (0, utils_1.showError)('Select a project before running this action.');
+            void (0, utils_1.showError)('Select a project before running this action.');
             return null;
         }
         return { data, project };
@@ -933,7 +933,7 @@ function getDatabaseLabel(db) {
 function getWorkspacePath() {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
-        (0, notifications_1.showError)("Open a workspace to use this command.");
+        void (0, notifications_1.showError)("Open a workspace to use this command.");
         return null;
     }
     return workspaceFolders[0].uri.fsPath;
@@ -1057,12 +1057,12 @@ function buildDiscoveryCacheKey(kind, targetPath, overrides = {}) {
 }
 function discoverDirectories(targetPath, kind, options) {
     if (!targetPath) {
-        (0, notifications_1.showError)('Enter a target path to continue.');
+        void (0, notifications_1.showError)('Enter a target path to continue.');
         return [];
     }
     const normalizedRoot = normalizePath(targetPath);
     if (!fs.existsSync(normalizedRoot)) {
-        (0, notifications_1.showError)(`Path does not exist: ${normalizedRoot}`);
+        void (0, notifications_1.showError)(`Path does not exist: ${normalizedRoot}`);
         return [];
     }
     const stack = [{ dir: normalizedRoot, depth: 0 }];
@@ -1095,7 +1095,7 @@ function discoverDirectories(targetPath, kind, options) {
         processed++;
         if (processed > options.maxEntries) {
             if (!limitWarningShown) {
-                (0, notifications_1.showWarning)(`Search limit reached while scanning ${targetPath}. Some folders may be skipped. Adjust "odooDebugger.search.maxEntries" to increase the limit.`);
+                void (0, notifications_1.showWarning)(`Search limit reached while scanning ${targetPath}. Some folders may be skipped. Adjust "odooDebugger.search.maxEntries" to increase the limit.`);
                 limitWarningShown = true;
             }
             break;
@@ -1328,7 +1328,7 @@ async function createOdooDebuggerFile(filePath, workspacePath, fileName) {
         return data;
     }
     catch (error) {
-        (0, notifications_1.showError)(`Failed to create ${fileName}: ${error}`);
+        void (0, notifications_1.showError)(`Failed to create ${fileName}: ${error}`);
         throw error;
     }
 }
@@ -1345,14 +1345,14 @@ async function readFromFile(fileName) {
     try {
         const filePath = path.join(workspacePath, '.vscode', fileName);
         if (!fs.existsSync(filePath)) {
-            (0, notifications_1.showInfo)(`Creating ${fileName} file...`);
+            void (0, notifications_1.showInfo)(`Creating ${fileName} file...`);
             return await createOdooDebuggerFile(filePath, workspacePath, fileName);
         }
         const data = fs.readFileSync(filePath, 'utf-8');
         return (0, jsonc_parser_1.parse)(data);
     }
     catch (error) {
-        (0, notifications_1.showError)(`Failed to read ${fileName}: ${error}`);
+        void (0, notifications_1.showError)(`Failed to read ${fileName}: ${error}`);
         return null;
     }
 }
@@ -4272,7 +4272,7 @@ class VersionsService {
         if (settingsPatch) {
             Object.assign(version.settings, settingsPatch);
         }
-        const { settings, ...otherUpdates } = updatesCopy;
+        const { settings: _settings, ...otherUpdates } = updatesCopy;
         Object.assign(version, otherUpdates);
         // Update the updatedAt timestamp
         version.updatedAt = new Date();
@@ -4290,7 +4290,7 @@ class VersionsService {
         }
         // Don't allow deleting the last version
         if (this.versions.size <= 1) {
-            (0, notifications_1.showWarning)('Cannot delete the last version. At least one version must exist.');
+            void (0, notifications_1.showWarning)('Cannot delete the last version. At least one version must exist.');
             return false;
         }
         // Clean up any database references to this version before deleting
@@ -4561,7 +4561,7 @@ class VersionsService {
     async setSettingToDefault(versionId, settingKey) {
         const version = this.versions.get(versionId);
         if (!version) {
-            (0, notifications_1.showError)('The selected version could not be found.');
+            void (0, notifications_1.showError)('The selected version could not be found.');
             return false;
         }
         try {
@@ -4569,7 +4569,7 @@ class VersionsService {
             const defaultSettings = (0, utils_1.getDefaultVersionSettings)();
             const defaultValue = defaultSettings[settingKey];
             if (defaultValue === undefined) {
-                (0, notifications_1.showError)('Default value not found for this setting.');
+                void (0, notifications_1.showError)('Default value not found for this setting.');
                 return false;
             }
             // Update the setting
@@ -4577,12 +4577,12 @@ class VersionsService {
             version.updateSettings(updatedSettings);
             await this.saveVersions();
             vscode.commands.executeCommand('odoo.versionsChanged');
-            (0, notifications_1.showInfo)(`Setting "${settingKey}" reset to default value.`);
+            void (0, notifications_1.showInfo)(`Setting "${settingKey}" reset to default value.`);
             return true;
         }
         catch (error) {
             logger_1.logger.error('Failed to set setting to default:', error);
-            (0, notifications_1.showError)('Failed to set setting to default value.');
+            void (0, notifications_1.showError)('Failed to set setting to default value.');
             return false;
         }
     }
@@ -4592,24 +4592,24 @@ class VersionsService {
     async setSettingAsDefault(versionId, settingKey) {
         const version = this.versions.get(versionId);
         if (!version) {
-            (0, notifications_1.showError)('The selected version could not be found.');
+            void (0, notifications_1.showError)('The selected version could not be found.');
             return false;
         }
         try {
             const currentValue = version.settings[settingKey];
             if (currentValue === undefined) {
-                (0, notifications_1.showError)('Setting value not found.');
+                void (0, notifications_1.showError)('Setting value not found.');
                 return false;
             }
             // Update the VS Code configuration
             const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
             await config.update(settingKey, currentValue, vscode.ConfigurationTarget.Workspace);
-            (0, notifications_1.showInfo)(`Setting "${settingKey}" value saved as new default.`);
+            void (0, notifications_1.showInfo)(`Setting "${settingKey}" value saved as new default.`);
             return true;
         }
         catch (error) {
             logger_1.logger.error('Unable to save this setting as the default:', error);
-            (0, notifications_1.showError)('Unable to save this setting as the default.');
+            void (0, notifications_1.showError)('Unable to save this setting as the default.');
             return false;
         }
     }
@@ -4619,7 +4619,7 @@ class VersionsService {
     async setAllSettingsToDefault(versionId) {
         const version = this.versions.get(versionId);
         if (!version) {
-            (0, notifications_1.showError)('The selected version could not be found.');
+            void (0, notifications_1.showError)('The selected version could not be found.');
             return false;
         }
         try {
@@ -4628,12 +4628,12 @@ class VersionsService {
             version.updateSettings(defaultSettings);
             await this.saveVersions();
             vscode.commands.executeCommand('odoo.versionsChanged');
-            (0, notifications_1.showInfo)(`All settings reset to default values for version "${version.name}".`);
+            void (0, notifications_1.showInfo)(`All settings reset to default values for version "${version.name}".`);
             return true;
         }
         catch (error) {
             logger_1.logger.error('Failed to set all settings to default:', error);
-            (0, notifications_1.showError)('Unable to reset all settings to their default values.');
+            void (0, notifications_1.showError)('Unable to reset all settings to their default values.');
             return false;
         }
     }
@@ -4643,7 +4643,7 @@ class VersionsService {
     async setAllSettingsAsDefault(versionId) {
         const version = this.versions.get(versionId);
         if (!version) {
-            (0, notifications_1.showError)('The selected version could not be found.');
+            void (0, notifications_1.showError)('The selected version could not be found.');
             return false;
         }
         try {
@@ -4653,12 +4653,12 @@ class VersionsService {
             for (const [key, value] of Object.entries(settings)) {
                 await config.update(key, value, vscode.ConfigurationTarget.Workspace);
             }
-            (0, notifications_1.showInfo)(`All settings from version "${version.name}" saved as new defaults.`);
+            void (0, notifications_1.showInfo)(`All settings from version "${version.name}" saved as new defaults.`);
             return true;
         }
         catch (error) {
             logger_1.logger.error('Failed to set all settings as default:', error);
-            (0, notifications_1.showError)('Unable to save these settings as the new defaults.');
+            void (0, notifications_1.showError)('Unable to save these settings as the new defaults.');
             return false;
         }
     }
@@ -5102,7 +5102,7 @@ async function alignEnvironment(target, options) {
                 await vscode.commands.executeCommand('projectSelector.refresh');
             }
             catch (error) {
-                (0, utils_1.showWarning)(`${options.label}: environment switch failed: ${error.message}`);
+                void (0, utils_1.showWarning)(`${options.label}: environment switch failed: ${error.message}`);
             }
         });
         return;
@@ -5152,7 +5152,7 @@ async function applyEnvironmentDiff(diff, label) {
     }
     else {
         failures.forEach(failure => logger_1.logger.error(`[environment] ${label}: ${failure}`));
-        (0, utils_1.showWarning)(`${label}: environment switch finished with issues — ${failures.join('; ')}`);
+        void (0, utils_1.showWarning)(`${label}: environment switch finished with issues — ${failures.join('; ')}`);
     }
 }
 
@@ -5820,12 +5820,12 @@ function extractDatabaseFromEvent(event) {
 async function getDbDumpFolder(dumpsFolder, searchFilter) {
     dumpsFolder = (0, utils_1.normalizePath)(dumpsFolder);
     if (!(await (0, dumpImport_1.pathExists)(dumpsFolder))) {
-        (0, notifications_1.showError)(`Dumps folder not found: ${dumpsFolder}`);
+        void (0, notifications_1.showError)(`Dumps folder not found: ${dumpsFolder}`);
         return undefined;
     }
     const matches = await (0, dumpImport_1.collectDumpSources)(dumpsFolder);
     if (matches.length === 0) {
-        (0, notifications_1.showInfo)(`No dump directories or zip archives found in ${path.basename(dumpsFolder)}.`);
+        void (0, notifications_1.showInfo)(`No dump directories or zip archives found in ${path.basename(dumpsFolder)}.`);
         return undefined;
     }
     let foldersToShow = matches.map(item => ({
@@ -5958,7 +5958,7 @@ async function resolveVersionForNewDatabase(dbName, method) {
             await vscode.commands.executeCommand('dbSelector.refresh');
         }
         catch (error) {
-            (0, notifications_1.showError)(`Failed to create version for Odoo ${series}: ${(0, logger_1.errorMessage)(error)}`);
+            void (0, notifications_1.showError)(`Failed to create version for Odoo ${series}: ${(0, logger_1.errorMessage)(error)}`);
         }
     });
     return { versionId: undefined, branchLabel: series };
@@ -5994,7 +5994,7 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
             if (selection.kind === 'folder') {
                 const candidate = path.join(selection.path, 'dump.sql');
                 if (!(await (0, dumpImport_1.pathExists)(candidate))) {
-                    (0, notifications_1.showError)(`dump.sql not found inside ${selection.path}`);
+                    void (0, notifications_1.showError)(`dump.sql not found inside ${selection.path}`);
                     return undefined;
                 }
                 sqlDumpPath = candidate;
@@ -6008,7 +6008,7 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
             const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
             const templates = (0, templates_1.sanitizeDatabaseTemplates)(data.dbTemplates);
             if (templates.length === 0) {
-                (0, notifications_1.showInfo)('No database templates found. Use "Manage Database Templates" to create one first.');
+                void (0, notifications_1.showInfo)('No database templates found. Use "Manage Database Templates" to create one first.');
                 return undefined;
             }
             selectedTemplate = await promptTemplateSelection(templates, 'Select a template to clone into the new database');
@@ -6119,7 +6119,7 @@ async function cloneDatabaseFromTemplate(targetDbName, templateDbName) {
  */
 async function setupDatabase(dbName, dumpPath, remove = false) {
     if (dumpPath && !(await (0, dumpImport_1.pathExists)(dumpPath))) {
-        (0, notifications_1.showError)(`Dump file not found at: ${dumpPath}`);
+        void (0, notifications_1.showError)(`Dump file not found at: ${dumpPath}`);
         return;
     }
     let preparedDump;
@@ -6127,7 +6127,7 @@ async function setupDatabase(dbName, dumpPath, remove = false) {
         preparedDump = dumpPath ? await (0, dumpImport_1.prepareDumpForImport)(dumpPath) : undefined;
     }
     catch (error) {
-        (0, notifications_1.showError)(`Unable to read dump file: ${(0, logger_1.errorMessage)(error)}`);
+        void (0, notifications_1.showError)(`Unable to read dump file: ${(0, logger_1.errorMessage)(error)}`);
         return;
     }
     const operation = remove ? 'Removing' : preparedDump ? 'Setting up' : 'Creating';
@@ -6194,7 +6194,7 @@ async function setupDatabase(dbName, dumpPath, remove = false) {
             }
             catch (error) {
                 logger_1.logger.error(`Database setup failed for ${dbName}:`, error);
-                (0, notifications_1.showError)(`Failed to setup database: ${(0, logger_1.errorMessage)(error)}`);
+                void (0, notifications_1.showError)(`Failed to setup database: ${(0, logger_1.errorMessage)(error)}`);
             }
         });
     }
@@ -6230,7 +6230,7 @@ async function restoreDb(event) {
 async function selectDatabase(event) {
     const database = extractDatabaseFromEvent(event);
     if (!database) {
-        (0, notifications_1.showError)('Could not identify the database to select.');
+        void (0, notifications_1.showError)('Could not identify the database to select.');
         return;
     }
     const databaseLabel = (0, utils_1.getDatabaseLabel)(database);
@@ -6241,7 +6241,7 @@ async function selectDatabase(event) {
     const { data, project } = result;
     const projectIndex = data.projects.findIndex(p => p.uid === project.uid);
     if (projectIndex === -1) {
-        (0, notifications_1.showError)('The selected project could not be found.');
+        void (0, notifications_1.showError)('The selected project could not be found.');
         return;
     }
     // Update database selection
@@ -6262,14 +6262,14 @@ async function selectDatabase(event) {
     }
     catch (error) {
         logger_1.logger.error('Error while aligning environment for database selection:', error);
-        (0, notifications_1.showWarning)(`Database selected, but environment switching failed: ${(0, logger_1.errorMessage)(error)}`);
+        void (0, notifications_1.showWarning)(`Database selected, but environment switching failed: ${(0, logger_1.errorMessage)(error)}`);
     }
     (0, notifications_1.showBriefStatus)(`Database switched to: ${databaseLabel}`, 2000);
 }
 async function deleteDb(event) {
     const db = extractDatabaseFromEvent(event);
     if (!db) {
-        (0, notifications_1.showError)('Could not identify the database to delete.');
+        void (0, notifications_1.showError)('Could not identify the database to delete.');
         return;
     }
     const dbLabel = (0, utils_1.getDatabaseLabel)(db);
@@ -6281,7 +6281,7 @@ async function deleteDb(event) {
     // Find the project index in the projects array
     const projectIndex = data.projects.findIndex(p => p.uid === project.uid);
     if (projectIndex === -1) {
-        (0, notifications_1.showError)('The selected project could not be found.');
+        void (0, notifications_1.showError)('The selected project could not be found.');
         return;
     }
     // Ask for confirmation
@@ -6309,7 +6309,7 @@ async function changeDatabaseVersion(event) {
     try {
         const db = extractDatabaseFromEvent(event);
         if (!db) {
-            (0, notifications_1.showError)('Could not identify the database whose version should change.');
+            void (0, notifications_1.showError)('Could not identify the database whose version should change.');
             return;
         }
         const dbLabel = (0, utils_1.getDatabaseLabel)(db);
@@ -6321,13 +6321,13 @@ async function changeDatabaseVersion(event) {
         // Find the project index in the projects array
         const projectIndex = data.projects.findIndex(p => p.uid === project.uid);
         if (projectIndex === -1) {
-            (0, notifications_1.showError)('The selected project could not be found.');
+            void (0, notifications_1.showError)('The selected project could not be found.');
             return;
         }
         // Find the database index
         const dbIndex = project.dbs.findIndex((database) => database.id === db.id);
         if (dbIndex === -1) {
-            (0, notifications_1.showError)('The selected database could not be found.');
+            void (0, notifications_1.showError)('The selected database could not be found.');
             return;
         }
         // Get available versions
@@ -6401,7 +6401,7 @@ async function changeDatabaseVersion(event) {
         }
     }
     catch (error) {
-        (0, notifications_1.showError)(`Failed to change database version: ${(0, logger_1.errorMessage)(error)}`);
+        void (0, notifications_1.showError)(`Failed to change database version: ${(0, logger_1.errorMessage)(error)}`);
         logger_1.logger.error('Error in changeDatabaseVersion:', error);
     }
 }
@@ -6409,7 +6409,7 @@ async function changeDatabaseProjectRepoBranches(event) {
     try {
         const db = extractDatabaseFromEvent(event);
         if (!db) {
-            (0, notifications_1.showError)('Could not identify the database whose project repo branches should change.');
+            void (0, notifications_1.showError)('Could not identify the database whose project repo branches should change.');
             return;
         }
         const dbLabel = (0, utils_1.getDatabaseLabel)(db);
@@ -6420,12 +6420,12 @@ async function changeDatabaseProjectRepoBranches(event) {
         const { data, project } = result;
         const projectIndex = data.projects.findIndex(p => p.uid === project.uid);
         if (projectIndex === -1) {
-            (0, notifications_1.showError)('The selected project could not be found.');
+            void (0, notifications_1.showError)('The selected project could not be found.');
             return;
         }
         const dbIndex = project.dbs.findIndex((database) => database.id === db.id);
         if (dbIndex === -1) {
-            (0, notifications_1.showError)('The selected database could not be found.');
+            void (0, notifications_1.showError)('The selected database could not be found.');
             return;
         }
         const existingAssignments = (0, environment_1.sanitizeProjectRepoBranchAssignments)(project.dbs[dbIndex].projectRepoBranches);
@@ -6448,7 +6448,7 @@ async function changeDatabaseProjectRepoBranches(event) {
         }
     }
     catch (error) {
-        (0, notifications_1.showError)(`Failed to update project repo branch mapping: ${(0, logger_1.errorMessage)(error)}`);
+        void (0, notifications_1.showError)(`Failed to update project repo branch mapping: ${(0, logger_1.errorMessage)(error)}`);
         logger_1.logger.error('Error in changeDatabaseProjectRepoBranches:', error);
     }
 }
@@ -6581,7 +6581,7 @@ async function importTemplatesFromPostgres(data, templates) {
     const existingTemplateDbNames = new Set(templates.map(template => template.templateDbName.toLowerCase()));
     const importCandidates = postgresDbNames.filter(name => !existingTemplateDbNames.has(name.toLowerCase()));
     if (importCandidates.length === 0) {
-        (0, notifications_1.showInfo)('No PostgreSQL databases available to import as templates.');
+        void (0, notifications_1.showInfo)('No PostgreSQL databases available to import as templates.');
         return templates;
     }
     const selectedCandidates = await vscode.window.showQuickPick(importCandidates.map(name => ({
@@ -6629,13 +6629,13 @@ async function importTemplatesFromJson(data, templates) {
         const imported = Array.isArray(parsed) ? parsed : parsed.templates;
         const sanitizedImported = (0, templates_1.sanitizeDatabaseTemplates)(imported);
         if (sanitizedImported.length === 0) {
-            (0, notifications_1.showInfo)('No valid templates found in the selected file.');
+            void (0, notifications_1.showInfo)('No valid templates found in the selected file.');
             return templates;
         }
         const existingTemplateDbNames = new Set(templates.map(template => template.templateDbName.toLowerCase()));
         const toAdd = sanitizedImported.filter(template => !existingTemplateDbNames.has(template.templateDbName.toLowerCase()));
         if (toAdd.length === 0) {
-            (0, notifications_1.showInfo)('All templates in the selected file already exist.');
+            void (0, notifications_1.showInfo)('All templates in the selected file already exist.');
             return templates;
         }
         const updated = await (0, templates_1.persistDatabaseTemplates)(data, [...templates, ...toAdd]);
@@ -6643,13 +6643,13 @@ async function importTemplatesFromJson(data, templates) {
         return updated;
     }
     catch (error) {
-        (0, notifications_1.showError)(`Failed to import templates: ${(0, logger_1.errorMessage)(error)}`);
+        void (0, notifications_1.showError)(`Failed to import templates: ${(0, logger_1.errorMessage)(error)}`);
         return templates;
     }
 }
 async function exportTemplatesToJson(templates) {
     if (templates.length === 0) {
-        (0, notifications_1.showInfo)('No templates available to export.');
+        void (0, notifications_1.showInfo)('No templates available to export.');
         return;
     }
     const saveUri = await vscode.window.showSaveDialog({
@@ -8045,11 +8045,9 @@ function formatTicketLabel(ticket) {
     return ticket.title ? `${ticket.id} - ${ticket.title}` : ticket.id;
 }
 class ProjectTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
-    context;
     sortPreferences;
-    constructor(context, sortPreferences) {
+    constructor(_context, sortPreferences) {
         super();
-        this.context = context;
         this.sortPreferences = sortPreferences;
     }
     getTreeItem(element) {
@@ -8062,7 +8060,7 @@ class ProjectTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         }
         const projects = data.projects;
         if (!projects) {
-            (0, utils_1.showError)('Unable to load projects, please create a project first');
+            void (0, utils_1.showError)('Unable to load projects, please create a project first');
             return [];
         }
         if (!projectMetadataMigrationCompleted) {
@@ -8190,7 +8188,7 @@ async function selectProject(projectUid) {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     const projects = data.projects;
     if (!projects) {
-        (0, utils_1.showError)('Unable to load projects.');
+        void (0, utils_1.showError)('Unable to load projects.');
         return;
     }
     // Ensure all projects have UIDs (migration for existing data)
@@ -8214,18 +8212,18 @@ async function selectProject(projectUid) {
         if (selectedDb) {
             await (0, environment_1.alignEnvironment)((0, environment_1.buildDatabaseEnvironmentTarget)(selectedDb, selectedProject.repos ?? []), { label: `Project "${selectedProject.name}"` });
         }
-        (0, utils_1.showInfo)(`Project switched to: ${selectedProject.name}`);
+        void (0, utils_1.showInfo)(`Project switched to: ${selectedProject.name}`);
         // Force a small delay and refresh to ensure UI is updated
         await new Promise(resolve => setTimeout(resolve, 100));
     }
     else {
-        (0, utils_1.showError)('The selected project could not be found.');
+        void (0, utils_1.showError)('The selected project could not be found.');
     }
 }
 async function getRepo(targetPath, searchFilter) {
     const devsRepos = (0, utils_1.findRepositories)(targetPath);
     if (devsRepos.length === 0) {
-        (0, utils_1.showInfo)('No repositories found in the custom-addons path.');
+        void (0, utils_1.showInfo)('No repositories found in the custom-addons path.');
         throw new Error('No repositories found in the custom-addons path.');
     }
     // Show QuickPick with both name and path as label and description
@@ -8259,7 +8257,7 @@ async function getRepo(targetPath, searchFilter) {
         });
     }
     else {
-        (0, utils_1.showError)("Select at least one folder to continue.");
+        void (0, utils_1.showError)("Select at least one folder to continue.");
         throw new Error("Select at least one folder to continue.");
     }
 }
@@ -8270,7 +8268,7 @@ async function getProjectName(_workspaceFolder) {
         placeHolder: "e.g., My Odoo Project"
     });
     if (!name) {
-        (0, utils_1.showError)('Enter a project name to continue.');
+        void (0, utils_1.showError)('Enter a project name to continue.');
         throw new Error('Enter a project name to continue.');
     }
     return name;
@@ -8298,13 +8296,13 @@ async function deleteProject(event) {
         projectUid = event.projectUid;
     }
     else {
-        (0, utils_1.showError)('The project data is invalid for deletion');
+        void (0, utils_1.showError)('The project data is invalid for deletion');
         return;
     }
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     const projects = data.projects;
     if (!projects) {
-        (0, utils_1.showError)('Unable to load projects.');
+        void (0, utils_1.showError)('Unable to load projects.');
         return;
     }
     // Find the project index in the array by UID
@@ -8319,7 +8317,7 @@ async function deleteProject(event) {
         // Remove the project from the array and save the updated data
         data.projects.splice(projectIndex, 1);
         await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-        (0, utils_1.showInfo)(`Project "${projectToDelete.name}" deleted successfully`);
+        void (0, utils_1.showInfo)(`Project "${projectToDelete.name}" deleted successfully`);
         // If the deleted project was selected and there are other projects, select the first one
         if (projectToDelete.isSelected && data.projects.length > 0) {
             // Use the command to properly select the first project
@@ -8327,7 +8325,7 @@ async function deleteProject(event) {
         }
     }
     else {
-        (0, utils_1.showError)('The selected project could not be found. It may have already been deleted.');
+        void (0, utils_1.showError)('The selected project could not be found. It may have already been deleted.');
     }
 }
 async function duplicateProject(event) {
@@ -8346,18 +8344,18 @@ async function duplicateProject(event) {
         projectUid = event.projectUid;
     }
     else {
-        (0, utils_1.showError)('The project data is invalid.');
+        void (0, utils_1.showError)('The project data is invalid.');
         return;
     }
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     const projects = data.projects;
     if (!projects) {
-        (0, utils_1.showError)('Unable to load projects.');
+        void (0, utils_1.showError)('Unable to load projects.');
         return;
     }
     const projectIndex = projects.findIndex((p) => p.uid === projectUid);
     if (projectIndex === -1) {
-        (0, utils_1.showError)('The selected project could not be found.');
+        void (0, utils_1.showError)('The selected project could not be found.');
         return;
     }
     const sourceProject = projects[projectIndex];
@@ -8372,7 +8370,7 @@ async function duplicateProject(event) {
     }
     // Check if name already exists
     if (projects.some(p => p.name === duplicateName)) {
-        (0, utils_1.showError)('A project with this name already exists. Choose a different name.');
+        void (0, utils_1.showError)('A project with this name already exists. Choose a different name.');
         return;
     }
     // Deselect all projects
@@ -8387,7 +8385,7 @@ async function duplicateProject(event) {
     );
     projects.push(duplicateProject);
     await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-    (0, utils_1.showInfo)(`Project "${duplicateName}" created as a duplicate of "${sourceProject.name}"`);
+    void (0, utils_1.showInfo)(`Project "${duplicateName}" created as a duplicate of "${sourceProject.name}"`);
 }
 async function getProjectContextFromEvent(event) {
     let projectUid;
@@ -8406,20 +8404,20 @@ async function getProjectContextFromEvent(event) {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     const projects = data.projects ?? [];
     if (projects.length === 0) {
-        (0, utils_1.showError)('No projects are configured.');
+        void (0, utils_1.showError)('No projects are configured.');
         return null;
     }
     if (!projectUid) {
         const selectedProject = projects.find((p) => p.isSelected);
         if (!selectedProject) {
-            (0, utils_1.showError)('Select a project first.');
+            void (0, utils_1.showError)('Select a project first.');
             return null;
         }
         projectUid = selectedProject.uid;
     }
     const projectIndex = projects.findIndex((p) => p.uid === projectUid);
     if (projectIndex === -1) {
-        (0, utils_1.showError)('The selected project could not be found.');
+        void (0, utils_1.showError)('The selected project could not be found.');
         return null;
     }
     const project = projects[projectIndex];
@@ -8503,7 +8501,7 @@ async function editProjectName(project, data) {
         const oldName = project.name;
         project.name = newName.trim();
         await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-        (0, utils_1.showInfo)(`Project renamed from "${oldName}" to "${project.name}"`);
+        void (0, utils_1.showInfo)(`Project renamed from "${oldName}" to "${project.name}"`);
     }
 }
 async function manageProjectTicketsForProject(project, data) {
@@ -8587,7 +8585,7 @@ async function manageProjectTicketsForProject(project, data) {
             continue;
         }
         if (tickets.length === 0) {
-            (0, utils_1.showInfo)('No project tickets available. Add one first.');
+            void (0, utils_1.showInfo)('No project tickets available. Add one first.');
             continue;
         }
         const ticketToModify = await vscode.window.showQuickPick(tickets.map(ticket => ({
@@ -8723,18 +8721,18 @@ async function exportProject(event) {
             projectUid = event.projectUid;
         }
         else {
-            (0, utils_1.showError)('The project data is invalid.');
+            void (0, utils_1.showError)('The project data is invalid.');
             return;
         }
         const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
         const projects = data.projects;
         if (!projects) {
-            (0, utils_1.showError)('No projects are configured.');
+            void (0, utils_1.showError)('No projects are configured.');
             return;
         }
         const project = projects.find(p => p.uid === projectUid);
         if (!project) {
-            (0, utils_1.showError)('The selected project could not be found.');
+            void (0, utils_1.showError)('The selected project could not be found.');
             return;
         }
         // Let user choose export location
@@ -8780,7 +8778,7 @@ Note: Repository paths use ~ for home directory and may need adjustment on diffe
     }
     catch (error) {
         logger_1.logger.error('Error exporting project:', error);
-        (0, utils_1.showError)(`Failed to export project: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        void (0, utils_1.showError)(`Failed to export project: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 }
 async function importProject() {
@@ -8804,7 +8802,7 @@ async function importProject() {
         const importData = JSON.parse(fileContent.toString());
         // Validate import data
         if (!importData.name || !importData.repositories || !Array.isArray(importData.repositories)) {
-            (0, utils_1.showError)('The selected file is not a valid project export.');
+            void (0, utils_1.showError)('The selected file is not a valid project export.');
             return;
         }
         const importedTickets = sanitizeProjectTickets(importData.tickets);
@@ -8866,10 +8864,10 @@ async function importProject() {
     catch (error) {
         logger_1.logger.error('Error importing project:', error);
         if (error instanceof SyntaxError) {
-            (0, utils_1.showError)('The selected file is not valid JSON.');
+            void (0, utils_1.showError)('The selected file is not valid JSON.');
         }
         else {
-            (0, utils_1.showError)(`Failed to import project: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            void (0, utils_1.showError)(`Failed to import project: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
     }
 }
@@ -8878,7 +8876,7 @@ async function quickProjectSearch() {
         const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
         const projects = data.projects;
         if (!projects || projects.length === 0) {
-            (0, utils_1.showError)('No projects are configured. Create a project first.');
+            void (0, utils_1.showError)('No projects are configured. Create a project first.');
             return;
         }
         // Create quick pick items with project information
@@ -8909,7 +8907,7 @@ async function quickProjectSearch() {
     }
     catch (error) {
         logger_1.logger.error('Error in quick project search:', error);
-        (0, utils_1.showError)('Unable to load projects for search.');
+        void (0, utils_1.showError)('Unable to load projects for search.');
     }
 }
 
@@ -9131,11 +9129,9 @@ async function mapWithConcurrency(items, limit, worker) {
     return results;
 }
 class RepoTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
-    context;
     sortPreferences;
-    constructor(context, sortPreferences) {
+    constructor(_context, sortPreferences) {
         super();
-        this.context = context;
         this.sortPreferences = sortPreferences;
     }
     getTreeItem(element) {
@@ -9158,16 +9154,16 @@ class RepoTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         const customAddonsPath = (0, utils_1.normalizePath)(settings.customAddonsPath);
         // Check if path exists first
         if (!fs.existsSync(customAddonsPath)) {
-            (0, utils_1.showError)(`Path does not exist: ${customAddonsPath}`);
+            void (0, utils_1.showError)(`Path does not exist: ${customAddonsPath}`);
             return [];
         }
         const devsRepos = (0, utils_1.findRepositories)(customAddonsPath);
         if (devsRepos.length === 0) {
-            (0, utils_1.showInfo)('No repositories found in the custom addons directory.');
+            void (0, utils_1.showInfo)('No repositories found in the custom addons directory.');
             return [];
         }
         if (!repos) {
-            (0, utils_1.showError)('No modules are configured for this database.');
+            void (0, utils_1.showError)('No modules are configured for this database.');
             return [];
         }
         const repoEntries = await mapWithConcurrency(devsRepos, 6, async (repo) => {
@@ -9488,7 +9484,7 @@ async function revealProjectRepo(repo) {
         await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(repo.path));
     }
     catch (error) {
-        (0, utils_1.showError)(`Unable to reveal repository: ${(0, logger_1.errorMessage)(error)}`);
+        void (0, utils_1.showError)(`Unable to reveal repository: ${(0, logger_1.errorMessage)(error)}`);
     }
 }
 
@@ -9705,11 +9701,9 @@ const baseTreeProvider_1 = __webpack_require__(4);
 const process_1 = __webpack_require__(14);
 const logger_1 = __webpack_require__(11);
 class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
-    context;
     sortPreferences;
-    constructor(context, sortPreferences) {
+    constructor(_context, sortPreferences) {
         super();
-        this.context = context;
         this.sortPreferences = sortPreferences;
     }
     getTreeItem(element) {
@@ -9981,12 +9975,12 @@ async function selectModule(event) {
     const { data, project } = result;
     const db = project.dbs.find((db) => db.isSelected === true);
     if (!db) {
-        (0, utils_1.showError)('Select a database before running this action.');
+        void (0, utils_1.showError)('Select a database before running this action.');
         return;
     }
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        (0, utils_1.showError)('Disable testing mode before changing module selections.');
+        void (0, utils_1.showError)('Disable testing mode before changing module selections.');
         return;
     }
     const moduleExistsInDb = db.modules.find(mod => mod.name === module.name);
@@ -10027,7 +10021,7 @@ async function createModuleFromScaffold() {
     const targetProject = projectResult.project;
     const projectRepos = (targetProject.repos ?? []);
     if (projectRepos.length === 0) {
-        (0, utils_1.showError)(`Project "${targetProject.name}" has no selected repositories.`);
+        void (0, utils_1.showError)(`Project "${targetProject.name}" has no selected repositories.`);
         return;
     }
     let targetRepo;
@@ -10050,7 +10044,7 @@ async function createModuleFromScaffold() {
         targetRepo = selectedRepo.repo;
     }
     if (!targetRepo) {
-        (0, utils_1.showError)('Select a destination repository.');
+        void (0, utils_1.showError)('Select a destination repository.');
         return;
     }
     const versionsService = versionsService_1.VersionsService.getInstance();
@@ -10061,19 +10055,19 @@ async function createModuleFromScaffold() {
     const repositoryRootPath = await resolveRepositoryRoot(destinationPath);
     const odooBinPath = path.join(normalizedOdooPath, 'odoo-bin');
     if (!normalizedPythonPath || !fs.existsSync(normalizedPythonPath)) {
-        (0, utils_1.showError)(`Python executable not found: ${normalizedPythonPath}`);
+        void (0, utils_1.showError)(`Python executable not found: ${normalizedPythonPath}`);
         return;
     }
     if (!normalizedOdooPath || !fs.existsSync(normalizedOdooPath)) {
-        (0, utils_1.showError)(`Odoo path not found: ${normalizedOdooPath}`);
+        void (0, utils_1.showError)(`Odoo path not found: ${normalizedOdooPath}`);
         return;
     }
     if (!fs.existsSync(odooBinPath)) {
-        (0, utils_1.showError)(`odoo-bin not found at: ${odooBinPath}`);
+        void (0, utils_1.showError)(`odoo-bin not found at: ${odooBinPath}`);
         return;
     }
     if (!repositoryRootPath || !fs.existsSync(repositoryRootPath)) {
-        (0, utils_1.showError)(`Destination repository path not found: ${repositoryRootPath}`);
+        void (0, utils_1.showError)(`Destination repository path not found: ${repositoryRootPath}`);
         return;
     }
     const moduleName = await vscode.window.showInputBox({
@@ -10111,7 +10105,7 @@ async function createModuleFromScaffold() {
         (0, utils_1.showAutoInfo)(`Module "${sanitizedModuleName}" created in ${repositoryRootPath}`, 3500);
     }
     catch (error) {
-        (0, utils_1.showError)(`Failed to scaffold module "${sanitizedModuleName}": ${error.message}`);
+        void (0, utils_1.showError)(`Failed to scaffold module "${sanitizedModuleName}": ${error.message}`);
     }
 }
 /**
@@ -10126,12 +10120,12 @@ async function setModuleToInstall(event) {
     const { data, project } = result;
     const db = project.dbs.find((db) => db.isSelected === true);
     if (!db) {
-        (0, utils_1.showError)('Select a database before running this action.');
+        void (0, utils_1.showError)('Select a database before running this action.');
         return;
     }
     // Check if testing is enabled
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        (0, utils_1.showError)('Disable testing mode before changing module selections.');
+        void (0, utils_1.showError)('Disable testing mode before changing module selections.');
         return;
     }
     const moduleExistsInDb = db.modules.find(mod => mod.name === moduleData.name);
@@ -10157,12 +10151,12 @@ async function setModuleToUpgrade(event) {
     const { data, project } = result;
     const db = project.dbs.find((db) => db.isSelected === true);
     if (!db) {
-        (0, utils_1.showError)('Select a database before running this action.');
+        void (0, utils_1.showError)('Select a database before running this action.');
         return;
     }
     // Check if testing is enabled
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        (0, utils_1.showError)('Disable testing mode before changing module selections.');
+        void (0, utils_1.showError)('Disable testing mode before changing module selections.');
         return;
     }
     const moduleExistsInDb = db.modules.find(mod => mod.name === moduleData.name);
@@ -10188,12 +10182,12 @@ async function clearModuleState(event) {
     const { data, project } = result;
     const db = project.dbs.find((db) => db.isSelected === true);
     if (!db) {
-        (0, utils_1.showError)('Select a database before running this action.');
+        void (0, utils_1.showError)('Select a database before running this action.');
         return;
     }
     // Check if testing is enabled
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        (0, utils_1.showError)('Disable testing mode before changing module selections.');
+        void (0, utils_1.showError)('Disable testing mode before changing module selections.');
         return;
     }
     const moduleExistsInDb = db.modules.find(mod => mod.name === moduleData.name);
@@ -10216,12 +10210,12 @@ async function togglePsaeInternalModule(event) {
     const { data, project } = result;
     const db = project.dbs.find((db) => db.isSelected === true);
     if (!db) {
-        (0, utils_1.showError)('Select a database before running this action.');
+        void (0, utils_1.showError)('Select a database before running this action.');
         return;
     }
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        (0, utils_1.showError)('Disable testing mode before changing module selections.');
+        void (0, utils_1.showError)('Disable testing mode before changing module selections.');
         return;
     }
     // Initialize includedPsaeInternalPaths if it doesn't exist
@@ -10244,11 +10238,11 @@ async function togglePsaeInternalModule(event) {
                 const moduleNamesToRemove = psaeModules.map((m) => m.name);
                 db.modules = db.modules.filter(dbModule => !moduleNamesToRemove.includes(dbModule.name));
                 await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-                (0, utils_1.showInfo)(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
+                void (0, utils_1.showInfo)(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
             }
             else {
                 await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-                (0, utils_1.showInfo)(`Removed manual inclusion of ${dirName} (${repoName})`);
+                void (0, utils_1.showInfo)(`Removed manual inclusion of ${dirName} (${repoName})`);
             }
         }
         else {
@@ -10258,7 +10252,7 @@ async function togglePsaeInternalModule(event) {
             const moduleNamesToRemove = psaeModules.map((m) => m.name);
             db.modules = db.modules.filter(dbModule => !moduleNamesToRemove.includes(dbModule.name));
             await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-            (0, utils_1.showInfo)(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
+            void (0, utils_1.showInfo)(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
         }
     }
     else {
@@ -10270,41 +10264,41 @@ async function togglePsaeInternalModule(event) {
             }
             await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
             if (hasSelectedModules || hasInstalledOrDbModules) {
-                (0, utils_1.showInfo)(`Removed manual exclusion of ${dirName} (${repoName}). Now auto-included due to modules.`);
+                void (0, utils_1.showInfo)(`Removed manual exclusion of ${dirName} (${repoName}). Now auto-included due to modules.`);
             }
             else {
-                (0, utils_1.showInfo)(`Removed manual exclusion of ${dirName} (${repoName})`);
+                void (0, utils_1.showInfo)(`Removed manual exclusion of ${dirName} (${repoName})`);
             }
         }
         else {
             // Currently not included - add manual inclusion
             project.includedPsaeInternalPaths.push(psaeInternalPath);
             await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-            (0, utils_1.showInfo)(`Manually included ${dirName} (${repoName}) in addons path`);
+            void (0, utils_1.showInfo)(`Manually included ${dirName} (${repoName}) in addons path`);
         }
     }
 }
 async function updateAllModules() {
     const result = await settingsStore_1.SettingsStore.getSelectedProject();
     if (!result) {
-        (0, utils_1.showError)('Select a project before running this action.');
+        void (0, utils_1.showError)('Select a project before running this action.');
         return;
     }
     const { data, project } = result;
     const db = project.dbs.find((db) => db.isSelected === true);
     if (!db) {
-        (0, utils_1.showError)('Select a database before running this action.');
+        void (0, utils_1.showError)('Select a database before running this action.');
         return;
     }
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        (0, utils_1.showError)('Disable testing mode before changing module selections.');
+        void (0, utils_1.showError)('Disable testing mode before changing module selections.');
         return;
     }
     const { modules: allModules } = collectModuleDiscovery(project);
     const availableModules = allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i));
     if (availableModules.length === 0) {
-        (0, utils_1.showInfo)('No modules are available to update.');
+        void (0, utils_1.showInfo)('No modules are available to update.');
         return;
     }
     // Confirm action
@@ -10339,27 +10333,27 @@ async function updateAllModules() {
 async function updateInstalledModules() {
     const result = await settingsStore_1.SettingsStore.getSelectedProject();
     if (!result) {
-        (0, utils_1.showError)('Select a project before running this action.');
+        void (0, utils_1.showError)('Select a project before running this action.');
         return;
     }
     const { data, project } = result;
     const db = project.dbs.find((db) => db.isSelected === true);
     if (!db) {
-        (0, utils_1.showError)('Select a database before running this action.');
+        void (0, utils_1.showError)('Select a database before running this action.');
         return;
     }
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        (0, utils_1.showError)('Disable testing mode before changing module selections.');
+        void (0, utils_1.showError)('Disable testing mode before changing module selections.');
         return;
     }
     if (!db.modules || db.modules.length === 0) {
-        (0, utils_1.showInfo)('No modules are configured for this database to update');
+        void (0, utils_1.showInfo)('No modules are configured for this database to update');
         return;
     }
     const installedModules = db.modules.filter(module => module.state === 'install');
     if (installedModules.length === 0) {
-        (0, utils_1.showInfo)('No modules are currently marked with the "install" state.');
+        void (0, utils_1.showInfo)('No modules are currently marked with the "install" state.');
         return;
     }
     // Confirm action
@@ -10377,24 +10371,24 @@ async function updateInstalledModules() {
 async function installAllModules() {
     const result = await settingsStore_1.SettingsStore.getSelectedProject();
     if (!result) {
-        (0, utils_1.showError)('Select a project before running this action.');
+        void (0, utils_1.showError)('Select a project before running this action.');
         return;
     }
     const { data, project } = result;
     const db = project.dbs.find((db) => db.isSelected === true);
     if (!db) {
-        (0, utils_1.showError)('Select a database before running this action.');
+        void (0, utils_1.showError)('Select a database before running this action.');
         return;
     }
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        (0, utils_1.showError)('Disable testing mode before changing module selections.');
+        void (0, utils_1.showError)('Disable testing mode before changing module selections.');
         return;
     }
     const { modules: allModules } = collectModuleDiscovery(project);
     const availableModules = allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i));
     if (availableModules.length === 0) {
-        (0, utils_1.showInfo)('No modules are available to install.');
+        void (0, utils_1.showInfo)('No modules are available to install.');
         return;
     }
     // Confirm action
@@ -10429,18 +10423,18 @@ async function installAllModules() {
 async function clearAllModuleSelections() {
     const result = await settingsStore_1.SettingsStore.getSelectedProject();
     if (!result) {
-        (0, utils_1.showError)('Select a project before running this action.');
+        void (0, utils_1.showError)('Select a project before running this action.');
         return;
     }
     const { data, project } = result;
     const db = project.dbs.find((db) => db.isSelected === true);
     if (!db) {
-        (0, utils_1.showError)('Select a database before running this action.');
+        void (0, utils_1.showError)('Select a database before running this action.');
         return;
     }
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        (0, utils_1.showError)('Disable testing mode before changing module selections.');
+        void (0, utils_1.showError)('Disable testing mode before changing module selections.');
         return;
     }
     if (!db.modules || db.modules.length === 0) {
@@ -10460,20 +10454,20 @@ async function clearAllModuleSelections() {
 async function viewInstalledModules() {
     const result = await settingsStore_1.SettingsStore.getSelectedProject();
     if (!result) {
-        (0, utils_1.showError)('Select a project before running this action.');
+        void (0, utils_1.showError)('Select a project before running this action.');
         return;
     }
     const { project } = result;
     const db = project.dbs.find((db) => db.isSelected === true);
     if (!db) {
-        (0, utils_1.showError)('Select a database before running this action.');
+        void (0, utils_1.showError)('Select a database before running this action.');
         return;
     }
     try {
         // Get all installed modules from database
         const installedModules = await (0, database_1.getInstalledModules)(db.id);
         if (installedModules.length === 0) {
-            (0, utils_1.showInfo)('No installed modules were found in the database');
+            void (0, utils_1.showInfo)('No installed modules were found in the database');
             return;
         }
         // Create quick pick items with detailed information
@@ -10493,7 +10487,7 @@ async function viewInstalledModules() {
         });
     }
     catch (error) {
-        (0, utils_1.showError)(`Failed to retrieve installed modules: ${error}`);
+        void (0, utils_1.showError)(`Failed to retrieve installed modules: ${error}`);
     }
 }
 
@@ -10578,10 +10572,8 @@ const logger_1 = __webpack_require__(11);
 const notifications_1 = __webpack_require__(13);
 const baseTreeProvider_1 = __webpack_require__(4);
 class TestingTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
-    context;
-    constructor(context) {
+    constructor(_context) {
         super();
-        this.context = context;
     }
     getTreeItem(element) {
         return element;
@@ -10748,13 +10740,13 @@ async function toggleTesting(event) {
         const { isEnabled } = event;
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         if (!result) {
-            (0, utils_1.showError)('Select a project before running this action.');
+            void (0, utils_1.showError)('Select a project before running this action.');
             return;
         }
         const { data, project } = result;
         const db = project.dbs.find(db => db.isSelected === true);
         if (!db) {
-            (0, utils_1.showError)('Select a database before running this action.');
+            void (0, utils_1.showError)('Select a database before running this action.');
             return;
         }
         // Ensure we have a proper TestingConfigModel instance
@@ -10798,14 +10790,14 @@ async function toggleTesting(event) {
     }
     catch (error) {
         logger_1.logger.error('Error in toggleTesting:', error);
-        (0, utils_1.showError)(`Failed to toggle testing: ${error}`);
+        void (0, utils_1.showError)(`Failed to toggle testing: ${error}`);
     }
 }
 async function toggleStopAfterInit() {
     try {
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         if (!result) {
-            (0, utils_1.showError)('Select a project before running this action.');
+            void (0, utils_1.showError)('Select a project before running this action.');
             return;
         }
         const { data, project } = result;
@@ -10819,14 +10811,14 @@ async function toggleStopAfterInit() {
     }
     catch (error) {
         logger_1.logger.error('Error in toggleStopAfterInit:', error);
-        (0, utils_1.showError)(`Failed to toggle stop after init: ${error}`);
+        void (0, utils_1.showError)(`Failed to toggle stop after init: ${error}`);
     }
 }
 async function setTestFile() {
     try {
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         if (!result) {
-            (0, utils_1.showError)('Select a project before running this action.');
+            void (0, utils_1.showError)('Select a project before running this action.');
             return;
         }
         const { data, project } = result;
@@ -10852,25 +10844,25 @@ async function setTestFile() {
     }
     catch (error) {
         logger_1.logger.error('Error in setTestFile:', error);
-        (0, utils_1.showError)(`Failed to set test file: ${error}`);
+        void (0, utils_1.showError)(`Failed to set test file: ${error}`);
     }
 }
 async function addTestTag() {
     try {
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         if (!result) {
-            (0, utils_1.showError)('Select a project before running this action.');
+            void (0, utils_1.showError)('Select a project before running this action.');
             return;
         }
         const { data, project } = result;
         project.testingConfig = (0, testing_1.ensureTestingConfigModel)(project.testingConfig);
         if (!project.testingConfig.isEnabled) {
-            (0, utils_1.showError)('Enable testing before running this command.');
+            void (0, utils_1.showError)('Enable testing before running this command.');
             return;
         }
         const db = project.dbs.find(db => db.isSelected === true);
         if (!db) {
-            (0, utils_1.showError)('Select a database before running this action.');
+            void (0, utils_1.showError)('Select a database before running this action.');
             return;
         }
         // Create a comprehensive quick pick with examples and better descriptions
@@ -10913,7 +10905,7 @@ async function addTestTag() {
             try {
                 const installedModules = await (0, database_1.getInstalledModules)(db.id);
                 if (installedModules.length === 0) {
-                    (0, utils_1.showInfo)('No installed modules were found.');
+                    void (0, utils_1.showInfo)('No installed modules were found.');
                     return;
                 }
                 // Create better module selection with grouping
@@ -10948,7 +10940,7 @@ async function addTestTag() {
                 }
             }
             catch (error) {
-                (0, utils_1.showError)(`Failed to get installed modules: ${error}`);
+                void (0, utils_1.showError)(`Failed to get installed modules: ${error}`);
             }
         }
         else {
@@ -11009,14 +11001,14 @@ async function addTestTag() {
                     formatInfo = ` (will be formatted as :${userInput.trim()})`;
                     // Show naming convention suggestion if applicable
                     if (!userInput.trim().startsWith('Test') && !userInput.trim().includes('Test')) {
-                        (0, utils_1.showWarning)(`Warning: Class names typically start with "Test" (e.g., "TestSalesAccessRights").`);
+                        void (0, utils_1.showWarning)(`Warning: Class names typically start with "Test" (e.g., "TestSalesAccessRights").`);
                     }
                 }
                 else if (selectedType.value === 'method') {
                     formatInfo = ` (will be formatted as .${userInput.trim()})`;
                     // Show naming convention suggestion if applicable
                     if (!userInput.trim().startsWith('test_')) {
-                        (0, utils_1.showWarning)(`Warning: Method names typically start with "test_" (e.g., "test_workflow_invoice").`);
+                        void (0, utils_1.showWarning)(`Warning: Method names typically start with "test_" (e.g., "test_workflow_invoice").`);
                     }
                 }
                 (0, utils_1.showAutoInfo)(`Added ${selectedType.value} "${userInput.trim()}"${formatInfo} as test target.`, 4000);
@@ -11027,14 +11019,14 @@ async function addTestTag() {
     }
     catch (error) {
         logger_1.logger.error('Error in addTestTag:', error);
-        (0, utils_1.showError)(`Failed to add test tag: ${error}`);
+        void (0, utils_1.showError)(`Failed to add test tag: ${error}`);
     }
 }
 async function cycleTestTagState(tag) {
     try {
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         if (!result) {
-            (0, utils_1.showError)('Select a project before running this action.');
+            void (0, utils_1.showError)('Select a project before running this action.');
             return;
         }
         const { data, project } = result;
@@ -11059,19 +11051,19 @@ async function cycleTestTagState(tag) {
             await (0, debugger_1.setupDebugger)();
         }
         else {
-            (0, utils_1.showError)('Could not find that test tag.');
+            void (0, utils_1.showError)('Could not find that test tag.');
         }
     }
     catch (error) {
         logger_1.logger.error('Error in cycleTestTagState:', error);
-        (0, utils_1.showError)(`Failed to cycle test tag state: ${error}`);
+        void (0, utils_1.showError)(`Failed to cycle test tag state: ${error}`);
     }
 }
 async function removeTestTag(tagOrTreeItem) {
     try {
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         if (!result) {
-            (0, utils_1.showError)('Select a project before running this action.');
+            void (0, utils_1.showError)('Select a project before running this action.');
             return;
         }
         const { data, project } = result;
@@ -11099,7 +11091,7 @@ async function removeTestTag(tagOrTreeItem) {
         }
         else {
             logger_1.logger.error('Could not find the referenced test tag:', tagOrTreeItem);
-            (0, utils_1.showError)('Could not find the referenced test tag.');
+            void (0, utils_1.showError)('Could not find the referenced test tag.');
             return;
         }
         const tagIndex = project.testingConfig.testTags.findIndex(t => t.id === tagId);
@@ -11111,19 +11103,19 @@ async function removeTestTag(tagOrTreeItem) {
             await (0, debugger_1.setupDebugger)();
         }
         else {
-            (0, utils_1.showError)('Could not find that test tag.');
+            void (0, utils_1.showError)('Could not find that test tag.');
         }
     }
     catch (error) {
         logger_1.logger.error('Error in removeTestTag:', error);
-        (0, utils_1.showError)(`Failed to remove test tag: ${error}`);
+        void (0, utils_1.showError)(`Failed to remove test tag: ${error}`);
     }
 }
 async function toggleLogLevel() {
     try {
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         if (!result) {
-            (0, utils_1.showError)('Select a project before running this action.');
+            void (0, utils_1.showError)('Select a project before running this action.');
             return;
         }
         const { data, project } = result;
@@ -11141,14 +11133,14 @@ async function toggleLogLevel() {
     }
     catch (error) {
         logger_1.logger.error('Error in toggleLogLevel:', error);
-        (0, utils_1.showError)(`Failed to toggle log level: ${error}`);
+        void (0, utils_1.showError)(`Failed to toggle log level: ${error}`);
     }
 }
 async function setSpecificLogLevel() {
     try {
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         if (!result) {
-            (0, utils_1.showError)('Select a project before running this action.');
+            void (0, utils_1.showError)('Select a project before running this action.');
             return;
         }
         const { data, project } = result;
@@ -11196,7 +11188,7 @@ async function setSpecificLogLevel() {
     }
     catch (error) {
         logger_1.logger.error('Error in setSpecificLogLevel:', error);
-        (0, utils_1.showError)(`Failed to set log level: ${error}`);
+        void (0, utils_1.showError)(`Failed to set log level: ${error}`);
     }
 }
 
@@ -11382,14 +11374,14 @@ async function setupDebugger() {
         logger_1.logger.warn('Could not prepare debugger launch arguments:', error);
         if (error instanceof Error) {
             if (error.message === 'Select a database before running this action.') {
-                (0, utils_1.showInfo)('Select a database before configuring the debugger.');
+                void (0, utils_1.showInfo)('Select a database before configuring the debugger.');
             }
             else {
-                (0, utils_1.showError)(error.message);
+                void (0, utils_1.showError)(error.message);
             }
         }
         else {
-            (0, utils_1.showError)('Could not prepare debugger launch arguments.');
+            void (0, utils_1.showError)('Could not prepare debugger launch arguments.');
         }
         return undefined;
     }
@@ -11416,7 +11408,7 @@ async function setupDebugger() {
         fs.writeFileSync(launchPath, JSON.stringify(launchData, null, 2) + '\n', 'utf8');
     }
     catch (error) {
-        (0, utils_1.showError)(`Unable to update launch.json: ${error}`);
+        void (0, utils_1.showError)(`Unable to update launch.json: ${error}`);
     }
     await selectPythonInterpreter(settings.pythonPath);
     return newOdooConfig;
@@ -11634,14 +11626,14 @@ async function startDebugShell() {
     catch (error) {
         if (error instanceof Error) {
             if (error.message === 'Select a database before running this action.') {
-                (0, utils_1.showInfo)('Select a database before opening the Odoo shell.');
+                void (0, utils_1.showInfo)('Select a database before opening the Odoo shell.');
             }
             else {
-                (0, utils_1.showError)(error.message);
+                void (0, utils_1.showError)(error.message);
             }
         }
         else {
-            (0, utils_1.showError)('Could not prepare shell arguments.');
+            void (0, utils_1.showError)('Could not prepare shell arguments.');
         }
         return undefined;
     }
@@ -11669,7 +11661,7 @@ function quoteShellArg(value) {
 async function startDebugServer() {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
-        (0, utils_1.showError)("Open a workspace to use this command.");
+        void (0, utils_1.showError)("Open a workspace to use this command.");
         return undefined;
     }
     const result = await settingsStore_1.SettingsStore.getSelectedProject();
@@ -12123,7 +12115,7 @@ class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
             return nodes;
         }
         catch (error) {
-            (0, utils_1.showError)(`Unable to read ${dir.fsPath}: ${error?.message ?? error}`);
+            void (0, utils_1.showError)(`Unable to read ${dir.fsPath}: ${error?.message ?? error}`);
             return [];
         }
     }
@@ -12139,7 +12131,7 @@ async function promptName(placeHolder, value) {
 async function createNewFile(folderUri) {
     const baseUri = folderUri ?? (vscode.window.activeTextEditor?.document.uri);
     if (!baseUri) {
-        (0, utils_1.showInfo)('Select a folder to create a file.');
+        void (0, utils_1.showInfo)('Select a folder to create a file.');
         return;
     }
     const folderPath = baseUri.fsPath;
@@ -12152,7 +12144,7 @@ async function createNewFile(folderUri) {
 }
 async function createNewFolder(folderUri) {
     if (!folderUri) {
-        (0, utils_1.showInfo)('Select a folder to create a new folder.');
+        void (0, utils_1.showInfo)('Select a folder to create a new folder.');
         return;
     }
     const name = await promptName('New folder name', 'new-folder');
@@ -12164,7 +12156,7 @@ async function createNewFolder(folderUri) {
 }
 async function renameEntry(uri) {
     if (!uri) {
-        (0, utils_1.showInfo)('Select a file or folder to rename.');
+        void (0, utils_1.showInfo)('Select a file or folder to rename.');
         return;
     }
     const currentName = path.basename(uri.fsPath);
@@ -12177,7 +12169,7 @@ async function renameEntry(uri) {
 }
 async function deleteEntry(uri) {
     if (!uri) {
-        (0, utils_1.showInfo)('Select a file or folder to delete.');
+        void (0, utils_1.showInfo)('Select a file or folder to delete.');
         return;
     }
     const choice = await (0, notifications_1.showModalWarning)(`Delete "${path.basename(uri.fsPath)}"?`, 'Delete');
@@ -12188,7 +12180,7 @@ async function deleteEntry(uri) {
 }
 async function openTerminalHere(uri) {
     if (!uri) {
-        (0, utils_1.showInfo)('Select a folder to open in terminal.');
+        void (0, utils_1.showInfo)('Select a folder to open in terminal.');
         return;
     }
     const terminal = vscode.window.createTerminal({ cwd: uri.fsPath });
@@ -12197,7 +12189,7 @@ async function openTerminalHere(uri) {
 async function selectProjectForExplorer() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
-        (0, utils_1.showInfo)('No projects found. Create a project first.');
+        void (0, utils_1.showInfo)('No projects found. Create a project first.');
         return;
     }
     const pick = await vscode.window.showQuickPick(data.projects.map((p, idx) => ({
@@ -12235,12 +12227,12 @@ async function pathExists(uri) {
 }
 async function pasteEntries(targetUri) {
     if (!clipboard || clipboard.uris.length === 0) {
-        (0, utils_1.showInfo)('Nothing to paste.');
+        void (0, utils_1.showInfo)('Nothing to paste.');
         return;
     }
     const folderUri = getTargetFolderUri(targetUri);
     if (!folderUri) {
-        (0, utils_1.showInfo)('Select a destination folder.');
+        void (0, utils_1.showInfo)('Select a destination folder.');
         return;
     }
     for (const source of clipboard.uris) {
@@ -12262,7 +12254,7 @@ async function pasteEntries(targetUri) {
             }
         }
         catch (error) {
-            (0, utils_1.showError)(`Failed to paste "${base}": ${error?.message ?? error}`);
+            void (0, utils_1.showError)(`Failed to paste "${base}": ${error?.message ?? error}`);
         }
     }
     if (clipboard.cut) {
@@ -12412,7 +12404,7 @@ function registerViewCommands(deps) {
                 const moduleData = item.moduleData
                     ?? item.command?.arguments?.[0];
                 if (!moduleData?.name) {
-                    (0, notifications_1.showInfo)('Unable to read module details for this selection.');
+                    void (0, notifications_1.showInfo)('Unable to read module details for this selection.');
                     return;
                 }
                 const stateSelection = await vscode.window.showQuickPick([
@@ -12462,7 +12454,7 @@ function registerViewCommands(deps) {
             onPick: async (item) => {
                 const repo = item?.metadata?.repo;
                 if (!repo?.path) {
-                    (0, notifications_1.showInfo)('Select a repository to reveal.');
+                    void (0, notifications_1.showInfo)('Select a repository to reveal.');
                     return;
                 }
                 await (0, projectRepos_1.revealProjectRepo)(repo);
@@ -12553,7 +12545,7 @@ function getTreeItemDetail(item) {
 }
 async function quickSearchTreeItems(items, options) {
     if (!items.length) {
-        (0, notifications_1.showInfo)(options.emptyMessage);
+        void (0, notifications_1.showInfo)(options.emptyMessage);
         return;
     }
     const picks = items.map(item => ({
@@ -12577,7 +12569,7 @@ async function quickSearchTreeItems(items, options) {
         return;
     }
     if (!selected.item.command) {
-        (0, notifications_1.showInfo)('No action is available for the selected item.');
+        void (0, notifications_1.showInfo)('No action is available for the selected item.');
         return;
     }
     await vscode.commands.executeCommand(selected.item.command.command, ...(selected.item.command.arguments ?? []));
@@ -12688,7 +12680,7 @@ function registerProjectCommands(deps) {
             await refreshAll();
         }
         catch (err) {
-            (0, notifications_1.showError)((0, logger_1.errorMessage)(err));
+            void (0, notifications_1.showError)((0, logger_1.errorMessage)(err));
         }
     }));
     context.subscriptions.push(vscode.commands.registerCommand('projectSelector.selectProject', async (event) => {
@@ -12806,7 +12798,7 @@ Continue?`;
     }
     const baseDir = (0, utils_1.getWorkspacePath)();
     if (!baseDir) {
-        (0, utils_1.showError)('Open a workspace folder before running this command.');
+        void (0, utils_1.showError)('Open a workspace folder before running this command.');
         return;
     }
     // Check if directories already exist
@@ -12927,11 +12919,11 @@ Continue?`;
             terminal.sendText(`echo "3. Install additional dependencies if needed"`);
             terminal.sendText(`echo "4. Create your custom addons directory"`);
             terminal.sendText(`echo ""`);
-            (0, utils_1.showInfo)(`Odoo ${branch} setup completed successfully!\n\nCheck the terminal for next steps.`);
+            void (0, utils_1.showInfo)(`Odoo ${branch} setup completed successfully!\n\nCheck the terminal for next steps.`);
         }
         catch (error) {
             logger_1.logger.error('Setup failed:', error);
-            (0, utils_1.showError)(`Setup failed: ${error.message}`);
+            void (0, utils_1.showError)(`Setup failed: ${error.message}`);
         }
     });
 }
@@ -12985,7 +12977,7 @@ const utils_1 = __webpack_require__(7);
 async function getActiveProjectOrPrompt() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
-        (0, utils_1.showInfo)('No projects found. Create a project first.');
+        void (0, utils_1.showInfo)('No projects found. Create a project first.');
         return undefined;
     }
     let projectIndex = data.projects.findIndex((p) => p.isSelected);
@@ -13006,7 +12998,7 @@ async function getActiveProjectOrPrompt() {
 }
 async function buildWorkspaceFile(context, project) {
     if (!project.repos || project.repos.length === 0) {
-        (0, utils_1.showInfo)(`Project "${project.name}" has no repositories. Add repos first.`);
+        void (0, utils_1.showInfo)(`Project "${project.name}" has no repositories. Add repos first.`);
         return undefined;
     }
     const workspacesDir = vscode.Uri.joinPath(context.globalStorageUri, 'workspaces');
@@ -13054,7 +13046,7 @@ async function openProjectWorkspace(context) {
 async function quickSwitchProjectWorkspace(context) {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
-        (0, utils_1.showInfo)('No projects found. Create a project first.');
+        void (0, utils_1.showInfo)('No projects found. Create a project first.');
         return;
     }
     const pick = await vscode.window.showQuickPick(data.projects.map((p, idx) => ({
@@ -13196,7 +13188,7 @@ function registerDbCommands(deps) {
             await refreshAll();
         }
         catch (err) {
-            (0, notifications_1.showError)((0, logger_1.errorMessage)(err));
+            void (0, notifications_1.showError)((0, logger_1.errorMessage)(err));
         }
     }));
     context.subscriptions.push(vscode.commands.registerCommand('dbSelector.selectDb', async (event) => {
@@ -13205,7 +13197,7 @@ function registerDbCommands(deps) {
             await refreshAll();
         }
         catch (err) {
-            (0, notifications_1.showError)(`Failed to select database: ${(0, logger_1.errorMessage)(err)}`);
+            void (0, notifications_1.showError)(`Failed to select database: ${(0, logger_1.errorMessage)(err)}`);
             logger_1.logger.error('Error in database selection:', err);
         }
     }));
@@ -13215,7 +13207,7 @@ function registerDbCommands(deps) {
             await refreshAll();
         }
         catch (err) {
-            (0, notifications_1.showError)(`Failed to delete database: ${(0, logger_1.errorMessage)(err)}`);
+            void (0, notifications_1.showError)(`Failed to delete database: ${(0, logger_1.errorMessage)(err)}`);
             logger_1.logger.error('Error in database deletion:', err);
         }
     }));
@@ -13226,7 +13218,7 @@ function registerDbCommands(deps) {
             await refreshAll();
         }
         catch (err) {
-            (0, notifications_1.showError)(`Failed to restore database: ${(0, logger_1.errorMessage)(err)}`);
+            void (0, notifications_1.showError)(`Failed to restore database: ${(0, logger_1.errorMessage)(err)}`);
             logger_1.logger.error('Error in database restoration:', err);
         }
     }));
@@ -13236,7 +13228,7 @@ function registerDbCommands(deps) {
             await refreshAll();
         }
         catch (err) {
-            (0, notifications_1.showError)(`Failed to change database version: ${(0, logger_1.errorMessage)(err)}`);
+            void (0, notifications_1.showError)(`Failed to change database version: ${(0, logger_1.errorMessage)(err)}`);
             logger_1.logger.error('Error in database version change:', err);
         }
     }));
@@ -13246,7 +13238,7 @@ function registerDbCommands(deps) {
             await refreshAll({ reason: 'ui' });
         }
         catch (err) {
-            (0, notifications_1.showError)(`Failed to update project repo branch mapping: ${(0, logger_1.errorMessage)(err)}`);
+            void (0, notifications_1.showError)(`Failed to update project repo branch mapping: ${(0, logger_1.errorMessage)(err)}`);
             logger_1.logger.error('Error in database project repo branch mapping update:', err);
         }
     }));
@@ -13256,7 +13248,7 @@ function registerDbCommands(deps) {
             await refreshAll({ reason: 'ui' });
         }
         catch (err) {
-            (0, notifications_1.showError)(`Failed to manage database templates: ${(0, logger_1.errorMessage)(err)}`);
+            void (0, notifications_1.showError)(`Failed to manage database templates: ${(0, logger_1.errorMessage)(err)}`);
             logger_1.logger.error('Error in database template management:', err);
         }
     }));
@@ -13553,7 +13545,7 @@ function registerVersionCommands(deps) {
             }
         }
         catch (error) {
-            (0, notifications_1.showError)(`Failed to create version: ${(0, logger_1.errorMessage)(error)}`);
+            void (0, notifications_1.showError)(`Failed to create version: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
     context.subscriptions.push(vscode.commands.registerCommand('odoo.openVersionDefaults', async () => {
@@ -13563,12 +13555,12 @@ function registerVersionCommands(deps) {
         try {
             const versionId = (0, args_1.extractVersionId)(versionIdOrTreeItem);
             if (!versionId) {
-                (0, notifications_1.showError)('Select a version before continuing.');
+                void (0, notifications_1.showError)('Select a version before continuing.');
                 return;
             }
             const version = versionsService.getVersion(versionId);
             if (!version) {
-                (0, notifications_1.showError)('The selected version could not be found.');
+                void (0, notifications_1.showError)('The selected version could not be found.');
                 return;
             }
             // Get Odoo path from the specific version being edited
@@ -13616,10 +13608,10 @@ function registerVersionCommands(deps) {
                 return; // No change or cancelled
             }
             await versionsService.updateVersion(versionId, { odooVersion: newBranch });
-            (0, notifications_1.showInfo)(`Branch changed from "${version.odooVersion}" to "${newBranch}" for version "${version.name}"`);
+            void (0, notifications_1.showInfo)(`Branch changed from "${version.odooVersion}" to "${newBranch}" for version "${version.name}"`);
         }
         catch (error) {
-            (0, notifications_1.showError)(`Failed to change branch: ${(0, logger_1.errorMessage)(error)}`);
+            void (0, notifications_1.showError)(`Failed to change branch: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
     context.subscriptions.push(vscode.commands.registerCommand('odoo.setActiveVersion', async (versionIdOrTreeItem) => {
@@ -13645,7 +13637,7 @@ function registerVersionCommands(deps) {
             const success = await versionsService.setActiveVersion(versionId);
             if (success) {
                 const version = versionsService.getVersion(versionId);
-                (0, notifications_1.showInfo)(`Activated version: ${version?.name}`);
+                void (0, notifications_1.showInfo)(`Activated version: ${version?.name}`);
                 if (version) {
                     // Align the core repos to the version's branch through the
                     // shared switch pipeline (honors databaseSwitchBehavior).
@@ -13654,11 +13646,11 @@ function registerVersionCommands(deps) {
                 await refreshAll(); // Refresh all views to reflect new active version
             }
             else {
-                (0, notifications_1.showError)('Unable to activate the selected version.');
+                void (0, notifications_1.showError)('Unable to activate the selected version.');
             }
         }
         catch (error) {
-            (0, notifications_1.showError)(`Unable to activate the selected version: ${(0, logger_1.errorMessage)(error)}`);
+            void (0, notifications_1.showError)(`Unable to activate the selected version: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
     // Helper functions for setting editing
@@ -13738,7 +13730,7 @@ function registerVersionCommands(deps) {
         try {
             const ref = (0, args_1.extractVersionSettingRef)(versionIdOrTreeItem, settingKey, currentValue);
             if (!ref) {
-                (0, notifications_1.showError)('This command was invoked with invalid parameters.');
+                void (0, notifications_1.showError)('This command was invoked with invalid parameters.');
                 return;
             }
             const { versionId, key, value } = ref;
@@ -13774,11 +13766,11 @@ function registerVersionCommands(deps) {
             else if (['odooPath', 'enterprisePath', 'designThemesPath', 'subModulesPaths'].includes(key)) {
                 (0, runtimeCache_1.invalidateModuleDiscoveryCache)();
             }
-            (0, notifications_1.showInfo)(`Updated ${key} successfully`);
+            void (0, notifications_1.showInfo)(`Updated ${key} successfully`);
             await refreshAll();
         }
         catch (error) {
-            (0, notifications_1.showError)(`Failed to edit setting: ${(0, logger_1.errorMessage)(error)}`);
+            void (0, notifications_1.showError)(`Failed to edit setting: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
     context.subscriptions.push(vscode.commands.registerCommand('odoo.cloneVersion', async (versionIdOrTreeItem) => {
@@ -13809,14 +13801,14 @@ function registerVersionCommands(deps) {
             }
             const clonedVersion = await versionsService.cloneVersion(versionId, name);
             if (clonedVersion) {
-                (0, notifications_1.showInfo)(`Version "${name}" cloned successfully`);
+                void (0, notifications_1.showInfo)(`Version "${name}" cloned successfully`);
             }
             else {
-                (0, notifications_1.showError)('Failed to clone the selected version.');
+                void (0, notifications_1.showError)('Failed to clone the selected version.');
             }
         }
         catch (error) {
-            (0, notifications_1.showError)(`Failed to clone the selected version: ${(0, logger_1.errorMessage)(error)}`);
+            void (0, notifications_1.showError)(`Failed to clone the selected version: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
     context.subscriptions.push(vscode.commands.registerCommand('odoo.deleteVersion', async (versionIdOrTreeItem) => {
@@ -13831,7 +13823,7 @@ function registerVersionCommands(deps) {
                     versionId: v.id
                 }));
                 if (items.length === 0) {
-                    (0, notifications_1.showInfo)('There are no versions available to delete (the active version cannot be removed).');
+                    void (0, notifications_1.showInfo)('There are no versions available to delete (the active version cannot be removed).');
                     return;
                 }
                 const selected = await vscode.window.showQuickPick(items, {
@@ -13844,7 +13836,7 @@ function registerVersionCommands(deps) {
             }
             const version = versionsService.getVersion(versionId);
             if (!version) {
-                (0, notifications_1.showError)('The selected version could not be found.');
+                void (0, notifications_1.showError)('The selected version could not be found.');
                 return;
             }
             const confirm = await (0, notifications_1.showModalWarning)(`Are you sure you want to delete version "${version.name}"?`, 'Delete');
@@ -13853,58 +13845,58 @@ function registerVersionCommands(deps) {
             }
             const success = await versionsService.deleteVersion(versionId);
             if (success) {
-                (0, notifications_1.showInfo)(`Version "${version.name}" deleted successfully`);
+                void (0, notifications_1.showInfo)(`Version "${version.name}" deleted successfully`);
             }
             else {
-                (0, notifications_1.showError)('Failed to delete the selected version.');
+                void (0, notifications_1.showError)('Failed to delete the selected version.');
             }
         }
         catch (error) {
-            (0, notifications_1.showError)(`Failed to delete the selected version: ${(0, logger_1.errorMessage)(error)}`);
+            void (0, notifications_1.showError)(`Failed to delete the selected version: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
     context.subscriptions.push(vscode.commands.registerCommand('odoo.setSettingToDefault', async (settingTreeItem) => {
         try {
             const ref = (0, args_1.extractVersionSettingRef)(settingTreeItem);
             if (!ref) {
-                (0, notifications_1.showError)('Select a setting before continuing.');
+                void (0, notifications_1.showError)('Select a setting before continuing.');
                 return;
             }
             const success = await versionsService.setSettingToDefault(ref.versionId, ref.key);
             if (!success) {
-                (0, notifications_1.showError)('Unable to reset this setting to its default value.');
+                void (0, notifications_1.showError)('Unable to reset this setting to its default value.');
             }
         }
         catch (error) {
-            (0, notifications_1.showError)(`Failed to reset setting to default: ${(0, logger_1.errorMessage)(error)}`);
+            void (0, notifications_1.showError)(`Failed to reset setting to default: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
     context.subscriptions.push(vscode.commands.registerCommand('odoo.setSettingAsDefault', async (settingTreeItem) => {
         try {
             const ref = (0, args_1.extractVersionSettingRef)(settingTreeItem);
             if (!ref) {
-                (0, notifications_1.showError)('Select a setting before continuing.');
+                void (0, notifications_1.showError)('Select a setting before continuing.');
                 return;
             }
             const success = await versionsService.setSettingAsDefault(ref.versionId, ref.key);
             if (!success) {
-                (0, notifications_1.showError)('Unable to save this setting as the default.');
+                void (0, notifications_1.showError)('Unable to save this setting as the default.');
             }
         }
         catch (error) {
-            (0, notifications_1.showError)(`Unable to save this setting as the default: ${(0, logger_1.errorMessage)(error)}`);
+            void (0, notifications_1.showError)(`Unable to save this setting as the default: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
     context.subscriptions.push(vscode.commands.registerCommand('odoo.setAllSettingsToDefault', async (versionTreeItem) => {
         try {
             const versionId = (0, args_1.extractVersionId)(versionTreeItem);
             if (!versionId) {
-                (0, notifications_1.showError)('Select a version before continuing.');
+                void (0, notifications_1.showError)('Select a version before continuing.');
                 return;
             }
             const version = versionsService.getVersion(versionId);
             if (!version) {
-                (0, notifications_1.showError)('The selected version could not be found.');
+                void (0, notifications_1.showError)('The selected version could not be found.');
                 return;
             }
             const confirm = await (0, notifications_1.showWarning)(`Are you sure you want to reset ALL settings for version "${version.name}" to their default values?`, 'Reset All', 'Cancel');
@@ -13913,23 +13905,23 @@ function registerVersionCommands(deps) {
             }
             const success = await versionsService.setAllSettingsToDefault(versionId);
             if (!success) {
-                (0, notifications_1.showError)('Unable to reset all settings to their default values.');
+                void (0, notifications_1.showError)('Unable to reset all settings to their default values.');
             }
         }
         catch (error) {
-            (0, notifications_1.showError)(`Failed to reset all settings to default: ${(0, logger_1.errorMessage)(error)}`);
+            void (0, notifications_1.showError)(`Failed to reset all settings to default: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
     context.subscriptions.push(vscode.commands.registerCommand('odoo.setAllSettingsAsDefault', async (versionTreeItem) => {
         try {
             const versionId = (0, args_1.extractVersionId)(versionTreeItem);
             if (!versionId) {
-                (0, notifications_1.showError)('Select a version before continuing.');
+                void (0, notifications_1.showError)('Select a version before continuing.');
                 return;
             }
             const version = versionsService.getVersion(versionId);
             if (!version) {
-                (0, notifications_1.showError)('The selected version could not be found.');
+                void (0, notifications_1.showError)('The selected version could not be found.');
                 return;
             }
             const confirm = await (0, notifications_1.showWarning)(`Are you sure you want to save ALL settings from version "${version.name}" as new default values?`, 'Save All as Default', 'Cancel');
@@ -13938,11 +13930,11 @@ function registerVersionCommands(deps) {
             }
             const success = await versionsService.setAllSettingsAsDefault(versionId);
             if (!success) {
-                (0, notifications_1.showError)('Unable to save these settings as the new defaults.');
+                void (0, notifications_1.showError)('Unable to save these settings as the new defaults.');
             }
         }
         catch (error) {
-            (0, notifications_1.showError)(`Unable to save these settings as the new defaults: ${(0, logger_1.errorMessage)(error)}`);
+            void (0, notifications_1.showError)(`Unable to save these settings as the new defaults: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
     context.subscriptions.push(vscode.commands.registerCommand('odoo.refreshVersions', async () => {
@@ -14187,7 +14179,7 @@ const projectRepos_1 = __webpack_require__(51);
 const projectReposExplorer_1 = __webpack_require__(60);
 async function copyPathToClipboard(uri, relative) {
     if (!uri) {
-        (0, notifications_1.showInfo)('Select a file or folder first.');
+        void (0, notifications_1.showInfo)('Select a file or folder first.');
         return;
     }
     const absolutePath = uri.fsPath;
@@ -14209,7 +14201,7 @@ async function copyPathToClipboard(uri, relative) {
 }
 async function openUriInIntegratedTerminal(uri) {
     if (!uri) {
-        (0, notifications_1.showInfo)('Select a folder to open in terminal.');
+        void (0, notifications_1.showInfo)('Select a folder to open in terminal.');
         return;
     }
     const cwd = fs.existsSync(uri.fsPath) && fs.lstatSync(uri.fsPath).isDirectory()
@@ -14228,7 +14220,7 @@ function registerReposExplorerCommands(deps) {
         }
         const uri = (0, args_1.extractUri)(arg);
         if (!uri) {
-            (0, notifications_1.showInfo)('Select a repository to reveal.');
+            void (0, notifications_1.showInfo)('Select a repository to reveal.');
             return;
         }
         await vscode.commands.executeCommand('revealInExplorer', uri);
@@ -14286,7 +14278,7 @@ function registerReposExplorerCommands(deps) {
     context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.revealInExplorer', async (arg) => {
         const uri = (0, args_1.extractUri)(arg);
         if (!uri) {
-            (0, notifications_1.showInfo)('Select a file or folder first.');
+            void (0, notifications_1.showInfo)('Select a file or folder first.');
             return;
         }
         await vscode.commands.executeCommand('revealInExplorer', uri);
@@ -14294,7 +14286,7 @@ function registerReposExplorerCommands(deps) {
     context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.revealFileInOS', async (arg) => {
         const uri = (0, args_1.extractUri)(arg);
         if (!uri) {
-            (0, notifications_1.showInfo)('Select a file or folder first.');
+            void (0, notifications_1.showInfo)('Select a file or folder first.');
             return;
         }
         await vscode.commands.executeCommand('revealFileInOS', uri);
@@ -14312,7 +14304,7 @@ function registerReposExplorerCommands(deps) {
     context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyEntry', async (arg) => {
         const uri = (0, args_1.extractUri)(arg);
         if (!uri) {
-            (0, notifications_1.showInfo)('Select a file or folder first.');
+            void (0, notifications_1.showInfo)('Select a file or folder first.');
             return;
         }
         (0, projectReposExplorer_1.copyEntries)([uri], false);
@@ -14320,7 +14312,7 @@ function registerReposExplorerCommands(deps) {
     context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.cutEntry', async (arg) => {
         const uri = (0, args_1.extractUri)(arg);
         if (!uri) {
-            (0, notifications_1.showInfo)('Select a file or folder first.');
+            void (0, notifications_1.showInfo)('Select a file or folder first.');
             return;
         }
         (0, projectReposExplorer_1.copyEntries)([uri], true);
@@ -14328,7 +14320,7 @@ function registerReposExplorerCommands(deps) {
     context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.pasteEntry', async (arg) => {
         const uri = (0, args_1.extractUri)(arg);
         if (!uri) {
-            (0, notifications_1.showInfo)('Select a folder to paste into.');
+            void (0, notifications_1.showInfo)('Select a folder to paste into.');
             return;
         }
         let target = uri;

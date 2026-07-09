@@ -5,7 +5,6 @@ import * as fs from 'fs';
 import { getWorkspacePath, showInfo, showError } from './utils';
 import { tryRunCommand } from './services/process';
 import { logger } from './services/logger';
-import { showWarning } from './services/notifications';
 import { showModalWarning } from './services/notifications';
 
 export async function setupOdooBranch() {
@@ -30,7 +29,7 @@ Continue?`;
 
     const baseDir = getWorkspacePath();
     if (!baseDir) {
-        showError('Open a workspace folder before running this command.');
+        void showError('Open a workspace folder before running this command.');
         return;
     }
 
@@ -184,11 +183,11 @@ Continue?`;
             terminal.sendText(`echo "4. Create your custom addons directory"`);
             terminal.sendText(`echo ""`);
 
-            showInfo(`Odoo ${branch} setup completed successfully!\n\nCheck the terminal for next steps.`);
+            void showInfo(`Odoo ${branch} setup completed successfully!\n\nCheck the terminal for next steps.`);
 
         } catch (error: any) {
             logger.error('Setup failed:', error);
-            showError(`Setup failed: ${error.message}`);
+            void showError(`Setup failed: ${error.message}`);
         }
     });
 }

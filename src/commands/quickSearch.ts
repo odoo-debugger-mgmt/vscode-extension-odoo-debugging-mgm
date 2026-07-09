@@ -52,7 +52,7 @@ export async function quickSearchTreeItems(
     }
 ): Promise<void> {
     if (!items.length) {
-        showInfo(options.emptyMessage);
+        void showInfo(options.emptyMessage);
         return;
     }
 
@@ -81,7 +81,7 @@ export async function quickSearchTreeItems(
     }
 
     if (!selected.item.command) {
-        showInfo('No action is available for the selected item.');
+        void showInfo('No action is available for the selected item.');
         return;
     }
 

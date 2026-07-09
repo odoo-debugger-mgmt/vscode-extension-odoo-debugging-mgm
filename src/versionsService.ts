@@ -273,7 +273,7 @@ export class VersionsService {
             Object.assign(version.settings, settingsPatch);
         }
 
-        const { settings, ...otherUpdates } = updatesCopy;
+        const { settings: _settings, ...otherUpdates } = updatesCopy;
         Object.assign(version, otherUpdates);
 
         // Update the updatedAt timestamp
@@ -297,7 +297,7 @@ export class VersionsService {
 
         // Don't allow deleting the last version
         if (this.versions.size <= 1) {
-            showWarning('Cannot delete the last version. At least one version must exist.');
+            void showWarning('Cannot delete the last version. At least one version must exist.');
             return false;
         }
 
@@ -609,7 +609,7 @@ export class VersionsService {
     public async setSettingToDefault(versionId: string, settingKey: string): Promise<boolean> {
         const version = this.versions.get(versionId);
         if (!version) {
-            showError('The selected version could not be found.');
+            void showError('The selected version could not be found.');
             return false;
         }
 
@@ -619,7 +619,7 @@ export class VersionsService {
             const defaultValue = defaultSettings[settingKey];
 
             if (defaultValue === undefined) {
-                showError('Default value not found for this setting.');
+                void showError('Default value not found for this setting.');
                 return false;
             }
 
@@ -630,11 +630,11 @@ export class VersionsService {
             await this.saveVersions();
             vscode.commands.executeCommand('odoo.versionsChanged');
 
-            showInfo(`Setting "${settingKey}" reset to default value.`);
+            void showInfo(`Setting "${settingKey}" reset to default value.`);
             return true;
         } catch (error) {
             logger.error('Failed to set setting to default:', error);
-            showError('Failed to set setting to default value.');
+            void showError('Failed to set setting to default value.');
             return false;
         }
     }
@@ -645,14 +645,14 @@ export class VersionsService {
     public async setSettingAsDefault(versionId: string, settingKey: string): Promise<boolean> {
         const version = this.versions.get(versionId);
         if (!version) {
-            showError('The selected version could not be found.');
+            void showError('The selected version could not be found.');
             return false;
         }
 
         try {
             const currentValue = (version.settings as any)[settingKey];
             if (currentValue === undefined) {
-                showError('Setting value not found.');
+                void showError('Setting value not found.');
                 return false;
             }
 
@@ -660,11 +660,11 @@ export class VersionsService {
             const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
             await config.update(settingKey, currentValue, vscode.ConfigurationTarget.Workspace);
 
-            showInfo(`Setting "${settingKey}" value saved as new default.`);
+            void showInfo(`Setting "${settingKey}" value saved as new default.`);
             return true;
         } catch (error) {
             logger.error('Unable to save this setting as the default:', error);
-            showError('Unable to save this setting as the default.');
+            void showError('Unable to save this setting as the default.');
             return false;
         }
     }
@@ -675,7 +675,7 @@ export class VersionsService {
     public async setAllSettingsToDefault(versionId: string): Promise<boolean> {
         const version = this.versions.get(versionId);
         if (!version) {
-            showError('The selected version could not be found.');
+            void showError('The selected version could not be found.');
             return false;
         }
 
@@ -688,11 +688,11 @@ export class VersionsService {
             await this.saveVersions();
             vscode.commands.executeCommand('odoo.versionsChanged');
 
-            showInfo(`All settings reset to default values for version "${version.name}".`);
+            void showInfo(`All settings reset to default values for version "${version.name}".`);
             return true;
         } catch (error) {
             logger.error('Failed to set all settings to default:', error);
-            showError('Unable to reset all settings to their default values.');
+            void showError('Unable to reset all settings to their default values.');
             return false;
         }
     }
@@ -703,7 +703,7 @@ export class VersionsService {
     public async setAllSettingsAsDefault(versionId: string): Promise<boolean> {
         const version = this.versions.get(versionId);
         if (!version) {
-            showError('The selected version could not be found.');
+            void showError('The selected version could not be found.');
             return false;
         }
 
@@ -716,11 +716,11 @@ export class VersionsService {
                 await config.update(key, value, vscode.ConfigurationTarget.Workspace);
             }
 
-            showInfo(`All settings from version "${version.name}" saved as new defaults.`);
+            void showInfo(`All settings from version "${version.name}" saved as new defaults.`);
             return true;
         } catch (error) {
             logger.error('Failed to set all settings as default:', error);
-            showError('Unable to save these settings as the new defaults.');
+            void showError('Unable to save these settings as the new defaults.');
             return false;
         }
     }
