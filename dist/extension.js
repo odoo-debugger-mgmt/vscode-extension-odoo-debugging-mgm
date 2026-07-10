@@ -48,16 +48,16 @@ const dataMigration_1 = __webpack_require__(44);
 const project_1 = __webpack_require__(45);
 const repos_1 = __webpack_require__(50);
 const module_1 = __webpack_require__(51);
-const testing_1 = __webpack_require__(53);
-const debugger_1 = __webpack_require__(55);
+const testing_1 = __webpack_require__(54);
+const debugger_1 = __webpack_require__(56);
 const settingsStore_1 = __webpack_require__(5);
-const versionsTreeProvider_1 = __webpack_require__(56);
+const versionsTreeProvider_1 = __webpack_require__(58);
 const versionsService_1 = __webpack_require__(23);
-const context_1 = __webpack_require__(54);
-const sortPreferences_1 = __webpack_require__(57);
-const projectReposExplorer_1 = __webpack_require__(58);
+const context_1 = __webpack_require__(55);
+const sortPreferences_1 = __webpack_require__(59);
+const projectReposExplorer_1 = __webpack_require__(60);
 const logger_1 = __webpack_require__(11);
-const commands_1 = __webpack_require__(60);
+const commands_1 = __webpack_require__(62);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -9311,12 +9311,9 @@ exports.viewInstalledModules = viewInstalledModules;
 const module_1 = __webpack_require__(52);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(7);
+const psaeInternal_1 = __webpack_require__(53);
 const fs = __importStar(__webpack_require__(40));
 const path = __importStar(__webpack_require__(3));
-function collectModuleDiscovery(project) {
-    const manualIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
-    return (0, utils_1.discoverModulesInRepos)(project.repos, { manualIncludePaths: manualIncludes });
-}
 const settingsStore_1 = __webpack_require__(5);
 const database_1 = __webpack_require__(36);
 const sortOptions_1 = __webpack_require__(26);
@@ -9334,7 +9331,10 @@ class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     getTreeItem(element) {
         return element;
     }
-    async getChildren(_element) {
+    async getChildren(element) {
+        if (element) {
+            return element.psaeChildren ?? [];
+        }
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         if (!result) {
             return [(0, utils_1.createInfoTreeItem)('Select a project to manage modules.')];
@@ -9348,196 +9348,129 @@ class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         if (!modules) {
             return [(0, utils_1.createInfoTreeItem)('No modules configured for this database.')];
         }
-        // Check if testing is enabled
-        const isTestingEnabled = project.testingConfig && project.testingConfig.isEnabled;
-        const { modules: allModules, psaeDirectories } = collectModuleDiscovery(project);
+        const isTestingEnabled = !!(project.testingConfig && project.testingConfig.isEnabled);
+        const { modules: allModules, psaeDirectories } = (0, psaeInternal_1.collectModuleDiscovery)(project);
         const installedModuleNames = await (0, database_1.getInstalledModuleNames)(db.id);
         const dbModulesByName = new Map(modules.map(module => [module.name, module]));
         const selectedDbModuleNames = new Set(modules
             .filter(module => module.state === 'install' || module.state === 'upgrade')
             .map(module => module.name));
-        const manuallyIncludedPaths = new Set((project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!')));
-        const manuallyExcludedPaths = new Set((project.includedPsaeInternalPaths ?? []).filter(entry => entry.startsWith('!')).map(entry => entry.substring(1)));
+        const psaeStates = (0, psaeInternal_1.resolvePsaeDirectories)({
+            psaeDirectories,
+            includedPsaeInternalPaths: project.includedPsaeInternalPaths,
+            selectedModuleNames: selectedDbModuleNames,
+            installedModuleNames
+        });
+        const buildModuleNode = (module) => {
+            const repoPath = module.isPsaeInternal ? `${module.repoName}/${module.psInternalDirName}` : module.repoName;
+            const managed = dbModulesByName.get(module.name);
+            const isInstalledInDb = installedModuleNames.has(module.name);
+            if (managed) {
+                managed.isInstalled = isInstalledInDb;
+            }
+            const state = managed?.state ?? 'none';
+            const item = new vscode.TreeItem(module.name, vscode.TreeItemCollapsibleState.None);
+            item.id = module.path;
+            item.iconPath = this.getModuleIcon(state, isInstalledInDb);
+            item.description = repoPath;
+            item.contextValue = 'module';
+            const stateLabel = state !== 'none' ? state : isInstalledInDb ? 'Installed' : 'none';
+            item.tooltip = new vscode.MarkdownString([
+                `**Module:** ${module.name}`,
+                `**State:** ${stateLabel}`,
+                `**Source:** ${repoPath}`,
+                `**Path:** ${module.path}`
+            ].join('\n\n'));
+            const moduleData = {
+                name: module.name,
+                path: module.path,
+                state,
+                repoName: module.repoName,
+                isPsaeInternal: module.isPsaeInternal,
+                isInstalled: isInstalledInDb
+            };
+            item.moduleData = moduleData;
+            item.command = isTestingEnabled ? undefined : {
+                command: 'moduleSelector.select',
+                title: 'Select Module',
+                arguments: [moduleData]
+            };
+            return item;
+        };
+        const treeItems = [];
+        if (isTestingEnabled) {
+            const testingModeItem = new vscode.TreeItem('Module management disabled (testing mode)', vscode.TreeItemCollapsibleState.None);
+            testingModeItem.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
+            testingModeItem.tooltip = 'Testing is enabled. Disable testing in the Testing view to manage modules again.';
+            testingModeItem.contextValue = 'info';
+            treeItems.push(testingModeItem);
+        }
+        // psae-internal directories become collapsible groups with their
+        // modules as children; the toggle lives on the group.
         const modulesByPsaeDir = new Map();
         for (const module of allModules) {
             if (!module.isPsaeInternal || !module.psInternalDirPath) {
                 continue;
             }
-            const existing = modulesByPsaeDir.get(module.psInternalDirPath) ?? [];
+            const key = (0, utils_1.normalizePath)(module.psInternalDirPath);
+            const existing = modulesByPsaeDir.get(key) ?? [];
             existing.push(module);
-            modulesByPsaeDir.set(module.psInternalDirPath, existing);
+            modulesByPsaeDir.set(key, existing);
         }
-        let treeItems = [];
-        // ALWAYS add testing mode notification first when testing is enabled
-        if (isTestingEnabled) {
-            const testingModeItem = new vscode.TreeItem('⚠️ Module Management Disabled (Testing Mode)', vscode.TreeItemCollapsibleState.None);
-            testingModeItem.tooltip = 'Testing is enabled. Disable testing to manage modules again.';
-            testingModeItem.description = 'Go to Testing tab to disable';
-            treeItems.push(testingModeItem);
+        for (const psaeState of psaeStates) {
+            const members = (modulesByPsaeDir.get(psaeState.path) ?? [])
+                .filter(m => !psaeInternal_1.PSAE_INTERNAL_REGEX.test(m.name))
+                .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+            const parent = new vscode.TreeItem(psaeState.dirName, vscode.TreeItemCollapsibleState.Collapsed);
+            parent.id = psaeState.path;
+            parent.iconPath = psaeState.isIncluded
+                ? new vscode.ThemeIcon('package', new vscode.ThemeColor('charts.green'))
+                : new vscode.ThemeIcon('package');
+            parent.description = `${psaeState.repoName} • ${members.length} modules • ${psaeState.isIncluded ? 'in addons path' : 'excluded'}`;
+            parent.contextValue = isTestingEnabled ? 'psaeDirectoryDisabled' : 'psaeDirectory';
+            const reasons = [];
+            if (psaeState.isManuallyIncluded) {
+                reasons.push('manually included');
+            }
+            if (psaeState.isManuallyExcluded) {
+                reasons.push('manually excluded');
+            }
+            if (psaeState.hasSelectedModules) {
+                reasons.push('has selected modules');
+            }
+            if (psaeState.hasDbModules) {
+                reasons.push('has database modules');
+            }
+            parent.tooltip = [
+                `${psaeState.dirName}: ${psaeState.isIncluded ? 'Included in addons path' : 'Not included'}${reasons.length ? ` (${reasons.join(' + ')})` : ''}`,
+                `Repo: ${psaeState.repoName}`,
+                `Path: ${psaeState.path}`,
+                isTestingEnabled ? 'Module management disabled while testing is enabled' : 'Use the toggle action to include/exclude it'
+            ].join('\n');
+            parent.psaeState = psaeState;
+            parent.psaeChildren = members.map(buildModuleNode);
+            treeItems.push(parent);
         }
-        // Add psae-internal directories as special meta-modules
-        for (const psaeDir of psaeDirectories) {
-            const psaeInternalModules = modulesByPsaeDir.get(psaeDir.path) ?? [];
-            // Check if any modules from this ps*-internal are selected OR installed in DB
-            const hasSelectedModules = psaeInternalModules.some(m => selectedDbModuleNames.has(m.name));
-            // Check if any modules from this ps*-internal directory are installed/to upgrade in DB
-            const hasDbModules = psaeInternalModules.some(m => installedModuleNames.has(m.name));
-            const isManuallyIncluded = manuallyIncludedPaths.has(psaeDir.path);
-            // Auto-include if has selected OR database modules
-            // If not manually set: auto-include if has selected OR database modules
-            const shouldBeIncluded = isManuallyIncluded || (!manuallyExcludedPaths.has(psaeDir.path) && (hasSelectedModules || hasDbModules));
-            // Determine icon and tooltip based on status
-            let psaeIcon;
-            let psaeTooltip;
-            if (shouldBeIncluded) {
-                psaeIcon = '📦'; // Package icon when included in addons path
-                const reasons = [];
-                if (isManuallyIncluded) {
-                    reasons.push('manually included');
-                }
-                if (hasSelectedModules) {
-                    reasons.push('has selected modules');
-                }
-                if (hasDbModules) {
-                    reasons.push('has database modules');
-                }
-                psaeTooltip = `${psaeDir.dirName}: Included (${reasons.join(' + ')})\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to exclude from addons path`;
-            }
-            else {
-                psaeIcon = '📋'; // Clipboard icon when not included
-                const reason = manuallyExcludedPaths.has(psaeDir.path) ? 'manually excluded' : 'no modules';
-                psaeTooltip = `${psaeDir.dirName}: Not included (${reason})\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to include in addons path`;
-            }
-            treeItems.push({
-                id: psaeDir.path,
-                label: `${psaeIcon} ${psaeDir.dirName}`,
-                tooltip: isTestingEnabled
-                    ? `${psaeTooltip}\n⚠️ Module management disabled while testing is enabled`
-                    : psaeTooltip,
-                description: `${psaeDir.repoName} (${psaeInternalModules.length} modules)`,
-                command: isTestingEnabled ? undefined : {
-                    command: 'moduleSelector.togglePsaeInternalModule',
-                    title: `Toggle ${psaeDir.dirName}`,
-                    arguments: [{
-                            path: psaeDir.path,
-                            repoName: psaeDir.repoName,
-                            dirName: psaeDir.dirName,
-                            hasSelectedModules: hasSelectedModules,
-                            hasDbModules: hasDbModules,
-                            isManuallyIncluded: isManuallyIncluded,
-                            shouldBeIncluded: shouldBeIncluded,
-                            modules: psaeInternalModules
-                        }]
-                }
-            });
-        }
-        // Add regular modules (excluding ps*-internal from the name display since we show them separately)
-        for (const module of allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i))) {
-            const repoPath = module.isPsaeInternal ? `${module.repoName}/${module.psInternalDirName}` : module.repoName;
-            const existingModule = dbModulesByName.get(module.name);
-            const isInstalledInDb = installedModuleNames.has(module.name);
-            if (existingModule) {
-                // Update the isInstalled flag based on database state
-                existingModule.isInstalled = isInstalledInDb;
-                let moduleIcon;
-                switch (existingModule.state) {
-                    case 'install':
-                        moduleIcon = '🟢';
-                        break;
-                    case 'upgrade':
-                        moduleIcon = '🟡';
-                        break;
-                    default:
-                        moduleIcon = existingModule.isInstalled ? '⚫' : '⚪'; // Black circle for installed but not managed
-                        break;
-                }
-                // Create module tooltip with consistent formatting
-                const moduleTooltipDetails = [];
-                moduleTooltipDetails.push(`**Module:** ${module.name}`);
-                moduleTooltipDetails.push(`**State:** ${existingModule.state}`);
-                moduleTooltipDetails.push(`**Source:** ${repoPath}`);
-                moduleTooltipDetails.push(`**Path:** ${module.path}`);
-                const managedModuleItem = {
-                    id: module.path,
-                    label: `${moduleIcon} ${module.name}`,
-                    tooltip: new vscode.MarkdownString(moduleTooltipDetails.join('\n\n')),
-                    description: repoPath,
-                    contextValue: 'module',
-                    command: isTestingEnabled ? undefined : {
-                        command: 'moduleSelector.select',
-                        title: 'Select Module',
-                        arguments: [{ name: module.name, path: module.path, state: existingModule.state, repoName: module.repoName, isPsaeInternal: module.isPsaeInternal, isInstalled: existingModule.isInstalled }]
-                    }
-                };
-                // Store module data for context menu commands
-                managedModuleItem.moduleData = {
-                    name: module.name,
-                    path: module.path,
-                    state: existingModule.state,
-                    repoName: module.repoName,
-                    isPsaeInternal: module.isPsaeInternal,
-                    isInstalled: existingModule.isInstalled
-                };
-                treeItems.push(managedModuleItem);
-            }
-            else {
-                // Module not in our managed list
-                const moduleIcon = isInstalledInDb ? '⚫' : '⚪'; // Black circle for installed, white for not installed
-                const moduleState = isInstalledInDb ? 'Installed' : 'none';
-                // Create module tooltip with consistent formatting
-                const moduleTooltipDetails = [];
-                moduleTooltipDetails.push(`**Module:** ${module.name}`);
-                moduleTooltipDetails.push(`**State:** ${moduleState}`);
-                moduleTooltipDetails.push(`**Source:** ${repoPath}`);
-                moduleTooltipDetails.push(`**Path:** ${module.path}`);
-                const unmanagedModuleItem = {
-                    id: module.path,
-                    label: `${moduleIcon} ${module.name}`,
-                    tooltip: new vscode.MarkdownString(moduleTooltipDetails.join('\n\n')),
-                    description: repoPath,
-                    contextValue: 'module',
-                    command: isTestingEnabled ? undefined : {
-                        command: 'moduleSelector.select',
-                        title: 'Select Module',
-                        arguments: [{ name: module.name, path: module.path, state: 'none', repoName: module.repoName, isPsaeInternal: module.isPsaeInternal, isInstalled: isInstalledInDb }]
-                    }
-                };
-                // Store module data for context menu commands
-                unmanagedModuleItem.moduleData = {
-                    name: module.name,
-                    path: module.path,
-                    state: 'none',
-                    repoName: module.repoName,
-                    isPsaeInternal: module.isPsaeInternal,
-                    isInstalled: isInstalledInDb
-                };
-                treeItems.push(unmanagedModuleItem);
-            }
-        }
+        // Regular (non-psae) modules at the root.
+        const regularModules = allModules
+            .filter(m => !m.isPsaeInternal && !psaeInternal_1.PSAE_INTERNAL_REGEX.test(m.name))
+            .map(buildModuleNode);
         const sortId = this.sortPreferences.get('moduleSelector', (0, sortOptions_1.getDefaultSortOption)('moduleSelector'));
-        return this.sortModuleItems(treeItems, sortId);
+        regularModules.sort((a, b) => this.compareModules(a, b, sortId));
+        treeItems.push(...regularModules);
+        return treeItems;
     }
-    sortModuleItems(items, sortId) {
-        const testingItems = [];
-        const psaeItems = [];
-        const moduleItems = [];
-        const otherItems = [];
-        for (const item of items) {
-            if (typeof item.label === 'string' && item.label.includes('⚠️ Module Management Disabled (Testing Mode)')) {
-                testingItems.push(item);
-            }
-            else if ((item.command?.command === 'moduleSelector.togglePsaeInternalModule') || (typeof item.label === 'string' && /ps[a-z]*-internal/i.test(item.label))) {
-                psaeItems.push(item);
-            }
-            else if (item.moduleData) {
-                moduleItems.push(item);
-            }
-            else {
-                otherItems.push(item);
-            }
+    getModuleIcon(state, isInstalled) {
+        switch (state) {
+            case 'install':
+                return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'));
+            case 'upgrade':
+                return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.yellow'));
+            default:
+                return isInstalled
+                    ? new vscode.ThemeIcon('circle-filled')
+                    : new vscode.ThemeIcon('circle-outline');
         }
-        moduleItems.sort((a, b) => this.compareModules(a, b, sortId));
-        return [...testingItems, ...psaeItems, ...moduleItems, ...otherItems];
     }
     compareModules(itemA, itemB, sortId) {
         const dataA = itemA.moduleData;
@@ -9566,6 +9499,13 @@ class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
             }
             case 'module:state:active-last': {
                 const diff = statePriority(dataB.state) - statePriority(dataA.state);
+                if (diff !== 0) {
+                    return diff;
+                }
+                return nameCompare;
+            }
+            case 'module:installed:first': {
+                const diff = Number(dataB.isInstalled) - Number(dataA.isInstalled);
                 if (diff !== 0) {
                     return diff;
                 }
@@ -9826,8 +9766,11 @@ async function clearModuleState(event) {
     await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
 }
 async function togglePsaeInternalModule(event) {
-    const { path: psaeInternalPath, repoName, dirName, hasSelectedModules, hasDbModules, hasInstalledModules, isManuallyIncluded, shouldBeIncluded, modules: psaeModules } = event;
-    const hasInstalledOrDbModules = Boolean(hasInstalledModules ?? hasDbModules);
+    const state = event?.psaeState;
+    if (!state) {
+        void (0, utils_1.showError)('Could not identify the psae-internal directory to toggle.');
+        return;
+    }
     const result = await settingsStore_1.SettingsStore.getSelectedProject();
     if (!result) {
         return;
@@ -9838,69 +9781,24 @@ async function togglePsaeInternalModule(event) {
         void (0, utils_1.showError)('Select a database before running this action.');
         return;
     }
-    // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
         void (0, utils_1.showError)('Disable testing mode before changing module selections.');
         return;
     }
-    // Initialize includedPsaeInternalPaths if it doesn't exist
-    if (!project.includedPsaeInternalPaths) {
-        project.includedPsaeInternalPaths = [];
+    const include = !state.isIncluded;
+    const { removedModuleNames } = (0, psaeInternal_1.setPsaeDirectoryIncluded)(project, state, include);
+    if (removedModuleNames.length > 0) {
+        db.modules = db.modules.filter(dbModule => !removedModuleNames.includes(dbModule.name));
     }
-    const excludePath = `!${psaeInternalPath}`;
-    const isManuallyExcluded = project.includedPsaeInternalPaths.includes(excludePath);
-    if (shouldBeIncluded) {
-        if (isManuallyIncluded) {
-            // Currently manually included - remove manual inclusion (may still be auto-included)
-            const pathIndex = project.includedPsaeInternalPaths.indexOf(psaeInternalPath);
-            if (pathIndex > -1) {
-                project.includedPsaeInternalPaths.splice(pathIndex, 1);
-            }
-            // If would still be auto-included, add manual exclusion and remove selected modules
-            if (hasSelectedModules || hasInstalledOrDbModules) {
-                project.includedPsaeInternalPaths.push(excludePath);
-                // Remove selected modules from this psae-internal directory
-                const moduleNamesToRemove = psaeModules.map((m) => m.name);
-                db.modules = db.modules.filter(dbModule => !moduleNamesToRemove.includes(dbModule.name));
-                await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-                void (0, utils_1.showInfo)(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
-            }
-            else {
-                await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-                void (0, utils_1.showInfo)(`Removed manual inclusion of ${dirName} (${repoName})`);
-            }
-        }
-        else {
-            // Currently auto-included - add manual exclusion to override and remove selected modules
-            project.includedPsaeInternalPaths.push(excludePath);
-            // Remove selected modules from this psae-internal directory
-            const moduleNamesToRemove = psaeModules.map((m) => m.name);
-            db.modules = db.modules.filter(dbModule => !moduleNamesToRemove.includes(dbModule.name));
-            await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-            void (0, utils_1.showInfo)(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
-        }
+    await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+    if (include) {
+        (0, utils_1.showAutoInfo)(`Included ${state.dirName} (${state.repoName}) in the addons path`, 2500);
+    }
+    else if (removedModuleNames.length > 0) {
+        (0, utils_1.showAutoInfo)(`Excluded ${state.dirName} (${state.repoName}) and cleared ${removedModuleNames.length} selected module(s)`, 3000);
     }
     else {
-        if (isManuallyExcluded) {
-            // Currently manually excluded - remove exclusion (may auto-include)
-            const pathIndex = project.includedPsaeInternalPaths.indexOf(excludePath);
-            if (pathIndex > -1) {
-                project.includedPsaeInternalPaths.splice(pathIndex, 1);
-            }
-            await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-            if (hasSelectedModules || hasInstalledOrDbModules) {
-                void (0, utils_1.showInfo)(`Removed manual exclusion of ${dirName} (${repoName}). Now auto-included due to modules.`);
-            }
-            else {
-                void (0, utils_1.showInfo)(`Removed manual exclusion of ${dirName} (${repoName})`);
-            }
-        }
-        else {
-            // Currently not included - add manual inclusion
-            project.includedPsaeInternalPaths.push(psaeInternalPath);
-            await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-            void (0, utils_1.showInfo)(`Manually included ${dirName} (${repoName}) in addons path`);
-        }
+        (0, utils_1.showAutoInfo)(`Excluded ${state.dirName} (${state.repoName}) from the addons path`, 2500);
     }
 }
 async function updateAllModules() {
@@ -9920,8 +9818,8 @@ async function updateAllModules() {
         void (0, utils_1.showError)('Disable testing mode before changing module selections.');
         return;
     }
-    const { modules: allModules } = collectModuleDiscovery(project);
-    const availableModules = allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i));
+    const { modules: allModules } = (0, psaeInternal_1.collectModuleDiscovery)(project);
+    const availableModules = allModules.filter(m => !psaeInternal_1.PSAE_INTERNAL_REGEX.test(m.name));
     if (availableModules.length === 0) {
         void (0, utils_1.showInfo)('No modules are available to update.');
         return;
@@ -10010,8 +9908,8 @@ async function installAllModules() {
         void (0, utils_1.showError)('Disable testing mode before changing module selections.');
         return;
     }
-    const { modules: allModules } = collectModuleDiscovery(project);
-    const availableModules = allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i));
+    const { modules: allModules } = (0, psaeInternal_1.collectModuleDiscovery)(project);
+    const availableModules = allModules.filter(m => !psaeInternal_1.PSAE_INTERNAL_REGEX.test(m.name));
     if (availableModules.length === 0) {
         void (0, utils_1.showInfo)('No modules are available to install.');
         return;
@@ -10139,6 +10037,103 @@ exports.ModuleModel = ModuleModel;
 
 /***/ }),
 /* 53 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.PSAE_INTERNAL_REGEX = void 0;
+exports.collectModuleDiscovery = collectModuleDiscovery;
+exports.parsePsaeOverrides = parsePsaeOverrides;
+exports.resolvePsaeDirectories = resolvePsaeDirectories;
+exports.setPsaeDirectoryIncluded = setPsaeDirectoryIncluded;
+const utils_1 = __webpack_require__(7);
+/**
+ * Single source of truth for "psae-internal" module directories (Odoo PS
+ * convention: directories matching ps*-internal hold internal modules that
+ * are only added to the addons path when needed). Both the Modules tree and
+ * the debugger arg builder resolve inclusion through this module, and the
+ * project's `includedPsaeInternalPaths` override list ("path" to force
+ * include, "!path" to force exclude) is only interpreted here.
+ */
+exports.PSAE_INTERNAL_REGEX = /^ps[a-z]*-internal$/i;
+/** Runs module discovery for the project, honoring its manual includes. */
+function collectModuleDiscovery(project) {
+    const manualIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
+    return (0, utils_1.discoverModulesInRepos)(project.repos, { manualIncludePaths: manualIncludes });
+}
+/** Splits the raw override list into normalized include/exclude path sets. */
+function parsePsaeOverrides(includedPsaeInternalPaths) {
+    const manualIncludes = new Set();
+    const manualExcludes = new Set();
+    for (const entry of includedPsaeInternalPaths ?? []) {
+        if (entry.startsWith('!')) {
+            manualExcludes.add((0, utils_1.normalizePath)(entry.substring(1)));
+        }
+        else {
+            manualIncludes.add((0, utils_1.normalizePath)(entry));
+        }
+    }
+    return { manualIncludes, manualExcludes };
+}
+/**
+ * Resolves the inclusion state of every discovered psae-internal directory.
+ * A directory is included when it is manually included, or when it contains
+ * selected or installed modules and is not manually excluded.
+ */
+function resolvePsaeDirectories(args) {
+    const { manualIncludes, manualExcludes } = parsePsaeOverrides(args.includedPsaeInternalPaths);
+    return args.psaeDirectories.map(dir => {
+        const normalized = (0, utils_1.normalizePath)(dir.path);
+        const isManuallyIncluded = manualIncludes.has(normalized);
+        const isManuallyExcluded = manualExcludes.has(normalized);
+        const hasSelectedModules = dir.moduleNames.some(name => args.selectedModuleNames.has(name));
+        const hasDbModules = dir.moduleNames.some(name => args.installedModuleNames.has(name));
+        return {
+            ...dir,
+            path: normalized,
+            isManuallyIncluded,
+            isManuallyExcluded,
+            hasSelectedModules,
+            hasDbModules,
+            isIncluded: isManuallyIncluded || (!isManuallyExcluded && (hasSelectedModules || hasDbModules))
+        };
+    });
+}
+/**
+ * Rewrites the project's override list so that `dir` resolves to `include`.
+ * Intent-based: clears any contradicting override first, then adds a manual
+ * include/exclude only when the automatic resolution would not already give
+ * the requested result. Returns the module names whose selections must be
+ * dropped (when excluding a directory that has selected modules).
+ */
+function setPsaeDirectoryIncluded(project, dir, include) {
+    const overrides = (project.includedPsaeInternalPaths ?? []).filter(entry => {
+        const normalized = (0, utils_1.normalizePath)(entry.startsWith('!') ? entry.substring(1) : entry);
+        return normalized !== dir.path;
+    });
+    let removedModuleNames = [];
+    if (include) {
+        // Auto-inclusion only triggers with selected/installed modules;
+        // otherwise pin the directory with a manual include.
+        if (!dir.hasSelectedModules && !dir.hasDbModules) {
+            overrides.push(dir.path);
+        }
+    }
+    else {
+        if (dir.hasSelectedModules || dir.hasDbModules) {
+            overrides.push(`!${dir.path}`);
+        }
+        if (dir.hasSelectedModules) {
+            removedModuleNames = [...dir.moduleNames];
+        }
+    }
+    project.includedPsaeInternalPaths = overrides;
+    return { removedModuleNames };
+}
+
+
+/***/ }),
+/* 54 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10190,8 +10185,8 @@ const settingsStore_1 = __webpack_require__(5);
 const testing_1 = __webpack_require__(48);
 const module_1 = __webpack_require__(52);
 const utils_1 = __webpack_require__(7);
-const context_1 = __webpack_require__(54);
-const debugger_1 = __webpack_require__(55);
+const context_1 = __webpack_require__(55);
+const debugger_1 = __webpack_require__(56);
 const database_1 = __webpack_require__(36);
 const logger_1 = __webpack_require__(11);
 const notifications_1 = __webpack_require__(13);
@@ -10355,6 +10350,9 @@ class TestingTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         }
         if (testingConfig.stopAfterInit) {
             parts.push('--stop-after-init');
+        }
+        if (testingConfig.logLevel && testingConfig.logLevel !== 'disabled') {
+            parts.push(`--log-level ${testingConfig.logLevel}`);
         }
         return parts.join(' ');
     }
@@ -10586,26 +10584,28 @@ async function addTestTag() {
                         return 'Please enter a value';
                     }
                     const trimmed = value.trim();
-                    // Basic validation based on type
+                    // Basic validation based on type; naming-convention hints
+                    // are shown inline but never block accepting the input.
                     switch (selectedType.value) {
                         case 'tag':
-                            // Simple tags: alphanumeric and underscores
                             if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) {
                                 return 'Tag names should contain only letters, numbers, and underscores';
                             }
                             break;
                         case 'class':
-                            // Class format: just the class name (no module: prefix needed)
-                            // Non-blocking check for Test prefix - just log suggestion, don't block
-                            if (!trimmed.startsWith('Test') && !trimmed.includes('Test')) {
-                                logger_1.logger.debug(`Class names typically start with "Test" (e.g., "TestSalesAccessRights")`);
+                            if (!trimmed.includes('Test')) {
+                                return {
+                                    message: 'Class names typically start with "Test" (e.g. "TestSalesAccessRights")',
+                                    severity: vscode.InputBoxValidationSeverity.Info
+                                };
                             }
                             break;
                         case 'method':
-                            // Method format: just the method name (no module:Class. prefix needed)
-                            // Non-blocking check for test_ prefix - just log suggestion, don't block
                             if (!trimmed.startsWith('test_')) {
-                                logger_1.logger.debug(`Method names typically start with "test_" (e.g., "test_workflow_invoice")`);
+                                return {
+                                    message: 'Method names typically start with "test_" (e.g. "test_workflow_invoice")',
+                                    severity: vscode.InputBoxValidationSeverity.Info
+                                };
                             }
                             break;
                     }
@@ -10624,17 +10624,9 @@ async function addTestTag() {
                 let formatInfo = '';
                 if (selectedType.value === 'class') {
                     formatInfo = ` (will be formatted as :${userInput.trim()})`;
-                    // Show naming convention suggestion if applicable
-                    if (!userInput.trim().startsWith('Test') && !userInput.trim().includes('Test')) {
-                        void (0, utils_1.showWarning)(`Warning: Class names typically start with "Test" (e.g., "TestSalesAccessRights").`);
-                    }
                 }
                 else if (selectedType.value === 'method') {
                     formatInfo = ` (will be formatted as .${userInput.trim()})`;
-                    // Show naming convention suggestion if applicable
-                    if (!userInput.trim().startsWith('test_')) {
-                        void (0, utils_1.showWarning)(`Warning: Method names typically start with "test_" (e.g., "test_workflow_invoice").`);
-                    }
                 }
                 (0, utils_1.showAutoInfo)(`Added ${selectedType.value} "${userInput.trim()}"${formatInfo} as test target.`, 4000);
                 // Update launch.json with new test configuration
@@ -10819,7 +10811,7 @@ async function setSpecificLogLevel() {
 
 
 /***/ }),
-/* 54 */
+/* 55 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10873,7 +10865,7 @@ function updateActiveContext(isActive) {
 
 
 /***/ }),
-/* 55 */
+/* 56 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10915,15 +10907,15 @@ exports.setupDebugger = setupDebugger;
 exports.startDebugShell = startDebugShell;
 exports.startDebugServer = startDebugServer;
 const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(8));
 const path = __importStar(__webpack_require__(3));
 const utils_1 = __webpack_require__(7);
+const psaeInternal_1 = __webpack_require__(53);
 const settingsStore_1 = __webpack_require__(5);
 const versionsService_1 = __webpack_require__(23);
 const testing_1 = __webpack_require__(48);
 const database_1 = __webpack_require__(36);
-const jsonc_parser_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(11);
+const launchConfig_1 = __webpack_require__(57);
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
 const baseInstallNotifiedDbs = new Set();
@@ -10954,26 +10946,6 @@ async function selectPythonInterpreter(pythonPath) {
     catch (error) {
         logger_1.logger.warn(`Failed to set Python interpreter to "${pythonPath}":`, error);
     }
-}
-function readLaunchData(workspacePath, debuggerName) {
-    const vscodeDir = path.join(workspacePath, '.vscode');
-    const launchPath = path.join(vscodeDir, 'launch.json');
-    fs.mkdirSync(vscodeDir, { recursive: true });
-    let content;
-    if (fs.existsSync(launchPath)) {
-        content = fs.readFileSync(launchPath, 'utf8');
-    }
-    else {
-        content = JSON.stringify({ version: '0.2.0', configurations: [] }, null, 2) + '\n';
-        fs.writeFileSync(launchPath, content, 'utf8');
-    }
-    let launchData = (0, jsonc_parser_1.parse)(content);
-    if (!launchData || typeof launchData !== 'object') {
-        launchData = { version: '0.2.0', configurations: [] };
-    }
-    const configurations = Array.isArray(launchData.configurations) ? [...launchData.configurations] : [];
-    const existingIndex = configurations.findIndex(conf => conf?.name === debuggerName);
-    return { launchPath, launchData, configurations, existingIndex };
 }
 async function setupDebugger() {
     const workspacePath = (0, utils_1.getWorkspacePath)();
@@ -11010,30 +10982,24 @@ async function setupDebugger() {
         }
         return undefined;
     }
-    const { launchPath, launchData, configurations, existingIndex } = readLaunchData(workspacePath, settings.debuggerName);
-    const existingConfig = existingIndex >= 0 ? configurations[existingIndex] : undefined;
-    const newOdooConfig = {
-        ...existingConfig,
-        name: settings.debuggerName,
-        type: "debugpy",
-        request: "launch",
-        cwd: workspacePath,
-        program: `${normalizedOdooPath}/odoo-bin`,
-        python: normalizedPythonPath,
-        console: "integratedTerminal",
-        args
-    };
-    if (existingIndex >= 0) {
-        configurations.splice(existingIndex, 1);
-    }
-    configurations.unshift(newOdooConfig);
-    launchData.version = launchData.version ?? '0.2.0';
-    launchData.configurations = configurations;
+    let newOdooConfig;
     try {
-        fs.writeFileSync(launchPath, JSON.stringify(launchData, null, 2) + '\n', 'utf8');
+        // Only the extension's own entry in launch.json is rewritten; user
+        // comments and other configurations are preserved.
+        newOdooConfig = await (0, launchConfig_1.updateManagedLaunchConfig)(workspacePath, {
+            name: settings.debuggerName,
+            type: 'debugpy',
+            request: 'launch',
+            cwd: workspacePath,
+            program: `${normalizedOdooPath}/odoo-bin`,
+            python: normalizedPythonPath,
+            console: 'integratedTerminal',
+            args
+        });
     }
     catch (error) {
-        void (0, utils_1.showError)(`Unable to update launch.json: ${error}`);
+        void (0, utils_1.showError)(`Unable to update launch.json: ${(0, logger_1.errorMessage)(error)}`);
+        return undefined;
     }
     await selectPythonInterpreter(settings.pythonPath);
     return newOdooConfig;
@@ -11072,22 +11038,9 @@ async function prepareArgs(project, settings, isShell = false) {
         throw new Error('Select a database before running this action.');
     }
     const projectModules = db.modules ?? [];
-    // Auto-detect ps*-internal paths needed based on selected modules
-    const psInternalPaths = new Set();
-    const manualIncludes = new Set();
-    const manualExcludes = new Set();
-    for (const entry of project.includedPsaeInternalPaths ?? []) {
-        if (entry.startsWith('!')) {
-            manualExcludes.add((0, utils_1.normalizePath)(entry.substring(1)));
-        }
-        else {
-            const normalized = (0, utils_1.normalizePath)(entry);
-            manualIncludes.add(normalized);
-            psInternalPaths.add(normalized);
-        }
-    }
-    const manualPsaeIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
-    const discovery = (0, utils_1.discoverModulesInRepos)(project.repos, { manualIncludePaths: manualPsaeIncludes });
+    // psae-internal directories: resolved through the shared service so the
+    // Modules tree and the launch args always agree on what is included.
+    const discovery = (0, psaeInternal_1.collectModuleDiscovery)(project);
     const containerPathMap = new Map();
     const recordContainerPath = (rawContainerPath) => {
         const normalized = (0, utils_1.normalizePath)(rawContainerPath);
@@ -11109,10 +11062,6 @@ async function prepareArgs(project, settings, isShell = false) {
     for (const containerPath of containerPathMap.values()) {
         addAddonPath(containerPath);
     }
-    const foundPsInternalDirs = new Map(); // path -> modules
-    for (const dir of discovery.psaeDirectories) {
-        foundPsInternalDirs.set((0, utils_1.normalizePath)(dir.path), dir.moduleNames);
-    }
     const selectedModuleNames = new Set(projectModules
         .filter(module => module.state === 'install' || module.state === 'upgrade')
         .map(module => module.name));
@@ -11123,21 +11072,15 @@ async function prepareArgs(project, settings, isShell = false) {
     catch (error) {
         logger_1.logger.warn('Failed to get installed modules from database:', error);
     }
-    for (const [psPath, psModules] of foundPsInternalDirs.entries()) {
-        if (manualExcludes.has(psPath)) {
-            continue;
-        }
-        const isManuallyIncluded = manualIncludes.has(psPath);
-        const hasSelectedModules = psModules.some(psModule => selectedModuleNames.has(psModule));
-        const hasDbModules = psModules.some(psModule => installedModuleNames.has(psModule));
-        if (isManuallyIncluded || hasSelectedModules || hasDbModules) {
-            psInternalPaths.add(psPath);
-        }
-    }
-    // Add auto-detected ps*-internal paths to addons paths
-    if (psInternalPaths.size > 0) {
-        for (const psPath of psInternalPaths) {
-            addAddonPath(psPath);
+    const psaeStates = (0, psaeInternal_1.resolvePsaeDirectories)({
+        psaeDirectories: discovery.psaeDirectories,
+        includedPsaeInternalPaths: project.includedPsaeInternalPaths,
+        selectedModuleNames,
+        installedModuleNames
+    });
+    for (const psaeState of psaeStates) {
+        if (psaeState.isIncluded) {
+            addAddonPath(psaeState.path);
         }
     }
     // Add global submodules paths from settings (for backward compatibility)
@@ -11296,16 +11239,105 @@ async function startDebugServer() {
     // Get settings from active version instead of legacy settings
     const versionsService = versionsService_1.VersionsService.getInstance();
     const workspaceSettings = await versionsService.getActiveVersionSettings();
+    // Stop only the session launched from the extension's own configuration;
+    // unrelated debug sessions must survive a server (re)start.
     const existingSession = vscode.debug.activeDebugSession;
-    if (existingSession) {
+    if (existingSession && existingSession.configuration?.name === workspaceSettings.debuggerName) {
         await vscode.debug.stopDebugging(existingSession);
     }
-    vscode.debug.startDebugging(workspaceFolders[0], workspaceSettings.debuggerName);
+    void vscode.debug.startDebugging(workspaceFolders[0], workspaceSettings.debuggerName);
 }
 
 
 /***/ }),
-/* 56 */
+/* 57 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.updateManagedLaunchConfig = updateManagedLaunchConfig;
+const fs = __importStar(__webpack_require__(22));
+const path = __importStar(__webpack_require__(3));
+const jsonc_parser_1 = __webpack_require__(16);
+/**
+ * Manages the extension's entry in .vscode/launch.json. Only the managed
+ * configuration (matched by name) is rewritten - user comments, formatting
+ * and other configurations in the file are preserved via jsonc edits.
+ */
+const EMPTY_LAUNCH_CONTENT = `{
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+
+    // The "<debugger name>" entry is managed by the Odoo DevTools extension;
+    // it is rewritten whenever the active version, database or modules change.
+    "configurations": []
+}
+`;
+/**
+ * Updates (or inserts at the top) the launch configuration named
+ * `managedConfig.name`, keeping any extra user-added keys on that entry and
+ * leaving the rest of launch.json untouched.
+ */
+async function updateManagedLaunchConfig(workspacePath, managedConfig) {
+    const vscodeDir = path.join(workspacePath, '.vscode');
+    const launchPath = path.join(vscodeDir, 'launch.json');
+    await fs.mkdir(vscodeDir, { recursive: true });
+    let raw = await fs.readFile(launchPath, 'utf8').catch(() => EMPTY_LAUNCH_CONTENT);
+    let parsed = (0, jsonc_parser_1.parse)(raw);
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.configurations)) {
+        // Unreadable/malformed file: fall back to a fresh skeleton rather
+        // than guessing at edits inside broken JSON.
+        raw = EMPTY_LAUNCH_CONTENT;
+        parsed = (0, jsonc_parser_1.parse)(raw);
+    }
+    const configurations = parsed.configurations;
+    const existingIndex = configurations.findIndex(conf => conf?.name === managedConfig.name);
+    const existing = existingIndex >= 0 ? configurations[existingIndex] : undefined;
+    const merged = { ...existing, ...managedConfig };
+    const options = { formattingOptions: { tabSize: 4, insertSpaces: true } };
+    const edits = existingIndex >= 0
+        ? (0, jsonc_parser_1.modify)(raw, ['configurations', existingIndex], merged, options)
+        : (0, jsonc_parser_1.modify)(raw, ['configurations', 0], merged, { ...options, isArrayInsertion: true });
+    await fs.writeFile(launchPath, (0, jsonc_parser_1.applyEdits)(raw, edits), 'utf8');
+    return merged;
+}
+
+
+/***/ }),
+/* 58 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11501,7 +11533,7 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 
 /***/ }),
-/* 57 */
+/* 59 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -11524,7 +11556,7 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 58 */
+/* 60 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11576,7 +11608,7 @@ const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
 const runtimeCache_1 = __webpack_require__(12);
-const filesExclude_1 = __webpack_require__(59);
+const filesExclude_1 = __webpack_require__(61);
 const notifications_1 = __webpack_require__(13);
 const baseTreeProvider_1 = __webpack_require__(4);
 const sortOptions_1 = __webpack_require__(26);
@@ -11920,7 +11952,7 @@ async function pasteEntries(targetUri) {
 
 
 /***/ }),
-/* 59 */
+/* 61 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12063,21 +12095,21 @@ function createFilesExcludeMatcher(scopeUri) {
 
 
 /***/ }),
-/* 60 */
+/* 62 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(61);
-const projectCommands_1 = __webpack_require__(63);
-const repoCommands_1 = __webpack_require__(66);
-const dbCommands_1 = __webpack_require__(67);
-const moduleCommands_1 = __webpack_require__(68);
-const testingCommands_1 = __webpack_require__(69);
-const versionCommands_1 = __webpack_require__(70);
-const debugCommands_1 = __webpack_require__(72);
-const reposExplorerCommands_1 = __webpack_require__(73);
+const viewCommands_1 = __webpack_require__(63);
+const projectCommands_1 = __webpack_require__(65);
+const repoCommands_1 = __webpack_require__(68);
+const dbCommands_1 = __webpack_require__(69);
+const moduleCommands_1 = __webpack_require__(70);
+const testingCommands_1 = __webpack_require__(71);
+const versionCommands_1 = __webpack_require__(72);
+const debugCommands_1 = __webpack_require__(74);
+const reposExplorerCommands_1 = __webpack_require__(75);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -12093,7 +12125,7 @@ function registerAllCommands(deps) {
 
 
 /***/ }),
-/* 61 */
+/* 63 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12133,7 +12165,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(62);
+const quickSearch_1 = __webpack_require__(64);
 const sortOptions_1 = __webpack_require__(26);
 const notifications_1 = __webpack_require__(13);
 const module_1 = __webpack_require__(51);
@@ -12193,7 +12225,10 @@ function registerViewCommands(deps) {
         });
     }));
     context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.quickSearch', async () => {
-        const items = ((await providers.module.getChildren()) ?? [])
+        // Include modules nested under psae-internal groups in the search.
+        const rootItems = ((await providers.module.getChildren()) ?? []);
+        const nestedItems = rootItems.flatMap(item => item.psaeChildren ?? []);
+        const items = [...rootItems, ...nestedItems]
             .filter(item => item.contextValue === 'module' && !!item.command);
         await (0, quickSearch_1.quickSearchTreeItems)(items, {
             placeHolder: 'Search modules...',
@@ -12262,7 +12297,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 62 */
+/* 64 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12374,7 +12409,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 63 */
+/* 65 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12419,8 +12454,8 @@ const notifications_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(11);
 const project_1 = __webpack_require__(45);
 const dbs_1 = __webpack_require__(31);
-const odooInstaller_1 = __webpack_require__(64);
-const projectWorkspace_1 = __webpack_require__(65);
+const odooInstaller_1 = __webpack_require__(66);
+const projectWorkspace_1 = __webpack_require__(67);
 function registerProjectCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('projectSelector.create', async () => {
@@ -12532,7 +12567,7 @@ function registerProjectCommands(deps) {
 
 
 /***/ }),
-/* 64 */
+/* 66 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12727,7 +12762,7 @@ Continue?`;
 
 
 /***/ }),
-/* 65 */
+/* 67 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12861,7 +12896,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 66 */
+/* 68 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12902,7 +12937,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerRepoCommands = registerRepoCommands;
 const vscode = __importStar(__webpack_require__(1));
 const repos_1 = __webpack_require__(50);
-const projectWorkspace_1 = __webpack_require__(65);
+const projectWorkspace_1 = __webpack_require__(67);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
@@ -12914,7 +12949,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 67 */
+/* 69 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13053,7 +13088,7 @@ function registerDbCommands(deps) {
 
 
 /***/ }),
-/* 68 */
+/* 70 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13143,7 +13178,7 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 69 */
+/* 71 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13183,7 +13218,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerTestingCommands = registerTestingCommands;
 const vscode = __importStar(__webpack_require__(1));
-const testing_1 = __webpack_require__(53);
+const testing_1 = __webpack_require__(54);
 function registerTestingCommands(deps) {
     const { context, providers, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleTesting', async (event) => {
@@ -13222,7 +13257,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 70 */
+/* 72 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13263,7 +13298,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerVersionCommands = registerVersionCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(40));
-const args_1 = __webpack_require__(71);
+const args_1 = __webpack_require__(73);
 const utils_1 = __webpack_require__(7);
 const notifications_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(11);
@@ -13766,7 +13801,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 71 */
+/* 73 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13859,7 +13894,7 @@ function extractUri(arg) {
 
 
 /***/ }),
-/* 72 */
+/* 74 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13899,7 +13934,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerDebugCommands = registerDebugCommands;
 const vscode = __importStar(__webpack_require__(1));
-const debugger_1 = __webpack_require__(55);
+const debugger_1 = __webpack_require__(56);
 function registerDebugCommands(deps) {
     const { context } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('odoo.startServer', async () => {
@@ -13912,7 +13947,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 73 */
+/* 75 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13954,9 +13989,9 @@ exports.registerReposExplorerCommands = registerReposExplorerCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(40));
 const path = __importStar(__webpack_require__(3));
-const args_1 = __webpack_require__(71);
+const args_1 = __webpack_require__(73);
 const notifications_1 = __webpack_require__(13);
-const projectReposExplorer_1 = __webpack_require__(58);
+const projectReposExplorer_1 = __webpack_require__(60);
 async function copyPathToClipboard(uri, relative) {
     if (!uri) {
         void (0, notifications_1.showInfo)('Select a file or folder first.');

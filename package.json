@@ -329,7 +329,8 @@
       },
       {
         "command": "moduleSelector.togglePsaeInternalModule",
-        "title": "Toggle psae-internal Module"
+        "title": "Toggle Addons-Path Inclusion",
+        "icon": "$(arrow-swap)"
       },
       {
         "command": "moduleSelector.setToInstall",
@@ -643,12 +644,12 @@
         },
         {
           "command": "testingSelector.addTestTag",
-          "when": "view == testingSelector",
+          "when": "view == testingSelector && odoo-debugger.testing_enabled",
           "group": "navigation@1"
         },
         {
           "command": "testingSelector.setTestFile",
-          "when": "view == testingSelector",
+          "when": "view == testingSelector && odoo-debugger.testing_enabled",
           "group": "navigation@2"
         },
         {
@@ -867,6 +868,218 @@
           "command": "odooDebugger.revealInExplorer",
           "when": "view == odt.projectReposExplorer && viewItem == projectRepoRoot",
           "group": "navigation@1"
+        },
+        {
+          "command": "moduleSelector.togglePsaeInternalModule",
+          "when": "view == moduleSelector && viewItem == psaeDirectory",
+          "group": "inline"
+        },
+        {
+          "command": "moduleSelector.togglePsaeInternalModule",
+          "when": "view == moduleSelector && viewItem == psaeDirectory",
+          "group": "psae@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "projectSelector.selectProject",
+          "when": "false"
+        },
+        {
+          "command": "projectSelector.delete",
+          "when": "false"
+        },
+        {
+          "command": "projectSelector.editSettings",
+          "when": "false"
+        },
+        {
+          "command": "projectSelector.manageTickets",
+          "when": "false"
+        },
+        {
+          "command": "projectSelector.openTicket",
+          "when": "false"
+        },
+        {
+          "command": "projectSelector.duplicateProject",
+          "when": "false"
+        },
+        {
+          "command": "projectSelector.exportProject",
+          "when": "false"
+        },
+        {
+          "command": "repoSelector.selectRepo",
+          "when": "false"
+        },
+        {
+          "command": "dbSelector.selectDb",
+          "when": "false"
+        },
+        {
+          "command": "dbSelector.delete",
+          "when": "false"
+        },
+        {
+          "command": "dbSelector.restore",
+          "when": "false"
+        },
+        {
+          "command": "dbSelector.changeVersion",
+          "when": "false"
+        },
+        {
+          "command": "dbSelector.configureRepoBranches",
+          "when": "false"
+        },
+        {
+          "command": "moduleSelector.select",
+          "when": "false"
+        },
+        {
+          "command": "moduleSelector.setToInstall",
+          "when": "false"
+        },
+        {
+          "command": "moduleSelector.setToUpgrade",
+          "when": "false"
+        },
+        {
+          "command": "moduleSelector.clearState",
+          "when": "false"
+        },
+        {
+          "command": "moduleSelector.togglePsaeInternalModule",
+          "when": "false"
+        },
+        {
+          "command": "testingSelector.toggleTesting",
+          "when": "false"
+        },
+        {
+          "command": "testingSelector.removeTestTag",
+          "when": "false"
+        },
+        {
+          "command": "testingSelector.cycleTestTagState",
+          "when": "false"
+        },
+        {
+          "command": "odoo.changeBranch",
+          "when": "false"
+        },
+        {
+          "command": "odoo.setSettingToDefault",
+          "when": "false"
+        },
+        {
+          "command": "odoo.setSettingAsDefault",
+          "when": "false"
+        },
+        {
+          "command": "odoo.setAllSettingsToDefault",
+          "when": "false"
+        },
+        {
+          "command": "odoo.setAllSettingsAsDefault",
+          "when": "false"
+        },
+        {
+          "command": "odt.projectReposExplorer.newFile",
+          "when": "false"
+        },
+        {
+          "command": "odt.projectReposExplorer.newFolder",
+          "when": "false"
+        },
+        {
+          "command": "odt.projectReposExplorer.rename",
+          "when": "false"
+        },
+        {
+          "command": "odt.projectReposExplorer.delete",
+          "when": "false"
+        },
+        {
+          "command": "odt.projectReposExplorer.openTerminalHere",
+          "when": "false"
+        },
+        {
+          "command": "odt.projectReposExplorer.copy",
+          "when": "false"
+        },
+        {
+          "command": "odt.projectReposExplorer.cut",
+          "when": "false"
+        },
+        {
+          "command": "odt.projectReposExplorer.paste",
+          "when": "false"
+        },
+        {
+          "command": "odooDebugger.copyFilePath",
+          "when": "false"
+        },
+        {
+          "command": "odooDebugger.copyRelativePath",
+          "when": "false"
+        },
+        {
+          "command": "odooDebugger.openInIntegratedTerminal",
+          "when": "false"
+        },
+        {
+          "command": "odooDebugger.revealInExplorer",
+          "when": "false"
+        },
+        {
+          "command": "odooDebugger.revealFileInOS",
+          "when": "false"
+        },
+        {
+          "command": "projectSelector.refresh",
+          "when": "false"
+        },
+        {
+          "command": "repoSelector.refresh",
+          "when": "false"
+        },
+        {
+          "command": "dbSelector.refresh",
+          "when": "false"
+        },
+        {
+          "command": "moduleSelector.refresh",
+          "when": "false"
+        },
+        {
+          "command": "testingSelector.refresh",
+          "when": "false"
+        },
+        {
+          "command": "projectSelector.sort",
+          "when": "false"
+        },
+        {
+          "command": "repoSelector.sort",
+          "when": "false"
+        },
+        {
+          "command": "dbSelector.sort",
+          "when": "false"
+        },
+        {
+          "command": "moduleSelector.sort",
+          "when": "false"
+        },
+        {
+          "command": "versionsManager.sort",
+          "when": "false"
+        },
+        {
+          "command": "projectRepos.sort",
+          "when": "false"
         }
       ]
     },
@@ -985,12 +1198,12 @@
         "odooDebugger.defaultVersion.installApps": {
           "type": "string",
           "default": "",
-          "description": "Default apps to install for new versions"
+          "description": "Extra apps appended to -i in addition to the Modules view selections (comma-separated). The Modules view is the primary way to select modules."
         },
         "odooDebugger.defaultVersion.upgradeApps": {
           "type": "string",
           "default": "",
-          "description": "Default apps to upgrade for new versions"
+          "description": "Extra apps appended to -u in addition to the Modules view selections (comma-separated). The Modules view is the primary way to select modules."
         },
         "odooDebugger.defaultVersion.preCheckoutCommands": {
           "type": "array",

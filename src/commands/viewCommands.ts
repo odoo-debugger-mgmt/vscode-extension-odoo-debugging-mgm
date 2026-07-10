@@ -70,7 +70,10 @@ export function registerViewCommands(deps: CommandDeps): void {
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.quickSearch', async () => {
-        const items = ((await providers.module.getChildren()) ?? [])
+        // Include modules nested under psae-internal groups in the search.
+        const rootItems = ((await providers.module.getChildren()) ?? []);
+        const nestedItems = rootItems.flatMap(item => (item as vscode.TreeItem & { psaeChildren?: vscode.TreeItem[] }).psaeChildren ?? []);
+        const items = [...rootItems, ...nestedItems]
             .filter(item => item.contextValue === 'module' && !!item.command);
 
         await quickSearchTreeItems(items, {

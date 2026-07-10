@@ -3,7 +3,7 @@ import { SettingsStore } from './settingsStore';
 import { TestTag, TestingConfigModel, LogLevel, ensureTestingConfigModel } from './models/testing';
 import { ModuleModel } from './models/module';
 import { InstalledModuleInfo } from './models/module';
-import { showError, showInfo, showAutoInfo, showWarning, stripSettings, createInfoTreeItem } from './utils';
+import { showError, showInfo, showAutoInfo, stripSettings, createInfoTreeItem } from './utils';
 import { updateTestingContext } from './context';
 import { setupDebugger } from './debugger';
 import { getInstalledModules } from './services/database';
@@ -219,6 +219,10 @@ export class TestingTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
         if (testingConfig.stopAfterInit) {
             parts.push('--stop-after-init');
+        }
+
+        if (testingConfig.logLevel && testingConfig.logLevel !== 'disabled') {
+            parts.push(`--log-level ${testingConfig.logLevel}`);
         }
 
         return parts.join(' ');
@@ -484,33 +488,35 @@ export async function addTestTag(): Promise<void> {
                     : `Examples: ${examplesText}`,
                 value: '',
                 ignoreFocusOut: true,
-                validateInput: (value: string) => {
+                validateInput: (value: string): string | vscode.InputBoxValidationMessage | null => {
                     if (!value.trim()) {
                         return 'Please enter a value';
                     }
 
                     const trimmed = value.trim();
 
-                    // Basic validation based on type
+                    // Basic validation based on type; naming-convention hints
+                    // are shown inline but never block accepting the input.
                     switch (selectedType.value) {
                         case 'tag':
-                            // Simple tags: alphanumeric and underscores
                             if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) {
                                 return 'Tag names should contain only letters, numbers, and underscores';
                             }
                             break;
                         case 'class':
-                            // Class format: just the class name (no module: prefix needed)
-                            // Non-blocking check for Test prefix - just log suggestion, don't block
-                            if (!trimmed.startsWith('Test') && !trimmed.includes('Test')) {
-                                logger.debug(`Class names typically start with "Test" (e.g., "TestSalesAccessRights")`);
+                            if (!trimmed.includes('Test')) {
+                                return {
+                                    message: 'Class names typically start with "Test" (e.g. "TestSalesAccessRights")',
+                                    severity: vscode.InputBoxValidationSeverity.Info
+                                };
                             }
                             break;
                         case 'method':
-                            // Method format: just the method name (no module:Class. prefix needed)
-                            // Non-blocking check for test_ prefix - just log suggestion, don't block
                             if (!trimmed.startsWith('test_')) {
-                                logger.debug(`Method names typically start with "test_" (e.g., "test_workflow_invoice")`);
+                                return {
+                                    message: 'Method names typically start with "test_" (e.g. "test_workflow_invoice")',
+                                    severity: vscode.InputBoxValidationSeverity.Info
+                                };
                             }
                             break;
                     }
@@ -532,18 +538,8 @@ export async function addTestTag(): Promise<void> {
                 let formatInfo = '';
                 if (selectedType.value === 'class') {
                     formatInfo = ` (will be formatted as :${userInput.trim()})`;
-
-                    // Show naming convention suggestion if applicable
-                    if (!userInput.trim().startsWith('Test') && !userInput.trim().includes('Test')) {
-                        void showWarning(`Warning: Class names typically start with "Test" (e.g., "TestSalesAccessRights").`);
-                    }
                 } else if (selectedType.value === 'method') {
                     formatInfo = ` (will be formatted as .${userInput.trim()})`;
-
-                    // Show naming convention suggestion if applicable
-                    if (!userInput.trim().startsWith('test_')) {
-                        void showWarning(`Warning: Method names typically start with "test_" (e.g., "test_workflow_invoice").`);
-                    }
                 }
 
                 showAutoInfo(`Added ${selectedType.value} "${userInput.trim()}"${formatInfo} as test target.`, 4000);

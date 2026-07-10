@@ -1,17 +1,13 @@
 import { ModuleModel, InstalledModuleInfo } from "./models/module";
 import { DatabaseModel } from "./models/db";
-import { ProjectModel } from "./models/project";
 import { RepoModel } from "./models/repo";
 import * as vscode from "vscode";
-import { discoverModulesInRepos, showError, showInfo, showAutoInfo, stripSettings, createInfoTreeItem, ModuleDiscoveryResult, getDatabaseLabel, normalizePath } from './utils';
+import { showError, showInfo, showAutoInfo, stripSettings, createInfoTreeItem, getDatabaseLabel, normalizePath } from './utils';
+import { collectModuleDiscovery, resolvePsaeDirectories, setPsaeDirectoryIncluded, PSAE_INTERNAL_REGEX, PsaeDirectoryState } from './services/psaeInternal';
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-function collectModuleDiscovery(project: ProjectModel): ModuleDiscoveryResult {
-    const manualIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
-    return discoverModulesInRepos(project.repos, { manualIncludePaths: manualIncludes });
-}
 import { SettingsStore } from './settingsStore';
 import { getInstalledModuleNames, getInstalledModules } from './services/database';
 import { SortPreferences } from './sortPreferences';
@@ -22,15 +18,36 @@ import { BaseTreeProvider } from './views/baseTreeProvider';
 import { runCommand, tryRunCommand } from './services/process';
 import { errorMessage } from './services/logger';
 
+interface ModuleData {
+    name: string;
+    path: string;
+    state: string;
+    repoName: string;
+    isPsaeInternal: boolean;
+    isInstalled: boolean;
+}
+
+type ModuleTreeNode = vscode.TreeItem & {
+    moduleData?: ModuleData;
+    psaeState?: PsaeDirectoryState;
+    psaeChildren?: ModuleTreeNode[];
+};
+
 export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
     constructor(_context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
         super();
     }
+
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
         return element;
     }
-    async getChildren(_element?: any): Promise<vscode.TreeItem[] | undefined> {
+
+    async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[] | undefined> {
+        if (element) {
+            return (element as ModuleTreeNode).psaeChildren ?? [];
+        }
+
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
             return [createInfoTreeItem('Select a project to manage modules.')];
@@ -45,8 +62,7 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             return [createInfoTreeItem('No modules configured for this database.')];
         }
 
-        // Check if testing is enabled
-        const isTestingEnabled = project.testingConfig && project.testingConfig.isEnabled;
+        const isTestingEnabled = !!(project.testingConfig && project.testingConfig.isEnabled);
 
         const { modules: allModules, psaeDirectories } = collectModuleDiscovery(project);
         const installedModuleNames = await getInstalledModuleNames(db.id);
@@ -56,224 +72,138 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
                 .filter(module => module.state === 'install' || module.state === 'upgrade')
                 .map(module => module.name)
         );
-        const manuallyIncludedPaths = new Set((project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!')));
-        const manuallyExcludedPaths = new Set((project.includedPsaeInternalPaths ?? []).filter(entry => entry.startsWith('!')).map(entry => entry.substring(1)));
 
+        const psaeStates = resolvePsaeDirectories({
+            psaeDirectories,
+            includedPsaeInternalPaths: project.includedPsaeInternalPaths,
+            selectedModuleNames: selectedDbModuleNames,
+            installedModuleNames
+        });
+
+        const buildModuleNode = (module: { name: string; path: string; repoName: string; isPsaeInternal: boolean; psInternalDirName?: string }): ModuleTreeNode => {
+            const repoPath = module.isPsaeInternal ? `${module.repoName}/${module.psInternalDirName}` : module.repoName;
+            const managed = dbModulesByName.get(module.name);
+            const isInstalledInDb = installedModuleNames.has(module.name);
+            if (managed) {
+                managed.isInstalled = isInstalledInDb;
+            }
+            const state = managed?.state ?? 'none';
+
+            const item: ModuleTreeNode = new vscode.TreeItem(module.name, vscode.TreeItemCollapsibleState.None);
+            item.id = module.path;
+            item.iconPath = this.getModuleIcon(state, isInstalledInDb);
+            item.description = repoPath;
+            item.contextValue = 'module';
+
+            const stateLabel = state !== 'none' ? state : isInstalledInDb ? 'Installed' : 'none';
+            item.tooltip = new vscode.MarkdownString([
+                `**Module:** ${module.name}`,
+                `**State:** ${stateLabel}`,
+                `**Source:** ${repoPath}`,
+                `**Path:** ${module.path}`
+            ].join('\n\n'));
+
+            const moduleData: ModuleData = {
+                name: module.name,
+                path: module.path,
+                state,
+                repoName: module.repoName,
+                isPsaeInternal: module.isPsaeInternal,
+                isInstalled: isInstalledInDb
+            };
+            item.moduleData = moduleData;
+            item.command = isTestingEnabled ? undefined : {
+                command: 'moduleSelector.select',
+                title: 'Select Module',
+                arguments: [moduleData]
+            };
+            return item;
+        };
+
+        const treeItems: ModuleTreeNode[] = [];
+
+        if (isTestingEnabled) {
+            const testingModeItem: ModuleTreeNode = new vscode.TreeItem(
+                'Module management disabled (testing mode)',
+                vscode.TreeItemCollapsibleState.None
+            );
+            testingModeItem.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
+            testingModeItem.tooltip = 'Testing is enabled. Disable testing in the Testing view to manage modules again.';
+            testingModeItem.contextValue = 'info';
+            treeItems.push(testingModeItem);
+        }
+
+        // psae-internal directories become collapsible groups with their
+        // modules as children; the toggle lives on the group.
         const modulesByPsaeDir = new Map<string, typeof allModules>();
         for (const module of allModules) {
             if (!module.isPsaeInternal || !module.psInternalDirPath) {
                 continue;
             }
-            const existing = modulesByPsaeDir.get(module.psInternalDirPath) ?? [];
+            const key = normalizePath(module.psInternalDirPath);
+            const existing = modulesByPsaeDir.get(key) ?? [];
             existing.push(module);
-            modulesByPsaeDir.set(module.psInternalDirPath, existing);
+            modulesByPsaeDir.set(key, existing);
         }
 
-        let treeItems: vscode.TreeItem[] = [];
+        for (const psaeState of psaeStates) {
+            const members = (modulesByPsaeDir.get(psaeState.path) ?? [])
+                .filter(m => !PSAE_INTERNAL_REGEX.test(m.name))
+                .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
-        // ALWAYS add testing mode notification first when testing is enabled
-        if (isTestingEnabled) {
-            const testingModeItem = new vscode.TreeItem(
-                '⚠️ Module Management Disabled (Testing Mode)',
-                vscode.TreeItemCollapsibleState.None
-            );
-            testingModeItem.tooltip = 'Testing is enabled. Disable testing to manage modules again.';
-            testingModeItem.description = 'Go to Testing tab to disable';
-            treeItems.push(testingModeItem);
+            const parent: ModuleTreeNode = new vscode.TreeItem(psaeState.dirName, vscode.TreeItemCollapsibleState.Collapsed);
+            parent.id = psaeState.path;
+            parent.iconPath = psaeState.isIncluded
+                ? new vscode.ThemeIcon('package', new vscode.ThemeColor('charts.green'))
+                : new vscode.ThemeIcon('package');
+            parent.description = `${psaeState.repoName} • ${members.length} modules • ${psaeState.isIncluded ? 'in addons path' : 'excluded'}`;
+            parent.contextValue = isTestingEnabled ? 'psaeDirectoryDisabled' : 'psaeDirectory';
+
+            const reasons: string[] = [];
+            if (psaeState.isManuallyIncluded) { reasons.push('manually included'); }
+            if (psaeState.isManuallyExcluded) { reasons.push('manually excluded'); }
+            if (psaeState.hasSelectedModules) { reasons.push('has selected modules'); }
+            if (psaeState.hasDbModules) { reasons.push('has database modules'); }
+            parent.tooltip = [
+                `${psaeState.dirName}: ${psaeState.isIncluded ? 'Included in addons path' : 'Not included'}${reasons.length ? ` (${reasons.join(' + ')})` : ''}`,
+                `Repo: ${psaeState.repoName}`,
+                `Path: ${psaeState.path}`,
+                isTestingEnabled ? 'Module management disabled while testing is enabled' : 'Use the toggle action to include/exclude it'
+            ].join('\n');
+
+            parent.psaeState = psaeState;
+            parent.psaeChildren = members.map(buildModuleNode);
+            treeItems.push(parent);
         }
 
-        // Add psae-internal directories as special meta-modules
-        for (const psaeDir of psaeDirectories) {
-            const psaeInternalModules = modulesByPsaeDir.get(psaeDir.path) ?? [];
-
-            // Check if any modules from this ps*-internal are selected OR installed in DB
-            const hasSelectedModules = psaeInternalModules.some(m =>
-                selectedDbModuleNames.has(m.name)
-            );
-
-            // Check if any modules from this ps*-internal directory are installed/to upgrade in DB
-            const hasDbModules = psaeInternalModules.some(m =>
-                installedModuleNames.has(m.name)
-            );
-
-            const isManuallyIncluded = manuallyIncludedPaths.has(psaeDir.path);
-
-            // Auto-include if has selected OR database modules
-            // If not manually set: auto-include if has selected OR database modules
-            const shouldBeIncluded = isManuallyIncluded || (!manuallyExcludedPaths.has(psaeDir.path) && (hasSelectedModules || hasDbModules));
-
-            // Determine icon and tooltip based on status
-            let psaeIcon: string;
-            let psaeTooltip: string;
-
-            if (shouldBeIncluded) {
-                psaeIcon = '📦'; // Package icon when included in addons path
-                const reasons = [];
-                if (isManuallyIncluded) {
-                    reasons.push('manually included');
-                }
-                if (hasSelectedModules) {
-                    reasons.push('has selected modules');
-                }
-                if (hasDbModules) {
-                    reasons.push('has database modules');
-                }
-
-                psaeTooltip = `${psaeDir.dirName}: Included (${reasons.join(' + ')})\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to exclude from addons path`;
-            } else {
-                psaeIcon = '📋'; // Clipboard icon when not included
-                const reason = manuallyExcludedPaths.has(psaeDir.path) ? 'manually excluded' : 'no modules';
-                psaeTooltip = `${psaeDir.dirName}: Not included (${reason})\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to include in addons path`;
-            }
-
-            treeItems.push({
-                id: psaeDir.path,
-                label: `${psaeIcon} ${psaeDir.dirName}`,
-                tooltip: isTestingEnabled
-                    ? `${psaeTooltip}\n⚠️ Module management disabled while testing is enabled`
-                    : psaeTooltip,
-                description: `${psaeDir.repoName} (${psaeInternalModules.length} modules)`,
-                command: isTestingEnabled ? undefined : {
-                    command: 'moduleSelector.togglePsaeInternalModule',
-                    title: `Toggle ${psaeDir.dirName}`,
-                    arguments: [{
-                        path: psaeDir.path,
-                        repoName: psaeDir.repoName,
-                        dirName: psaeDir.dirName,
-                        hasSelectedModules: hasSelectedModules,
-                        hasDbModules: hasDbModules,
-                        isManuallyIncluded: isManuallyIncluded,
-                        shouldBeIncluded: shouldBeIncluded,
-                        modules: psaeInternalModules
-                    }]
-                }
-            });
-        }
-
-        // Add regular modules (excluding ps*-internal from the name display since we show them separately)
-        for (const module of allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i))) {
-            const repoPath = module.isPsaeInternal ? `${module.repoName}/${module.psInternalDirName}` : module.repoName;
-            const existingModule = dbModulesByName.get(module.name);
-            const isInstalledInDb = installedModuleNames.has(module.name);
-
-            if (existingModule) {
-                // Update the isInstalled flag based on database state
-                existingModule.isInstalled = isInstalledInDb;
-
-                let moduleIcon: string;
-
-                switch (existingModule.state) {
-                    case 'install':
-                        moduleIcon = '🟢';
-                        break;
-                    case 'upgrade':
-                        moduleIcon = '🟡';
-                        break;
-                    default:
-                        moduleIcon = existingModule.isInstalled ? '⚫' : '⚪'; // Black circle for installed but not managed
-                        break;
-                }
-
-                // Create module tooltip with consistent formatting
-                const moduleTooltipDetails = [];
-                moduleTooltipDetails.push(`**Module:** ${module.name}`);
-                moduleTooltipDetails.push(`**State:** ${existingModule.state}`);
-                moduleTooltipDetails.push(`**Source:** ${repoPath}`);
-                moduleTooltipDetails.push(`**Path:** ${module.path}`);
-
-                const managedModuleItem = {
-                    id: module.path,
-                    label: `${moduleIcon} ${module.name}`,
-                    tooltip: new vscode.MarkdownString(moduleTooltipDetails.join('\n\n')),
-                    description: repoPath,
-                    contextValue: 'module',
-                    command: isTestingEnabled ? undefined : {
-                        command: 'moduleSelector.select',
-                        title: 'Select Module',
-                        arguments: [{ name: module.name, path: module.path, state: existingModule.state, repoName: module.repoName, isPsaeInternal: module.isPsaeInternal, isInstalled: existingModule.isInstalled }]
-                    }
-                } as vscode.TreeItem & { contextValue: string };
-
-                // Store module data for context menu commands
-                (managedModuleItem as any).moduleData = {
-                    name: module.name,
-                    path: module.path,
-                    state: existingModule.state,
-                    repoName: module.repoName,
-                    isPsaeInternal: module.isPsaeInternal,
-                    isInstalled: existingModule.isInstalled
-                };
-
-                treeItems.push(managedModuleItem);
-            } else {
-                // Module not in our managed list
-                const moduleIcon = isInstalledInDb ? '⚫' : '⚪'; // Black circle for installed, white for not installed
-                const moduleState = isInstalledInDb ? 'Installed' : 'none';
-
-                // Create module tooltip with consistent formatting
-                const moduleTooltipDetails = [];
-                moduleTooltipDetails.push(`**Module:** ${module.name}`);
-                moduleTooltipDetails.push(`**State:** ${moduleState}`);
-                moduleTooltipDetails.push(`**Source:** ${repoPath}`);
-                moduleTooltipDetails.push(`**Path:** ${module.path}`);
-
-                const unmanagedModuleItem = {
-                    id: module.path,
-                    label: `${moduleIcon} ${module.name}`,
-                    tooltip: new vscode.MarkdownString(moduleTooltipDetails.join('\n\n')),
-                    description: repoPath,
-                    contextValue: 'module',
-                    command: isTestingEnabled ? undefined : {
-                        command: 'moduleSelector.select',
-                        title: 'Select Module',
-                        arguments: [{ name: module.name, path: module.path, state: 'none', repoName: module.repoName, isPsaeInternal: module.isPsaeInternal, isInstalled: isInstalledInDb }]
-                    }
-                } as vscode.TreeItem & { contextValue: string };
-
-                // Store module data for context menu commands
-                (unmanagedModuleItem as any).moduleData = {
-                    name: module.name,
-                    path: module.path,
-                    state: 'none',
-                    repoName: module.repoName,
-                    isPsaeInternal: module.isPsaeInternal,
-                    isInstalled: isInstalledInDb
-                };
-
-                treeItems.push(unmanagedModuleItem);
-            }
-        }
+        // Regular (non-psae) modules at the root.
+        const regularModules = allModules
+            .filter(m => !m.isPsaeInternal && !PSAE_INTERNAL_REGEX.test(m.name))
+            .map(buildModuleNode);
 
         const sortId = this.sortPreferences.get('moduleSelector', getDefaultSortOption('moduleSelector'));
-        return this.sortModuleItems(treeItems, sortId);
+        regularModules.sort((a, b) => this.compareModules(a, b, sortId));
+
+        treeItems.push(...regularModules);
+        return treeItems;
     }
 
-    private sortModuleItems(items: vscode.TreeItem[], sortId: string): vscode.TreeItem[] {
-        const testingItems: vscode.TreeItem[] = [];
-        const psaeItems: vscode.TreeItem[] = [];
-        const moduleItems: vscode.TreeItem[] = [];
-        const otherItems: vscode.TreeItem[] = [];
-
-        for (const item of items) {
-            if (typeof item.label === 'string' && item.label.includes('⚠️ Module Management Disabled (Testing Mode)')) {
-                testingItems.push(item);
-            } else if ((item.command?.command === 'moduleSelector.togglePsaeInternalModule') || (typeof item.label === 'string' && /ps[a-z]*-internal/i.test(item.label))) {
-                psaeItems.push(item);
-            } else if ((item as any).moduleData) {
-                moduleItems.push(item);
-            } else {
-                otherItems.push(item);
-            }
+    private getModuleIcon(state: string, isInstalled: boolean): vscode.ThemeIcon {
+        switch (state) {
+            case 'install':
+                return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'));
+            case 'upgrade':
+                return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.yellow'));
+            default:
+                return isInstalled
+                    ? new vscode.ThemeIcon('circle-filled')
+                    : new vscode.ThemeIcon('circle-outline');
         }
-
-        moduleItems.sort((a, b) => this.compareModules(a, b, sortId));
-
-        return [...testingItems, ...psaeItems, ...moduleItems, ...otherItems];
     }
 
-    private compareModules(itemA: vscode.TreeItem, itemB: vscode.TreeItem, sortId: string): number {
-        const dataA = (itemA as any).moduleData;
-        const dataB = (itemB as any).moduleData;
+    private compareModules(itemA: ModuleTreeNode, itemB: ModuleTreeNode, sortId: string): number {
+        const dataA = itemA.moduleData;
+        const dataB = itemB.moduleData;
 
         if (!dataA || !dataB) {
             return 0;
@@ -297,6 +227,13 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             }
             case 'module:state:active-last': {
                 const diff = statePriority(dataB.state) - statePriority(dataA.state);
+                if (diff !== 0) {
+                    return diff;
+                }
+                return nameCompare;
+            }
+            case 'module:installed:first': {
+                const diff = Number(dataB.isInstalled) - Number(dataA.isInstalled);
                 if (diff !== 0) {
                     return diff;
                 }
@@ -594,19 +531,12 @@ export async function clearModuleState(event: any): Promise<void> {
     await SettingsStore.saveWithoutComments(stripSettings(data));
 }
 
-export async function togglePsaeInternalModule(event: any): Promise<void> {
-    const {
-        path: psaeInternalPath,
-        repoName,
-        dirName,
-        hasSelectedModules,
-        hasDbModules,
-        hasInstalledModules,
-        isManuallyIncluded,
-        shouldBeIncluded,
-        modules: psaeModules
-    } = event;
-    const hasInstalledOrDbModules = Boolean(hasInstalledModules ?? hasDbModules);
+export async function togglePsaeInternalModule(event: unknown): Promise<void> {
+    const state = (event as { psaeState?: PsaeDirectoryState })?.psaeState;
+    if (!state) {
+        void showError('Could not identify the psae-internal directory to toggle.');
+        return;
+    }
 
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
@@ -620,67 +550,25 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
         return;
     }
 
-    // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
         void showError('Disable testing mode before changing module selections.');
         return;
     }
 
-    // Initialize includedPsaeInternalPaths if it doesn't exist
-    if (!project.includedPsaeInternalPaths) {
-        project.includedPsaeInternalPaths = [];
+    const include = !state.isIncluded;
+    const { removedModuleNames } = setPsaeDirectoryIncluded(project, state, include);
+    if (removedModuleNames.length > 0) {
+        db.modules = db.modules.filter(dbModule => !removedModuleNames.includes(dbModule.name));
     }
 
-    const excludePath = `!${psaeInternalPath}`;
-    const isManuallyExcluded = project.includedPsaeInternalPaths.includes(excludePath);
+    await SettingsStore.saveWithoutComments(stripSettings(data));
 
-    if (shouldBeIncluded) {
-        if (isManuallyIncluded) {
-            // Currently manually included - remove manual inclusion (may still be auto-included)
-            const pathIndex = project.includedPsaeInternalPaths.indexOf(psaeInternalPath);
-            if (pathIndex > -1) {
-                project.includedPsaeInternalPaths.splice(pathIndex, 1);
-            }
-            // If would still be auto-included, add manual exclusion and remove selected modules
-            if (hasSelectedModules || hasInstalledOrDbModules) {
-                project.includedPsaeInternalPaths.push(excludePath);
-                // Remove selected modules from this psae-internal directory
-                const moduleNamesToRemove = psaeModules.map((m: any) => m.name);
-                db.modules = db.modules.filter(dbModule => !moduleNamesToRemove.includes(dbModule.name));
-                await SettingsStore.saveWithoutComments(stripSettings(data));
-                void showInfo(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
-            } else {
-                await SettingsStore.saveWithoutComments(stripSettings(data));
-                void showInfo(`Removed manual inclusion of ${dirName} (${repoName})`);
-            }
-        } else {
-            // Currently auto-included - add manual exclusion to override and remove selected modules
-            project.includedPsaeInternalPaths.push(excludePath);
-            // Remove selected modules from this psae-internal directory
-            const moduleNamesToRemove = psaeModules.map((m: any) => m.name);
-            db.modules = db.modules.filter(dbModule => !moduleNamesToRemove.includes(dbModule.name));
-            await SettingsStore.saveWithoutComments(stripSettings(data));
-            void showInfo(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
-        }
+    if (include) {
+        showAutoInfo(`Included ${state.dirName} (${state.repoName}) in the addons path`, 2500);
+    } else if (removedModuleNames.length > 0) {
+        showAutoInfo(`Excluded ${state.dirName} (${state.repoName}) and cleared ${removedModuleNames.length} selected module(s)`, 3000);
     } else {
-        if (isManuallyExcluded) {
-            // Currently manually excluded - remove exclusion (may auto-include)
-            const pathIndex = project.includedPsaeInternalPaths.indexOf(excludePath);
-            if (pathIndex > -1) {
-                project.includedPsaeInternalPaths.splice(pathIndex, 1);
-            }
-            await SettingsStore.saveWithoutComments(stripSettings(data));
-            if (hasSelectedModules || hasInstalledOrDbModules) {
-                void showInfo(`Removed manual exclusion of ${dirName} (${repoName}). Now auto-included due to modules.`);
-            } else {
-                void showInfo(`Removed manual exclusion of ${dirName} (${repoName})`);
-            }
-        } else {
-            // Currently not included - add manual inclusion
-            project.includedPsaeInternalPaths.push(psaeInternalPath);
-            await SettingsStore.saveWithoutComments(stripSettings(data));
-            void showInfo(`Manually included ${dirName} (${repoName}) in addons path`);
-        }
+        showAutoInfo(`Excluded ${state.dirName} (${state.repoName}) from the addons path`, 2500);
     }
 }
 
@@ -706,7 +594,7 @@ export async function updateAllModules(): Promise<void> {
 
     const { modules: allModules } = collectModuleDiscovery(project);
 
-    const availableModules = allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i));
+    const availableModules = allModules.filter(m => !PSAE_INTERNAL_REGEX.test(m.name));
 
     if (availableModules.length === 0) {
         void showInfo('No modules are available to update.');
@@ -822,7 +710,7 @@ export async function installAllModules(): Promise<void> {
 
     const { modules: allModules } = collectModuleDiscovery(project);
 
-    const availableModules = allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i));
+    const availableModules = allModules.filter(m => !PSAE_INTERNAL_REGEX.test(m.name));
 
     if (availableModules.length === 0) {
         void showInfo('No modules are available to install.');

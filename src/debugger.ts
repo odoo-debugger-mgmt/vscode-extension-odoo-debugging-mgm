@@ -1,15 +1,15 @@
 import * as vscode from "vscode";
-import * as fs from 'fs';
 import * as path from 'node:path';
 import { ProjectModel } from "./models/project";
 import { SettingsModel } from "./models/settings";
-import { getWorkspacePath, normalizePath, showError, showInfo, showAutoInfo, discoverModulesInRepos } from './utils';
+import { getWorkspacePath, normalizePath, showError, showInfo, showAutoInfo } from './utils';
+import { collectModuleDiscovery, resolvePsaeDirectories } from './services/psaeInternal';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import { ensureTestingConfigModel } from './models/testing';
 import { getInstalledModuleNames, databaseHasModuleTable } from './services/database';
-import { parse } from 'jsonc-parser';
-import { logger } from './services/logger';
+import { logger, errorMessage } from './services/logger';
+import { updateManagedLaunchConfig } from './services/launchConfig';
 
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
@@ -46,31 +46,6 @@ async function selectPythonInterpreter(pythonPath: string): Promise<void> {
     }
 }
 
-function readLaunchData(workspacePath: string, debuggerName: string): { launchPath: string; launchData: any; configurations: any[]; existingIndex: number } {
-    const vscodeDir = path.join(workspacePath, '.vscode');
-    const launchPath = path.join(vscodeDir, 'launch.json');
-
-    fs.mkdirSync(vscodeDir, { recursive: true });
-
-    let content: string;
-    if (fs.existsSync(launchPath)) {
-        content = fs.readFileSync(launchPath, 'utf8');
-    } else {
-        content = JSON.stringify({ version: '0.2.0', configurations: [] }, null, 2) + '\n';
-        fs.writeFileSync(launchPath, content, 'utf8');
-    }
-
-    let launchData = parse(content);
-    if (!launchData || typeof launchData !== 'object') {
-        launchData = { version: '0.2.0', configurations: [] };
-    }
-
-    const configurations = Array.isArray(launchData.configurations) ? [...launchData.configurations] : [];
-    const existingIndex = configurations.findIndex(conf => conf?.name === debuggerName);
-    return { launchPath, launchData, configurations, existingIndex };
-}
-
-
 export async function setupDebugger(): Promise<any> {
     const workspacePath = getWorkspacePath();
     if (!workspacePath) {
@@ -104,32 +79,23 @@ export async function setupDebugger(): Promise<any> {
         return undefined;
     }
 
-    const { launchPath, launchData, configurations, existingIndex } = readLaunchData(workspacePath, settings.debuggerName);
-    const existingConfig = existingIndex >= 0 ? configurations[existingIndex] : undefined;
-
-    const newOdooConfig = {
-        ...existingConfig,
-        name: settings.debuggerName,
-        type: "debugpy",
-        request: "launch",
-        cwd: workspacePath,
-        program: `${normalizedOdooPath}/odoo-bin`,
-        python: normalizedPythonPath,
-        console: "integratedTerminal",
-        args
-    };
-
-    if (existingIndex >= 0) {
-        configurations.splice(existingIndex, 1);
-    }
-    configurations.unshift(newOdooConfig);
-    launchData.version = launchData.version ?? '0.2.0';
-    launchData.configurations = configurations;
-
+    let newOdooConfig;
     try {
-        fs.writeFileSync(launchPath, JSON.stringify(launchData, null, 2) + '\n', 'utf8');
+        // Only the extension's own entry in launch.json is rewritten; user
+        // comments and other configurations are preserved.
+        newOdooConfig = await updateManagedLaunchConfig(workspacePath, {
+            name: settings.debuggerName,
+            type: 'debugpy',
+            request: 'launch',
+            cwd: workspacePath,
+            program: `${normalizedOdooPath}/odoo-bin`,
+            python: normalizedPythonPath,
+            console: 'integratedTerminal',
+            args
+        });
     } catch (error) {
-        void showError(`Unable to update launch.json: ${error}`);
+        void showError(`Unable to update launch.json: ${errorMessage(error)}`);
+        return undefined;
     }
 
     await selectPythonInterpreter(settings.pythonPath);
@@ -177,23 +143,9 @@ async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShe
     }
     const projectModules = db.modules ?? [];
 
-    // Auto-detect ps*-internal paths needed based on selected modules
-    const psInternalPaths = new Set<string>();
-    const manualIncludes = new Set<string>();
-    const manualExcludes = new Set<string>();
-
-    for (const entry of project.includedPsaeInternalPaths ?? []) {
-        if (entry.startsWith('!')) {
-            manualExcludes.add(normalizePath(entry.substring(1)));
-        } else {
-            const normalized = normalizePath(entry);
-            manualIncludes.add(normalized);
-            psInternalPaths.add(normalized);
-        }
-    }
-
-    const manualPsaeIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
-    const discovery = discoverModulesInRepos(project.repos, { manualIncludePaths: manualPsaeIncludes });
+    // psae-internal directories: resolved through the shared service so the
+    // Modules tree and the launch args always agree on what is included.
+    const discovery = collectModuleDiscovery(project);
 
     const containerPathMap = new Map<string, string>();
 
@@ -219,12 +171,6 @@ async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShe
         addAddonPath(containerPath);
     }
 
-    const foundPsInternalDirs = new Map<string, string[]>(); // path -> modules
-
-    for (const dir of discovery.psaeDirectories) {
-        foundPsInternalDirs.set(normalizePath(dir.path), dir.moduleNames);
-    }
-
     const selectedModuleNames = new Set(
         projectModules
             .filter(module => module.state === 'install' || module.state === 'upgrade')
@@ -238,24 +184,15 @@ async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShe
         logger.warn('Failed to get installed modules from database:', error);
     }
 
-    for (const [psPath, psModules] of foundPsInternalDirs.entries()) {
-        if (manualExcludes.has(psPath)) {
-            continue;
-        }
-
-        const isManuallyIncluded = manualIncludes.has(psPath);
-        const hasSelectedModules = psModules.some(psModule => selectedModuleNames.has(psModule));
-        const hasDbModules = psModules.some(psModule => installedModuleNames.has(psModule));
-
-        if (isManuallyIncluded || hasSelectedModules || hasDbModules) {
-            psInternalPaths.add(psPath);
-        }
-    }
-
-    // Add auto-detected ps*-internal paths to addons paths
-    if (psInternalPaths.size > 0) {
-        for (const psPath of psInternalPaths) {
-            addAddonPath(psPath);
+    const psaeStates = resolvePsaeDirectories({
+        psaeDirectories: discovery.psaeDirectories,
+        includedPsaeInternalPaths: project.includedPsaeInternalPaths,
+        selectedModuleNames,
+        installedModuleNames
+    });
+    for (const psaeState of psaeStates) {
+        if (psaeState.isIncluded) {
+            addAddonPath(psaeState.path);
         }
     }
 
@@ -435,11 +372,13 @@ export async function startDebugServer(): Promise<void> {
     // Get settings from active version instead of legacy settings
     const versionsService = VersionsService.getInstance();
     const workspaceSettings = await versionsService.getActiveVersionSettings();
+    // Stop only the session launched from the extension's own configuration;
+    // unrelated debug sessions must survive a server (re)start.
     const existingSession = vscode.debug.activeDebugSession;
-    if (existingSession) {
+    if (existingSession && existingSession.configuration?.name === workspaceSettings.debuggerName) {
         await vscode.debug.stopDebugging(existingSession);
     }
-    vscode.debug.startDebugging(
+    void vscode.debug.startDebugging(
         workspaceFolders[0],
         workspaceSettings.debuggerName
     );
