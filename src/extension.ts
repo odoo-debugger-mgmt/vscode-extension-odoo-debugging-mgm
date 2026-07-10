@@ -5,7 +5,6 @@ import { migrateLegacySwitchBehaviorSetting } from './services/environment';
 import { migrateDebuggerData } from './services/dataMigration';
 import { ProjectTreeProvider } from './project';
 import { RepoTreeProvider } from './repos';
-import { ProjectReposProvider } from './projectRepos';
 import { ModuleTreeProvider } from './module';
 import { TestingTreeProvider } from './testing';
 import { setupDebugger } from './debugger';
@@ -57,8 +56,7 @@ export async function activate(context: vscode.ExtensionContext) {
         module: new ModuleTreeProvider(context, sortPreferences),
         testing: new TestingTreeProvider(context),
         versions: new VersionsTreeProvider(sortPreferences),
-        projectRepos: new ProjectReposProvider(sortPreferences),
-        projectReposExplorer: new ProjectReposExplorerProvider()
+        projectReposExplorer: new ProjectReposExplorerProvider(sortPreferences)
     };
 
     // React to version changes fired by VersionsService.refresh(). Must be
@@ -84,7 +82,6 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.window.registerTreeDataProvider('moduleSelector', providers.module));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('testingSelector', providers.testing));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('versionsManager', providers.versions));
-    context.subscriptions.push(vscode.window.registerTreeDataProvider('projectRepos', providers.projectRepos));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('odt.projectReposExplorer', providers.projectReposExplorer));
 
     // ------------------------------------------------------------------

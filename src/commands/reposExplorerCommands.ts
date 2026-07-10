@@ -2,9 +2,8 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { CommandDeps } from './index';
-import { extractUri, extractRepoFromMetadata } from './args';
+import { extractUri } from './args';
 import { showInfo } from '../services/notifications';
-import { revealProjectRepo } from '../projectRepos';
 import {
     createNewFile as explorerCreateNewFile,
     createNewFolder as explorerCreateNewFolder,
@@ -58,21 +57,6 @@ async function openUriInIntegratedTerminal(uri: vscode.Uri | undefined): Promise
 
 export function registerReposExplorerCommands(deps: CommandDeps): void {
     const { context, providers } = deps;
-
-    context.subscriptions.push(vscode.commands.registerCommand('projectRepos.reveal', async (arg?: unknown) => {
-        const repo = extractRepoFromMetadata(arg);
-        if (repo?.path) {
-            await revealProjectRepo(repo);
-            return;
-        }
-
-        const uri = extractUri(arg);
-        if (!uri) {
-            void showInfo('Select a repository to reveal.');
-            return;
-        }
-        await vscode.commands.executeCommand('revealInExplorer', uri);
-    }));
 
     context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFile', async (uri?: vscode.Uri) => {
         await explorerCreateNewFile(uri);
@@ -140,51 +124,5 @@ export function registerReposExplorerCommands(deps: CommandDeps): void {
             return;
         }
         await vscode.commands.executeCommand('revealFileInOS', uri);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.renameEntry', async (arg?: unknown) => {
-        await explorerRenameEntry(extractUri(arg));
-        providers.projectRepos.refresh();
-        providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.deleteEntry', async (arg?: unknown) => {
-        await explorerDeleteEntry(extractUri(arg));
-        providers.projectRepos.refresh();
-        providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyEntry', async (arg?: unknown) => {
-        const uri = extractUri(arg);
-        if (!uri) {
-            void showInfo('Select a file or folder first.');
-            return;
-        }
-        explorerCopyEntries([uri], false);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.cutEntry', async (arg?: unknown) => {
-        const uri = extractUri(arg);
-        if (!uri) {
-            void showInfo('Select a file or folder first.');
-            return;
-        }
-        explorerCopyEntries([uri], true);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.pasteEntry', async (arg?: unknown) => {
-        const uri = extractUri(arg);
-        if (!uri) {
-            void showInfo('Select a folder to paste into.');
-            return;
-        }
-
-        let target = uri;
-        try {
-            if (fs.existsSync(uri.fsPath) && fs.lstatSync(uri.fsPath).isFile()) {
-                target = vscode.Uri.file(path.dirname(uri.fsPath));
-            }
-        } catch {
-            // Best effort: fall back to the provided uri
-        }
-
-        await explorerPasteEntries(target);
-        providers.projectRepos.refresh();
-        providers.projectReposExplorer.refresh();
     }));
 }

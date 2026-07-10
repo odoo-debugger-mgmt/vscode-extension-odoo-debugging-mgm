@@ -47,18 +47,17 @@ const environment_1 = __webpack_require__(27);
 const dataMigration_1 = __webpack_require__(44);
 const project_1 = __webpack_require__(45);
 const repos_1 = __webpack_require__(50);
-const projectRepos_1 = __webpack_require__(51);
-const module_1 = __webpack_require__(53);
-const testing_1 = __webpack_require__(55);
-const debugger_1 = __webpack_require__(57);
+const module_1 = __webpack_require__(51);
+const testing_1 = __webpack_require__(53);
+const debugger_1 = __webpack_require__(55);
 const settingsStore_1 = __webpack_require__(5);
-const versionsTreeProvider_1 = __webpack_require__(58);
+const versionsTreeProvider_1 = __webpack_require__(56);
 const versionsService_1 = __webpack_require__(23);
-const context_1 = __webpack_require__(56);
-const sortPreferences_1 = __webpack_require__(59);
-const projectReposExplorer_1 = __webpack_require__(60);
+const context_1 = __webpack_require__(54);
+const sortPreferences_1 = __webpack_require__(57);
+const projectReposExplorer_1 = __webpack_require__(58);
 const logger_1 = __webpack_require__(11);
-const commands_1 = __webpack_require__(61);
+const commands_1 = __webpack_require__(60);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -92,8 +91,7 @@ async function activate(context) {
         module: new module_1.ModuleTreeProvider(context, sortPreferences),
         testing: new testing_1.TestingTreeProvider(context),
         versions: new versionsTreeProvider_1.VersionsTreeProvider(sortPreferences),
-        projectRepos: new projectRepos_1.ProjectReposProvider(sortPreferences),
-        projectReposExplorer: new projectReposExplorer_1.ProjectReposExplorerProvider()
+        projectReposExplorer: new projectReposExplorer_1.ProjectReposExplorerProvider(sortPreferences)
     };
     // React to version changes fired by VersionsService.refresh(). Must be
     // registered before the migrations below, which may fire it, and outside
@@ -116,7 +114,6 @@ async function activate(context) {
     context.subscriptions.push(vscode.window.registerTreeDataProvider('moduleSelector', providers.module));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('testingSelector', providers.testing));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('versionsManager', providers.versions));
-    context.subscriptions.push(vscode.window.registerTreeDataProvider('projectRepos', providers.projectRepos));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('odt.projectReposExplorer', providers.projectReposExplorer));
     // ------------------------------------------------------------------
     // Refresh machinery: UI refreshes update every provider; debugger
@@ -9299,378 +9296,6 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ProjectReposProvider = void 0;
-exports.revealProjectRepo = revealProjectRepo;
-const vscode = __importStar(__webpack_require__(1));
-const fs = __importStar(__webpack_require__(22));
-const path = __importStar(__webpack_require__(3));
-const settingsStore_1 = __webpack_require__(5);
-const utils_1 = __webpack_require__(7);
-const sortOptions_1 = __webpack_require__(26);
-const filesExclude_1 = __webpack_require__(52);
-const baseTreeProvider_1 = __webpack_require__(4);
-const logger_1 = __webpack_require__(11);
-class ProjectRepoItem extends vscode.TreeItem {
-    metadata;
-    constructor(metadata) {
-        super(ProjectRepoItem.getLabel(metadata), ProjectRepoItem.getCollapsibleState(metadata));
-        this.metadata = metadata;
-        this.contextValue = ProjectRepoItem.getContext(metadata);
-        this.tooltip = ProjectRepoItem.getTooltip(metadata);
-        this.resourceUri = ProjectRepoItem.getResource(metadata);
-        this.command = ProjectRepoItem.getCommand(metadata);
-        this.description = ProjectRepoItem.getDescription(metadata);
-    }
-    static getLabel(metadata) {
-        switch (metadata.kind) {
-            case 'info':
-                return metadata.message;
-            case 'repo':
-                return metadata.repo.name;
-            case 'folder':
-            case 'file':
-                return path.basename(metadata.fsPath);
-            default:
-                return '';
-        }
-    }
-    static getDescription(metadata) {
-        if (metadata.kind === 'repo') {
-            return metadata.repo.path;
-        }
-        return undefined;
-    }
-    static getCollapsibleState(metadata) {
-        if (metadata.kind === 'info' || metadata.kind === 'file') {
-            return vscode.TreeItemCollapsibleState.None;
-        }
-        return vscode.TreeItemCollapsibleState.Collapsed;
-    }
-    static getTooltip(metadata) {
-        if (metadata.kind === 'repo') {
-            return metadata.repo.path;
-        }
-        if (metadata.kind === 'folder' || metadata.kind === 'file') {
-            return metadata.fsPath;
-        }
-        return undefined;
-    }
-    static getResource(metadata) {
-        if (metadata.kind === 'repo') {
-            return vscode.Uri.file(metadata.repo.path);
-        }
-        if (metadata.kind === 'folder' || metadata.kind === 'file') {
-            return vscode.Uri.file(metadata.fsPath);
-        }
-        return undefined;
-    }
-    static getCommand(metadata) {
-        if (metadata.kind === 'file') {
-            return {
-                command: 'vscode.open',
-                title: 'Open File',
-                arguments: [vscode.Uri.file(metadata.fsPath)]
-            };
-        }
-        return undefined;
-    }
-    static getContext(metadata) {
-        switch (metadata.kind) {
-            case 'info':
-                return 'projectReposInfo';
-            case 'repo':
-                return 'projectRepoRoot';
-            case 'folder':
-                return 'projectRepoFolder';
-            case 'file':
-                return 'projectRepoFile';
-            default:
-                return undefined;
-        }
-    }
-}
-class ProjectReposProvider extends baseTreeProvider_1.BaseTreeProvider {
-    sortPreferences;
-    constructor(sortPreferences) {
-        super();
-        this.sortPreferences = sortPreferences;
-    }
-    getTreeItem(element) {
-        return element;
-    }
-    async getChildren(element) {
-        const result = await settingsStore_1.SettingsStore.getSelectedProject();
-        if (!result) {
-            return [new ProjectRepoItem({ kind: 'info', message: 'Select a project to see its repositories.' })];
-        }
-        const repos = result.project.repos ?? [];
-        if (!repos.length) {
-            return [new ProjectRepoItem({ kind: 'info', message: 'No repositories selected for this project.' })];
-        }
-        if (!element) {
-            const sortId = this.sortPreferences.get('projectRepos', (0, sortOptions_1.getDefaultSortOption)('projectRepos'));
-            const sortedRepos = [...repos].sort((a, b) => this.compareRepos(a, b, sortId));
-            return sortedRepos.map(repo => new ProjectRepoItem({ kind: 'repo', repo }));
-        }
-        if (element.metadata.kind === 'repo') {
-            return this.getDirectoryEntries(element.metadata.repo.path, element.metadata.repo);
-        }
-        if (element.metadata.kind === 'folder') {
-            return this.getDirectoryEntries(element.metadata.fsPath, element.metadata.repo);
-        }
-        return [];
-    }
-    async getDirectoryEntries(dirPath, repo) {
-        try {
-            const filesExcludeMatcher = (0, filesExclude_1.createFilesExcludeMatcher)(vscode.Uri.file(dirPath));
-            const dirents = await fs.readdir(dirPath, { withFileTypes: true });
-            const visibleDirents = dirents.filter(dirent => {
-                const childPath = path.join(dirPath, dirent.name);
-                return !filesExcludeMatcher.isExcluded(childPath, dirent.name);
-            });
-            const sorted = visibleDirents.sort((a, b) => {
-                if (a.isDirectory() && !b.isDirectory()) {
-                    return -1;
-                }
-                if (!a.isDirectory() && b.isDirectory()) {
-                    return 1;
-                }
-                return a.name.localeCompare(b.name);
-            });
-            return sorted.map(dirent => {
-                const childPath = path.join(dirPath, dirent.name);
-                if (dirent.isDirectory()) {
-                    return new ProjectRepoItem({ kind: 'folder', repo, fsPath: childPath });
-                }
-                return new ProjectRepoItem({ kind: 'file', repo, fsPath: childPath });
-            });
-        }
-        catch (error) {
-            return [
-                new ProjectRepoItem({
-                    kind: 'info',
-                    message: `Unable to read folder: ${error?.message ?? error}`
-                })
-            ];
-        }
-    }
-    compareRepos(a, b, sortId) {
-        switch (sortId) {
-            case 'projectRepos:name:asc':
-                return a.name.localeCompare(b.name);
-            case 'projectRepos:name:desc':
-                return b.name.localeCompare(a.name);
-            case 'projectRepos:added:newest':
-                return this.getAddedTimestamp(b) - this.getAddedTimestamp(a);
-            case 'projectRepos:added:oldest':
-                return this.getAddedTimestamp(a) - this.getAddedTimestamp(b);
-            default:
-                return a.name.localeCompare(b.name);
-        }
-    }
-    getAddedTimestamp(repo) {
-        if (repo.addedAt) {
-            const value = new Date(repo.addedAt).getTime();
-            if (!isNaN(value)) {
-                return value;
-            }
-        }
-        return 0;
-    }
-}
-exports.ProjectReposProvider = ProjectReposProvider;
-async function revealProjectRepo(repo) {
-    try {
-        await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(repo.path));
-    }
-    catch (error) {
-        void (0, utils_1.showError)(`Unable to reveal repository: ${(0, logger_1.errorMessage)(error)}`);
-    }
-}
-
-
-/***/ }),
-/* 52 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.createFilesExcludeMatcher = createFilesExcludeMatcher;
-const fs = __importStar(__webpack_require__(40));
-const path = __importStar(__webpack_require__(3));
-const vscode = __importStar(__webpack_require__(1));
-function globToRegExp(pattern) {
-    const normalizedPattern = pattern.split(path.sep).join('/');
-    const placeholders = {
-        doubleStar: '__GLOB_DOUBLE_STAR__',
-        singleStar: '__GLOB_SINGLE_STAR__',
-        question: '__GLOB_QUESTION__'
-    };
-    let working = normalizedPattern
-        .replaceAll('**', placeholders.doubleStar)
-        .replaceAll('*', placeholders.singleStar)
-        .replaceAll('?', placeholders.question);
-    working = working.replaceAll(/[.+^${}()|[\]\\]/g, String.raw `\$&`);
-    working = working
-        .replaceAll(new RegExp(placeholders.doubleStar, 'g'), '.*')
-        .replaceAll(new RegExp(placeholders.singleStar, 'g'), '[^/]*')
-        .replaceAll(new RegExp(placeholders.question, 'g'), '[^/]');
-    return new RegExp(`^${working}$`, 'i');
-}
-function normalizeForMatch(value) {
-    return value.replace(/\\/g, '/').replace(/^\.?\//, '');
-}
-function resolveWorkspaceRoot(scopeUri) {
-    if (scopeUri) {
-        const folder = vscode.workspace.getWorkspaceFolder(scopeUri);
-        if (folder) {
-            return folder.uri.fsPath;
-        }
-    }
-    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-}
-function resolveFilesExcludeRules(scopeUri) {
-    const config = vscode.workspace.getConfiguration('files', scopeUri);
-    const excludes = config.get('exclude', {});
-    if (!excludes || typeof excludes !== 'object') {
-        return [];
-    }
-    const rules = [];
-    for (const [pattern, rawValue] of Object.entries(excludes)) {
-        if (rawValue === false) {
-            continue;
-        }
-        if (rawValue === true) {
-            rules.push({ regex: globToRegExp(pattern) });
-            continue;
-        }
-        if (!rawValue || typeof rawValue !== 'object') {
-            continue;
-        }
-        rules.push({
-            regex: globToRegExp(pattern),
-            when: typeof rawValue.when === 'string' ? rawValue.when : undefined
-        });
-    }
-    return rules;
-}
-function ruleMatchesPath(rule, relativePath, absolutePath, entryName) {
-    return rule.regex.test(relativePath)
-        || rule.regex.test(`/${relativePath}`)
-        || rule.regex.test(entryName)
-        || rule.regex.test(absolutePath);
-}
-function whenClauseMatches(whenClause, fsPath, entryName) {
-    if (!whenClause || whenClause.trim() === '') {
-        return true;
-    }
-    const basename = path.parse(entryName).name;
-    const siblingName = whenClause.replaceAll('$(basename)', basename);
-    const siblingPath = path.join(path.dirname(fsPath), siblingName);
-    return fs.existsSync(siblingPath);
-}
-function createFilesExcludeMatcher(scopeUri) {
-    const rules = resolveFilesExcludeRules(scopeUri);
-    const workspaceRoot = resolveWorkspaceRoot(scopeUri);
-    return {
-        isExcluded(fsPath, entryName) {
-            if (rules.length === 0) {
-                return false;
-            }
-            const normalizedAbsolute = normalizeForMatch(fsPath);
-            const relativeCandidate = workspaceRoot
-                ? normalizeForMatch(path.relative(workspaceRoot, fsPath))
-                : normalizedAbsolute;
-            const relative = relativeCandidate && relativeCandidate !== '.'
-                ? relativeCandidate
-                : normalizedAbsolute;
-            for (const rule of rules) {
-                if (!ruleMatchesPath(rule, relative, normalizedAbsolute, entryName)) {
-                    continue;
-                }
-                if (!whenClauseMatches(rule.when, fsPath, entryName)) {
-                    continue;
-                }
-                return true;
-            }
-            return false;
-        }
-    };
-}
-
-
-/***/ }),
-/* 53 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ModuleTreeProvider = void 0;
 exports.selectModule = selectModule;
 exports.createModuleFromScaffold = createModuleFromScaffold;
@@ -9683,7 +9308,7 @@ exports.updateInstalledModules = updateInstalledModules;
 exports.installAllModules = installAllModules;
 exports.clearAllModuleSelections = clearAllModuleSelections;
 exports.viewInstalledModules = viewInstalledModules;
-const module_1 = __webpack_require__(54);
+const module_1 = __webpack_require__(52);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(7);
 const fs = __importStar(__webpack_require__(40));
@@ -10493,7 +10118,7 @@ async function viewInstalledModules() {
 
 
 /***/ }),
-/* 54 */
+/* 52 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -10513,7 +10138,7 @@ exports.ModuleModel = ModuleModel;
 
 
 /***/ }),
-/* 55 */
+/* 53 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10563,10 +10188,10 @@ exports.setSpecificLogLevel = setSpecificLogLevel;
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(5);
 const testing_1 = __webpack_require__(48);
-const module_1 = __webpack_require__(54);
+const module_1 = __webpack_require__(52);
 const utils_1 = __webpack_require__(7);
-const context_1 = __webpack_require__(56);
-const debugger_1 = __webpack_require__(57);
+const context_1 = __webpack_require__(54);
+const debugger_1 = __webpack_require__(55);
 const database_1 = __webpack_require__(36);
 const logger_1 = __webpack_require__(11);
 const notifications_1 = __webpack_require__(13);
@@ -11194,7 +10819,7 @@ async function setSpecificLogLevel() {
 
 
 /***/ }),
-/* 56 */
+/* 54 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11248,7 +10873,7 @@ function updateActiveContext(isActive) {
 
 
 /***/ }),
-/* 57 */
+/* 55 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11680,7 +11305,7 @@ async function startDebugServer() {
 
 
 /***/ }),
-/* 58 */
+/* 56 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11876,7 +11501,7 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 
 /***/ }),
-/* 59 */
+/* 57 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -11899,7 +11524,7 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 60 */
+/* 58 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11951,13 +11576,19 @@ const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
 const runtimeCache_1 = __webpack_require__(12);
-const filesExclude_1 = __webpack_require__(52);
+const filesExclude_1 = __webpack_require__(59);
 const notifications_1 = __webpack_require__(13);
 const baseTreeProvider_1 = __webpack_require__(4);
+const sortOptions_1 = __webpack_require__(26);
 class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
+    sortPreferences;
     watchers = [];
     watcherKey = '';
     refreshDebounceTimer;
+    constructor(sortPreferences) {
+        super();
+        this.sortPreferences = sortPreferences;
+    }
     scheduleRefresh() {
         if (this.refreshDebounceTimer) {
             clearTimeout(this.refreshDebounceTimer);
@@ -12053,7 +11684,9 @@ class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
                 ];
             }
             this.resetWatchers(repos);
-            return repos.map(repo => ({
+            const sortId = this.sortPreferences.get('projectRepos', (0, sortOptions_1.getDefaultSortOption)('projectRepos'));
+            const sortedRepos = [...repos].sort((a, b) => this.compareRepos(a, b, sortId));
+            return sortedRepos.map(repo => ({
                 kind: 'repo',
                 label: repo.name,
                 repo,
@@ -12064,6 +11697,29 @@ class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
             return this.readDirectory(element.uri);
         }
         return [];
+    }
+    compareRepos(a, b, sortId) {
+        switch (sortId) {
+            case 'projectRepos:name:asc':
+                return a.name.localeCompare(b.name);
+            case 'projectRepos:name:desc':
+                return b.name.localeCompare(a.name);
+            case 'projectRepos:added:newest':
+                return this.getAddedTimestamp(b) - this.getAddedTimestamp(a);
+            case 'projectRepos:added:oldest':
+                return this.getAddedTimestamp(a) - this.getAddedTimestamp(b);
+            default:
+                return a.name.localeCompare(b.name);
+        }
+    }
+    getAddedTimestamp(repo) {
+        if (repo.addedAt) {
+            const value = new Date(repo.addedAt).getTime();
+            if (!isNaN(value)) {
+                return value;
+            }
+        }
+        return 0;
     }
     resetWatchers(repos) {
         const nextKey = repos
@@ -12264,21 +11920,164 @@ async function pasteEntries(targetUri) {
 
 
 /***/ }),
-/* 61 */
+/* 59 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.createFilesExcludeMatcher = createFilesExcludeMatcher;
+const fs = __importStar(__webpack_require__(40));
+const path = __importStar(__webpack_require__(3));
+const vscode = __importStar(__webpack_require__(1));
+function globToRegExp(pattern) {
+    const normalizedPattern = pattern.split(path.sep).join('/');
+    const placeholders = {
+        doubleStar: '__GLOB_DOUBLE_STAR__',
+        singleStar: '__GLOB_SINGLE_STAR__',
+        question: '__GLOB_QUESTION__'
+    };
+    let working = normalizedPattern
+        .replaceAll('**', placeholders.doubleStar)
+        .replaceAll('*', placeholders.singleStar)
+        .replaceAll('?', placeholders.question);
+    working = working.replaceAll(/[.+^${}()|[\]\\]/g, String.raw `\$&`);
+    working = working
+        .replaceAll(new RegExp(placeholders.doubleStar, 'g'), '.*')
+        .replaceAll(new RegExp(placeholders.singleStar, 'g'), '[^/]*')
+        .replaceAll(new RegExp(placeholders.question, 'g'), '[^/]');
+    return new RegExp(`^${working}$`, 'i');
+}
+function normalizeForMatch(value) {
+    return value.replace(/\\/g, '/').replace(/^\.?\//, '');
+}
+function resolveWorkspaceRoot(scopeUri) {
+    if (scopeUri) {
+        const folder = vscode.workspace.getWorkspaceFolder(scopeUri);
+        if (folder) {
+            return folder.uri.fsPath;
+        }
+    }
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+}
+function resolveFilesExcludeRules(scopeUri) {
+    const config = vscode.workspace.getConfiguration('files', scopeUri);
+    const excludes = config.get('exclude', {});
+    if (!excludes || typeof excludes !== 'object') {
+        return [];
+    }
+    const rules = [];
+    for (const [pattern, rawValue] of Object.entries(excludes)) {
+        if (rawValue === false) {
+            continue;
+        }
+        if (rawValue === true) {
+            rules.push({ regex: globToRegExp(pattern) });
+            continue;
+        }
+        if (!rawValue || typeof rawValue !== 'object') {
+            continue;
+        }
+        rules.push({
+            regex: globToRegExp(pattern),
+            when: typeof rawValue.when === 'string' ? rawValue.when : undefined
+        });
+    }
+    return rules;
+}
+function ruleMatchesPath(rule, relativePath, absolutePath, entryName) {
+    return rule.regex.test(relativePath)
+        || rule.regex.test(`/${relativePath}`)
+        || rule.regex.test(entryName)
+        || rule.regex.test(absolutePath);
+}
+function whenClauseMatches(whenClause, fsPath, entryName) {
+    if (!whenClause || whenClause.trim() === '') {
+        return true;
+    }
+    const basename = path.parse(entryName).name;
+    const siblingName = whenClause.replaceAll('$(basename)', basename);
+    const siblingPath = path.join(path.dirname(fsPath), siblingName);
+    return fs.existsSync(siblingPath);
+}
+function createFilesExcludeMatcher(scopeUri) {
+    const rules = resolveFilesExcludeRules(scopeUri);
+    const workspaceRoot = resolveWorkspaceRoot(scopeUri);
+    return {
+        isExcluded(fsPath, entryName) {
+            if (rules.length === 0) {
+                return false;
+            }
+            const normalizedAbsolute = normalizeForMatch(fsPath);
+            const relativeCandidate = workspaceRoot
+                ? normalizeForMatch(path.relative(workspaceRoot, fsPath))
+                : normalizedAbsolute;
+            const relative = relativeCandidate && relativeCandidate !== '.'
+                ? relativeCandidate
+                : normalizedAbsolute;
+            for (const rule of rules) {
+                if (!ruleMatchesPath(rule, relative, normalizedAbsolute, entryName)) {
+                    continue;
+                }
+                if (!whenClauseMatches(rule.when, fsPath, entryName)) {
+                    continue;
+                }
+                return true;
+            }
+            return false;
+        }
+    };
+}
+
+
+/***/ }),
+/* 60 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(62);
-const projectCommands_1 = __webpack_require__(64);
-const repoCommands_1 = __webpack_require__(67);
-const dbCommands_1 = __webpack_require__(68);
-const moduleCommands_1 = __webpack_require__(69);
-const testingCommands_1 = __webpack_require__(70);
-const versionCommands_1 = __webpack_require__(71);
-const debugCommands_1 = __webpack_require__(73);
-const reposExplorerCommands_1 = __webpack_require__(74);
+const viewCommands_1 = __webpack_require__(61);
+const projectCommands_1 = __webpack_require__(63);
+const repoCommands_1 = __webpack_require__(66);
+const dbCommands_1 = __webpack_require__(67);
+const moduleCommands_1 = __webpack_require__(68);
+const testingCommands_1 = __webpack_require__(69);
+const versionCommands_1 = __webpack_require__(70);
+const debugCommands_1 = __webpack_require__(72);
+const reposExplorerCommands_1 = __webpack_require__(73);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -12294,7 +12093,7 @@ function registerAllCommands(deps) {
 
 
 /***/ }),
-/* 62 */
+/* 61 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12334,11 +12133,10 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(63);
+const quickSearch_1 = __webpack_require__(62);
 const sortOptions_1 = __webpack_require__(26);
 const notifications_1 = __webpack_require__(13);
-const module_1 = __webpack_require__(53);
-const projectRepos_1 = __webpack_require__(51);
+const module_1 = __webpack_require__(51);
 /**
  * Generic per-view plumbing: refresh, sort, and quick-search commands.
  */
@@ -12369,7 +12167,8 @@ function registerViewCommands(deps) {
     registerViewSortCommand('dbSelector', providers.db);
     registerViewSortCommand('moduleSelector', providers.module);
     registerViewSortCommand('versionsManager', providers.versions);
-    registerViewSortCommand('projectRepos', providers.projectRepos);
+    // The explorer view keeps the historical 'projectRepos' sort ids so stored preferences survive.
+    registerViewSortCommand('projectRepos', providers.projectReposExplorer);
     context.subscriptions.push(vscode.commands.registerCommand('projectSelector.refresh', async () => refreshAll({ reason: 'ui' })));
     context.subscriptions.push(vscode.commands.registerCommand('repoSelector.refresh', async () => refreshAll({ reason: 'ui' })));
     context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.refresh', async () => refreshAll({ reason: 'ui' })));
@@ -12445,19 +12244,17 @@ function registerViewCommands(deps) {
         });
     }));
     context.subscriptions.push(vscode.commands.registerCommand('projectRepos.quickSearch', async () => {
-        const rootItems = ((await providers.projectRepos.getChildren()) ?? [])
-            .filter(item => item?.metadata?.kind === 'repo');
-        await (0, quickSearch_1.quickSearchTreeItems)(rootItems, {
+        const rootNodes = ((await providers.projectReposExplorer.getChildren()) ?? [])
+            .filter(node => node.kind === 'repo');
+        const items = rootNodes.map(node => providers.projectReposExplorer.getTreeItem(node));
+        await (0, quickSearch_1.quickSearchTreeItems)(items, {
             placeHolder: 'Search project repositories...',
             title: 'Project Repo Search',
             emptyMessage: 'No project repositories available to search.',
             onPick: async (item) => {
-                const repo = item?.metadata?.repo;
-                if (!repo?.path) {
-                    void (0, notifications_1.showInfo)('Select a repository to reveal.');
-                    return;
+                if (item.resourceUri) {
+                    await vscode.commands.executeCommand('revealInExplorer', item.resourceUri);
                 }
-                await (0, projectRepos_1.revealProjectRepo)(repo);
             }
         });
     }));
@@ -12465,7 +12262,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 63 */
+/* 62 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12577,7 +12374,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 64 */
+/* 63 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12622,8 +12419,8 @@ const notifications_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(11);
 const project_1 = __webpack_require__(45);
 const dbs_1 = __webpack_require__(31);
-const odooInstaller_1 = __webpack_require__(65);
-const projectWorkspace_1 = __webpack_require__(66);
+const odooInstaller_1 = __webpack_require__(64);
+const projectWorkspace_1 = __webpack_require__(65);
 function registerProjectCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('projectSelector.create', async () => {
@@ -12735,7 +12532,7 @@ function registerProjectCommands(deps) {
 
 
 /***/ }),
-/* 65 */
+/* 64 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12930,7 +12727,7 @@ Continue?`;
 
 
 /***/ }),
-/* 66 */
+/* 65 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13064,7 +12861,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 67 */
+/* 66 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13105,7 +12902,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerRepoCommands = registerRepoCommands;
 const vscode = __importStar(__webpack_require__(1));
 const repos_1 = __webpack_require__(50);
-const projectWorkspace_1 = __webpack_require__(66);
+const projectWorkspace_1 = __webpack_require__(65);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
@@ -13117,7 +12914,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 68 */
+/* 67 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13256,7 +13053,7 @@ function registerDbCommands(deps) {
 
 
 /***/ }),
-/* 69 */
+/* 68 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13296,7 +13093,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerModuleCommands = registerModuleCommands;
 const vscode = __importStar(__webpack_require__(1));
-const module_1 = __webpack_require__(53);
+const module_1 = __webpack_require__(51);
 function registerModuleCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.select', async (event) => {
@@ -13346,7 +13143,7 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 70 */
+/* 69 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13386,7 +13183,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerTestingCommands = registerTestingCommands;
 const vscode = __importStar(__webpack_require__(1));
-const testing_1 = __webpack_require__(55);
+const testing_1 = __webpack_require__(53);
 function registerTestingCommands(deps) {
     const { context, providers, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleTesting', async (event) => {
@@ -13425,7 +13222,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 71 */
+/* 70 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13466,7 +13263,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerVersionCommands = registerVersionCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(40));
-const args_1 = __webpack_require__(72);
+const args_1 = __webpack_require__(71);
 const utils_1 = __webpack_require__(7);
 const notifications_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(11);
@@ -13969,7 +13766,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 72 */
+/* 71 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14010,7 +13807,6 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.extractVersionId = extractVersionId;
 exports.extractVersionSettingRef = extractVersionSettingRef;
 exports.extractUri = extractUri;
-exports.extractRepoFromMetadata = extractRepoFromMetadata;
 const vscode = __importStar(__webpack_require__(1));
 function isObject(value) {
     return typeof value === 'object' && value !== null;
@@ -14060,20 +13856,58 @@ function extractUri(arg) {
     }
     return undefined;
 }
-/** A repo model attached to a Project Repos tree item. */
-function extractRepoFromMetadata(arg) {
-    if (!isObject(arg)) {
-        return undefined;
+
+
+/***/ }),
+/* 72 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
     }
-    const metadata = arg.metadata;
-    if (!isObject(metadata) || metadata.kind !== 'repo') {
-        return undefined;
-    }
-    const repo = metadata.repo;
-    if (isObject(repo) && typeof repo.path === 'string') {
-        return repo;
-    }
-    return undefined;
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerDebugCommands = registerDebugCommands;
+const vscode = __importStar(__webpack_require__(1));
+const debugger_1 = __webpack_require__(55);
+function registerDebugCommands(deps) {
+    const { context } = deps;
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.startServer', async () => {
+        await (0, debugger_1.startDebugServer)();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.startShell', async () => {
+        await (0, debugger_1.startDebugShell)();
+    }));
 }
 
 
@@ -14116,67 +13950,13 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.registerDebugCommands = registerDebugCommands;
-const vscode = __importStar(__webpack_require__(1));
-const debugger_1 = __webpack_require__(57);
-function registerDebugCommands(deps) {
-    const { context } = deps;
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.startServer', async () => {
-        await (0, debugger_1.startDebugServer)();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.startShell', async () => {
-        await (0, debugger_1.startDebugShell)();
-    }));
-}
-
-
-/***/ }),
-/* 74 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerReposExplorerCommands = registerReposExplorerCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(40));
 const path = __importStar(__webpack_require__(3));
-const args_1 = __webpack_require__(72);
+const args_1 = __webpack_require__(71);
 const notifications_1 = __webpack_require__(13);
-const projectRepos_1 = __webpack_require__(51);
-const projectReposExplorer_1 = __webpack_require__(60);
+const projectReposExplorer_1 = __webpack_require__(58);
 async function copyPathToClipboard(uri, relative) {
     if (!uri) {
         void (0, notifications_1.showInfo)('Select a file or folder first.');
@@ -14212,19 +13992,6 @@ async function openUriInIntegratedTerminal(uri) {
 }
 function registerReposExplorerCommands(deps) {
     const { context, providers } = deps;
-    context.subscriptions.push(vscode.commands.registerCommand('projectRepos.reveal', async (arg) => {
-        const repo = (0, args_1.extractRepoFromMetadata)(arg);
-        if (repo?.path) {
-            await (0, projectRepos_1.revealProjectRepo)(repo);
-            return;
-        }
-        const uri = (0, args_1.extractUri)(arg);
-        if (!uri) {
-            void (0, notifications_1.showInfo)('Select a repository to reveal.');
-            return;
-        }
-        await vscode.commands.executeCommand('revealInExplorer', uri);
-    }));
     context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFile', async (uri) => {
         await (0, projectReposExplorer_1.createNewFile)(uri);
         providers.projectReposExplorer.refresh();
@@ -14290,51 +14057,6 @@ function registerReposExplorerCommands(deps) {
             return;
         }
         await vscode.commands.executeCommand('revealFileInOS', uri);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.renameEntry', async (arg) => {
-        await (0, projectReposExplorer_1.renameEntry)((0, args_1.extractUri)(arg));
-        providers.projectRepos.refresh();
-        providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.deleteEntry', async (arg) => {
-        await (0, projectReposExplorer_1.deleteEntry)((0, args_1.extractUri)(arg));
-        providers.projectRepos.refresh();
-        providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyEntry', async (arg) => {
-        const uri = (0, args_1.extractUri)(arg);
-        if (!uri) {
-            void (0, notifications_1.showInfo)('Select a file or folder first.');
-            return;
-        }
-        (0, projectReposExplorer_1.copyEntries)([uri], false);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.cutEntry', async (arg) => {
-        const uri = (0, args_1.extractUri)(arg);
-        if (!uri) {
-            void (0, notifications_1.showInfo)('Select a file or folder first.');
-            return;
-        }
-        (0, projectReposExplorer_1.copyEntries)([uri], true);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.pasteEntry', async (arg) => {
-        const uri = (0, args_1.extractUri)(arg);
-        if (!uri) {
-            void (0, notifications_1.showInfo)('Select a folder to paste into.');
-            return;
-        }
-        let target = uri;
-        try {
-            if (fs.existsSync(uri.fsPath) && fs.lstatSync(uri.fsPath).isFile()) {
-                target = vscode.Uri.file(path.dirname(uri.fsPath));
-            }
-        }
-        catch {
-            // Best effort: fall back to the provided uri
-        }
-        await (0, projectReposExplorer_1.pasteEntries)(target);
-        providers.projectRepos.refresh();
-        providers.projectReposExplorer.refresh();
     }));
 }
 

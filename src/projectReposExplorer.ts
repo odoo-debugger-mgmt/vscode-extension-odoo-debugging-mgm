@@ -8,6 +8,8 @@ import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } fr
 import { createFilesExcludeMatcher } from './services/filesExclude';
 import { showModalWarning } from './services/notifications';
 import { BaseTreeProvider } from './views/baseTreeProvider';
+import { SortPreferences } from './sortPreferences';
+import { getDefaultSortOption } from './sortOptions';
 
 type NodeKind = 'placeholder' | 'repo' | 'folder' | 'file';
 
@@ -43,6 +45,10 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
     private watchers: vscode.FileSystemWatcher[] = [];
     private watcherKey = '';
     private refreshDebounceTimer: NodeJS.Timeout | undefined;
+
+    constructor(private readonly sortPreferences: SortPreferences) {
+        super();
+    }
 
     private scheduleRefresh(): void {
         if (this.refreshDebounceTimer) {
@@ -148,7 +154,9 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
 
             this.resetWatchers(repos);
 
-            return repos.map(repo => ({
+            const sortId = this.sortPreferences.get('projectRepos', getDefaultSortOption('projectRepos'));
+            const sortedRepos = [...repos].sort((a, b) => this.compareRepos(a, b, sortId));
+            return sortedRepos.map(repo => ({
                 kind: 'repo',
                 label: repo.name,
                 repo,
@@ -161,6 +169,31 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
         }
 
         return [];
+    }
+
+    private compareRepos(a: RepoModel, b: RepoModel, sortId: string): number {
+        switch (sortId) {
+            case 'projectRepos:name:asc':
+                return a.name.localeCompare(b.name);
+            case 'projectRepos:name:desc':
+                return b.name.localeCompare(a.name);
+            case 'projectRepos:added:newest':
+                return this.getAddedTimestamp(b) - this.getAddedTimestamp(a);
+            case 'projectRepos:added:oldest':
+                return this.getAddedTimestamp(a) - this.getAddedTimestamp(b);
+            default:
+                return a.name.localeCompare(b.name);
+        }
+    }
+
+    private getAddedTimestamp(repo: RepoModel): number {
+        if (repo.addedAt) {
+            const value = new Date(repo.addedAt).getTime();
+            if (!isNaN(value)) {
+                return value;
+            }
+        }
+        return 0;
     }
 
     private resetWatchers(repos: RepoModel[]) {

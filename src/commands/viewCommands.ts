@@ -4,7 +4,6 @@ import { quickSearchTreeItems, getTreeItemLabel } from './quickSearch';
 import { getSortOptions, getDefaultSortOption, SortableViewId } from '../sortOptions';
 import { showInfo } from '../services/notifications';
 import { setModuleToInstall, setModuleToUpgrade, clearModuleState } from '../module';
-import { revealProjectRepo } from '../projectRepos';
 
 /**
  * Generic per-view plumbing: refresh, sort, and quick-search commands.
@@ -39,7 +38,8 @@ export function registerViewCommands(deps: CommandDeps): void {
     registerViewSortCommand('dbSelector', providers.db);
     registerViewSortCommand('moduleSelector', providers.module);
     registerViewSortCommand('versionsManager', providers.versions);
-    registerViewSortCommand('projectRepos', providers.projectRepos);
+    // The explorer view keeps the historical 'projectRepos' sort ids so stored preferences survive.
+    registerViewSortCommand('projectRepos', providers.projectReposExplorer);
 
     context.subscriptions.push(vscode.commands.registerCommand('projectSelector.refresh', async () => refreshAll({ reason: 'ui' })));
     context.subscriptions.push(vscode.commands.registerCommand('repoSelector.refresh', async () => refreshAll({ reason: 'ui' })));
@@ -127,20 +127,18 @@ export function registerViewCommands(deps: CommandDeps): void {
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand('projectRepos.quickSearch', async () => {
-        const rootItems = ((await providers.projectRepos.getChildren()) ?? [])
-            .filter(item => item?.metadata?.kind === 'repo');
+        const rootNodes = ((await providers.projectReposExplorer.getChildren()) ?? [])
+            .filter(node => node.kind === 'repo');
+        const items = rootNodes.map(node => providers.projectReposExplorer.getTreeItem(node));
 
-        await quickSearchTreeItems(rootItems, {
+        await quickSearchTreeItems(items, {
             placeHolder: 'Search project repositories...',
             title: 'Project Repo Search',
             emptyMessage: 'No project repositories available to search.',
             onPick: async (item) => {
-                const repo = (item as { metadata?: { repo?: { path?: string } } })?.metadata?.repo;
-                if (!repo?.path) {
-                    void showInfo('Select a repository to reveal.');
-                    return;
+                if (item.resourceUri) {
+                    await vscode.commands.executeCommand('revealInExplorer', item.resourceUri);
                 }
-                await revealProjectRepo(repo as { path: string });
             }
         });
     }));

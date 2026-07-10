@@ -5,7 +5,6 @@ import type { DbsTreeProvider } from '../views/dbsView';
 import type { ModuleTreeProvider } from '../module';
 import type { TestingTreeProvider } from '../testing';
 import type { VersionsTreeProvider } from '../versionsTreeProvider';
-import type { ProjectReposProvider } from '../projectRepos';
 import type { ProjectReposExplorerProvider } from '../projectReposExplorer';
 import type { VersionsService } from '../versionsService';
 import type { SortPreferences } from '../sortPreferences';
@@ -28,7 +27,6 @@ export interface Providers {
     module: ModuleTreeProvider;
     testing: TestingTreeProvider;
     versions: VersionsTreeProvider;
-    projectRepos: ProjectReposProvider;
     projectReposExplorer: ProjectReposExplorerProvider;
 }
 

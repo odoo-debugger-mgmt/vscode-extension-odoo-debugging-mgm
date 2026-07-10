@@ -78,18 +78,3 @@ export function extractUri(arg: unknown): vscode.Uri | undefined {
     return undefined;
 }
 
-/** A repo model attached to a Project Repos tree item. */
-export function extractRepoFromMetadata(arg: unknown): { name?: string; path: string } | undefined {
-    if (!isObject(arg)) {
-        return undefined;
-    }
-    const metadata = arg.metadata;
-    if (!isObject(metadata) || metadata.kind !== 'repo') {
-        return undefined;
-    }
-    const repo = metadata.repo;
-    if (isObject(repo) && typeof repo.path === 'string') {
-        return repo as { name?: string; path: string };
-    }
-    return undefined;
-}
