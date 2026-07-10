@@ -523,6 +523,28 @@
       {
         "command": "odooDebugger.relocateRepo",
         "title": "Relocate Repository…"
+      },
+      {
+        "command": "odoo.stopServer",
+        "title": "Stop Server",
+        "category": "Odoo DevTools",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "odoo.toggleTestingMode",
+        "title": "Toggle Testing Mode",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "odoo.setActiveVersion",
+        "title": "Switch Active Version",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "projectSelector.detectTickets",
+        "title": "Detect Tickets from Branches & Manifests",
+        "category": "Odoo DevTools",
+        "icon": "$(search-fuzzy)"
       }
     ],
     "menus": {
@@ -923,6 +945,11 @@
           "command": "odooDebugger.relocateRepo",
           "when": "view == odt.projectReposExplorer && viewItem == projectRepoRootMissing",
           "group": "navigation@1"
+        },
+        {
+          "command": "projectSelector.detectTickets",
+          "when": "view == projectSelector",
+          "group": "project@9"
         }
       ],
       "commandPalette": [
@@ -1153,6 +1180,36 @@
         "key": "ctrl+alt+p",
         "mac": "cmd+alt+p",
         "when": "editorTextFocus || !inputFocus"
+      },
+      {
+        "command": "odoo.startServer",
+        "key": "ctrl+alt+o s",
+        "mac": "cmd+alt+o s",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "odoo.stopServer",
+        "key": "ctrl+alt+o x",
+        "mac": "cmd+alt+o x",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "odoo.toggleTestingMode",
+        "key": "ctrl+alt+o t",
+        "mac": "cmd+alt+o t",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "dbSelector.quickSearch",
+        "key": "ctrl+alt+o d",
+        "mac": "cmd+alt+o d",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "odoo.setActiveVersion",
+        "key": "ctrl+alt+o v",
+        "mac": "cmd+alt+o v",
+        "when": "odoo-debugger.is_active"
       }
     ],
     "configuration": {
@@ -1338,6 +1395,11 @@
           "items": {
             "type": "string"
           }
+        },
+        "odooDebugger.statusBar.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the active project, database and version in the status bar (click to switch)."
         }
       }
     }

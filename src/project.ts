@@ -14,6 +14,9 @@ import { logger } from './services/logger';
 import { showModalInfo, showWarning } from './services/notifications';
 import { showModalWarning } from './services/notifications';
 import { BaseTreeProvider } from './views/baseTreeProvider';
+import { getRepoBranch } from './services/branches';
+import { readModuleManifest, extractTicketIdsFromBranch } from './services/manifest';
+import { collectModuleDiscovery } from './services/psaeInternal';
 
 let projectMetadataMigrationCompleted = false;
 
@@ -62,6 +65,71 @@ function buildTicketUrl(ticketId: string): string {
 
 function formatTicketLabel(ticket: ProjectTicketModel): string {
     return ticket.title ? `${ticket.id} - ${ticket.title}` : ticket.id;
+}
+
+/**
+ * Scans the project's repo branches and module manifests for ticket/task ids
+ * (Odoo PS conventions) and offers to add the new ones to the project.
+ */
+export async function detectProjectTickets(): Promise<void> {
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
+        return;
+    }
+    const { data, project } = result;
+    project.tickets = sanitizeProjectTickets(project.tickets);
+    const known = new Set(project.tickets.map(ticket => ticket.id.toLowerCase()));
+
+    const candidates = new Map<string, string>();
+    const offer = (id: string, source: string) => {
+        if (!known.has(id.toLowerCase()) && !candidates.has(id)) {
+            candidates.set(id, source);
+        }
+    };
+
+    for (const repo of project.repos ?? []) {
+        const branch = await getRepoBranch(normalizePath(repo.path));
+        for (const id of extractTicketIdsFromBranch(branch)) {
+            offer(id, `branch "${branch}" (${repo.name})`);
+        }
+    }
+
+    const discovery = collectModuleDiscovery(project);
+    for (const module of discovery.modules) {
+        const manifest = await readModuleManifest(module.path);
+        for (const id of manifest?.ticketIds ?? []) {
+            offer(id, `manifest of "${module.name}"`);
+        }
+    }
+
+    if (candidates.size === 0) {
+        showAutoInfo('No new ticket ids found in repo branches or module manifests.', 3000);
+        return;
+    }
+
+    const picks = Array.from(candidates.entries()).map(([id, source]) => ({
+        label: id,
+        description: `Found in ${source}`,
+        picked: true,
+        id
+    }));
+    const chosen = await vscode.window.showQuickPick(picks, {
+        canPickMany: true,
+        placeHolder: 'Add detected ticket ids to the project?',
+        ignoreFocusOut: true
+    });
+    if (!chosen || chosen.length === 0) {
+        return;
+    }
+
+    project.tickets.push(...chosen.map(pick => ({ id: pick.id })));
+    project.tickets = sanitizeProjectTickets(project.tickets);
+    await SettingsStore.saveWithoutComments(stripSettings(data));
+
+    const action = await showInfo(`Added ${chosen.length} ticket(s) to "${project.name}".`, 'Open Ticket');
+    if (action === 'Open Ticket') {
+        await vscode.commands.executeCommand('projectSelector.openTicket');
+    }
 }
 
 export class ProjectTreeProvider extends BaseTreeProvider<vscode.TreeItem> {

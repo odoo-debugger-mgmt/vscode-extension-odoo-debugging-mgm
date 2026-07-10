@@ -46,19 +46,20 @@ const dbsView_1 = __webpack_require__(2);
 const environment_1 = __webpack_require__(27);
 const dataMigration_1 = __webpack_require__(45);
 const project_1 = __webpack_require__(46);
-const repos_1 = __webpack_require__(51);
-const module_1 = __webpack_require__(52);
-const testing_1 = __webpack_require__(55);
-const debugger_1 = __webpack_require__(57);
+const repos_1 = __webpack_require__(53);
+const module_1 = __webpack_require__(54);
+const testing_1 = __webpack_require__(56);
+const debugger_1 = __webpack_require__(58);
 const settingsStore_1 = __webpack_require__(5);
-const versionsTreeProvider_1 = __webpack_require__(59);
+const versionsTreeProvider_1 = __webpack_require__(60);
 const versionsService_1 = __webpack_require__(23);
-const context_1 = __webpack_require__(56);
-const sortPreferences_1 = __webpack_require__(60);
-const projectReposExplorer_1 = __webpack_require__(61);
+const context_1 = __webpack_require__(57);
+const sortPreferences_1 = __webpack_require__(61);
+const projectReposExplorer_1 = __webpack_require__(62);
 const logger_1 = __webpack_require__(11);
 const reconcile_1 = __webpack_require__(44);
-const commands_1 = __webpack_require__(63);
+const statusBar_1 = __webpack_require__(64);
+const commands_1 = __webpack_require__(65);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -103,6 +104,13 @@ async function activate(context) {
     // Providers own event emitters (and the explorer owns file watchers)
     // that need disposal with the extension.
     context.subscriptions.push(...Object.values(providers));
+    const statusBar = new statusBar_1.StatusBarIndicators();
+    context.subscriptions.push(statusBar);
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+        if (event.affectsConfiguration('odooDebugger.statusBar.enabled')) {
+            void statusBar.update();
+        }
+    }));
     // One-time v1.2 migrations: fold legacy per-DB odooVersion into versions,
     // and map old databaseSwitchBehavior values onto the new auto/ask/never
     // enum. Runs after provider construction so the versions-changed refresh
@@ -125,6 +133,7 @@ async function activate(context) {
     const refreshViews = async () => {
         await initializeTestingContext();
         Object.values(providers).forEach(provider => provider.refresh());
+        await statusBar.update();
     };
     let debuggerSyncTimer;
     let debuggerSyncInFlight = null;
@@ -175,6 +184,7 @@ async function activate(context) {
         }
     };
     (0, commands_1.registerAllCommands)({ context, providers, versionsService, sortPreferences, refreshAll });
+    void statusBar.update();
 }
 function deactivate() {
     // All cleanup runs through context.subscriptions.
@@ -8174,6 +8184,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectTreeProvider = void 0;
+exports.detectProjectTickets = detectProjectTickets;
 exports.createProject = createProject;
 exports.selectProject = selectProject;
 exports.getRepo = getRepo;
@@ -8200,6 +8211,9 @@ const logger_1 = __webpack_require__(11);
 const notifications_1 = __webpack_require__(13);
 const notifications_2 = __webpack_require__(13);
 const baseTreeProvider_1 = __webpack_require__(4);
+const branches_1 = __webpack_require__(28);
+const manifest_1 = __webpack_require__(51);
+const psaeInternal_1 = __webpack_require__(52);
 let projectMetadataMigrationCompleted = false;
 function sanitizeProjectTickets(rawTickets) {
     if (!Array.isArray(rawTickets)) {
@@ -8240,6 +8254,63 @@ function buildTicketUrl(ticketId) {
 }
 function formatTicketLabel(ticket) {
     return ticket.title ? `${ticket.id} - ${ticket.title}` : ticket.id;
+}
+/**
+ * Scans the project's repo branches and module manifests for ticket/task ids
+ * (Odoo PS conventions) and offers to add the new ones to the project.
+ */
+async function detectProjectTickets() {
+    const result = await settingsStore_1.SettingsStore.getSelectedProject();
+    if (!result) {
+        return;
+    }
+    const { data, project } = result;
+    project.tickets = sanitizeProjectTickets(project.tickets);
+    const known = new Set(project.tickets.map(ticket => ticket.id.toLowerCase()));
+    const candidates = new Map();
+    const offer = (id, source) => {
+        if (!known.has(id.toLowerCase()) && !candidates.has(id)) {
+            candidates.set(id, source);
+        }
+    };
+    for (const repo of project.repos ?? []) {
+        const branch = await (0, branches_1.getRepoBranch)((0, utils_1.normalizePath)(repo.path));
+        for (const id of (0, manifest_1.extractTicketIdsFromBranch)(branch)) {
+            offer(id, `branch "${branch}" (${repo.name})`);
+        }
+    }
+    const discovery = (0, psaeInternal_1.collectModuleDiscovery)(project);
+    for (const module of discovery.modules) {
+        const manifest = await (0, manifest_1.readModuleManifest)(module.path);
+        for (const id of manifest?.ticketIds ?? []) {
+            offer(id, `manifest of "${module.name}"`);
+        }
+    }
+    if (candidates.size === 0) {
+        (0, utils_1.showAutoInfo)('No new ticket ids found in repo branches or module manifests.', 3000);
+        return;
+    }
+    const picks = Array.from(candidates.entries()).map(([id, source]) => ({
+        label: id,
+        description: `Found in ${source}`,
+        picked: true,
+        id
+    }));
+    const chosen = await vscode.window.showQuickPick(picks, {
+        canPickMany: true,
+        placeHolder: 'Add detected ticket ids to the project?',
+        ignoreFocusOut: true
+    });
+    if (!chosen || chosen.length === 0) {
+        return;
+    }
+    project.tickets.push(...chosen.map(pick => ({ id: pick.id })));
+    project.tickets = sanitizeProjectTickets(project.tickets);
+    await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+    const action = await (0, utils_1.showInfo)(`Added ${chosen.length} ticket(s) to "${project.name}".`, 'Open Ticket');
+    if (action === 'Open Ticket') {
+        await vscode.commands.executeCommand('projectSelector.openTicket');
+    }
 }
 class ProjectTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     sortPreferences;
@@ -9293,6 +9364,231 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.readModuleManifest = readModuleManifest;
+exports.extractTicketIdsFromBranch = extractTicketIdsFromBranch;
+const fs = __importStar(__webpack_require__(22));
+const path = __importStar(__webpack_require__(3));
+const logger_1 = __webpack_require__(11);
+const manifestCache = new Map();
+const TICKET_KEYS = ['task_id', 'task_ids', 'ticket', 'ticket_id', 'ticket_number'];
+function extractQuotedStrings(source) {
+    const values = [];
+    const regex = /['"]([^'"]+)['"]/g;
+    let match;
+    while ((match = regex.exec(source)) !== null) {
+        values.push(match[1].trim());
+    }
+    return values.filter(Boolean);
+}
+function parseDepends(content) {
+    const match = /['"]depends['"]\s*:\s*\[([^\]]*)\]/s.exec(content);
+    if (!match) {
+        return [];
+    }
+    return Array.from(new Set(extractQuotedStrings(match[1])));
+}
+function parseTicketIds(content) {
+    const ids = new Set();
+    for (const key of TICKET_KEYS) {
+        // Value forms: 1234567, '1234567', or a [list, of, them].
+        const keyRegex = new RegExp(`['"]${key}['"]\\s*:\\s*(\\[[^\\]]*\\]|['"][^'"]+['"]|\\d+)`, 'g');
+        let match;
+        while ((match = keyRegex.exec(content)) !== null) {
+            const raw = match[1];
+            const digits = raw.match(/\d{4,}/g);
+            for (const digit of digits ?? []) {
+                ids.add(digit);
+            }
+        }
+    }
+    // Free-form mentions like "task 1234567" / "task-id: 1234567" in the
+    // description or comments.
+    const mentionRegex = /task[-_ ]?(?:id)?\s*[:#]?\s*(\d{5,})/gi;
+    let mention;
+    while ((mention = mentionRegex.exec(content)) !== null) {
+        ids.add(mention[1]);
+    }
+    return Array.from(ids);
+}
+/**
+ * Reads a module's manifest (depends + ticket ids), or undefined when the
+ * module has no readable __manifest__.py.
+ */
+async function readModuleManifest(modulePath) {
+    const manifestPath = path.join(modulePath, '__manifest__.py');
+    let mtimeMs;
+    try {
+        mtimeMs = (await fs.stat(manifestPath)).mtimeMs;
+    }
+    catch {
+        return undefined;
+    }
+    const cached = manifestCache.get(manifestPath);
+    if (cached && cached.mtimeMs === mtimeMs) {
+        return cached.info;
+    }
+    try {
+        const content = await fs.readFile(manifestPath, 'utf-8');
+        const info = {
+            depends: parseDepends(content),
+            ticketIds: parseTicketIds(content)
+        };
+        manifestCache.set(manifestPath, { mtimeMs, info });
+        return info;
+    }
+    catch (error) {
+        logger_1.logger.debug(`Failed to read manifest for ${modulePath}:`, error);
+        return undefined;
+    }
+}
+/**
+ * Extracts ticket-id candidates from a branch name (PS convention:
+ * "17.0-project-1234567-dev" carries the task id as a long digit run).
+ */
+function extractTicketIdsFromBranch(branchName) {
+    if (!branchName) {
+        return [];
+    }
+    return Array.from(new Set(branchName.match(/\d{5,}/g) ?? []));
+}
+
+
+/***/ }),
+/* 52 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.PSAE_INTERNAL_REGEX = void 0;
+exports.collectModuleDiscovery = collectModuleDiscovery;
+exports.parsePsaeOverrides = parsePsaeOverrides;
+exports.resolvePsaeDirectories = resolvePsaeDirectories;
+exports.setPsaeDirectoryIncluded = setPsaeDirectoryIncluded;
+const utils_1 = __webpack_require__(7);
+/**
+ * Single source of truth for "psae-internal" module directories (Odoo PS
+ * convention: directories matching ps*-internal hold internal modules that
+ * are only added to the addons path when needed). Both the Modules tree and
+ * the debugger arg builder resolve inclusion through this module, and the
+ * project's `includedPsaeInternalPaths` override list ("path" to force
+ * include, "!path" to force exclude) is only interpreted here.
+ */
+exports.PSAE_INTERNAL_REGEX = /^ps[a-z]*-internal$/i;
+/** Runs module discovery for the project, honoring its manual includes. */
+function collectModuleDiscovery(project) {
+    const manualIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
+    return (0, utils_1.discoverModulesInRepos)(project.repos, { manualIncludePaths: manualIncludes });
+}
+/** Splits the raw override list into normalized include/exclude path sets. */
+function parsePsaeOverrides(includedPsaeInternalPaths) {
+    const manualIncludes = new Set();
+    const manualExcludes = new Set();
+    for (const entry of includedPsaeInternalPaths ?? []) {
+        if (entry.startsWith('!')) {
+            manualExcludes.add((0, utils_1.normalizePath)(entry.substring(1)));
+        }
+        else {
+            manualIncludes.add((0, utils_1.normalizePath)(entry));
+        }
+    }
+    return { manualIncludes, manualExcludes };
+}
+/**
+ * Resolves the inclusion state of every discovered psae-internal directory.
+ * A directory is included when it is manually included, or when it contains
+ * selected or installed modules and is not manually excluded.
+ */
+function resolvePsaeDirectories(args) {
+    const { manualIncludes, manualExcludes } = parsePsaeOverrides(args.includedPsaeInternalPaths);
+    return args.psaeDirectories.map(dir => {
+        const normalized = (0, utils_1.normalizePath)(dir.path);
+        const isManuallyIncluded = manualIncludes.has(normalized);
+        const isManuallyExcluded = manualExcludes.has(normalized);
+        const hasSelectedModules = dir.moduleNames.some(name => args.selectedModuleNames.has(name));
+        const hasDbModules = dir.moduleNames.some(name => args.installedModuleNames.has(name));
+        return {
+            ...dir,
+            path: normalized,
+            isManuallyIncluded,
+            isManuallyExcluded,
+            hasSelectedModules,
+            hasDbModules,
+            isIncluded: isManuallyIncluded || (!isManuallyExcluded && (hasSelectedModules || hasDbModules))
+        };
+    });
+}
+/**
+ * Rewrites the project's override list so that `dir` resolves to `include`.
+ * Intent-based: clears any contradicting override first, then adds a manual
+ * include/exclude only when the automatic resolution would not already give
+ * the requested result. Returns the module names whose selections must be
+ * dropped (when excluding a directory that has selected modules).
+ */
+function setPsaeDirectoryIncluded(project, dir, include) {
+    const overrides = (project.includedPsaeInternalPaths ?? []).filter(entry => {
+        const normalized = (0, utils_1.normalizePath)(entry.startsWith('!') ? entry.substring(1) : entry);
+        return normalized !== dir.path;
+    });
+    let removedModuleNames = [];
+    if (include) {
+        // Auto-inclusion only triggers with selected/installed modules;
+        // otherwise pin the directory with a manual include.
+        if (!dir.hasSelectedModules && !dir.hasDbModules) {
+            overrides.push(dir.path);
+        }
+    }
+    else {
+        if (dir.hasSelectedModules || dir.hasDbModules) {
+            overrides.push(`!${dir.path}`);
+        }
+        if (dir.hasSelectedModules) {
+            removedModuleNames = [...dir.moduleNames];
+        }
+    }
+    project.includedPsaeInternalPaths = overrides;
+    return { removedModuleNames };
+}
+
+
+/***/ }),
+/* 53 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.RepoTreeProvider = void 0;
 exports.selectRepo = selectRepo;
 const repo_1 = __webpack_require__(50);
@@ -9462,7 +9758,7 @@ async function selectRepo(event) {
 
 
 /***/ }),
-/* 52 */
+/* 54 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -9512,10 +9808,10 @@ exports.updateInstalledModules = updateInstalledModules;
 exports.installAllModules = installAllModules;
 exports.clearAllModuleSelections = clearAllModuleSelections;
 exports.viewInstalledModules = viewInstalledModules;
-const module_1 = __webpack_require__(53);
+const module_1 = __webpack_require__(55);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(7);
-const psaeInternal_1 = __webpack_require__(54);
+const psaeInternal_1 = __webpack_require__(52);
 const fs = __importStar(__webpack_require__(40));
 const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(5);
@@ -9526,6 +9822,8 @@ const notifications_1 = __webpack_require__(13);
 const baseTreeProvider_1 = __webpack_require__(4);
 const process_1 = __webpack_require__(14);
 const logger_1 = __webpack_require__(11);
+const manifest_1 = __webpack_require__(51);
+const CORE_HINT = 'Core/other module (not in this project\'s repos)';
 class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     sortPreferences;
     constructor(_context, sortPreferences) {
@@ -9535,9 +9833,18 @@ class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     getTreeItem(element) {
         return element;
     }
+    /** Module names discovered in the project's repos (for dependency hints). */
+    knownModuleNames = new Set();
     async getChildren(element) {
         if (element) {
-            return element.psaeChildren ?? [];
+            const node = element;
+            if (node.psaeChildren) {
+                return node.psaeChildren;
+            }
+            if (node.moduleData) {
+                return this.buildDependencyItems(node.moduleData);
+            }
+            return [];
         }
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         if (!result) {
@@ -9554,6 +9861,7 @@ class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         }
         const isTestingEnabled = !!(project.testingConfig && project.testingConfig.isEnabled);
         const { modules: allModules, psaeDirectories } = (0, psaeInternal_1.collectModuleDiscovery)(project);
+        this.knownModuleNames = new Set(allModules.map(module => module.name));
         const installedModuleNames = await (0, database_1.getInstalledModuleNames)(db.id);
         const dbModulesByName = new Map(modules.map(module => [module.name, module]));
         const selectedDbModuleNames = new Set(modules
@@ -9573,7 +9881,8 @@ class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
                 managed.isInstalled = isInstalledInDb;
             }
             const state = managed?.state ?? 'none';
-            const item = new vscode.TreeItem(module.name, vscode.TreeItemCollapsibleState.None);
+            // Collapsed: expanding a module lazily lists its manifest dependencies.
+            const item = new vscode.TreeItem(module.name, vscode.TreeItemCollapsibleState.Collapsed);
             item.id = module.path;
             item.iconPath = this.getModuleIcon(state, isInstalledInDb);
             item.description = repoPath;
@@ -9663,6 +9972,28 @@ class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         regularModules.sort((a, b) => this.compareModules(a, b, sortId));
         treeItems.push(...regularModules);
         return treeItems;
+    }
+    /** Lazily lists a module's manifest dependencies (one level deep). */
+    async buildDependencyItems(moduleData) {
+        const manifest = await (0, manifest_1.readModuleManifest)(moduleData.path);
+        if (!manifest || manifest.depends.length === 0) {
+            const empty = new vscode.TreeItem(manifest ? 'No dependencies' : 'No __manifest__.py found', vscode.TreeItemCollapsibleState.None);
+            empty.contextValue = 'info';
+            empty.iconPath = new vscode.ThemeIcon('info');
+            return [empty];
+        }
+        return manifest.depends.map(dep => {
+            const isLocal = this.knownModuleNames.has(dep);
+            const item = new vscode.TreeItem(dep, vscode.TreeItemCollapsibleState.None);
+            item.id = `${moduleData.path}::dep::${dep}`;
+            item.contextValue = 'moduleDependency';
+            item.iconPath = isLocal
+                ? new vscode.ThemeIcon('package', new vscode.ThemeColor('charts.blue'))
+                : new vscode.ThemeIcon('library');
+            item.description = isLocal ? 'project module' : 'core/other';
+            item.tooltip = isLocal ? `Dependency "${dep}" is available in this project's repos.` : `${dep}: ${CORE_HINT}`;
+            return item;
+        });
     }
     getModuleIcon(state, isInstalled) {
         switch (state) {
@@ -10220,7 +10551,7 @@ async function viewInstalledModules() {
 
 
 /***/ }),
-/* 53 */
+/* 55 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -10240,104 +10571,7 @@ exports.ModuleModel = ModuleModel;
 
 
 /***/ }),
-/* 54 */
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.PSAE_INTERNAL_REGEX = void 0;
-exports.collectModuleDiscovery = collectModuleDiscovery;
-exports.parsePsaeOverrides = parsePsaeOverrides;
-exports.resolvePsaeDirectories = resolvePsaeDirectories;
-exports.setPsaeDirectoryIncluded = setPsaeDirectoryIncluded;
-const utils_1 = __webpack_require__(7);
-/**
- * Single source of truth for "psae-internal" module directories (Odoo PS
- * convention: directories matching ps*-internal hold internal modules that
- * are only added to the addons path when needed). Both the Modules tree and
- * the debugger arg builder resolve inclusion through this module, and the
- * project's `includedPsaeInternalPaths` override list ("path" to force
- * include, "!path" to force exclude) is only interpreted here.
- */
-exports.PSAE_INTERNAL_REGEX = /^ps[a-z]*-internal$/i;
-/** Runs module discovery for the project, honoring its manual includes. */
-function collectModuleDiscovery(project) {
-    const manualIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
-    return (0, utils_1.discoverModulesInRepos)(project.repos, { manualIncludePaths: manualIncludes });
-}
-/** Splits the raw override list into normalized include/exclude path sets. */
-function parsePsaeOverrides(includedPsaeInternalPaths) {
-    const manualIncludes = new Set();
-    const manualExcludes = new Set();
-    for (const entry of includedPsaeInternalPaths ?? []) {
-        if (entry.startsWith('!')) {
-            manualExcludes.add((0, utils_1.normalizePath)(entry.substring(1)));
-        }
-        else {
-            manualIncludes.add((0, utils_1.normalizePath)(entry));
-        }
-    }
-    return { manualIncludes, manualExcludes };
-}
-/**
- * Resolves the inclusion state of every discovered psae-internal directory.
- * A directory is included when it is manually included, or when it contains
- * selected or installed modules and is not manually excluded.
- */
-function resolvePsaeDirectories(args) {
-    const { manualIncludes, manualExcludes } = parsePsaeOverrides(args.includedPsaeInternalPaths);
-    return args.psaeDirectories.map(dir => {
-        const normalized = (0, utils_1.normalizePath)(dir.path);
-        const isManuallyIncluded = manualIncludes.has(normalized);
-        const isManuallyExcluded = manualExcludes.has(normalized);
-        const hasSelectedModules = dir.moduleNames.some(name => args.selectedModuleNames.has(name));
-        const hasDbModules = dir.moduleNames.some(name => args.installedModuleNames.has(name));
-        return {
-            ...dir,
-            path: normalized,
-            isManuallyIncluded,
-            isManuallyExcluded,
-            hasSelectedModules,
-            hasDbModules,
-            isIncluded: isManuallyIncluded || (!isManuallyExcluded && (hasSelectedModules || hasDbModules))
-        };
-    });
-}
-/**
- * Rewrites the project's override list so that `dir` resolves to `include`.
- * Intent-based: clears any contradicting override first, then adds a manual
- * include/exclude only when the automatic resolution would not already give
- * the requested result. Returns the module names whose selections must be
- * dropped (when excluding a directory that has selected modules).
- */
-function setPsaeDirectoryIncluded(project, dir, include) {
-    const overrides = (project.includedPsaeInternalPaths ?? []).filter(entry => {
-        const normalized = (0, utils_1.normalizePath)(entry.startsWith('!') ? entry.substring(1) : entry);
-        return normalized !== dir.path;
-    });
-    let removedModuleNames = [];
-    if (include) {
-        // Auto-inclusion only triggers with selected/installed modules;
-        // otherwise pin the directory with a manual include.
-        if (!dir.hasSelectedModules && !dir.hasDbModules) {
-            overrides.push(dir.path);
-        }
-    }
-    else {
-        if (dir.hasSelectedModules || dir.hasDbModules) {
-            overrides.push(`!${dir.path}`);
-        }
-        if (dir.hasSelectedModules) {
-            removedModuleNames = [...dir.moduleNames];
-        }
-    }
-    project.includedPsaeInternalPaths = overrides;
-    return { removedModuleNames };
-}
-
-
-/***/ }),
-/* 55 */
+/* 56 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10387,10 +10621,10 @@ exports.setSpecificLogLevel = setSpecificLogLevel;
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(5);
 const testing_1 = __webpack_require__(49);
-const module_1 = __webpack_require__(53);
+const module_1 = __webpack_require__(55);
 const utils_1 = __webpack_require__(7);
-const context_1 = __webpack_require__(56);
-const debugger_1 = __webpack_require__(57);
+const context_1 = __webpack_require__(57);
+const debugger_1 = __webpack_require__(58);
 const database_1 = __webpack_require__(36);
 const logger_1 = __webpack_require__(11);
 const notifications_1 = __webpack_require__(13);
@@ -11015,7 +11249,7 @@ async function setSpecificLogLevel() {
 
 
 /***/ }),
-/* 56 */
+/* 57 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11069,7 +11303,7 @@ function updateActiveContext(isActive) {
 
 
 /***/ }),
-/* 57 */
+/* 58 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11109,17 +11343,18 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.setupDebugger = setupDebugger;
 exports.startDebugShell = startDebugShell;
+exports.stopDebugServer = stopDebugServer;
 exports.startDebugServer = startDebugServer;
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
 const utils_1 = __webpack_require__(7);
-const psaeInternal_1 = __webpack_require__(54);
+const psaeInternal_1 = __webpack_require__(52);
 const settingsStore_1 = __webpack_require__(5);
 const versionsService_1 = __webpack_require__(23);
 const testing_1 = __webpack_require__(49);
 const database_1 = __webpack_require__(36);
 const logger_1 = __webpack_require__(11);
-const launchConfig_1 = __webpack_require__(58);
+const launchConfig_1 = __webpack_require__(59);
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
 const baseInstallNotifiedDbs = new Set();
@@ -11430,6 +11665,17 @@ function quoteShellArg(value) {
     const escapedValue = value.replaceAll("'", String.raw `'\''`);
     return `'${escapedValue}'`;
 }
+/** Stops the debug session launched from the extension's configuration. */
+async function stopDebugServer() {
+    const versionsService = versionsService_1.VersionsService.getInstance();
+    const settings = await versionsService.getActiveVersionSettings();
+    const session = vscode.debug.activeDebugSession;
+    if (session && session.configuration?.name === settings.debuggerName) {
+        await vscode.debug.stopDebugging(session);
+        return;
+    }
+    void (0, utils_1.showInfo)('No Odoo debug session is currently running.');
+}
 async function startDebugServer() {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
@@ -11454,7 +11700,7 @@ async function startDebugServer() {
 
 
 /***/ }),
-/* 58 */
+/* 59 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11541,7 +11787,7 @@ async function updateManagedLaunchConfig(workspacePath, managedConfig) {
 
 
 /***/ }),
-/* 59 */
+/* 60 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11737,7 +11983,7 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 
 /***/ }),
-/* 60 */
+/* 61 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -11760,7 +12006,7 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 61 */
+/* 62 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11812,7 +12058,7 @@ const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
 const runtimeCache_1 = __webpack_require__(12);
-const filesExclude_1 = __webpack_require__(62);
+const filesExclude_1 = __webpack_require__(63);
 const notifications_1 = __webpack_require__(13);
 const baseTreeProvider_1 = __webpack_require__(4);
 const sortOptions_1 = __webpack_require__(26);
@@ -12174,7 +12420,7 @@ async function pasteEntries(targetUri) {
 
 
 /***/ }),
-/* 62 */
+/* 63 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12317,21 +12563,143 @@ function createFilesExcludeMatcher(scopeUri) {
 
 
 /***/ }),
-/* 63 */
+/* 64 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.StatusBarIndicators = void 0;
+const vscode = __importStar(__webpack_require__(1));
+const settingsStore_1 = __webpack_require__(5);
+const versionsService_1 = __webpack_require__(23);
+const utils_1 = __webpack_require__(7);
+const logger_1 = __webpack_require__(11);
+/**
+ * Status bar indicators for the active project, database and version.
+ * Clicking each opens the corresponding quick-switch picker, so the current
+ * context is visible (and switchable) without opening the side bar.
+ */
+class StatusBarIndicators {
+    projectItem;
+    dbItem;
+    versionItem;
+    constructor() {
+        this.projectItem = vscode.window.createStatusBarItem('odooDevtools.project', vscode.StatusBarAlignment.Left, 100);
+        this.projectItem.name = 'Odoo DevTools: Project';
+        this.projectItem.command = 'odoo-debugger.quickProjectSearch';
+        this.dbItem = vscode.window.createStatusBarItem('odooDevtools.database', vscode.StatusBarAlignment.Left, 99);
+        this.dbItem.name = 'Odoo DevTools: Database';
+        this.dbItem.command = 'dbSelector.quickSearch';
+        this.versionItem = vscode.window.createStatusBarItem('odooDevtools.version', vscode.StatusBarAlignment.Left, 98);
+        this.versionItem.name = 'Odoo DevTools: Version';
+        this.versionItem.command = 'odoo.setActiveVersion';
+    }
+    /** Re-reads the active project/db/version and updates the items. */
+    async update() {
+        const enabled = vscode.workspace.getConfiguration('odooDebugger').get('statusBar.enabled', true);
+        if (!enabled || !vscode.workspace.workspaceFolders?.length) {
+            this.hideAll();
+            return;
+        }
+        try {
+            // Read without getSelectedProject(): no project selected must not toast.
+            const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
+            const project = data.projects?.find(p => p.isSelected);
+            const db = project?.dbs?.find(candidate => candidate.isSelected);
+            const version = versionsService_1.VersionsService.getInstance().getActiveVersion();
+            if (project) {
+                this.projectItem.text = `$(folder-library) ${project.name}`;
+                this.projectItem.tooltip = `Odoo project: ${project.name} - click to switch`;
+                this.projectItem.show();
+            }
+            else {
+                this.projectItem.hide();
+            }
+            if (db) {
+                this.dbItem.text = `$(database) ${(0, utils_1.getDatabaseLabel)(db)}`;
+                this.dbItem.tooltip = `Selected database: ${db.id} - click to switch`;
+                this.dbItem.show();
+            }
+            else {
+                this.dbItem.hide();
+            }
+            if (version) {
+                this.versionItem.text = `$(versions) ${version.odooVersion}`;
+                this.versionItem.tooltip = `Active version: ${version.name} (${version.odooVersion}) - click to switch`;
+                this.versionItem.show();
+            }
+            else {
+                this.versionItem.hide();
+            }
+        }
+        catch (error) {
+            logger_1.logger.debug('Status bar update failed:', error);
+            this.hideAll();
+        }
+    }
+    hideAll() {
+        this.projectItem.hide();
+        this.dbItem.hide();
+        this.versionItem.hide();
+    }
+    dispose() {
+        this.projectItem.dispose();
+        this.dbItem.dispose();
+        this.versionItem.dispose();
+    }
+}
+exports.StatusBarIndicators = StatusBarIndicators;
+
+
+/***/ }),
+/* 65 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(64);
-const projectCommands_1 = __webpack_require__(66);
-const repoCommands_1 = __webpack_require__(69);
-const dbCommands_1 = __webpack_require__(70);
-const moduleCommands_1 = __webpack_require__(71);
-const testingCommands_1 = __webpack_require__(72);
-const versionCommands_1 = __webpack_require__(73);
-const debugCommands_1 = __webpack_require__(75);
-const reposExplorerCommands_1 = __webpack_require__(76);
+const viewCommands_1 = __webpack_require__(66);
+const projectCommands_1 = __webpack_require__(68);
+const repoCommands_1 = __webpack_require__(71);
+const dbCommands_1 = __webpack_require__(72);
+const moduleCommands_1 = __webpack_require__(73);
+const testingCommands_1 = __webpack_require__(74);
+const versionCommands_1 = __webpack_require__(75);
+const debugCommands_1 = __webpack_require__(77);
+const reposExplorerCommands_1 = __webpack_require__(78);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -12347,7 +12715,7 @@ function registerAllCommands(deps) {
 
 
 /***/ }),
-/* 64 */
+/* 66 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12387,10 +12755,10 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(65);
+const quickSearch_1 = __webpack_require__(67);
 const sortOptions_1 = __webpack_require__(26);
 const notifications_1 = __webpack_require__(13);
-const module_1 = __webpack_require__(52);
+const module_1 = __webpack_require__(54);
 /**
  * Generic per-view plumbing: refresh, sort, and quick-search commands.
  */
@@ -12519,7 +12887,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 65 */
+/* 67 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12631,7 +12999,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 66 */
+/* 68 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12676,8 +13044,8 @@ const notifications_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(11);
 const project_1 = __webpack_require__(46);
 const dbs_1 = __webpack_require__(31);
-const odooInstaller_1 = __webpack_require__(67);
-const projectWorkspace_1 = __webpack_require__(68);
+const odooInstaller_1 = __webpack_require__(69);
+const projectWorkspace_1 = __webpack_require__(70);
 function registerProjectCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('projectSelector.create', async () => {
@@ -12785,11 +13153,15 @@ function registerProjectCommands(deps) {
     context.subscriptions.push(vscode.commands.registerCommand('proj.quickSwitchProject', async () => {
         await (0, projectWorkspace_1.quickSwitchProjectWorkspace)(context);
     }));
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.detectTickets', async () => {
+        await (0, project_1.detectProjectTickets)();
+        await refreshAll({ reason: 'ui' });
+    }));
 }
 
 
 /***/ }),
-/* 67 */
+/* 69 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12984,7 +13356,7 @@ Continue?`;
 
 
 /***/ }),
-/* 68 */
+/* 70 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13118,7 +13490,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 69 */
+/* 71 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13158,8 +13530,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerRepoCommands = registerRepoCommands;
 const vscode = __importStar(__webpack_require__(1));
-const repos_1 = __webpack_require__(51);
-const projectWorkspace_1 = __webpack_require__(68);
+const repos_1 = __webpack_require__(53);
+const projectWorkspace_1 = __webpack_require__(70);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
@@ -13171,7 +13543,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 70 */
+/* 72 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13340,7 +13712,7 @@ function registerDbCommands(deps) {
 
 
 /***/ }),
-/* 71 */
+/* 73 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13380,7 +13752,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerModuleCommands = registerModuleCommands;
 const vscode = __importStar(__webpack_require__(1));
-const module_1 = __webpack_require__(52);
+const module_1 = __webpack_require__(54);
 function registerModuleCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.select', async (event) => {
@@ -13430,7 +13802,7 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 72 */
+/* 74 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13470,7 +13842,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerTestingCommands = registerTestingCommands;
 const vscode = __importStar(__webpack_require__(1));
-const testing_1 = __webpack_require__(55);
+const settingsStore_1 = __webpack_require__(5);
+const testing_1 = __webpack_require__(56);
 function registerTestingCommands(deps) {
     const { context, providers, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleTesting', async (event) => {
@@ -13505,11 +13878,21 @@ function registerTestingCommands(deps) {
         await (0, testing_1.setSpecificLogLevel)();
         providers.testing.refresh();
     }));
+    // No-argument wrapper (keybinding / palette): reads the current state
+    // instead of requiring the tree item's payload.
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.toggleTestingMode', async () => {
+        const result = await settingsStore_1.SettingsStore.getSelectedProject();
+        if (!result) {
+            return;
+        }
+        await (0, testing_1.toggleTesting)({ isEnabled: !!result.project.testingConfig?.isEnabled });
+        await refreshAll({ reason: 'ui' });
+    }));
 }
 
 
 /***/ }),
-/* 73 */
+/* 75 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13550,7 +13933,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerVersionCommands = registerVersionCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(40));
-const args_1 = __webpack_require__(74);
+const args_1 = __webpack_require__(76);
 const utils_1 = __webpack_require__(7);
 const notifications_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(11);
@@ -14053,7 +14436,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 74 */
+/* 76 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14146,7 +14529,7 @@ function extractUri(arg) {
 
 
 /***/ }),
-/* 75 */
+/* 77 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14186,7 +14569,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerDebugCommands = registerDebugCommands;
 const vscode = __importStar(__webpack_require__(1));
-const debugger_1 = __webpack_require__(57);
+const debugger_1 = __webpack_require__(58);
 function registerDebugCommands(deps) {
     const { context } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('odoo.startServer', async () => {
@@ -14195,11 +14578,14 @@ function registerDebugCommands(deps) {
     context.subscriptions.push(vscode.commands.registerCommand('odoo.startShell', async () => {
         await (0, debugger_1.startDebugShell)();
     }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.stopServer', async () => {
+        await (0, debugger_1.stopDebugServer)();
+    }));
 }
 
 
 /***/ }),
-/* 76 */
+/* 78 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14241,13 +14627,13 @@ exports.registerReposExplorerCommands = registerReposExplorerCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(40));
 const path = __importStar(__webpack_require__(3));
-const args_1 = __webpack_require__(74);
+const args_1 = __webpack_require__(76);
 const notifications_1 = __webpack_require__(13);
 const notifications_2 = __webpack_require__(13);
 const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
 const runtimeCache_1 = __webpack_require__(12);
-const projectReposExplorer_1 = __webpack_require__(61);
+const projectReposExplorer_1 = __webpack_require__(62);
 async function copyPathToClipboard(uri, relative) {
     if (!uri) {
         void (0, notifications_1.showInfo)('Select a file or folder first.');

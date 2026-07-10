@@ -17,6 +17,7 @@ import { showModalWarning } from './services/notifications';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 import { runCommand, tryRunCommand } from './services/process';
 import { errorMessage } from './services/logger';
+import { readModuleManifest } from './services/manifest';
 
 interface ModuleData {
     name: string;
@@ -33,6 +34,8 @@ type ModuleTreeNode = vscode.TreeItem & {
     psaeChildren?: ModuleTreeNode[];
 };
 
+const CORE_HINT = 'Core/other module (not in this project\'s repos)';
+
 export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
     constructor(_context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
@@ -43,9 +46,19 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         return element;
     }
 
+    /** Module names discovered in the project's repos (for dependency hints). */
+    private knownModuleNames = new Set<string>();
+
     async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[] | undefined> {
         if (element) {
-            return (element as ModuleTreeNode).psaeChildren ?? [];
+            const node = element as ModuleTreeNode;
+            if (node.psaeChildren) {
+                return node.psaeChildren;
+            }
+            if (node.moduleData) {
+                return this.buildDependencyItems(node.moduleData);
+            }
+            return [];
         }
 
         const result = await SettingsStore.getSelectedProject();
@@ -65,6 +78,7 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         const isTestingEnabled = !!(project.testingConfig && project.testingConfig.isEnabled);
 
         const { modules: allModules, psaeDirectories } = collectModuleDiscovery(project);
+        this.knownModuleNames = new Set(allModules.map(module => module.name));
         const installedModuleNames = await getInstalledModuleNames(db.id);
         const dbModulesByName = new Map(modules.map(module => [module.name, module]));
         const selectedDbModuleNames = new Set(
@@ -89,7 +103,8 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             }
             const state = managed?.state ?? 'none';
 
-            const item: ModuleTreeNode = new vscode.TreeItem(module.name, vscode.TreeItemCollapsibleState.None);
+            // Collapsed: expanding a module lazily lists its manifest dependencies.
+            const item: ModuleTreeNode = new vscode.TreeItem(module.name, vscode.TreeItemCollapsibleState.Collapsed);
             item.id = module.path;
             item.iconPath = this.getModuleIcon(state, isInstalledInDb);
             item.description = repoPath;
@@ -186,6 +201,30 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
         treeItems.push(...regularModules);
         return treeItems;
+    }
+
+    /** Lazily lists a module's manifest dependencies (one level deep). */
+    private async buildDependencyItems(moduleData: ModuleData): Promise<vscode.TreeItem[]> {
+        const manifest = await readModuleManifest(moduleData.path);
+        if (!manifest || manifest.depends.length === 0) {
+            const empty = new vscode.TreeItem(manifest ? 'No dependencies' : 'No __manifest__.py found', vscode.TreeItemCollapsibleState.None);
+            empty.contextValue = 'info';
+            empty.iconPath = new vscode.ThemeIcon('info');
+            return [empty];
+        }
+
+        return manifest.depends.map(dep => {
+            const isLocal = this.knownModuleNames.has(dep);
+            const item = new vscode.TreeItem(dep, vscode.TreeItemCollapsibleState.None);
+            item.id = `${moduleData.path}::dep::${dep}`;
+            item.contextValue = 'moduleDependency';
+            item.iconPath = isLocal
+                ? new vscode.ThemeIcon('package', new vscode.ThemeColor('charts.blue'))
+                : new vscode.ThemeIcon('library');
+            item.description = isLocal ? 'project module' : 'core/other';
+            item.tooltip = isLocal ? `Dependency "${dep}" is available in this project's repos.` : `${dep}: ${CORE_HINT}`;
+            return item;
+        });
     }
 
     private getModuleIcon(state: string, isInstalled: boolean): vscode.ThemeIcon {

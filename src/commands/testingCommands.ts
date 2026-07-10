@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import type { CommandDeps } from './index';
+import { SettingsStore } from '../settingsStore';
 import {
     toggleTesting,
     toggleStopAfterInit,
@@ -52,5 +53,16 @@ export function registerTestingCommands(deps: CommandDeps): void {
     context.subscriptions.push(vscode.commands.registerCommand('testingSelector.setSpecificLogLevel', async () => {
         await setSpecificLogLevel();
         providers.testing.refresh();
+    }));
+
+    // No-argument wrapper (keybinding / palette): reads the current state
+    // instead of requiring the tree item's payload.
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.toggleTestingMode', async () => {
+        const result = await SettingsStore.getSelectedProject();
+        if (!result) {
+            return;
+        }
+        await toggleTesting({ isEnabled: !!result.project.testingConfig?.isEnabled });
+        await refreshAll({ reason: 'ui' });
     }));
 }

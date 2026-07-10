@@ -16,6 +16,7 @@ import { SortPreferences } from './sortPreferences';
 import { ProjectReposExplorerProvider } from './projectReposExplorer';
 import { logger, registerLogger } from './services/logger';
 import { logStaleReferences } from './services/reconcile';
+import { StatusBarIndicators } from './views/statusBar';
 import { registerAllCommands, RefreshReason } from './commands';
 
 /** Syncs the testing context key with the selected project's testing state. */
@@ -70,6 +71,14 @@ export async function activate(context: vscode.ExtensionContext) {
     // that need disposal with the extension.
     context.subscriptions.push(...Object.values(providers));
 
+    const statusBar = new StatusBarIndicators();
+    context.subscriptions.push(statusBar);
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+        if (event.affectsConfiguration('odooDebugger.statusBar.enabled')) {
+            void statusBar.update();
+        }
+    }));
+
     // One-time v1.2 migrations: fold legacy per-DB odooVersion into versions,
     // and map old databaseSwitchBehavior values onto the new auto/ask/never
     // enum. Runs after provider construction so the versions-changed refresh
@@ -95,6 +104,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const refreshViews = async () => {
         await initializeTestingContext();
         Object.values(providers).forEach(provider => provider.refresh());
+        await statusBar.update();
     };
 
     let debuggerSyncTimer: NodeJS.Timeout | undefined;
@@ -152,6 +162,8 @@ export async function activate(context: vscode.ExtensionContext) {
     };
 
     registerAllCommands({ context, providers, versionsService, sortPreferences, refreshAll });
+
+    void statusBar.update();
 }
 
 export function deactivate() {

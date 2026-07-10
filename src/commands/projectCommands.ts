@@ -15,7 +15,8 @@ import {
     importProject,
     quickProjectSearch,
     manageProjectTickets,
-    openProjectTicket
+    openProjectTicket,
+    detectProjectTickets
 } from '../project';
 import { createDb, selectDatabase } from '../dbs';
 import { setupOdooBranch } from '../odooInstaller';
@@ -142,5 +143,10 @@ export function registerProjectCommands(deps: CommandDeps): void {
 
     context.subscriptions.push(vscode.commands.registerCommand('proj.quickSwitchProject', async () => {
         await quickSwitchProjectWorkspace(context);
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.detectTickets', async () => {
+        await detectProjectTickets();
+        await refreshAll({ reason: 'ui' });
     }));
 }
