@@ -1,233 +1,138 @@
 # Odoo DevTools for VS Code
 
-All-in-one VS Code extension for managing and debugging Odoo projects: projects, repositories, databases, modules, version/branch switching, and quick server/shell launch.
+All-in-one VS Code extension for Odoo development: projects, repositories, databases (create/restore/clone/templates), modules, version & branch switching, testing mode, and one-keystroke server/shell launch under the debugger.
 
-## Setup
+A **Get Started with Odoo DevTools** walkthrough is available from VS Code's Welcome page after installing.
+
+## Requirements
+
+- Python + an Odoo environment (virtualenv recommended), with `debugpy` available for debugging
+- PostgreSQL client tools in `PATH` (`psql`, `createdb`, `dropdb`) for the database features
+- Git checkouts of Odoo / your addons (for branch switching)
+- `unzip` / `gunzip` for restoring `.zip` / `.sql.gz` dumps
+
+## Quick Start
 
 1. Open a folder in VS Code.
-   This extension stores its state in `.vscode/odoo-debugger-data.json`, so projects/versions/databases are **workspace-specific**.
+   The extension stores its state in `.vscode/odoo-debugger-data.json`, so projects/versions/databases are **workspace-specific**.
 
-2. **(Optional, skip this step if Odoo is already set up. Running this again might overwrite or corrupt your setup)** Run `Project Selector: Setup Odoo`.
-   This will:
-
-   - Clone `odoo` and `enterprise` for a chosen branch
-   - Create a Python virtual environment (e.g. `./venv`)
+2. **(Optional — skip if Odoo is already set up; running this again might overwrite your setup)** Run `Setup Odoo` from the Projects view title bar.
+   This clones `odoo` and `enterprise` for a chosen branch and creates a Python virtual environment.
 
    ![Odoo Setup](resources/assets/odoo-setup.gif)
 
-3. Configure defaults and other settings in VS Code settings under `odooDebugger.*`.
-   Configurations include:
+3. Configure defaults under `odooDebugger.defaultVersion.*` in VS Code settings — most importantly the paths:
 
-   1. New Versions' default values (`odooDebugger.defaultVersion.*`)
-      Recommended to set early:
+   ```jsonc
+   {
+     "odooDebugger.defaultVersion.odooPath": "./odoo",
+     "odooDebugger.defaultVersion.enterprisePath": "./enterprise",
+     "odooDebugger.defaultVersion.designThemesPath": "./design-themes",
+     "odooDebugger.defaultVersion.customAddonsPath": "./custom-addons",
+     "odooDebugger.defaultVersion.pythonPath": "./venv/bin/python",
+     "odooDebugger.defaultVersion.dumpsFolder": "./dumps"
+   }
+   ```
 
-      - `odooDebugger.defaultVersion.odooPath`, `enterprisePath`, `designThemesPath`, `customAddonsPath`
-      - `odooDebugger.defaultVersion.pythonPath`
-      - `odooDebugger.defaultVersion.dumpsFolder`
-   2. Database switch behavior (`odooDebugger.databaseSwitchBehavior`)
-      Controls what happens when you select a DB that is linked to a different version/branch:
-      - `auto` (default): silently align the active version and git branches to the database
-      - `ask`: show a notification asking whether to align
-      - `never`: never switch automatically
-   3. Pre & Post auto-checkout commands
+   Absolute paths are recommended.
 
-      - `odooDebugger.defaultVersion.preCheckoutCommands`
-      - `odooDebugger.defaultVersion.postCheckoutCommands`
-        These run **per "odoo" repository** during a branch switch, with the repo folder as the working directory.
-   4. File search configurations (`odooDebugger.search.*`)
-      Tune discovery speed/accuracy for large workspaces (depth, max entries, exclude patterns).
+   ![VS Code Setting](resources/assets/vscode-settings.gif)
 
-    ![VS Code Setting](resources/assets/vscode-settings.gif)
+4. In the **Versions** view: create a version (branch pick + name — settings come from the defaults) and activate it.
 
-4. In the **Versions** view: create/activate a version (settings profile) and optionally switch branches.
-   A version can be linked to each database and is used for:
+   ![Version Setup](resources/assets/version-setup.gif)
 
-   - Choosing the target Git branch for auto-checkout (when enabled)
-   - Defining runtime settings used by `Odoo: Start Server` / `Odoo: Start Shell`
+5. In the **Projects** view: create a project. The wizard covers repositories and the first database.
 
-   Default version settings come from `odooDebugger.defaultVersion.*`, and you can edit settings directly from the Versions view after creation.
+   ![Project Creation](resources/assets/project-creation.gif)
 
-   ![Versions view](resources/assets/versions-settings.png)
+6. In the **Modules** view: mark modules for **Install** or **Upgrade**.
 
-   Configurations include:
-   - Debugger: VS Code debugger settings `debuggerName`/`debuggerVersion`
-   - Server/Shell port numbers: `portNumber` / `shellPortNumber`
-   - Other server settings: `extraParams` / `devMode` / `limitTime*` / `maxCronThreads` / etc.
-   - Paths:
-        1. Odoo/Enterprise/Design Themes Dir: Respective repo locations
-        2. Custom Addons: Folder that contains the custom repos. **IMPORTANT: The extension detects git repositories only.**
-        3. Python Exec: For python venv
-        4. Dumps Dir: Folder that contains DB dumps
-   It is recommended that all of these paths are configured as absolute files rather than relative
-   - Extra Params: Used to add extra parameters to the runtime settings. To add extra params, add the `option` and `value` as comma-separated values. Example: `--log-handler,odoo.addons.base.models.ir_attachment:WARNING,--shell-interface,ptpython`
+   ![Module Management](resources/assets/module-management.gif)
 
-    ![Version Setup](resources/assets/version-setup.gif)
-
-5. In the **Projects** view: create a project and select it.
-
-   - `Project Selector: Create Project` will guide you through project creation.
-   - Selecting a project makes it the active context for the other views.
-
-    ![Project Creation](resources/assets/project-creation.gif)
-
-6. (Optional) In the **Repos** view: select the repos that belong to the project.
-
-   - Already done in the project creation step
-   - Repos are used for module discovery and are shown in the Project Repos views.
-   - Include your `custom-addons` repos (and any internal repos you want scanned).
-
-    ![Repo Selection](resources/assets/repo-selection.gif)
-
-7. (Optional) In the **Databases** view: create a database (fresh or from dump) and select it.
-
-   - Already done in the project creation step
-   - A project can have multiple different databases
-   - Choose **Fresh** for a clean DB, **From Dump** to restore from a `dump.sql` folder / `.zip` / `.sql.gz` archive, **From Template** to clone a saved template, or **Connect to Existing** to pick one of your live PostgreSQL databases.
-   - The database's Odoo version is detected automatically (from the restored data) and linked to the matching version profile; the current branch of each project repo is captured as the database's working state.
-   - Selecting a database aligns the active version and git branches to it, depending on `odooDebugger.databaseSwitchBehavior`.
-
-    ![Database Creation](resources/assets/database-creation.gif)
-
-8. (Optional) In the **Modules** view: select and apply module actions.
-
-   - Select modules and mark them for **Install** or **Upgrade**.
-   - Use the view actions to apply your selections to the selected database.
-
-    ![Module Management](resources/assets/module-management.gif)
-
-9. Use `Odoo: Start Server` / `Odoo: Start Shell`.
-
-   - Open the Command Palette and run `Odoo: Start Server` to launch Odoo with the active version + selected DB.
-   - Run `Odoo: Start Shell` for an interactive Odoo shell against the selected DB.
-
-## Discord Channel
-
-For bug reports or feature requests, please join our discord channel: https://discord.gg/5DMzx3nr9z
-
-## Features
-
-### Projects + Repos
-
-- Create/select projects and associate Git repositories with each project.
-- Use the Project Repos views to browse only the repositories of the active project.
-
-### Versions (Settings Profiles) + Branch Switching
-
-- Create multiple versions (settings profiles) and set one as active.
-- Each version has a target Odoo branch and runtime settings (paths/ports/params).
-- When selecting a database linked to a different version/branch, the extension can auto-switch based on `odooDebugger.databaseSwitchBehavior`.
-
-### Databases (Fresh / Dump / Existing)
-
-- Create fresh databases, restore from dumps (folder or `.zip` archive), or connect to an existing DB.
-- Databases can be linked to a version so selecting the DB can also activate the correct settings/branch.
-
-### Modules (Install / Upgrade Workflows)
-
-- Discover modules from the selected repositories.
-- Mark modules for install/upgrade and apply the actions to the selected database.
-
-### Checkout Hooks (Pre/Post Commands)
-
-- Configure commands that run before/after branch switching (e.g., `pip install`, `npm install`, sanity checks).
-- Commands run per repo during checkout and are executed via VS Code Tasks/Terminal.
+7. Launch: `Odoo DevTools: Start Server` (`Ctrl+Alt+O S`) or `Start Shell` from the Projects view / Command Palette.
 
 ## Core Concepts
 
-- **Project**: a workspace grouping (repositories + databases).
-- **Version**: a named settings profile (paths/ports/params) plus a target Git branch; one version is “active” at a time.
-- **Database**: a PostgreSQL DB that can be linked to a version; selecting a DB may also switch the active version and/or Git branches.
+- **Project**: a grouping of repositories + databases (+ tickets and a testing configuration).
+- **Version**: a named settings profile (paths/ports/params) bound to a target git branch; one version is *active* at a time.
+- **Database**: a PostgreSQL DB that carries its full environment — a linked version profile and per-repo branch assignments. Selecting a database aligns your workspace to it.
+
+## Database-Driven Switching
+
+Selecting a database aligns the active version, the core repo branches (odoo/enterprise/design-themes) and the project repo branches to what that database expects, controlled by `odooDebugger.databaseSwitchBehavior`:
+
+- `auto` (default): align silently
+- `ask`: one notification with **Switch** / **Keep Current**
+- `never`: selection only, no switching
+
+The status bar shows the active project, database and version — click any of them to switch.
 
 ## Views
 
-This extension contributes views in the Activity Bar and Explorer:
-
-- Activity Bar: Projects, Repos, Databases, Modules, Testing, Versions, Project Repos
-- Explorer: Project Repos (file-tree view)
+Activity Bar (**Odoo DevTools**): Projects, Repos, Databases, Modules, Testing, Versions.
+Explorer sidebar: **Project Repos** (project-scoped file tree).
 
 ### Projects
 
-- Create/select/delete/duplicate projects.
-- Import/export projects for backup/sharing.
-- Project selection drives what you see in Repos/Databases/Modules/Project Repos.
+- Create/select/delete/duplicate projects; import/export them as JSON for backup or sharing.
+- Project selection drives every other view.
+- **Tickets**: attach ticket/task ids to a project and open them with `odooDebugger.ticketBaseUrl`. `Detect Tickets from Branches & Manifests` scans your repo branch names and module manifests for task ids automatically.
+- **Workspace**: build/open a multi-root `.code-workspace` from the project's repos (`Open Project Workspace`, `Quick Switch Project Workspace`).
 
 ### Repos
 
-- Select which Git repositories belong to the active project.
-- Repos are used for module discovery and for the Project Repos views.
+- Choose which git repositories (discovered under your custom addons folder) belong to the active project.
+- Each repo shows its current branch; sort by name, creation date or branch.
 
 ### Databases
 
-- Create databases (fresh, from dump, from template, or connect to existing).
-- Restore DBs from a dump source (folder, `.zip`, `.sql`, or `.sql.gz`).
-- A database carries its full environment: a linked version profile plus per-repo branch assignments. Selecting it aligns your workspace based on `odooDebugger.databaseSwitchBehavior`:
-  - `auto` (default): align silently
-  - `ask`: one notification with Switch / Keep Current
-  - `never`: selection only
+- Create databases four ways: **Fresh**, **From Dump** (folder with `dump.sql`, `.zip`, `.sql`, `.sql.gz` — streamed straight into psql), **From Template** (`createdb -T` clone), or **Connect to Existing** (picked from your live PostgreSQL instance).
+- Restored dumps are neutralized for development: crons and outgoing mail disabled, passwords reset (`admin`/`admin`), fresh database UUID, extended expiration, mailcatcher entry.
+- The Odoo version is **auto-detected** from the database contents and linked to the matching version profile.
+- Context actions: restore, delete, clone, copy name, change linked version, configure per-repo branches.
+- **Templates** (`Manage Database Templates`): register or create template databases and clone from them in seconds; import/export template lists as JSON.
+- **Reconcile Databases** finds stored references whose PostgreSQL database no longer exists and removes them in one pass.
 
 ### Modules
 
-- Discovers modules from selected repos.
-- Mark modules for install/upgrade and apply to the selected DB.
-- Use PSAE/internal helpers when your repo layout requires it.
+- Modules discovered from the project's repos; click to cycle install → upgrade → unmanaged (green/yellow icons; filled/outline shows installed state).
+- Expand a module to see its manifest dependencies (project modules vs core).
+- Bulk actions: install all, update all, update installed, clear; browse the modules actually installed in the database.
+- **Create Module** scaffolds a new module via `odoo-bin scaffold` into a chosen repo.
+- `ps*-internal` directories appear as collapsible groups with an include/exclude toggle for the addons path.
+
+### Testing
+
+- Toggle testing mode (module selections are stashed and restored when you leave it).
+- Configure test targets (tags, modules, classes, methods — click to cycle include/exclude/disabled), a test file, `--stop-after-init` and a log level.
+- The view shows the exact test flags added to the launch configuration.
 
 ### Versions
 
-- Create/clone/delete versions.
-- Activate a version to apply its runtime settings (ports/paths/params).
-- Change the version’s branch and optionally switch repos to that branch.
-- Reset settings to defaults or save current settings as the new defaults.
+- Create (branch + name), clone, delete, activate; edit any setting inline from the tree.
+- Reset settings to the configured defaults, or save a version's settings as the new defaults.
+- Changing a version's branch or activating a version can check out the matching git branches.
 
-### Project Repos (Activity Bar + Explorer)
+### Project Repos (Explorer)
 
-- Browse the active project’s repositories and files.
-- Useful as a project-scoped file view separate from the standard Explorer.
-- Context actions include reveal, open terminal, rename/delete, copy/cut/paste.
+- Browse only the active project's repositories, with the current branch shown per repo.
+- File operations: new file/folder, rename, delete, copy/cut/paste, open in terminal, reveal.
+- Repos whose folder was moved or deleted are flagged with a **Relocate Repository** action.
+- Honors your `files.exclude` settings.
 
-## Configuration
+## Debugging & launch.json
 
-Project data is stored in `.vscode/odoo-debugger-data.json` inside your workspace.
+The extension maintains a single launch configuration (named after the version's `debuggerName`) in `.vscode/launch.json`, and rewrites **only that entry** — your own configurations and comments are preserved. It assembles `--addons-path`, `-d`, `-i`/`-u` from your module selections, ports, time limits, dev mode and testing flags automatically.
 
-### Recommended Settings
+## Branch Checkout Hooks
 
-At minimum, set the default paths for new versions (workspace-relative or absolute):
-
-```jsonc
-{
-  "odooDebugger.defaultVersion.odooPath": "./odoo",
-  "odooDebugger.defaultVersion.enterprisePath": "./enterprise",
-  "odooDebugger.defaultVersion.designThemesPath": "./design-themes",
-  "odooDebugger.defaultVersion.customAddonsPath": "./custom-addons",
-  "odooDebugger.defaultVersion.pythonPath": "./venv/bin/python",
-  "odooDebugger.defaultVersion.dumpsFolder": "./dumps"
-}
-```
-
-### Settings Reference
-
-Common VS Code settings include:
-
-- `odooDebugger.defaultVersion.*` – defaults used when creating new versions (paths, ports, etc.)
-- `odooDebugger.databaseSwitchBehavior` – how to handle version/branch mismatches when selecting a database
-- `odooDebugger.search.*` – recursive discovery tuning
-- `odooDebugger.defaultVersion.preCheckoutCommands` / `odooDebugger.defaultVersion.postCheckoutCommands` – shell commands run around branch checkouts
-
-### Branch Checkout Hooks
-
-Configure terminal commands to run before/after switching branches:
-
-- `odooDebugger.defaultVersion.preCheckoutCommands`
-- `odooDebugger.defaultVersion.postCheckoutCommands`
-
-Commands run **once per repo being switched**, with the repo folder as the working directory, and are logged in the `Odoo Debugger: Branch Hooks` output channel.
-
-Example:
+- `odooDebugger.defaultVersion.preCheckoutCommands` / `postCheckoutCommands` run **once per repo being switched**, with the repo folder as the working directory, and are logged in the `Odoo Debugger: Branch Hooks` output channel.
 
 ```jsonc
 {
   "odooDebugger.defaultVersion.preCheckoutCommands": [
-    "git status --porcelain",
-    "python -m compileall -q ."
+    "git status --porcelain"
   ],
   "odooDebugger.defaultVersion.postCheckoutCommands": [
     "pip install -r requirements.txt"
@@ -235,19 +140,40 @@ Example:
 }
 ```
 
-## Requirements (Runtime)
+## Commands & Keybindings
 
-- VS Code
-- Python + an Odoo environment (virtualenv recommended)
-- PostgreSQL (and tools like `createdb`, `dropdb`, `pg_dump` if you use DB features)
-- Git repositories for Odoo / addons (for branch switching)
+| Keybinding | Command |
+| --- | --- |
+| `Ctrl+Alt+P` | Search Projects (quick switch) |
+| `Ctrl+Alt+O S` | Start Server |
+| `Ctrl+Alt+O X` | Stop Server |
+| `Ctrl+Alt+O T` | Toggle Testing Mode |
+| `Ctrl+Alt+O D` | Search Databases (quick switch) |
+| `Ctrl+Alt+O V` | Switch Active Version |
+
+Every view also has search (`$(search)`) and sort (`$(sort-precedence)`) actions in its title bar. All palette commands live under the **Odoo DevTools** category.
+
+## Settings Reference
+
+- `odooDebugger.defaultVersion.*` — defaults applied to newly created versions (paths, ports, params, checkout hooks). Existing versions are edited from the Versions view.
+- `odooDebugger.databaseSwitchBehavior` — `auto` / `ask` / `never` (see above).
+- `odooDebugger.statusBar.enabled` — show the project/database/version status bar items.
+- `odooDebugger.ticketBaseUrl` — base URL used by Open Project Ticket.
+- `odooDebugger.search.*` — module/repository discovery tuning (max depth, max entries, exclude patterns) for large workspaces.
+
+Diagnostics are written to the **Odoo DevTools** output channel (View → Output).
 
 ## Tips & Troubleshooting
 
-- If branch switching does nothing, confirm `odooDebugger.defaultVersion.odooPath/enterprisePath/designThemesPath` point to valid Git repos.
-- If database operations fail, ensure your Postgres tools are installed and available in `PATH` (`createdb`, `dropdb`, `pg_dump`, etc.).
-- If module discovery is slow in large workspaces, tune `odooDebugger.search.*` exclude patterns and max depth.
-- If you changed VS Code settings but don’t see an effect, reload the window (`Developer: Reload Window`) and retry the action.
+- If branch switching does nothing, confirm the version's `odooPath`/`enterprisePath`/`designThemesPath` point to valid git repos.
+- If database operations fail, ensure the PostgreSQL client tools are installed and in `PATH` (`psql`, `createdb`, `dropdb`).
+- If module discovery is slow in large workspaces, tune the `odooDebugger.search.*` exclude patterns and max depth.
+- If a repo shows **path missing** in Project Repos, use *Relocate Repository* to point it at the moved folder.
+- Check the **Odoo DevTools** output channel for logged errors before filing an issue.
+
+## Support
+
+For bug reports or feature requests, join the Discord channel: https://discord.gg/5DMzx3nr9z
 
 ## License and Ethical Use Disclaimer
 

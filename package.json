@@ -1402,7 +1402,68 @@
           "description": "Show the active project, database and version in the status bar (click to switch)."
         }
       }
-    }
+    },
+    "walkthroughs": [
+      {
+        "id": "odooDevtools.gettingStarted",
+        "title": "Get Started with Odoo DevTools",
+        "description": "Set up your Odoo development workbench: defaults, a version profile, a project with its database, and the debugger.",
+        "steps": [
+          {
+            "id": "configureDefaults",
+            "title": "Configure default paths",
+            "description": "Point the extension at your Odoo repositories, Python environment and dumps folder.\n[Open Settings](command:odoo.openVersionDefaults)",
+            "media": {
+              "markdown": "media/walkthrough/configure-defaults.md"
+            },
+            "completionEvents": [
+              "onCommand:odoo.openVersionDefaults"
+            ]
+          },
+          {
+            "id": "createVersion",
+            "title": "Create a version profile",
+            "description": "Pick an Odoo branch and name the profile - two prompts, done.\n[Create Version](command:odoo.createVersion)",
+            "media": {
+              "markdown": "media/walkthrough/create-version.md"
+            },
+            "completionEvents": [
+              "onCommand:odoo.createVersion"
+            ]
+          },
+          {
+            "id": "createProject",
+            "title": "Create a project",
+            "description": "Group your repositories and set up a database (fresh, dump, template or existing).\n[Create Project](command:projectSelector.create)",
+            "media": {
+              "markdown": "media/walkthrough/create-project.md"
+            },
+            "completionEvents": [
+              "onCommand:projectSelector.create"
+            ]
+          },
+          {
+            "id": "startDebugging",
+            "title": "Select modules & start debugging",
+            "description": "Mark modules for install/upgrade and launch Odoo under the debugger.\n[Start Server](command:odoo.startServer)",
+            "media": {
+              "markdown": "media/walkthrough/start-debugging.md"
+            },
+            "completionEvents": [
+              "onCommand:odoo.startServer"
+            ]
+          },
+          {
+            "id": "exploreMore",
+            "title": "Testing mode, templates & shortcuts",
+            "description": "Database switching, testing mode, DB templates, the status bar and keybindings.",
+            "media": {
+              "markdown": "media/walkthrough/explore-more.md"
+            }
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

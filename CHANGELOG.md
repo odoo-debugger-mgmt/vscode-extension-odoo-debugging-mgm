@@ -15,14 +15,40 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - **Version creation is 2 prompts**: pick the branch (listed from your odoo repo), confirm the suggested name. Paths and ports come from `odooDebugger.defaultVersion.*` and stay editable in the Versions tree.
 - New databases use their plain PostgreSQL identifier as the display name (the "Project • Kind • Date • #hash" format is retired; existing names are kept).
 
+- The Modules view uses theme icons instead of emoji (green/yellow = install/upgrade, filled/outline = installed or not), and `ps*-internal` directories are collapsible groups with an explicit include/exclude toggle instead of inline pseudo-modules.
+- launch.json is updated surgically: only the extension's own configuration entry is rewritten — user comments, formatting and other configurations are preserved.
+- The command palette no longer lists tree-only commands that errored when invoked without a selection (~50 commands hidden); user-invokable commands are grouped under the **Odoo DevTools** category.
+- Testing view: the Add Test Target / Set Test File buttons only appear while testing is enabled; naming-convention hints are shown inline in the input box; the command preview includes `--log-level`.
+- Dump restore runs entirely without a shell (database names and paths are passed as process arguments), and the development neutralization tolerates missing tables (e.g. dumps without `hr`).
+
 ### Added
 
 - Odoo version auto-detection from PostgreSQL: restored/connected databases are probed for their Odoo series (e.g. `17.0`, `saas-17.4`) and linked to the matching version profile, with a one-click offer to create the profile when missing.
+- **Status bar indicators** for the active project, database and version — click to switch (`odooDebugger.statusBar.enabled`).
+- **Keybindings**: `Ctrl+Alt+O` + `S`/`X`/`T`/`D`/`V` for Start/Stop Server, Toggle Testing Mode, database quick-switch and version switch; new `Stop Server`, `Toggle Testing Mode` and `Switch Active Version` palette commands.
+- **Clone Database** and **Copy Database Name** context actions in the Databases view.
+- **Reconcile Databases**: detects stored database/template references whose PostgreSQL database no longer exists and removes them in one multi-select pass (activation logs stale references silently).
+- **Relocate Repository**: repos whose folder was moved or deleted are flagged in Project Repos with a one-click relocation flow; repo items show their current git branch.
+- **Module dependencies**: expand a module to see its `depends` from the manifest, marked as project modules vs core.
+- **Detect Tickets from Branches & Manifests**: scans repo branch names and module manifests for ticket/task ids and adds them to the project's tickets.
+- **Getting Started walkthrough** (VS Code Welcome page).
+- New sort options: modules by installed state, repos by branch.
+- All diagnostics now go to the **Odoo DevTools** output channel.
+
+### Removed
+
+- **The Project Repos activity-bar container.** The feature lives on as the more capable *Project Repos* view in the Explorer sidebar (file operations, watchers, sort/search, branch display); the two views were near-duplicates.
+- The unimplemented contributed commands (`Get Database`, Explorer `New File`/`New Folder`/`Rename`/`Delete` aliases), which errored with "command not found".
+- The accidental `install` and `npm` runtime dependencies.
 
 ### Fixed
 
-- Removed contributed commands that were never implemented (`Get Database`, Explorer `New File`/`New Folder`/`Rename`/`Delete` aliases), which errored with "command not found".
-- Removed the accidental `install` and `npm` runtime dependencies.
+- "Configure Version Defaults" opened the Settings UI with a wrong extension id filter (showed nothing).
+- The Projects view welcome content ("Open a folder…") never rendered due to a broken `when` clause.
+- Starting the server no longer kills unrelated debug sessions — only the extension's own session is restarted.
+- The "Added base during initialization" notification no longer repeats on every refresh for uninitialized databases.
+- Database names containing shell metacharacters can no longer break (or abuse) database operations: all `psql`/`createdb`/`dropdb` calls use argument arrays without a shell.
+- The extension package no longer ships sources, `node_modules` and old `.vsix` files (~13 MB → a few hundred KB).
 - Legacy per-database `odooVersion` data is migrated into version links (or the branch label) on first activation.
 
 ## [Unreleased]
