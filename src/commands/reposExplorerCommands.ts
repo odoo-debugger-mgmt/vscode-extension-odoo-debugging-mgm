@@ -3,7 +3,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { CommandDeps } from './index';
 import { extractUri } from './args';
-import { showInfo } from '../services/notifications';
+import { showInfo, showError } from '../services/notifications';
+import { showAutoInfo } from '../services/notifications';
+import { SettingsStore } from '../settingsStore';
+import { stripSettings } from '../utils';
+import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache, invalidateGitBranchCache } from '../services/runtimeCache';
 import {
     createNewFile as explorerCreateNewFile,
     createNewFolder as explorerCreateNewFolder,
@@ -124,5 +128,44 @@ export function registerReposExplorerCommands(deps: CommandDeps): void {
             return;
         }
         await vscode.commands.executeCommand('revealFileInOS', uri);
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.relocateRepo', async (arg?: unknown) => {
+        const repo = (arg as { repo?: { name?: string; path?: string } } | undefined)?.repo;
+        if (!repo?.path) {
+            void showInfo('Select a repository to relocate.');
+            return;
+        }
+
+        const picked = await vscode.window.showOpenDialog({
+            canSelectFolders: true,
+            canSelectFiles: false,
+            canSelectMany: false,
+            title: `Select the new location of "${repo.name ?? repo.path}"`,
+            openLabel: 'Use This Folder'
+        });
+        if (!picked || picked.length === 0) {
+            return;
+        }
+        const newPath = picked[0].fsPath;
+
+        const result = await SettingsStore.getSelectedProject();
+        if (!result) {
+            return;
+        }
+        const { data, project } = result;
+        const target = (project.repos ?? []).find(r => r.path === repo.path || r.name === repo.name);
+        if (!target) {
+            void showError('The repository could not be found in the current project.');
+            return;
+        }
+
+        target.path = newPath;
+        await SettingsStore.saveWithoutComments(stripSettings(data));
+        invalidateModuleDiscoveryCache();
+        invalidateRepositoryDiscoveryCache();
+        invalidateGitBranchCache();
+        showAutoInfo(`Repository "${target.name}" now points to ${newPath}`, 3000);
+        await deps.refreshAll();
     }));
 }

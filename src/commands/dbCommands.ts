@@ -11,8 +11,12 @@ import {
     restoreDb,
     changeDatabaseVersion,
     changeDatabaseProjectRepoBranches,
-    manageDatabaseTemplates
+    manageDatabaseTemplates,
+    cloneDatabaseFlow,
+    reconcileDatabasesFlow,
+    extractDatabaseFromEvent
 } from '../dbs';
+import { showBriefStatus } from '../services/notifications';
 
 export function registerDbCommands(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
@@ -104,6 +108,36 @@ export function registerDbCommands(deps: CommandDeps): void {
         } catch (err) {
             void showError(`Failed to manage database templates: ${errorMessage(err)}`);
             logger.error('Error in database template management:', err);
+        }
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.copyName', async (event) => {
+        const db = extractDatabaseFromEvent(event);
+        if (!db) {
+            void showError('Could not identify the database whose name to copy.');
+            return;
+        }
+        await vscode.env.clipboard.writeText(db.id);
+        showBriefStatus(`Copied database name: ${db.id}`);
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.clone', async (event) => {
+        try {
+            await cloneDatabaseFlow(event);
+            await refreshAll({ reason: 'ui' });
+        } catch (err) {
+            void showError(`Failed to clone database: ${errorMessage(err)}`);
+            logger.error('Error in database clone:', err);
+        }
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.reconcile', async () => {
+        try {
+            await reconcileDatabasesFlow();
+            await refreshAll({ reason: 'ui' });
+        } catch (err) {
+            void showError(`Failed to reconcile databases: ${errorMessage(err)}`);
+            logger.error('Error in database reconciliation:', err);
         }
     }));
 }

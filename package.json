@@ -503,6 +503,26 @@
         "command": "odooDebugger.revealFileInOS",
         "title": "Reveal in OS",
         "category": "Odoo DevTools"
+      },
+      {
+        "command": "dbSelector.copyName",
+        "title": "Copy Database Name",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "dbSelector.clone",
+        "title": "Clone Database",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "dbSelector.reconcile",
+        "title": "Reconcile Databases",
+        "icon": "$(checklist)",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "odooDebugger.relocateRepo",
+        "title": "Relocate Repository…"
       }
     ],
     "menus": {
@@ -691,6 +711,11 @@
           "command": "projectRepos.quickSearch",
           "when": "view == odt.projectReposExplorer",
           "group": "navigation@1.1"
+        },
+        {
+          "command": "dbSelector.reconcile",
+          "when": "view == dbSelector",
+          "group": "navigation@4.5"
         }
       ],
       "view/item/context": [
@@ -878,6 +903,26 @@
           "command": "moduleSelector.togglePsaeInternalModule",
           "when": "view == moduleSelector && viewItem == psaeDirectory",
           "group": "psae@1"
+        },
+        {
+          "command": "dbSelector.copyName",
+          "when": "view == dbSelector && viewItem == database",
+          "group": "database@5"
+        },
+        {
+          "command": "dbSelector.clone",
+          "when": "view == dbSelector && viewItem == database",
+          "group": "database@6"
+        },
+        {
+          "command": "odooDebugger.relocateRepo",
+          "when": "view == odt.projectReposExplorer && viewItem == projectRepoRootMissing",
+          "group": "inline"
+        },
+        {
+          "command": "odooDebugger.relocateRepo",
+          "when": "view == odt.projectReposExplorer && viewItem == projectRepoRootMissing",
+          "group": "navigation@1"
         }
       ],
       "commandPalette": [
@@ -1079,6 +1124,18 @@
         },
         {
           "command": "projectRepos.sort",
+          "when": "false"
+        },
+        {
+          "command": "dbSelector.copyName",
+          "when": "false"
+        },
+        {
+          "command": "dbSelector.clone",
+          "when": "false"
+        },
+        {
+          "command": "odooDebugger.relocateRepo",
           "when": "false"
         }
       ]

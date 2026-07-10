@@ -149,6 +149,10 @@ export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
                 return this.getRepoTimestamp(b) - this.getRepoTimestamp(a);
             case 'repo:created:oldest':
                 return this.getRepoTimestamp(a) - this.getRepoTimestamp(b);
+            case 'repo:branch:asc':
+                return (a.branch ?? '').localeCompare(b.branch ?? '') || a.name.localeCompare(b.name);
+            case 'repo:branch:desc':
+                return (b.branch ?? '').localeCompare(a.branch ?? '') || a.name.localeCompare(b.name);
             default:
                 return a.name.localeCompare(b.name);
         }

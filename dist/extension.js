@@ -44,20 +44,21 @@ exports.deactivate = deactivate;
 const vscode = __importStar(__webpack_require__(1));
 const dbsView_1 = __webpack_require__(2);
 const environment_1 = __webpack_require__(27);
-const dataMigration_1 = __webpack_require__(44);
-const project_1 = __webpack_require__(45);
-const repos_1 = __webpack_require__(50);
-const module_1 = __webpack_require__(51);
-const testing_1 = __webpack_require__(54);
-const debugger_1 = __webpack_require__(56);
+const dataMigration_1 = __webpack_require__(45);
+const project_1 = __webpack_require__(46);
+const repos_1 = __webpack_require__(51);
+const module_1 = __webpack_require__(52);
+const testing_1 = __webpack_require__(55);
+const debugger_1 = __webpack_require__(57);
 const settingsStore_1 = __webpack_require__(5);
-const versionsTreeProvider_1 = __webpack_require__(58);
+const versionsTreeProvider_1 = __webpack_require__(59);
 const versionsService_1 = __webpack_require__(23);
-const context_1 = __webpack_require__(55);
-const sortPreferences_1 = __webpack_require__(59);
-const projectReposExplorer_1 = __webpack_require__(60);
+const context_1 = __webpack_require__(56);
+const sortPreferences_1 = __webpack_require__(60);
+const projectReposExplorer_1 = __webpack_require__(61);
 const logger_1 = __webpack_require__(11);
-const commands_1 = __webpack_require__(62);
+const reconcile_1 = __webpack_require__(44);
+const commands_1 = __webpack_require__(63);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -108,6 +109,8 @@ async function activate(context) {
     // command used when new profiles are created is already registered.
     await (0, dataMigration_1.migrateDebuggerData)();
     void (0, environment_1.migrateLegacySwitchBehaviorSetting)();
+    // Passive check only: stale references are logged, never prompted about.
+    void (0, reconcile_1.logStaleReferences)();
     context.subscriptions.push(vscode.window.registerTreeDataProvider('projectSelector', providers.project));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('repoSelector', providers.repo));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('dbSelector', providers.db));
@@ -4767,7 +4770,9 @@ exports.SORT_OPTIONS = {
         { id: 'repo:name:asc', label: 'Name (A → Z)' },
         { id: 'repo:name:desc', label: 'Name (Z → A)' },
         { id: 'repo:created:newest', label: 'Creation Date (Newest first)', description: 'Uses filesystem creation time' },
-        { id: 'repo:created:oldest', label: 'Creation Date (Oldest first)', description: 'Uses filesystem creation time' }
+        { id: 'repo:created:oldest', label: 'Creation Date (Oldest first)', description: 'Uses filesystem creation time' },
+        { id: 'repo:branch:asc', label: 'Branch (A → Z)' },
+        { id: 'repo:branch:desc', label: 'Branch (Z → A)' }
     ],
     dbSelector: [
         { id: 'db:name:asc', label: 'Name (A → Z)' },
@@ -4780,6 +4785,7 @@ exports.SORT_OPTIONS = {
     moduleSelector: [
         { id: 'module:state:active-first', label: 'State (Install/Upgrade first)' },
         { id: 'module:state:active-last', label: 'State (Install/Upgrade last)' },
+        { id: 'module:installed:first', label: 'Installed in Database first' },
         { id: 'module:name:asc', label: 'Name (A → Z)' },
         { id: 'module:name:desc', label: 'Name (Z → A)' },
         { id: 'module:repo:asc', label: 'Repository (A → Z)' },
@@ -5571,11 +5577,14 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getEffectiveOdooVersion = getEffectiveOdooVersion;
 exports.promptProjectRepoBranchAssignments = promptProjectRepoBranchAssignments;
+exports.extractDatabaseFromEvent = extractDatabaseFromEvent;
 exports.createDb = createDb;
 exports.cloneDatabaseFromTemplate = cloneDatabaseFromTemplate;
 exports.restoreDb = restoreDb;
 exports.selectDatabase = selectDatabase;
 exports.deleteDb = deleteDb;
+exports.cloneDatabaseFlow = cloneDatabaseFlow;
+exports.reconcileDatabasesFlow = reconcileDatabasesFlow;
 exports.changeDatabaseVersion = changeDatabaseVersion;
 exports.changeDatabaseProjectRepoBranches = changeDatabaseProjectRepoBranches;
 exports.manageDatabaseTemplates = manageDatabaseTemplates;
@@ -5595,6 +5604,7 @@ const database_1 = __webpack_require__(36);
 const postgres_1 = __webpack_require__(38);
 const dumpImport_1 = __webpack_require__(39);
 const templates_1 = __webpack_require__(43);
+const reconcile_1 = __webpack_require__(44);
 const environment_1 = __webpack_require__(27);
 /**
  * Database UI flows: creation wizard, selection, deletion, restore, version
@@ -6301,6 +6311,140 @@ async function deleteDb(event) {
     if (db.isSelected && project.dbs.length > 0) {
         (0, notifications_1.showBriefStatus)(`Switched to database: ${(0, utils_1.getDatabaseLabel)(project.dbs[0])}`, 2000);
     }
+}
+/**
+ * Clones an existing linked database into a new one (createdb -T) and adds
+ * the clone to the current project with the same version/branch metadata.
+ */
+async function cloneDatabaseFlow(event) {
+    const db = extractDatabaseFromEvent(event);
+    if (!db) {
+        void (0, notifications_1.showError)('Could not identify the database to clone.');
+        return;
+    }
+    const result = await settingsStore_1.SettingsStore.getSelectedProject();
+    if (!result) {
+        return;
+    }
+    const { data, project } = result;
+    const existingIdentifiers = await collectExistingDatabaseIdentifiers();
+    let suggestion = `${db.id}-copy`;
+    for (let i = 2; existingIdentifiers.has(suggestion.toLowerCase()); i++) {
+        suggestion = `${db.id}-copy${i}`;
+    }
+    const nameInput = await vscode.window.showInputBox({
+        prompt: `Clone "${db.id}" into a new database`,
+        value: suggestion,
+        ignoreFocusOut: true,
+        validateInput: value => {
+            const trimmed = value.trim();
+            if (!trimmed) {
+                return 'Database name cannot be empty.';
+            }
+            if (!NEW_DB_NAME_PATTERN.test(trimmed)) {
+                return 'Use letters, numbers, "-" or "_" only. The name must not start with "-".';
+            }
+            if (postgres_1.RESERVED_DATABASE_NAMES.has(trimmed.toLowerCase())) {
+                return `"${trimmed}" is a reserved database name.`;
+            }
+            if (existingIdentifiers.has(trimmed.toLowerCase())) {
+                return 'A database with this name is already linked to a project.';
+            }
+            return null;
+        }
+    });
+    if (nameInput === undefined) {
+        return;
+    }
+    const targetName = nameInput.trim();
+    await cloneDatabaseFromTemplate(targetName, db.id);
+    const projectRepoBranches = await (0, environment_1.captureCurrentRepoBranches)(project.repos ?? []);
+    const clone = new db_1.DatabaseModel(targetName, new Date(), {
+        isSelected: false,
+        isItABackup: false,
+        isExisting: false,
+        branchName: db.branchName ?? '',
+        versionId: db.versionId,
+        displayName: targetName,
+        internalName: targetName,
+        kind: 'template',
+        projectRepoBranches
+    });
+    project.dbs.push(clone);
+    await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+    (0, notifications_1.showAutoInfo)(`Cloned "${db.id}" into "${targetName}" and added it to project "${project.name}"`, 3500);
+}
+/**
+ * Compares stored database/template references against the live PostgreSQL
+ * instance and offers to remove the ones that no longer exist.
+ */
+async function reconcileDatabasesFlow() {
+    const stale = await (0, reconcile_1.findStaleReferences)();
+    if (!stale) {
+        void (0, notifications_1.showWarning)('Could not query PostgreSQL to verify database references.');
+        return;
+    }
+    const total = stale.databases.length + stale.templates.length;
+    if (total === 0) {
+        (0, notifications_1.showAutoInfo)('All linked databases and templates exist in PostgreSQL.', 2500);
+        return;
+    }
+    const picks = [
+        ...stale.databases.map(entry => ({
+            label: `$(database) ${(0, utils_1.getDatabaseLabel)(entry.db)}`,
+            description: `Database in project "${entry.projectName}"`,
+            detail: `PostgreSQL database "${entry.db.id}" no longer exists`,
+            picked: true,
+            staleKind: 'db',
+            key: entry.db.id,
+            projectName: entry.projectName
+        })),
+        ...stale.templates.map(template => ({
+            label: `$(file-symlink-directory) ${template.name}`,
+            description: 'Database template',
+            detail: `Template database "${template.templateDbName}" no longer exists`,
+            picked: true,
+            staleKind: 'template',
+            key: template.templateDbName
+        }))
+    ];
+    const chosen = await vscode.window.showQuickPick(picks, {
+        canPickMany: true,
+        placeHolder: 'These references point to PostgreSQL databases that no longer exist - select which to remove',
+        ignoreFocusOut: true
+    });
+    if (!chosen || chosen.length === 0) {
+        return;
+    }
+    const dbKeys = new Map();
+    const templateKeys = new Set();
+    for (const pick of chosen) {
+        if (pick.staleKind === 'db' && pick.projectName) {
+            const set = dbKeys.get(pick.projectName) ?? new Set();
+            set.add(pick.key.toLowerCase());
+            dbKeys.set(pick.projectName, set);
+        }
+        else if (pick.staleKind === 'template') {
+            templateKeys.add(pick.key.toLowerCase());
+        }
+    }
+    const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
+    for (const project of data.projects ?? []) {
+        const staleForProject = dbKeys.get(project.name);
+        if (!staleForProject || !Array.isArray(project.dbs)) {
+            continue;
+        }
+        const hadSelected = project.dbs.some((db) => db.isSelected);
+        project.dbs = project.dbs.filter((db) => !staleForProject.has(db.id.toLowerCase()));
+        if (hadSelected && project.dbs.length > 0 && !project.dbs.some((db) => db.isSelected)) {
+            project.dbs[0].isSelected = true;
+        }
+    }
+    if (templateKeys.size > 0) {
+        data.dbTemplates = (data.dbTemplates ?? []).filter(template => !templateKeys.has(template.templateDbName.toLowerCase()));
+    }
+    await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+    (0, notifications_1.showAutoInfo)(`Removed ${chosen.length} stale database reference(s)`, 3000);
 }
 async function changeDatabaseVersion(event) {
     try {
@@ -7833,6 +7977,62 @@ async function persistDatabaseTemplates(data, templates) {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.findStaleReferences = findStaleReferences;
+exports.logStaleReferences = logStaleReferences;
+const settingsStore_1 = __webpack_require__(5);
+const postgres_1 = __webpack_require__(38);
+const logger_1 = __webpack_require__(11);
+/**
+ * Returns references to PostgreSQL databases that no longer exist, or
+ * undefined when PostgreSQL is unreachable (nothing can be verified then).
+ */
+async function findStaleReferences() {
+    const existing = await (0, postgres_1.listPostgresDatabases)();
+    if (existing.length === 0) {
+        // psql unavailable or no databases at all: treat as unverifiable
+        // rather than flagging everything as stale.
+        return undefined;
+    }
+    const existingLower = new Set(existing.map(name => name.toLowerCase()));
+    const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
+    const databases = [];
+    for (const project of data.projects ?? []) {
+        for (const db of project.dbs ?? []) {
+            if (db?.id && !existingLower.has(db.id.toLowerCase())) {
+                databases.push({ projectName: project.name, db });
+            }
+        }
+    }
+    const templates = (data.dbTemplates ?? []).filter(template => template.templateDbName && !existingLower.has(template.templateDbName.toLowerCase()));
+    return { databases, templates };
+}
+/** Activation-time check: logs stale references, never prompts. */
+async function logStaleReferences() {
+    try {
+        const stale = await findStaleReferences();
+        if (!stale) {
+            return;
+        }
+        const total = stale.databases.length + stale.templates.length;
+        if (total === 0) {
+            return;
+        }
+        logger_1.logger.warn(`${total} stored reference(s) point to PostgreSQL databases that no longer exist ` +
+            `(${stale.databases.map(entry => entry.db.id).join(', ')}${stale.templates.length ? `; templates: ${stale.templates.map(t => t.templateDbName).join(', ')}` : ''}). ` +
+            'Run "Reconcile Databases" from the Databases view to clean them up.');
+    }
+    catch (error) {
+        logger_1.logger.debug('Stale-reference check failed:', error);
+    }
+}
+
+
+/***/ }),
+/* 45 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.collectLegacyBranchesNeedingVersions = collectLegacyBranchesNeedingVersions;
 exports.applyDatabaseFieldMigration = applyDatabaseFieldMigration;
 exports.migrateDebuggerData = migrateDebuggerData;
@@ -7935,7 +8135,7 @@ async function migrateDebuggerData() {
 
 
 /***/ }),
-/* 45 */
+/* 46 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -7987,9 +8187,9 @@ exports.exportProject = exportProject;
 exports.importProject = importProject;
 exports.quickProjectSearch = quickProjectSearch;
 const vscode = __importStar(__webpack_require__(1));
-const os = __importStar(__webpack_require__(46));
-const project_1 = __webpack_require__(47);
-const repo_1 = __webpack_require__(49);
+const os = __importStar(__webpack_require__(47));
+const project_1 = __webpack_require__(48);
+const repo_1 = __webpack_require__(50);
 const utils_1 = __webpack_require__(7);
 const settingsStore_1 = __webpack_require__(5);
 const versionsService_1 = __webpack_require__(23);
@@ -8910,19 +9110,19 @@ async function quickProjectSearch() {
 
 
 /***/ }),
-/* 46 */
+/* 47 */
 /***/ ((module) => {
 
 module.exports = require("os");
 
 /***/ }),
-/* 47 */
+/* 48 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectModel = void 0;
-const testing_1 = __webpack_require__(48);
+const testing_1 = __webpack_require__(49);
 const crypto_1 = __webpack_require__(25);
 class ProjectModel {
     name; // project sh name
@@ -8950,7 +9150,7 @@ exports.ProjectModel = ProjectModel;
 
 
 /***/ }),
-/* 48 */
+/* 49 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -9033,7 +9233,7 @@ function ensureTestingConfigModel(testingConfig) {
 
 
 /***/ }),
-/* 49 */
+/* 50 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -9055,7 +9255,7 @@ exports.RepoModel = RepoModel;
 
 
 /***/ }),
-/* 50 */
+/* 51 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -9095,7 +9295,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.RepoTreeProvider = void 0;
 exports.selectRepo = selectRepo;
-const repo_1 = __webpack_require__(49);
+const repo_1 = __webpack_require__(50);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(7);
 const settingsStore_1 = __webpack_require__(5);
@@ -9222,6 +9422,10 @@ class RepoTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
                 return this.getRepoTimestamp(b) - this.getRepoTimestamp(a);
             case 'repo:created:oldest':
                 return this.getRepoTimestamp(a) - this.getRepoTimestamp(b);
+            case 'repo:branch:asc':
+                return (a.branch ?? '').localeCompare(b.branch ?? '') || a.name.localeCompare(b.name);
+            case 'repo:branch:desc':
+                return (b.branch ?? '').localeCompare(a.branch ?? '') || a.name.localeCompare(b.name);
             default:
                 return a.name.localeCompare(b.name);
         }
@@ -9258,7 +9462,7 @@ async function selectRepo(event) {
 
 
 /***/ }),
-/* 51 */
+/* 52 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -9308,10 +9512,10 @@ exports.updateInstalledModules = updateInstalledModules;
 exports.installAllModules = installAllModules;
 exports.clearAllModuleSelections = clearAllModuleSelections;
 exports.viewInstalledModules = viewInstalledModules;
-const module_1 = __webpack_require__(52);
+const module_1 = __webpack_require__(53);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(7);
-const psaeInternal_1 = __webpack_require__(53);
+const psaeInternal_1 = __webpack_require__(54);
 const fs = __importStar(__webpack_require__(40));
 const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(5);
@@ -10016,7 +10220,7 @@ async function viewInstalledModules() {
 
 
 /***/ }),
-/* 52 */
+/* 53 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -10036,7 +10240,7 @@ exports.ModuleModel = ModuleModel;
 
 
 /***/ }),
-/* 53 */
+/* 54 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -10133,7 +10337,7 @@ function setPsaeDirectoryIncluded(project, dir, include) {
 
 
 /***/ }),
-/* 54 */
+/* 55 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10182,11 +10386,11 @@ exports.toggleLogLevel = toggleLogLevel;
 exports.setSpecificLogLevel = setSpecificLogLevel;
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(5);
-const testing_1 = __webpack_require__(48);
-const module_1 = __webpack_require__(52);
+const testing_1 = __webpack_require__(49);
+const module_1 = __webpack_require__(53);
 const utils_1 = __webpack_require__(7);
-const context_1 = __webpack_require__(55);
-const debugger_1 = __webpack_require__(56);
+const context_1 = __webpack_require__(56);
+const debugger_1 = __webpack_require__(57);
 const database_1 = __webpack_require__(36);
 const logger_1 = __webpack_require__(11);
 const notifications_1 = __webpack_require__(13);
@@ -10811,7 +11015,7 @@ async function setSpecificLogLevel() {
 
 
 /***/ }),
-/* 55 */
+/* 56 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10865,7 +11069,7 @@ function updateActiveContext(isActive) {
 
 
 /***/ }),
-/* 56 */
+/* 57 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10909,13 +11113,13 @@ exports.startDebugServer = startDebugServer;
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
 const utils_1 = __webpack_require__(7);
-const psaeInternal_1 = __webpack_require__(53);
+const psaeInternal_1 = __webpack_require__(54);
 const settingsStore_1 = __webpack_require__(5);
 const versionsService_1 = __webpack_require__(23);
-const testing_1 = __webpack_require__(48);
+const testing_1 = __webpack_require__(49);
 const database_1 = __webpack_require__(36);
 const logger_1 = __webpack_require__(11);
-const launchConfig_1 = __webpack_require__(57);
+const launchConfig_1 = __webpack_require__(58);
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
 const baseInstallNotifiedDbs = new Set();
@@ -11250,7 +11454,7 @@ async function startDebugServer() {
 
 
 /***/ }),
-/* 57 */
+/* 58 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11337,7 +11541,7 @@ async function updateManagedLaunchConfig(workspacePath, managedConfig) {
 
 
 /***/ }),
-/* 58 */
+/* 59 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11533,7 +11737,7 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 
 /***/ }),
-/* 59 */
+/* 60 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -11556,7 +11760,7 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 60 */
+/* 61 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11608,10 +11812,12 @@ const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
 const runtimeCache_1 = __webpack_require__(12);
-const filesExclude_1 = __webpack_require__(61);
+const filesExclude_1 = __webpack_require__(62);
 const notifications_1 = __webpack_require__(13);
 const baseTreeProvider_1 = __webpack_require__(4);
 const sortOptions_1 = __webpack_require__(26);
+const branches_1 = __webpack_require__(28);
+const dumpImport_1 = __webpack_require__(39);
 class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
     sortPreferences;
     watchers = [];
@@ -11668,8 +11874,18 @@ class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
                 return item;
             }
             case 'repo': {
+                if (element.missing) {
+                    const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
+                    item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
+                    item.description = 'path missing';
+                    item.tooltip = `${element.repo.path} does not exist.\nThe folder may have been moved or deleted - use "Relocate Repository" to fix the path.`;
+                    item.contextValue = 'projectRepoRootMissing';
+                    return item;
+                }
                 const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.Collapsed);
                 item.resourceUri = element.uri;
+                item.description = element.branch ?? undefined;
+                item.tooltip = element.branch ? `${element.repo.path}\nBranch: ${element.branch}` : element.repo.path;
                 item.contextValue = 'projectRepoRoot';
                 return item;
             }
@@ -11718,11 +11934,17 @@ class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
             this.resetWatchers(repos);
             const sortId = this.sortPreferences.get('projectRepos', (0, sortOptions_1.getDefaultSortOption)('projectRepos'));
             const sortedRepos = [...repos].sort((a, b) => this.compareRepos(a, b, sortId));
-            return sortedRepos.map(repo => ({
-                kind: 'repo',
-                label: repo.name,
-                repo,
-                uri: vscode.Uri.file(repo.path)
+            return Promise.all(sortedRepos.map(async (repo) => {
+                const repoPath = (0, utils_1.normalizePath)(repo.path);
+                const missing = !(await (0, dumpImport_1.pathExists)(repoPath));
+                return {
+                    kind: 'repo',
+                    label: repo.name,
+                    repo,
+                    uri: vscode.Uri.file(repoPath),
+                    branch: missing ? null : await (0, branches_1.getRepoBranch)(repoPath),
+                    missing
+                };
             }));
         }
         if (element.kind === 'repo' || element.kind === 'folder') {
@@ -11952,7 +12174,7 @@ async function pasteEntries(targetUri) {
 
 
 /***/ }),
-/* 61 */
+/* 62 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12095,21 +12317,21 @@ function createFilesExcludeMatcher(scopeUri) {
 
 
 /***/ }),
-/* 62 */
+/* 63 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(63);
-const projectCommands_1 = __webpack_require__(65);
-const repoCommands_1 = __webpack_require__(68);
-const dbCommands_1 = __webpack_require__(69);
-const moduleCommands_1 = __webpack_require__(70);
-const testingCommands_1 = __webpack_require__(71);
-const versionCommands_1 = __webpack_require__(72);
-const debugCommands_1 = __webpack_require__(74);
-const reposExplorerCommands_1 = __webpack_require__(75);
+const viewCommands_1 = __webpack_require__(64);
+const projectCommands_1 = __webpack_require__(66);
+const repoCommands_1 = __webpack_require__(69);
+const dbCommands_1 = __webpack_require__(70);
+const moduleCommands_1 = __webpack_require__(71);
+const testingCommands_1 = __webpack_require__(72);
+const versionCommands_1 = __webpack_require__(73);
+const debugCommands_1 = __webpack_require__(75);
+const reposExplorerCommands_1 = __webpack_require__(76);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -12125,7 +12347,7 @@ function registerAllCommands(deps) {
 
 
 /***/ }),
-/* 63 */
+/* 64 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12165,10 +12387,10 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(64);
+const quickSearch_1 = __webpack_require__(65);
 const sortOptions_1 = __webpack_require__(26);
 const notifications_1 = __webpack_require__(13);
-const module_1 = __webpack_require__(51);
+const module_1 = __webpack_require__(52);
 /**
  * Generic per-view plumbing: refresh, sort, and quick-search commands.
  */
@@ -12297,7 +12519,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 64 */
+/* 65 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12409,7 +12631,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 65 */
+/* 66 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12452,10 +12674,10 @@ const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(7);
 const notifications_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(11);
-const project_1 = __webpack_require__(45);
+const project_1 = __webpack_require__(46);
 const dbs_1 = __webpack_require__(31);
-const odooInstaller_1 = __webpack_require__(66);
-const projectWorkspace_1 = __webpack_require__(67);
+const odooInstaller_1 = __webpack_require__(67);
+const projectWorkspace_1 = __webpack_require__(68);
 function registerProjectCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('projectSelector.create', async () => {
@@ -12567,7 +12789,7 @@ function registerProjectCommands(deps) {
 
 
 /***/ }),
-/* 66 */
+/* 67 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12762,7 +12984,7 @@ Continue?`;
 
 
 /***/ }),
-/* 67 */
+/* 68 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12896,7 +13118,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 68 */
+/* 69 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12936,8 +13158,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerRepoCommands = registerRepoCommands;
 const vscode = __importStar(__webpack_require__(1));
-const repos_1 = __webpack_require__(50);
-const projectWorkspace_1 = __webpack_require__(67);
+const repos_1 = __webpack_require__(51);
+const projectWorkspace_1 = __webpack_require__(68);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
@@ -12949,7 +13171,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 69 */
+/* 70 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12993,6 +13215,7 @@ const settingsStore_1 = __webpack_require__(5);
 const notifications_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(11);
 const dbs_1 = __webpack_require__(31);
+const notifications_2 = __webpack_require__(13);
 function registerDbCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('dbSelector.create', async () => {
@@ -13084,11 +13307,40 @@ function registerDbCommands(deps) {
             logger_1.logger.error('Error in database template management:', err);
         }
     }));
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.copyName', async (event) => {
+        const db = (0, dbs_1.extractDatabaseFromEvent)(event);
+        if (!db) {
+            void (0, notifications_1.showError)('Could not identify the database whose name to copy.');
+            return;
+        }
+        await vscode.env.clipboard.writeText(db.id);
+        (0, notifications_2.showBriefStatus)(`Copied database name: ${db.id}`);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.clone', async (event) => {
+        try {
+            await (0, dbs_1.cloneDatabaseFlow)(event);
+            await refreshAll({ reason: 'ui' });
+        }
+        catch (err) {
+            void (0, notifications_1.showError)(`Failed to clone database: ${(0, logger_1.errorMessage)(err)}`);
+            logger_1.logger.error('Error in database clone:', err);
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.reconcile', async () => {
+        try {
+            await (0, dbs_1.reconcileDatabasesFlow)();
+            await refreshAll({ reason: 'ui' });
+        }
+        catch (err) {
+            void (0, notifications_1.showError)(`Failed to reconcile databases: ${(0, logger_1.errorMessage)(err)}`);
+            logger_1.logger.error('Error in database reconciliation:', err);
+        }
+    }));
 }
 
 
 /***/ }),
-/* 70 */
+/* 71 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13128,7 +13380,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerModuleCommands = registerModuleCommands;
 const vscode = __importStar(__webpack_require__(1));
-const module_1 = __webpack_require__(51);
+const module_1 = __webpack_require__(52);
 function registerModuleCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.select', async (event) => {
@@ -13178,7 +13430,7 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 71 */
+/* 72 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13218,7 +13470,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerTestingCommands = registerTestingCommands;
 const vscode = __importStar(__webpack_require__(1));
-const testing_1 = __webpack_require__(54);
+const testing_1 = __webpack_require__(55);
 function registerTestingCommands(deps) {
     const { context, providers, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleTesting', async (event) => {
@@ -13257,7 +13509,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 72 */
+/* 73 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13298,7 +13550,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerVersionCommands = registerVersionCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(40));
-const args_1 = __webpack_require__(73);
+const args_1 = __webpack_require__(74);
 const utils_1 = __webpack_require__(7);
 const notifications_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(11);
@@ -13801,7 +14053,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 73 */
+/* 74 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13894,7 +14146,7 @@ function extractUri(arg) {
 
 
 /***/ }),
-/* 74 */
+/* 75 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13934,7 +14186,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerDebugCommands = registerDebugCommands;
 const vscode = __importStar(__webpack_require__(1));
-const debugger_1 = __webpack_require__(56);
+const debugger_1 = __webpack_require__(57);
 function registerDebugCommands(deps) {
     const { context } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('odoo.startServer', async () => {
@@ -13947,7 +14199,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 75 */
+/* 76 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13989,9 +14241,13 @@ exports.registerReposExplorerCommands = registerReposExplorerCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(40));
 const path = __importStar(__webpack_require__(3));
-const args_1 = __webpack_require__(73);
+const args_1 = __webpack_require__(74);
 const notifications_1 = __webpack_require__(13);
-const projectReposExplorer_1 = __webpack_require__(60);
+const notifications_2 = __webpack_require__(13);
+const settingsStore_1 = __webpack_require__(5);
+const utils_1 = __webpack_require__(7);
+const runtimeCache_1 = __webpack_require__(12);
+const projectReposExplorer_1 = __webpack_require__(61);
 async function copyPathToClipboard(uri, relative) {
     if (!uri) {
         void (0, notifications_1.showInfo)('Select a file or folder first.');
@@ -14092,6 +14348,41 @@ function registerReposExplorerCommands(deps) {
             return;
         }
         await vscode.commands.executeCommand('revealFileInOS', uri);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.relocateRepo', async (arg) => {
+        const repo = arg?.repo;
+        if (!repo?.path) {
+            void (0, notifications_1.showInfo)('Select a repository to relocate.');
+            return;
+        }
+        const picked = await vscode.window.showOpenDialog({
+            canSelectFolders: true,
+            canSelectFiles: false,
+            canSelectMany: false,
+            title: `Select the new location of "${repo.name ?? repo.path}"`,
+            openLabel: 'Use This Folder'
+        });
+        if (!picked || picked.length === 0) {
+            return;
+        }
+        const newPath = picked[0].fsPath;
+        const result = await settingsStore_1.SettingsStore.getSelectedProject();
+        if (!result) {
+            return;
+        }
+        const { data, project } = result;
+        const target = (project.repos ?? []).find(r => r.path === repo.path || r.name === repo.name);
+        if (!target) {
+            void (0, notifications_1.showError)('The repository could not be found in the current project.');
+            return;
+        }
+        target.path = newPath;
+        await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+        (0, runtimeCache_1.invalidateModuleDiscoveryCache)();
+        (0, runtimeCache_1.invalidateRepositoryDiscoveryCache)();
+        (0, runtimeCache_1.invalidateGitBranchCache)();
+        (0, notifications_2.showAutoInfo)(`Repository "${target.name}" now points to ${newPath}`, 3000);
+        await deps.refreshAll();
     }));
 }
 

@@ -40,6 +40,7 @@ import {
     validateTemplateDatabaseName,
     persistDatabaseTemplates
 } from './services/templates';
+import { findStaleReferences } from './services/reconcile';
 import {
     alignEnvironment,
     buildDatabaseEnvironmentTarget,
@@ -278,7 +279,7 @@ export async function promptProjectRepoBranchAssignments(
  * Helper function to extract DatabaseModel from various event sources
  * (direct database object, VS Code TreeItem, or command arguments)
  */
-function extractDatabaseFromEvent(event: unknown): DatabaseModel | null {
+export function extractDatabaseFromEvent(event: unknown): DatabaseModel | null {
     if (!event || typeof event !== 'object') {
         return null;
     }
@@ -855,6 +856,154 @@ export async function deleteDb(event: unknown) {
     if (db.isSelected && project.dbs.length > 0) {
         showBriefStatus(`Switched to database: ${getDatabaseLabel(project.dbs[0])}`, 2000);
     }
+}
+
+/**
+ * Clones an existing linked database into a new one (createdb -T) and adds
+ * the clone to the current project with the same version/branch metadata.
+ */
+export async function cloneDatabaseFlow(event: unknown): Promise<void> {
+    const db = extractDatabaseFromEvent(event);
+    if (!db) {
+        void showError('Could not identify the database to clone.');
+        return;
+    }
+
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
+        return;
+    }
+    const { data, project } = result;
+
+    const existingIdentifiers = await collectExistingDatabaseIdentifiers();
+    let suggestion = `${db.id}-copy`;
+    for (let i = 2; existingIdentifiers.has(suggestion.toLowerCase()); i++) {
+        suggestion = `${db.id}-copy${i}`;
+    }
+
+    const nameInput = await vscode.window.showInputBox({
+        prompt: `Clone "${db.id}" into a new database`,
+        value: suggestion,
+        ignoreFocusOut: true,
+        validateInput: value => {
+            const trimmed = value.trim();
+            if (!trimmed) {
+                return 'Database name cannot be empty.';
+            }
+            if (!NEW_DB_NAME_PATTERN.test(trimmed)) {
+                return 'Use letters, numbers, "-" or "_" only. The name must not start with "-".';
+            }
+            if (RESERVED_DATABASE_NAMES.has(trimmed.toLowerCase())) {
+                return `"${trimmed}" is a reserved database name.`;
+            }
+            if (existingIdentifiers.has(trimmed.toLowerCase())) {
+                return 'A database with this name is already linked to a project.';
+            }
+            return null;
+        }
+    });
+    if (nameInput === undefined) {
+        return;
+    }
+    const targetName = nameInput.trim();
+
+    await cloneDatabaseFromTemplate(targetName, db.id);
+
+    const projectRepoBranches = await captureCurrentRepoBranches(project.repos ?? []);
+    const clone = new DatabaseModel(targetName, new Date(), {
+        isSelected: false,
+        isItABackup: false,
+        isExisting: false,
+        branchName: db.branchName ?? '',
+        versionId: db.versionId,
+        displayName: targetName,
+        internalName: targetName,
+        kind: 'template',
+        projectRepoBranches
+    });
+    project.dbs.push(clone);
+    await SettingsStore.saveWithoutComments(stripSettings(data));
+
+    showAutoInfo(`Cloned "${db.id}" into "${targetName}" and added it to project "${project.name}"`, 3500);
+}
+
+/**
+ * Compares stored database/template references against the live PostgreSQL
+ * instance and offers to remove the ones that no longer exist.
+ */
+export async function reconcileDatabasesFlow(): Promise<void> {
+    const stale = await findStaleReferences();
+    if (!stale) {
+        void showWarning('Could not query PostgreSQL to verify database references.');
+        return;
+    }
+
+    const total = stale.databases.length + stale.templates.length;
+    if (total === 0) {
+        showAutoInfo('All linked databases and templates exist in PostgreSQL.', 2500);
+        return;
+    }
+
+    type StalePick = vscode.QuickPickItem & { staleKind: 'db' | 'template'; key: string; projectName?: string };
+    const picks: StalePick[] = [
+        ...stale.databases.map(entry => ({
+            label: `$(database) ${getDatabaseLabel(entry.db)}`,
+            description: `Database in project "${entry.projectName}"`,
+            detail: `PostgreSQL database "${entry.db.id}" no longer exists`,
+            picked: true,
+            staleKind: 'db' as const,
+            key: entry.db.id,
+            projectName: entry.projectName
+        })),
+        ...stale.templates.map(template => ({
+            label: `$(file-symlink-directory) ${template.name}`,
+            description: 'Database template',
+            detail: `Template database "${template.templateDbName}" no longer exists`,
+            picked: true,
+            staleKind: 'template' as const,
+            key: template.templateDbName
+        }))
+    ];
+
+    const chosen = await vscode.window.showQuickPick(picks, {
+        canPickMany: true,
+        placeHolder: 'These references point to PostgreSQL databases that no longer exist - select which to remove',
+        ignoreFocusOut: true
+    });
+    if (!chosen || chosen.length === 0) {
+        return;
+    }
+
+    const dbKeys = new Map<string, Set<string>>();
+    const templateKeys = new Set<string>();
+    for (const pick of chosen) {
+        if (pick.staleKind === 'db' && pick.projectName) {
+            const set = dbKeys.get(pick.projectName) ?? new Set<string>();
+            set.add(pick.key.toLowerCase());
+            dbKeys.set(pick.projectName, set);
+        } else if (pick.staleKind === 'template') {
+            templateKeys.add(pick.key.toLowerCase());
+        }
+    }
+
+    const data = await SettingsStore.get('odoo-debugger-data.json');
+    for (const project of data.projects ?? []) {
+        const staleForProject = dbKeys.get(project.name);
+        if (!staleForProject || !Array.isArray(project.dbs)) {
+            continue;
+        }
+        const hadSelected = project.dbs.some((db: DatabaseModel) => db.isSelected);
+        project.dbs = project.dbs.filter((db: DatabaseModel) => !staleForProject.has(db.id.toLowerCase()));
+        if (hadSelected && project.dbs.length > 0 && !project.dbs.some((db: DatabaseModel) => db.isSelected)) {
+            project.dbs[0].isSelected = true;
+        }
+    }
+    if (templateKeys.size > 0) {
+        data.dbTemplates = (data.dbTemplates ?? []).filter(template => !templateKeys.has(template.templateDbName.toLowerCase()));
+    }
+
+    await SettingsStore.saveWithoutComments(stripSettings(data));
+    showAutoInfo(`Removed ${chosen.length} stale database reference(s)`, 3000);
 }
 
 export async function changeDatabaseVersion(event: unknown) {

@@ -15,6 +15,7 @@ import { updateTestingContext, updateActiveContext } from './context';
 import { SortPreferences } from './sortPreferences';
 import { ProjectReposExplorerProvider } from './projectReposExplorer';
 import { logger, registerLogger } from './services/logger';
+import { logStaleReferences } from './services/reconcile';
 import { registerAllCommands, RefreshReason } from './commands';
 
 /** Syncs the testing context key with the selected project's testing state. */
@@ -75,6 +76,8 @@ export async function activate(context: vscode.ExtensionContext) {
     // command used when new profiles are created is already registered.
     await migrateDebuggerData();
     void migrateLegacySwitchBehaviorSetting();
+    // Passive check only: stale references are logged, never prompted about.
+    void logStaleReferences();
 
     context.subscriptions.push(vscode.window.registerTreeDataProvider('projectSelector', providers.project));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('repoSelector', providers.repo));

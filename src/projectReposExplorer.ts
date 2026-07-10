@@ -3,13 +3,15 @@ import * as path from 'node:path';
 import { SettingsStore } from './settingsStore';
 import { ProjectModel } from './models/project';
 import { RepoModel } from './models/repo';
-import { showError, showInfo } from './utils';
+import { showError, showInfo, normalizePath } from './utils';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
 import { createFilesExcludeMatcher } from './services/filesExclude';
 import { showModalWarning } from './services/notifications';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
+import { getRepoBranch } from './services/branches';
+import { pathExists as fsPathExists } from './services/dumpImport';
 
 type NodeKind = 'placeholder' | 'repo' | 'folder' | 'file';
 
@@ -22,6 +24,8 @@ interface RepoNode extends BaseNode {
     kind: 'repo';
     repo: RepoModel;
     uri: vscode.Uri;
+    branch: string | null;
+    missing: boolean;
 }
 
 interface FolderNode extends BaseNode {
@@ -102,8 +106,18 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
                 return item;
             }
             case 'repo': {
+                if (element.missing) {
+                    const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
+                    item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
+                    item.description = 'path missing';
+                    item.tooltip = `${element.repo.path} does not exist.\nThe folder may have been moved or deleted - use "Relocate Repository" to fix the path.`;
+                    item.contextValue = 'projectRepoRootMissing';
+                    return item;
+                }
                 const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.Collapsed);
                 item.resourceUri = element.uri;
+                item.description = element.branch ?? undefined;
+                item.tooltip = element.branch ? `${element.repo.path}\nBranch: ${element.branch}` : element.repo.path;
                 item.contextValue = 'projectRepoRoot';
                 return item;
             }
@@ -156,11 +170,17 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
 
             const sortId = this.sortPreferences.get('projectRepos', getDefaultSortOption('projectRepos'));
             const sortedRepos = [...repos].sort((a, b) => this.compareRepos(a, b, sortId));
-            return sortedRepos.map(repo => ({
-                kind: 'repo',
-                label: repo.name,
-                repo,
-                uri: vscode.Uri.file(repo.path)
+            return Promise.all(sortedRepos.map(async repo => {
+                const repoPath = normalizePath(repo.path);
+                const missing = !(await fsPathExists(repoPath));
+                return {
+                    kind: 'repo' as const,
+                    label: repo.name,
+                    repo,
+                    uri: vscode.Uri.file(repoPath),
+                    branch: missing ? null : await getRepoBranch(repoPath),
+                    missing
+                };
             }));
         }
 
