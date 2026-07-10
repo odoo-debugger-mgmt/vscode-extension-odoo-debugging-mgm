@@ -1,3 +1,8 @@
+/**
+ * Testing view and testing mode: toggling stashes/restores module
+ * selections and injects --test-enable/--test-tags/--test-file/
+ * --stop-after-init/--log-level into the launch configuration.
+ */
 import * as vscode from "vscode";
 import { SettingsStore } from './settingsStore';
 import { TestTag, TestingConfigModel, LogLevel, ensureTestingConfigModel } from './models/testing';

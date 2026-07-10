@@ -1,3 +1,6 @@
+/**
+ * Version model: a named settings profile bound to a target Odoo branch.
+ */
 import { randomUUID } from "crypto";
 
 export interface VersionSettings {

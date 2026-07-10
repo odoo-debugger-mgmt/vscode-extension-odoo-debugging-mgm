@@ -1,3 +1,7 @@
+/**
+ * Workspace data store for .vscode/odoo-debugger-data.json: mtime-based
+ * read cache and debounced, single-flight writes.
+ */
 import { SettingsModel } from './models/settings';
 import { readFromFile, DebuggerData, showError, getWorkspacePath, stripSettings, getDefaultVersionSettings } from './utils';
 import { ProjectModel } from './models/project';

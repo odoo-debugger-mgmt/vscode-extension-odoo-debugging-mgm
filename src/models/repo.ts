@@ -1,3 +1,6 @@
+/**
+ * Repository model: a git repo belonging to a project.
+ */
 export class RepoModel {
     name: string;
     path: string;

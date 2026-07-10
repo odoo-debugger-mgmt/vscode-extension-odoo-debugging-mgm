@@ -1,3 +1,6 @@
+/**
+ * Start/stop server and shell commands.
+ */
 import * as vscode from 'vscode';
 import type { CommandDeps } from './index';
 import { startDebugServer, startDebugShell, stopDebugServer } from '../debugger';

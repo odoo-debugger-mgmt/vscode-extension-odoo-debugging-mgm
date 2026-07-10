@@ -1,3 +1,6 @@
+/**
+ * VS Code context keys ('odoo-debugger.is_active', 'odoo-debugger.testing_enabled') used by when-clauses.
+ */
 import * as vscode from 'vscode';
 
 /**

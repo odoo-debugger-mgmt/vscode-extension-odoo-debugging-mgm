@@ -1,3 +1,8 @@
+/**
+ * Shared utilities: workspace paths, module/repository discovery walkers,
+ * data-file access helpers and setting display formatting. Messaging
+ * helpers are re-exported from services/notifications.
+ */
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';

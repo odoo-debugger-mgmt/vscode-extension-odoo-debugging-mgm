@@ -1,3 +1,6 @@
+/**
+ * Sort option catalogs for every sortable view.
+ */
 export interface SortOption {
     id: string;
     label: string;

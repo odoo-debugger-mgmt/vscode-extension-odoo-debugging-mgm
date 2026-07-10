@@ -1,3 +1,7 @@
+/**
+ * Testing configuration model: test targets, file, log level and the
+ * stashed module states used while testing mode is on.
+ */
 import { logger } from '../services/logger';
 
 export interface TestTag {

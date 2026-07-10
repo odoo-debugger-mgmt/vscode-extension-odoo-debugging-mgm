@@ -1,3 +1,6 @@
+/**
+ * Runtime settings shape shared by versions (paths, ports, params).
+ */
 export class SettingsModel {
     debuggerName: string = "odoo:18.0";
     debuggerVersion: string = "1.0.0";

@@ -1,3 +1,6 @@
+/**
+ * Database template metadata record (PostgreSQL template name + label).
+ */
 export interface DatabaseTemplateModel {
     /**
      * User-facing label for the template.

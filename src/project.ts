@@ -1,3 +1,7 @@
+/**
+ * Projects view and project lifecycle: create/select/delete/duplicate,
+ * import/export, ticket management and quick project search.
+ */
 import * as vscode from 'vscode';
 import * as os from 'os';
 import { ProjectModel, ProjectTicketModel } from './models/project';

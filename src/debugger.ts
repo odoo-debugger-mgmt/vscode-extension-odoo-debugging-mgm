@@ -1,3 +1,8 @@
+/**
+ * Debugger integration: keeps the managed launch.json entry in sync with the
+ * active version/database/module selections, builds odoo-bin arguments
+ * (addons path, -i/-u, testing flags), and starts/stops the server and shell.
+ */
 import * as vscode from "vscode";
 import * as path from 'node:path';
 import { ProjectModel } from "./models/project";

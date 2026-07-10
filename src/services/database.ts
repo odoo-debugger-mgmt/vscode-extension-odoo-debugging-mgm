@@ -1,3 +1,7 @@
+/**
+ * Read-only PostgreSQL probes for Odoo databases: installed modules and
+ * Odoo series detection via the base module version.
+ */
 import { execFile } from 'node:child_process';
 import * as util from 'node:util';
 import { InstalledModuleInfo } from '../models/module';

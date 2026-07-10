@@ -1,3 +1,6 @@
+/**
+ * Command handlers for the Versions view and version settings.
+ */
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import type { CommandDeps } from './index';

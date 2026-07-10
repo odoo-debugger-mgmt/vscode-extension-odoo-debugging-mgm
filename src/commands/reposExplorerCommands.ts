@@ -1,3 +1,7 @@
+/**
+ * Command handlers for the Project Repos (Explorer) view: file operations,
+ * path utilities and repository relocation.
+ */
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import * as path from 'node:path';

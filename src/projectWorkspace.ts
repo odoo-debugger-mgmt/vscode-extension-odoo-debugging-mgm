@@ -1,3 +1,7 @@
+/**
+ * Multi-root workspace files built from a project's repositories
+ * (open/rebuild/quick-switch).
+ */
 import * as vscode from 'vscode';
 import { SettingsStore } from './settingsStore';
 import { ProjectModel } from './models/project';

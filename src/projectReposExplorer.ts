@@ -1,3 +1,7 @@
+/**
+ * Project Repos view (Explorer sidebar): a project-scoped file tree with
+ * file operations, file watchers, branch display and missing-path detection.
+ */
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { SettingsStore } from './settingsStore';

@@ -1,3 +1,6 @@
+/**
+ * Module models: managed module state and installed-module info rows.
+ */
 export type ModuleState = 'install' | 'upgrade' | 'none';
 
 export interface InstalledModuleInfo {

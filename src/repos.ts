@@ -1,3 +1,7 @@
+/**
+ * Repos view: lists git repositories discovered under the version's custom
+ * addons folder and toggles their membership in the active project.
+ */
 import { RepoModel } from "./models/repo";
 import * as vscode from "vscode";
 import { findRepositories, getWorkspacePath, normalizePath, showError, showInfo, stripSettings } from './utils';

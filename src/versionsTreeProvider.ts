@@ -1,3 +1,6 @@
+/**
+ * Versions view: version profiles with their settings as editable children.
+ */
 import * as vscode from 'vscode';
 import { VersionModel } from './models/version';
 import { VersionsService } from './versionsService';

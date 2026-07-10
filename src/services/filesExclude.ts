@@ -1,3 +1,6 @@
+/**
+ * files.exclude-compatible matcher used by the Project Repos tree.
+ */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';

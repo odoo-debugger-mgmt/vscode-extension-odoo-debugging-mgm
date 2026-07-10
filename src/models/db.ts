@@ -1,3 +1,7 @@
+/**
+ * Database model: a PostgreSQL database linked to a version profile with
+ * per-repo branch assignments.
+ */
 import { ModuleModel } from "./module";
 import { VersionsService } from "../versionsService";
 import { logger } from '../services/logger';

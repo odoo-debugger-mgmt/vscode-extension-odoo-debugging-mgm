@@ -1,3 +1,6 @@
+/**
+ * Command handlers for the Testing view.
+ */
 import * as vscode from 'vscode';
 import type { CommandDeps } from './index';
 import { SettingsStore } from '../settingsStore';

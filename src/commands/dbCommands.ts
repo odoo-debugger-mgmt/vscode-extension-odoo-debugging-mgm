@@ -1,3 +1,6 @@
+/**
+ * Command handlers for the Databases view.
+ */
 import * as vscode from 'vscode';
 import type { CommandDeps } from './index';
 import type { ProjectModel } from '../models/project';

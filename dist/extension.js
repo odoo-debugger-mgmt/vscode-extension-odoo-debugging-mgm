@@ -547,6 +547,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SettingsStore = void 0;
+/**
+ * Workspace data store for .vscode/odoo-debugger-data.json: mtime-based
+ * read cache and debounced, single-flight writes.
+ */
 const settings_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(7);
 const jsonc_parser_1 = __webpack_require__(16);
@@ -760,6 +764,9 @@ exports.SettingsStore = SettingsStore;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SettingsModel = void 0;
+/**
+ * Runtime settings shape shared by versions (paths, ports, params).
+ */
 class SettingsModel {
     debuggerName = "odoo:18.0";
     debuggerVersion = "1.0.0";
@@ -847,6 +854,11 @@ exports.getSettingDisplayName = getSettingDisplayName;
 exports.getSettingDisplayValue = getSettingDisplayValue;
 exports.getGitBranches = getGitBranches;
 exports.getDefaultVersionSettings = getDefaultVersionSettings;
+/**
+ * Shared utilities: workspace paths, module/repository discovery walkers,
+ * data-file access helpers and setting display formatting. Messaging
+ * helpers are re-exported from services/notifications.
+ */
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(8));
 const path = __importStar(__webpack_require__(9));
@@ -1543,6 +1555,10 @@ exports.checkoutBranchViaSourceControl = checkoutBranchViaSourceControl;
 exports.getCurrentBranchViaSourceControl = getCurrentBranchViaSourceControl;
 exports.getBranchesWithMetadata = getBranchesWithMetadata;
 exports.getBranchesViaSourceControl = getBranchesViaSourceControl;
+/**
+ * Bridge to the built-in git extension's API: current branch, branch
+ * listings and checkouts via source control (with type-safe fallbacks).
+ */
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
 const logger_1 = __webpack_require__(11);
@@ -4050,6 +4066,11 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VersionsService = void 0;
+/**
+ * Version management singleton: stores version profiles (settings + target
+ * branch) in the workspace data file, tracks the active version, and applies
+ * default-value operations against odooDebugger.defaultVersion.*.
+ */
 const vscode = __importStar(__webpack_require__(1));
 const version_1 = __webpack_require__(24);
 const settingsStore_1 = __webpack_require__(5);
@@ -4683,6 +4704,9 @@ exports.VersionsService = VersionsService;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VersionModel = void 0;
+/**
+ * Version model: a named settings profile bound to a target Odoo branch.
+ */
 const crypto_1 = __webpack_require__(25);
 class VersionModel {
     id;
@@ -7086,6 +7110,10 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.generateDatabaseIdentifiers = generateDatabaseIdentifiers;
+/**
+ * Deterministic database name suggestions (slugified project + kind + date
+ * + collision-resolving hash).
+ */
 const crypto = __importStar(__webpack_require__(25));
 const MAX_IDENTIFIER_LENGTH = 63;
 const KIND_LABELS = {
@@ -7222,6 +7250,10 @@ exports.getInstalledModuleNames = getInstalledModuleNames;
 exports.clearInstalledModuleCache = clearInstalledModuleCache;
 exports.parseOdooSeries = parseOdooSeries;
 exports.detectOdooSeries = detectOdooSeries;
+/**
+ * Read-only PostgreSQL probes for Odoo databases: installed modules and
+ * Odoo series detection via the base module version.
+ */
 const node_child_process_1 = __webpack_require__(15);
 const util = __importStar(__webpack_require__(37));
 const runtimeCache_1 = __webpack_require__(12);
@@ -8197,6 +8229,10 @@ exports.openProjectTicket = openProjectTicket;
 exports.exportProject = exportProject;
 exports.importProject = importProject;
 exports.quickProjectSearch = quickProjectSearch;
+/**
+ * Projects view and project lifecycle: create/select/delete/duplicate,
+ * import/export, ticket management and quick project search.
+ */
 const vscode = __importStar(__webpack_require__(1));
 const os = __importStar(__webpack_require__(47));
 const project_1 = __webpack_require__(48);
@@ -9228,6 +9264,10 @@ exports.ProjectModel = ProjectModel;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.TestingConfigModel = void 0;
 exports.ensureTestingConfigModel = ensureTestingConfigModel;
+/**
+ * Testing configuration model: test targets, file, log level and the
+ * stashed module states used while testing mode is on.
+ */
 const logger_1 = __webpack_require__(11);
 class TestingConfigModel {
     isEnabled;
@@ -9310,6 +9350,9 @@ function ensureTestingConfigModel(testingConfig) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.RepoModel = void 0;
+/**
+ * Repository model: a git repo belonging to a project.
+ */
 class RepoModel {
     name;
     path;
@@ -9591,6 +9634,10 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.RepoTreeProvider = void 0;
 exports.selectRepo = selectRepo;
+/**
+ * Repos view: lists git repositories discovered under the version's custom
+ * addons folder and toggles their membership in the active project.
+ */
 const repo_1 = __webpack_require__(50);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(7);
@@ -9808,6 +9855,11 @@ exports.updateInstalledModules = updateInstalledModules;
 exports.installAllModules = installAllModules;
 exports.clearAllModuleSelections = clearAllModuleSelections;
 exports.viewInstalledModules = viewInstalledModules;
+/**
+ * Modules view and module workflows: discovery across project repos,
+ * install/upgrade state management, psae-internal groups, manifest
+ * dependencies, bulk actions and odoo-bin scaffolding.
+ */
 const module_1 = __webpack_require__(55);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(7);
@@ -10618,6 +10670,11 @@ exports.cycleTestTagState = cycleTestTagState;
 exports.removeTestTag = removeTestTag;
 exports.toggleLogLevel = toggleLogLevel;
 exports.setSpecificLogLevel = setSpecificLogLevel;
+/**
+ * Testing view and testing mode: toggling stashes/restores module
+ * selections and injects --test-enable/--test-tags/--test-file/
+ * --stop-after-init/--log-level into the launch configuration.
+ */
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(5);
 const testing_1 = __webpack_require__(49);
@@ -11289,6 +11346,9 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.updateTestingContext = updateTestingContext;
 exports.updateActiveContext = updateActiveContext;
+/**
+ * VS Code context keys ('odoo-debugger.is_active', 'odoo-debugger.testing_enabled') used by when-clauses.
+ */
 const vscode = __importStar(__webpack_require__(1));
 /**
  * Updates VS Code context keys used by the extension.
@@ -11345,6 +11405,11 @@ exports.setupDebugger = setupDebugger;
 exports.startDebugShell = startDebugShell;
 exports.stopDebugServer = stopDebugServer;
 exports.startDebugServer = startDebugServer;
+/**
+ * Debugger integration: keeps the managed launch.json entry in sync with the
+ * active version/database/module selections, builds odoo-bin arguments
+ * (addons path, -i/-u, testing flags), and starts/stops the server and shell.
+ */
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
 const utils_1 = __webpack_require__(7);
@@ -11826,6 +11891,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VersionsTreeProvider = exports.VersionSettingTreeItem = exports.VersionTreeItem = void 0;
+/**
+ * Versions view: version profiles with their settings as editable children.
+ */
 const vscode = __importStar(__webpack_require__(1));
 const versionsService_1 = __webpack_require__(23);
 const utils_1 = __webpack_require__(7);
@@ -12053,6 +12121,10 @@ exports.openTerminalHere = openTerminalHere;
 exports.selectProjectForExplorer = selectProjectForExplorer;
 exports.copyEntries = copyEntries;
 exports.pasteEntries = pasteEntries;
+/**
+ * Project Repos view (Explorer sidebar): a project-scoped file tree with
+ * file operations, file watchers, branch display and missing-path detection.
+ */
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(5);
@@ -12459,6 +12531,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.createFilesExcludeMatcher = createFilesExcludeMatcher;
+/**
+ * files.exclude-compatible matcher used by the Project Repos tree.
+ */
 const fs = __importStar(__webpack_require__(40));
 const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
@@ -13038,6 +13113,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerProjectCommands = registerProjectCommands;
+/**
+ * Command handlers for the Projects view and project workspaces.
+ */
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(7);
 const notifications_1 = __webpack_require__(13);
@@ -13200,6 +13278,10 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.setupOdooBranch = setupOdooBranch;
+/**
+ * Setup Odoo flow: clones odoo/enterprise for a chosen branch and creates a
+ * Python virtualenv in the workspace.
+ */
 // VSCode Extension Utility: Clone Odoo & Enterprise for a selected branch and setup venv with progress
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(9));
@@ -13397,6 +13479,10 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.rebuildProjectWorkspace = rebuildProjectWorkspace;
 exports.openProjectWorkspace = openProjectWorkspace;
 exports.quickSwitchProjectWorkspace = quickSwitchProjectWorkspace;
+/**
+ * Multi-root workspace files built from a project's repositories
+ * (open/rebuild/quick-switch).
+ */
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
@@ -13529,6 +13615,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerRepoCommands = registerRepoCommands;
+/**
+ * Command handlers for the Repos view.
+ */
 const vscode = __importStar(__webpack_require__(1));
 const repos_1 = __webpack_require__(53);
 const projectWorkspace_1 = __webpack_require__(70);
@@ -13582,6 +13671,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerDbCommands = registerDbCommands;
+/**
+ * Command handlers for the Databases view.
+ */
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(5);
 const notifications_1 = __webpack_require__(13);
@@ -13751,6 +13843,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerModuleCommands = registerModuleCommands;
+/**
+ * Command handlers for the Modules view.
+ */
 const vscode = __importStar(__webpack_require__(1));
 const module_1 = __webpack_require__(54);
 function registerModuleCommands(deps) {
@@ -13841,6 +13936,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerTestingCommands = registerTestingCommands;
+/**
+ * Command handlers for the Testing view.
+ */
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(5);
 const testing_1 = __webpack_require__(56);
@@ -13931,6 +14029,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerVersionCommands = registerVersionCommands;
+/**
+ * Command handlers for the Versions view and version settings.
+ */
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(40));
 const args_1 = __webpack_require__(76);
@@ -14568,6 +14669,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerDebugCommands = registerDebugCommands;
+/**
+ * Start/stop server and shell commands.
+ */
 const vscode = __importStar(__webpack_require__(1));
 const debugger_1 = __webpack_require__(58);
 function registerDebugCommands(deps) {
@@ -14624,6 +14728,10 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerReposExplorerCommands = registerReposExplorerCommands;
+/**
+ * Command handlers for the Project Repos (Explorer) view: file operations,
+ * path utilities and repository relocation.
+ */
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(40));
 const path = __importStar(__webpack_require__(3));

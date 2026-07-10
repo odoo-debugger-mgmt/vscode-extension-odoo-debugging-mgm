@@ -1,3 +1,6 @@
+/**
+ * Command handlers for the Repos view.
+ */
 import * as vscode from 'vscode';
 import type { CommandDeps } from './index';
 import { selectRepo } from '../repos';

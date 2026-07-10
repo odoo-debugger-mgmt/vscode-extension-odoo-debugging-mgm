@@ -1,3 +1,7 @@
+/**
+ * Setup Odoo flow: clones odoo/enterprise for a chosen branch and creates a
+ * Python virtualenv in the workspace.
+ */
 // VSCode Extension Utility: Clone Odoo & Enterprise for a selected branch and setup venv with progress
 import * as vscode from 'vscode';
 import * as path from 'path';

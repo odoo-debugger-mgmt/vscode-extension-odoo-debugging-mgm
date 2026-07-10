@@ -1,3 +1,8 @@
+/**
+ * Modules view and module workflows: discovery across project repos,
+ * install/upgrade state management, psae-internal groups, manifest
+ * dependencies, bulk actions and odoo-bin scaffolding.
+ */
 import { ModuleModel, InstalledModuleInfo } from "./models/module";
 import { DatabaseModel } from "./models/db";
 import { RepoModel } from "./models/repo";

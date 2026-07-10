@@ -1,3 +1,7 @@
+/**
+ * Bridge to the built-in git extension's API: current branch, branch
+ * listings and checkouts via source control (with type-safe fallbacks).
+ */
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import type { GitExtension, Repository, Branch, BranchType } from '../types/git';

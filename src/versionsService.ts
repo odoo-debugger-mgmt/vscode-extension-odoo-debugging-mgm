@@ -1,3 +1,8 @@
+/**
+ * Version management singleton: stores version profiles (settings + target
+ * branch) in the workspace data file, tracks the active version, and applies
+ * default-value operations against odooDebugger.defaultVersion.*.
+ */
 import * as vscode from 'vscode';
 import { VersionModel, VersionSettings } from './models/version';
 import { SettingsStore } from './settingsStore';

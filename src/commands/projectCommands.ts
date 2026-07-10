@@ -1,3 +1,6 @@
+/**
+ * Command handlers for the Projects view and project workspaces.
+ */
 import * as vscode from 'vscode';
 import type { CommandDeps } from './index';
 import { normalizePath } from '../utils';
