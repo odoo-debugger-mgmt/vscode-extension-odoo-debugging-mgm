@@ -28,15 +28,17 @@ export class TestingTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
     }
 
     async getChildren(element?: any): Promise<vscode.TreeItem[] | undefined> {
+        // Empty lists fall through to the view's welcome content, which
+        // explains that a project and database must be selected first.
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            return [createInfoTreeItem('Select a project before running this action.')];
+            return [];
         }
 
         const { data, project } = result;
         const db = project.dbs.find(db => db.isSelected === true);
         if (!db) {
-            return [createInfoTreeItem('Select a database before running this action.')];
+            return [];
         }
 
         let testingConfig = ensureTestingConfigModel(project.testingConfig);

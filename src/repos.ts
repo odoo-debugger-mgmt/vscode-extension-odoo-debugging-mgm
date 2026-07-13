@@ -4,7 +4,7 @@
  */
 import { RepoModel } from "./models/repo";
 import * as vscode from "vscode";
-import { findRepositories, getWorkspacePath, normalizePath, showError, showInfo, stripSettings } from './utils';
+import { findRepositories, getWorkspacePath, normalizePath, stripSettings } from './utils';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import * as path from 'path';
@@ -76,20 +76,14 @@ export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         const settings = await versionsService.getActiveVersionSettings();
         const customAddonsPath = normalizePath(settings.customAddonsPath);
 
-        // Check if path exists first
+        // Empty lists fall through to the view's welcome content, which
+        // points at the version's custom addons folder setting.
         if (!fs.existsSync(customAddonsPath)) {
-            void showError(`Path does not exist: ${customAddonsPath}`);
             return [];
         }
 
         const devsRepos = findRepositories(customAddonsPath);
-        if (devsRepos.length === 0) {
-            void showInfo('No repositories found in the custom addons directory.');
-            return [];
-        }
-
-        if (!repos) {
-            void showError('No modules are configured for this database.');
+        if (devsRepos.length === 0 || !repos) {
             return [];
         }
 
@@ -127,7 +121,11 @@ export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         return repoEntries.map(entry => {
             const treeItem = new vscode.TreeItem(entry.name);
             treeItem.iconPath = entry.isSelected ? selectedIcon : unselectedIcon;
-            treeItem.tooltip = `Repo: ${entry.name}\nPath: ${entry.path}`;
+            treeItem.tooltip = new vscode.MarkdownString([
+                `**${entry.name}**${entry.isSelected ? ' (in project)' : ''}`,
+                `**Path:** ${entry.path}`,
+                entry.branch ? `**Branch:** ${entry.branch}` : ''
+            ].filter(Boolean).join('\n\n'));
             treeItem.id = entry.path;
             treeItem.description = entry.branch ?? '';
             treeItem.command = {

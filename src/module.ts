@@ -7,7 +7,7 @@ import { ModuleModel, InstalledModuleInfo } from "./models/module";
 import { DatabaseModel } from "./models/db";
 import { RepoModel } from "./models/repo";
 import * as vscode from "vscode";
-import { showError, showInfo, showAutoInfo, stripSettings, createInfoTreeItem, getDatabaseLabel, normalizePath } from './utils';
+import { showError, showInfo, showAutoInfo, stripSettings, getDatabaseLabel, normalizePath } from './utils';
 import { collectModuleDiscovery, resolvePsaeDirectories, setPsaeDirectoryIncluded, PSAE_INTERNAL_REGEX, PsaeDirectoryState } from './services/psaeInternal';
 
 import * as fs from 'node:fs';
@@ -67,18 +67,20 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             return [];
         }
 
+        // Empty lists fall through to the view's welcome content, which
+        // explains that a project and database must be selected first.
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            return [createInfoTreeItem('Select a project to manage modules.')];
+            return [];
         }
         const { project } = result;
         const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
         if (!db) {
-            return [createInfoTreeItem('Select a database to view modules.')];
+            return [];
         }
         const modules: ModuleModel[] = db.modules;
         if (!modules) {
-            return [createInfoTreeItem('No modules configured for this database.')];
+            return [];
         }
 
         const isTestingEnabled = !!(project.testingConfig && project.testingConfig.isEnabled);

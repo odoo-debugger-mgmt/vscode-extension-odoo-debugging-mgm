@@ -19,7 +19,7 @@ export class VersionTreeItem extends vscode.TreeItem {
         super(version.name, collapsibleState);
 
         this.id = version.id;
-        this.tooltip = `${version.name} (${version.odooVersion})`;
+        this.tooltip = VersionTreeItem.buildTooltip(version);
         this.description = version.odooVersion;
         this.contextValue = version.isActive ? 'activeVersion' : 'version';
         this.iconPath = version.isActive ? activeIcon : new vscode.ThemeIcon('versions');
@@ -30,6 +30,27 @@ export class VersionTreeItem extends vscode.TreeItem {
             title: '',
             arguments: [version.id]
         };
+    }
+
+    private static buildTooltip(version: VersionModel): vscode.MarkdownString {
+        const lines: string[] = [
+            `**${version.name}**${version.isActive ? ' (active)' : ''}`,
+            `**Odoo Version:** ${version.odooVersion}`
+        ];
+        const settings = version.settings ?? {};
+        if (settings.portNumber) {
+            lines.push(`**Port:** ${settings.portNumber}`);
+        }
+        if (settings.odooPath) {
+            lines.push(`**Odoo Path:** ${settings.odooPath}`);
+        }
+        if (settings.pythonPath) {
+            lines.push(`**Python:** ${settings.pythonPath}`);
+        }
+        if (settings.customAddonsPath) {
+            lines.push(`**Custom Addons:** ${settings.customAddonsPath}`);
+        }
+        return new vscode.MarkdownString(lines.join('\n\n'));
     }
 }
 

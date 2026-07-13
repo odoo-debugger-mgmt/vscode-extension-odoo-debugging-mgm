@@ -16,7 +16,7 @@ import { getDefaultSortOption } from './sortOptions';
 import { getRepoBranch } from './services/branches';
 import { pathExists as fsPathExists } from './services/dumpImport';
 
-type NodeKind = 'placeholder' | 'repo' | 'folder' | 'file';
+type NodeKind = 'repo' | 'folder' | 'file';
 
 interface BaseNode {
     kind: NodeKind;
@@ -41,12 +41,7 @@ interface FileNode extends BaseNode {
     uri: vscode.Uri;
 }
 
-interface PlaceholderNode extends BaseNode {
-    kind: 'placeholder';
-    command?: vscode.Command;
-}
-
-type ExplorerNode = RepoNode | FolderNode | FileNode | PlaceholderNode;
+type ExplorerNode = RepoNode | FolderNode | FileNode;
 
 export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode> {
     private watchers: vscode.FileSystemWatcher[] = [];
@@ -102,12 +97,6 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
 
     getTreeItem(element: ExplorerNode): vscode.TreeItem {
         switch (element.kind) {
-            case 'placeholder': {
-                const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
-                item.contextValue = 'projectReposExplorerInfo';
-                item.command = (element as PlaceholderNode).command;
-                return item;
-            }
             case 'repo': {
                 if (element.missing) {
                     const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
@@ -146,27 +135,17 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
 
     async getChildren(element?: ExplorerNode): Promise<ExplorerNode[]> {
         if (!element) {
+            // Empty lists fall through to the view's welcome content, which
+            // offers the select-project / select-repos actions.
             const selection = await SettingsStore.getSelectedProject();
             if (!selection) {
-                return [
-                    {
-                        kind: 'placeholder',
-                        label: 'No active project. Select a project to view its repos.',
-                        command: { command: 'odt.projectReposExplorer.selectProject', title: 'Select Project' }
-                    }
-                ];
+                return [];
             }
 
             const { project } = selection;
             const repos = (project.repos ?? []) as RepoModel[];
             if (!repos.length) {
-                return [
-                    {
-                        kind: 'placeholder',
-                        label: 'No repositories selected for this project.',
-                        command: { command: 'repoSelector.selectRepo', title: 'Select Repo' }
-                    }
-                ];
+                return [];
             }
 
             this.resetWatchers(repos);

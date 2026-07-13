@@ -1184,6 +1184,40 @@
         "view": "projectSelector",
         "when": "!odoo-debugger.is_active",
         "contents": "Open a folder or a workspace for the extension to work.\n[Open Folder](command:workbench.action.files.openFolder)\n[Open Workspace](command:workbench.action.openWorkspace)"
+      },
+      {
+        "view": "projectSelector",
+        "when": "odoo-debugger.is_active",
+        "contents": "No projects yet. A project groups your repositories, databases and settings.\n[Create Project](command:projectSelector.create)"
+      },
+      {
+        "view": "dbSelector",
+        "when": "odoo-debugger.is_active",
+        "contents": "No databases to show. Select a project, then create or link a database.\n[Create Database](command:dbSelector.create)"
+      },
+      {
+        "view": "repoSelector",
+        "when": "odoo-debugger.is_active",
+        "contents": "No repositories found. Repositories are discovered in the active version's custom addons folder.\n[Manage Versions](command:odoo.manageVersions)"
+      },
+      {
+        "view": "moduleSelector",
+        "when": "odoo-debugger.is_active",
+        "contents": "Select a project and a database to see and manage their modules.\n[Switch Database](command:dbSelector.quickSearch)"
+      },
+      {
+        "view": "testingSelector",
+        "when": "odoo-debugger.is_active",
+        "contents": "Select a project and a database to configure test runs."
+      },
+      {
+        "view": "versionsManager",
+        "when": "odoo-debugger.is_active",
+        "contents": "No versions yet. A version stores the paths, port and defaults for one Odoo setup.\n[Create Version](command:odoo.createVersion)"
+      },
+      {
+        "view": "odt.projectReposExplorer",
+        "contents": "No project repositories to browse.\n[Select Project](command:odt.projectReposExplorer.selectProject)\n[Select Repositories](command:repoSelector.selectRepo)"
       }
     ],
     "keybindings": [

@@ -150,9 +150,9 @@ export class ProjectTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             return [];
         }
 
+        // Empty list: the view's welcome content offers "Create Project".
         const projects: ProjectModel[] = data.projects;
         if (!projects) {
-            void showError('Unable to load projects, please create a project first');
             return [];
         }
 
@@ -172,9 +172,8 @@ export class ProjectTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             const treeItem = new vscode.TreeItem(project.name);
             treeItem.id = project.uid; // Use UID instead of name for uniqueness
             treeItem.iconPath = project.isSelected ? activeIcon : new vscode.ThemeIcon('folder');
-
-            let tooltip = `Project: ${project.name}`;
-            treeItem.tooltip = tooltip;
+            treeItem.description = `${project.repos?.length ?? 0} repos • ${project.dbs?.length ?? 0} dbs`;
+            treeItem.tooltip = this.buildProjectTooltip(project);
 
             // Set context value for menu commands
             treeItem.contextValue = 'project';
@@ -188,6 +187,39 @@ export class ProjectTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             (treeItem as any).projectUid = project.uid;
             return treeItem;
         });
+    }
+
+    private buildProjectTooltip(project: ProjectModel): vscode.MarkdownString {
+        const lines: string[] = [`**${project.name}**${project.isSelected ? ' (active)' : ''}`];
+
+        const repos = project.repos ?? [];
+        if (repos.length > 0) {
+            const shown = repos.slice(0, 8).map(repo => `- ${repo.name}`);
+            if (repos.length > 8) {
+                shown.push(`- … ${repos.length - 8} more`);
+            }
+            lines.push(`**Repositories (${repos.length}):**\n${shown.join('\n')}`);
+        } else {
+            lines.push('**Repositories:** none');
+        }
+
+        const dbs = project.dbs ?? [];
+        const selectedDb = dbs.find(db => db.isSelected);
+        lines.push(`**Databases:** ${dbs.length}${selectedDb ? ` (active: ${getDatabaseLabel(selectedDb)})` : ''}`);
+
+        if (project.tickets && project.tickets.length > 0) {
+            lines.push(`**Tickets:** ${project.tickets.length}`);
+        }
+        if (project.testingConfig?.isEnabled) {
+            lines.push('**Testing mode:** enabled');
+        }
+
+        const created = project.createdAt ? new Date(project.createdAt as string | Date) : undefined;
+        if (created && !Number.isNaN(created.getTime())) {
+            lines.push(`**Created:** ${created.toISOString().split('T')[0]}`);
+        }
+
+        return new vscode.MarkdownString(lines.join('\n\n'));
     }
 
     private compareProjects(a: ProjectModel, b: ProjectModel, sortId: string): number {

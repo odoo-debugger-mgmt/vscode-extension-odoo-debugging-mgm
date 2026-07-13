@@ -263,7 +263,6 @@ const settingsStore_1 = __webpack_require__(5);
 const versionsService_1 = __webpack_require__(23);
 const sortOptions_1 = __webpack_require__(26);
 const utils_1 = __webpack_require__(7);
-const notifications_1 = __webpack_require__(13);
 const icons_1 = __webpack_require__(27);
 const environment_1 = __webpack_require__(28);
 const dbs_1 = __webpack_require__(32);
@@ -282,10 +281,10 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         if (!result) {
             return [];
         }
+        // Empty list: the view's welcome content offers "Create Database".
         const { project } = result;
         const dbs = project.dbs;
         if (!dbs) {
-            void (0, notifications_1.showError)('No databases are configured for this project.');
             return [];
         }
         const sortId = this.sortPreferences.get('dbSelector', (0, sortOptions_1.getDefaultSortOption)('dbSelector'));
@@ -8443,9 +8442,9 @@ class ProjectTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         if (!data) {
             return [];
         }
+        // Empty list: the view's welcome content offers "Create Project".
         const projects = data.projects;
         if (!projects) {
-            void (0, utils_1.showError)('Unable to load projects, please create a project first');
             return [];
         }
         if (!projectMetadataMigrationCompleted) {
@@ -8462,8 +8461,8 @@ class ProjectTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
             const treeItem = new vscode.TreeItem(project.name);
             treeItem.id = project.uid; // Use UID instead of name for uniqueness
             treeItem.iconPath = project.isSelected ? icons_1.activeIcon : new vscode.ThemeIcon('folder');
-            let tooltip = `Project: ${project.name}`;
-            treeItem.tooltip = tooltip;
+            treeItem.description = `${project.repos?.length ?? 0} repos • ${project.dbs?.length ?? 0} dbs`;
+            treeItem.tooltip = this.buildProjectTooltip(project);
             // Set context value for menu commands
             treeItem.contextValue = 'project';
             treeItem.command = {
@@ -8475,6 +8474,34 @@ class ProjectTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
             treeItem.projectUid = project.uid;
             return treeItem;
         });
+    }
+    buildProjectTooltip(project) {
+        const lines = [`**${project.name}**${project.isSelected ? ' (active)' : ''}`];
+        const repos = project.repos ?? [];
+        if (repos.length > 0) {
+            const shown = repos.slice(0, 8).map(repo => `- ${repo.name}`);
+            if (repos.length > 8) {
+                shown.push(`- … ${repos.length - 8} more`);
+            }
+            lines.push(`**Repositories (${repos.length}):**\n${shown.join('\n')}`);
+        }
+        else {
+            lines.push('**Repositories:** none');
+        }
+        const dbs = project.dbs ?? [];
+        const selectedDb = dbs.find(db => db.isSelected);
+        lines.push(`**Databases:** ${dbs.length}${selectedDb ? ` (active: ${(0, utils_1.getDatabaseLabel)(selectedDb)})` : ''}`);
+        if (project.tickets && project.tickets.length > 0) {
+            lines.push(`**Tickets:** ${project.tickets.length}`);
+        }
+        if (project.testingConfig?.isEnabled) {
+            lines.push('**Testing mode:** enabled');
+        }
+        const created = project.createdAt ? new Date(project.createdAt) : undefined;
+        if (created && !Number.isNaN(created.getTime())) {
+            lines.push(`**Created:** ${created.toISOString().split('T')[0]}`);
+        }
+        return new vscode.MarkdownString(lines.join('\n\n'));
     }
     compareProjects(a, b, sortId) {
         const activeDelta = Number(b.isSelected) - Number(a.isSelected);
@@ -9799,18 +9826,13 @@ class RepoTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         const versionsService = versionsService_1.VersionsService.getInstance();
         const settings = await versionsService.getActiveVersionSettings();
         const customAddonsPath = (0, utils_1.normalizePath)(settings.customAddonsPath);
-        // Check if path exists first
+        // Empty lists fall through to the view's welcome content, which
+        // points at the version's custom addons folder setting.
         if (!fs.existsSync(customAddonsPath)) {
-            void (0, utils_1.showError)(`Path does not exist: ${customAddonsPath}`);
             return [];
         }
         const devsRepos = (0, utils_1.findRepositories)(customAddonsPath);
-        if (devsRepos.length === 0) {
-            void (0, utils_1.showInfo)('No repositories found in the custom addons directory.');
-            return [];
-        }
-        if (!repos) {
-            void (0, utils_1.showError)('No modules are configured for this database.');
+        if (devsRepos.length === 0 || !repos) {
             return [];
         }
         const repoEntries = await mapWithConcurrency(devsRepos, 6, async (repo) => {
@@ -9847,7 +9869,11 @@ class RepoTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         return repoEntries.map(entry => {
             const treeItem = new vscode.TreeItem(entry.name);
             treeItem.iconPath = entry.isSelected ? icons_1.selectedIcon : icons_1.unselectedIcon;
-            treeItem.tooltip = `Repo: ${entry.name}\nPath: ${entry.path}`;
+            treeItem.tooltip = new vscode.MarkdownString([
+                `**${entry.name}**${entry.isSelected ? ' (in project)' : ''}`,
+                `**Path:** ${entry.path}`,
+                entry.branch ? `**Branch:** ${entry.branch}` : ''
+            ].filter(Boolean).join('\n\n'));
             treeItem.id = entry.path;
             treeItem.description = entry.branch ?? '';
             treeItem.command = {
@@ -10005,18 +10031,20 @@ class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
             }
             return [];
         }
+        // Empty lists fall through to the view's welcome content, which
+        // explains that a project and database must be selected first.
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         if (!result) {
-            return [(0, utils_1.createInfoTreeItem)('Select a project to manage modules.')];
+            return [];
         }
         const { project } = result;
         const db = project.dbs.find((db) => db.isSelected === true);
         if (!db) {
-            return [(0, utils_1.createInfoTreeItem)('Select a database to view modules.')];
+            return [];
         }
         const modules = db.modules;
         if (!modules) {
-            return [(0, utils_1.createInfoTreeItem)('No modules configured for this database.')];
+            return [];
         }
         const isTestingEnabled = !!(project.testingConfig && project.testingConfig.isEnabled);
         const { modules: allModules, psaeDirectories } = (0, psaeInternal_1.collectModuleDiscovery)(project);
@@ -10826,14 +10854,16 @@ class TestingTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         return element;
     }
     async getChildren(element) {
+        // Empty lists fall through to the view's welcome content, which
+        // explains that a project and database must be selected first.
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         if (!result) {
-            return [(0, utils_1.createInfoTreeItem)('Select a project before running this action.')];
+            return [];
         }
         const { data, project } = result;
         const db = project.dbs.find(db => db.isSelected === true);
         if (!db) {
-            return [(0, utils_1.createInfoTreeItem)('Select a database before running this action.')];
+            return [];
         }
         let testingConfig = (0, testing_1.ensureTestingConfigModel)(project.testingConfig);
         if (testingConfig !== project.testingConfig) {
@@ -12100,7 +12130,7 @@ class VersionTreeItem extends vscode.TreeItem {
         this.version = version;
         this.collapsibleState = collapsibleState;
         this.id = version.id;
-        this.tooltip = `${version.name} (${version.odooVersion})`;
+        this.tooltip = VersionTreeItem.buildTooltip(version);
         this.description = version.odooVersion;
         this.contextValue = version.isActive ? 'activeVersion' : 'version';
         this.iconPath = version.isActive ? icons_1.activeIcon : new vscode.ThemeIcon('versions');
@@ -12110,6 +12140,26 @@ class VersionTreeItem extends vscode.TreeItem {
             title: '',
             arguments: [version.id]
         };
+    }
+    static buildTooltip(version) {
+        const lines = [
+            `**${version.name}**${version.isActive ? ' (active)' : ''}`,
+            `**Odoo Version:** ${version.odooVersion}`
+        ];
+        const settings = version.settings ?? {};
+        if (settings.portNumber) {
+            lines.push(`**Port:** ${settings.portNumber}`);
+        }
+        if (settings.odooPath) {
+            lines.push(`**Odoo Path:** ${settings.odooPath}`);
+        }
+        if (settings.pythonPath) {
+            lines.push(`**Python:** ${settings.pythonPath}`);
+        }
+        if (settings.customAddonsPath) {
+            lines.push(`**Custom Addons:** ${settings.customAddonsPath}`);
+        }
+        return new vscode.MarkdownString(lines.join('\n\n'));
     }
 }
 exports.VersionTreeItem = VersionTreeItem;
@@ -12526,12 +12576,6 @@ class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
     }
     getTreeItem(element) {
         switch (element.kind) {
-            case 'placeholder': {
-                const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
-                item.contextValue = 'projectReposExplorerInfo';
-                item.command = element.command;
-                return item;
-            }
             case 'repo': {
                 if (element.missing) {
                     const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
@@ -12569,26 +12613,16 @@ class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
     }
     async getChildren(element) {
         if (!element) {
+            // Empty lists fall through to the view's welcome content, which
+            // offers the select-project / select-repos actions.
             const selection = await settingsStore_1.SettingsStore.getSelectedProject();
             if (!selection) {
-                return [
-                    {
-                        kind: 'placeholder',
-                        label: 'No active project. Select a project to view its repos.',
-                        command: { command: 'odt.projectReposExplorer.selectProject', title: 'Select Project' }
-                    }
-                ];
+                return [];
             }
             const { project } = selection;
             const repos = (project.repos ?? []);
             if (!repos.length) {
-                return [
-                    {
-                        kind: 'placeholder',
-                        label: 'No repositories selected for this project.',
-                        command: { command: 'repoSelector.selectRepo', title: 'Select Repo' }
-                    }
-                ];
+                return [];
             }
             this.resetWatchers(repos);
             const sortId = this.sortPreferences.get('projectRepos', (0, sortOptions_1.getDefaultSortOption)('projectRepos'));
@@ -14166,6 +14200,17 @@ exports.registerModuleCommands = registerModuleCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const module_1 = __webpack_require__(55);
+/**
+ * Tree context menus pass (clickedItem, selectedItems); with canSelectMany
+ * enabled a bulk action applies to the whole selection when the clicked
+ * item is part of it.
+ */
+function targetsOf(event, selection) {
+    if (selection && selection.length > 1 && selection.includes(event)) {
+        return selection;
+    }
+    return [event];
+}
 function registerModuleCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.select', async (event) => {
@@ -14180,16 +14225,22 @@ function registerModuleCommands(deps) {
         await (0, module_1.createModuleFromScaffold)();
         await refreshAll({ reason: 'ui' });
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.setToInstall', async (event) => {
-        await (0, module_1.setModuleToInstall)(event);
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.setToInstall', async (event, selection) => {
+        for (const target of targetsOf(event, selection)) {
+            await (0, module_1.setModuleToInstall)(target);
+        }
         await refreshAll();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.setToUpgrade', async (event) => {
-        await (0, module_1.setModuleToUpgrade)(event);
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.setToUpgrade', async (event, selection) => {
+        for (const target of targetsOf(event, selection)) {
+            await (0, module_1.setModuleToUpgrade)(target);
+        }
         await refreshAll();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.clearState', async (event) => {
-        await (0, module_1.clearModuleState)(event);
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.clearState', async (event, selection) => {
+        for (const target of targetsOf(event, selection)) {
+            await (0, module_1.clearModuleState)(target);
+        }
         await refreshAll();
     }));
     context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.updateAll', async () => {

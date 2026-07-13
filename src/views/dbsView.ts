@@ -7,7 +7,6 @@ import { VersionsService } from '../versionsService';
 import { SortPreferences } from '../sortPreferences';
 import { getDefaultSortOption } from '../sortOptions';
 import { getDatabaseLabel } from '../utils';
-import { showError } from '../services/notifications';
 import { activeIcon } from './icons';
 import { sanitizeProjectRepoBranchAssignments } from '../services/environment';
 import { getEffectiveOdooVersion } from '../dbs';
@@ -29,10 +28,10 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             return [];
         }
 
+        // Empty list: the view's welcome content offers "Create Database".
         const { project } = result;
         const dbs: DatabaseModel[] = project.dbs;
         if (!dbs) {
-            void showError('No databases are configured for this project.');
             return [];
         }
 
