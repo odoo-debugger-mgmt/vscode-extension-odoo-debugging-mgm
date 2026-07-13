@@ -134,7 +134,14 @@ async function activate(context) {
     context.subscriptions.push(vscode.window.registerTreeDataProvider('projectSelector', providers.project));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('repoSelector', providers.repo));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('dbSelector', providers.db));
-    context.subscriptions.push(vscode.window.registerTreeDataProvider('moduleSelector', providers.module));
+    // The Modules view needs a TreeView handle: reveal() for the editor
+    // "Reveal Module" command and canSelectMany for bulk state changes.
+    const moduleTreeView = vscode.window.createTreeView('moduleSelector', {
+        treeDataProvider: providers.module,
+        canSelectMany: true,
+        showCollapseAll: true
+    });
+    context.subscriptions.push(moduleTreeView);
     context.subscriptions.push(vscode.window.registerTreeDataProvider('testingSelector', providers.testing));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('versionsManager', providers.versions));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('odt.projectReposExplorer', providers.projectReposExplorer));
@@ -195,7 +202,7 @@ async function activate(context) {
             await refreshViews();
         }
     };
-    (0, commands_1.registerAllCommands)({ context, providers, versionsService, sortPreferences, refreshAll });
+    (0, commands_1.registerAllCommands)({ context, providers, versionsService, sortPreferences, moduleTreeView, refreshAll });
     void statusBar.update();
 }
 function deactivate() {
@@ -9483,6 +9490,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.readModuleManifest = readModuleManifest;
+exports.findModuleForFile = findModuleForFile;
 exports.extractTicketIdsFromBranch = extractTicketIdsFromBranch;
 const fs = __importStar(__webpack_require__(22));
 const path = __importStar(__webpack_require__(3));
@@ -9563,6 +9571,29 @@ async function readModuleManifest(modulePath) {
  * Extracts ticket-id candidates from a branch name (PS convention:
  * "17.0-project-1234567-dev" carries the task id as a long digit run).
  */
+/**
+ * Finds the Odoo module a file belongs to by walking up the directory
+ * tree until a folder containing __manifest__.py is found.
+ */
+async function findModuleForFile(filePath) {
+    let dir = path.dirname(filePath);
+    // Bounded walk so a weird path can never loop forever.
+    for (let depth = 0; depth < 40; depth++) {
+        try {
+            await fs.access(path.join(dir, '__manifest__.py'));
+            return { name: path.basename(dir), path: dir };
+        }
+        catch {
+            // not a module root - keep walking up
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir) {
+            return undefined;
+        }
+        dir = parent;
+    }
+    return undefined;
+}
 function extractTicketIdsFromBranch(branchName) {
     if (!branchName) {
         return [];
@@ -10090,6 +10121,7 @@ class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
             ].join('\n');
             parent.psaeState = psaeState;
             parent.psaeChildren = members.map(buildModuleNode);
+            parent.psaeChildren.forEach(child => (child.parentNode = parent));
             treeItems.push(parent);
         }
         // Regular (non-psae) modules at the root.
@@ -10099,7 +10131,30 @@ class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         const sortId = this.sortPreferences.get('moduleSelector', (0, sortOptions_1.getDefaultSortOption)('moduleSelector'));
         regularModules.sort((a, b) => this.compareModules(a, b, sortId));
         treeItems.push(...regularModules);
+        this.lastRootNodes = treeItems;
         return treeItems;
+    }
+    /** Root nodes from the latest build, used by getParent/findModuleNode. */
+    lastRootNodes = [];
+    /** Required for TreeView.reveal: psae children report their group node. */
+    getParent(element) {
+        return element.parentNode;
+    }
+    /** Locates the tree node for a module by name (for TreeView.reveal). */
+    async findModuleNode(moduleName) {
+        if (this.lastRootNodes.length === 0) {
+            await this.getChildren();
+        }
+        for (const node of this.lastRootNodes) {
+            if (node.moduleData?.name === moduleName) {
+                return node;
+            }
+            const child = node.psaeChildren?.find(entry => entry.moduleData?.name === moduleName);
+            if (child) {
+                return child;
+            }
+        }
+        return undefined;
     }
     /** Lazily lists a module's manifest dependencies (one level deep). */
     async buildDependencyItems(moduleData) {
@@ -10374,29 +10429,28 @@ async function setModuleToUpgrade(event) {
     const moduleData = event.moduleData || event;
     const result = await settingsStore_1.SettingsStore.getSelectedProject();
     if (!result) {
-        return;
+        return false;
     }
     const { data, project } = result;
     const db = project.dbs.find((db) => db.isSelected === true);
     if (!db) {
         void (0, utils_1.showError)('Select a database before running this action.');
-        return;
+        return false;
     }
     // Check if testing is enabled
     if (project.testingConfig && project.testingConfig.isEnabled) {
         void (0, utils_1.showError)('Disable testing mode before changing module selections.');
-        return;
+        return false;
     }
     const moduleExistsInDb = db.modules.find(mod => mod.name === moduleData.name);
     if (!moduleExistsInDb) {
         db.modules.push(new module_1.ModuleModel(moduleData.name, 'upgrade'));
-        (0, utils_1.showAutoInfo)(`Module "${moduleData.name}" set to upgrade`, 2000);
     }
     else {
         moduleExistsInDb.state = 'upgrade';
-        (0, utils_1.showAutoInfo)(`Module "${moduleData.name}" state changed to upgrade`, 2000);
     }
     await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+    return true;
 }
 /**
  * Clear a module's state (remove from managed modules)
@@ -10739,6 +10793,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.TestingTreeProvider = void 0;
 exports.toggleTesting = toggleTesting;
+exports.prepareTestRunForFile = prepareTestRunForFile;
 exports.toggleStopAfterInit = toggleStopAfterInit;
 exports.setTestFile = setTestFile;
 exports.addTestTag = addTestTag;
@@ -10985,6 +11040,55 @@ async function toggleTesting(event) {
         logger_1.logger.error('Error in toggleTesting:', error);
         void (0, utils_1.showError)(`Failed to toggle testing: ${error}`);
     }
+}
+/**
+ * Programmatic testing setup used by "Run Odoo Tests for Current File":
+ * enables testing mode (with the usual confirmation) if needed, points
+ * --test-file at the given file and includes the module as a test target.
+ * Returns false when the user cancels or prerequisites are missing.
+ */
+async function prepareTestRunForFile(filePath, moduleName) {
+    const result = await settingsStore_1.SettingsStore.getSelectedProject();
+    if (!result) {
+        void (0, utils_1.showError)('Select a project before running this action.');
+        return false;
+    }
+    const { data, project } = result;
+    const db = project.dbs.find(db => db.isSelected === true);
+    if (!db) {
+        void (0, utils_1.showError)('Select a database before running tests.');
+        return false;
+    }
+    project.testingConfig = (0, testing_1.ensureTestingConfigModel)(project.testingConfig);
+    if (!project.testingConfig.isEnabled) {
+        const confirm = await (0, notifications_1.showModalWarning)('Enable testing mode? Current module selections (install/upgrade) will be saved and cleared, and restored when testing is disabled.', 'Enable Testing');
+        if (confirm !== 'Enable Testing') {
+            return false;
+        }
+        project.testingConfig.savedModuleStates = db.modules.map(module => ({
+            name: module.name,
+            state: module.state
+        }));
+        db.modules = [];
+        project.testingConfig.isEnabled = true;
+        (0, context_1.updateTestingContext)(true);
+    }
+    project.testingConfig.testFile = filePath;
+    const existingTag = project.testingConfig.testTags.find(tag => tag.type === 'module' && tag.value === moduleName);
+    if (existingTag) {
+        existingTag.state = 'include';
+    }
+    else {
+        project.testingConfig.testTags.push({
+            id: `tag-${Date.now()}`,
+            value: moduleName,
+            state: 'include',
+            type: 'module'
+        });
+    }
+    await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+    await (0, debugger_1.setupDebugger)();
+    return true;
 }
 async function toggleStopAfterInit() {
     try {
@@ -12967,6 +13071,7 @@ const testingCommands_1 = __webpack_require__(77);
 const versionCommands_1 = __webpack_require__(78);
 const debugCommands_1 = __webpack_require__(80);
 const reposExplorerCommands_1 = __webpack_require__(81);
+const editorCommands_1 = __webpack_require__(82);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -12978,6 +13083,7 @@ function registerAllCommands(deps) {
     (0, versionCommands_1.registerVersionCommands)(deps);
     (0, debugCommands_1.registerDebugCommands)(deps);
     (0, reposExplorerCommands_1.registerReposExplorerCommands)(deps);
+    (0, editorCommands_1.registerEditorCommands)(deps);
 }
 
 
@@ -15082,6 +15188,113 @@ function registerReposExplorerCommands(deps) {
         (0, runtimeCache_1.invalidateGitBranchCache)();
         (0, notifications_2.showAutoInfo)(`Repository "${target.name}" now points to ${newPath}`, 3000);
         await deps.refreshAll();
+    }));
+}
+
+
+/***/ }),
+/* 82 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerEditorCommands = registerEditorCommands;
+/**
+ * Editor-context commands acting on the active file's Odoo module.
+ * Menu visibility is gated by odooDebugger.editorActions.enabled; the
+ * commands themselves stay callable from the palette.
+ */
+const vscode = __importStar(__webpack_require__(1));
+const manifest_1 = __webpack_require__(52);
+const module_1 = __webpack_require__(55);
+const testing_1 = __webpack_require__(57);
+const debugger_1 = __webpack_require__(59);
+const notifications_1 = __webpack_require__(13);
+async function moduleForActiveEditor() {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.uri.scheme !== 'file') {
+        void (0, notifications_1.showInfo)('Open a file inside an Odoo module first.');
+        return undefined;
+    }
+    const fileFsPath = editor.document.uri.fsPath;
+    const module = await (0, manifest_1.findModuleForFile)(fileFsPath);
+    if (!module) {
+        void (0, notifications_1.showInfo)('The active file does not belong to an Odoo module (no __manifest__.py found).');
+        return undefined;
+    }
+    return { ...module, fileFsPath };
+}
+function registerEditorCommands(deps) {
+    const { context, providers, moduleTreeView, refreshAll } = deps;
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.upgradeCurrentModule', async () => {
+        const module = await moduleForActiveEditor();
+        if (!module) {
+            return;
+        }
+        if (!(await (0, module_1.setModuleToUpgrade)({ name: module.name }))) {
+            return;
+        }
+        await refreshAll();
+        const choice = await (0, notifications_1.showInfo)(`Module "${module.name}" marked for upgrade.`, 'Restart Server');
+        if (choice === 'Restart Server') {
+            await (0, debugger_1.startDebugServer)();
+        }
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.runTestsForCurrentFile', async () => {
+        const module = await moduleForActiveEditor();
+        if (!module) {
+            return;
+        }
+        if (!(await (0, testing_1.prepareTestRunForFile)(module.fileFsPath, module.name))) {
+            return;
+        }
+        await refreshAll();
+        await (0, debugger_1.startDebugServer)();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.revealModuleInView', async () => {
+        const module = await moduleForActiveEditor();
+        if (!module) {
+            return;
+        }
+        const node = await providers.module.findModuleNode(module.name);
+        if (!node) {
+            void (0, notifications_1.showInfo)(`Module "${module.name}" was not found in the Modules view - is its repository part of the active project?`);
+            return;
+        }
+        await moduleTreeView.reveal(node, { select: true, focus: true });
     }));
 }
 

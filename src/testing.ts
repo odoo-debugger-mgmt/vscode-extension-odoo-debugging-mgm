@@ -305,6 +305,65 @@ export async function toggleTesting(event: any): Promise<void> {
     }
 }
 
+/**
+ * Programmatic testing setup used by "Run Odoo Tests for Current File":
+ * enables testing mode (with the usual confirmation) if needed, points
+ * --test-file at the given file and includes the module as a test target.
+ * Returns false when the user cancels or prerequisites are missing.
+ */
+export async function prepareTestRunForFile(filePath: string, moduleName: string): Promise<boolean> {
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
+        void showError('Select a project before running this action.');
+        return false;
+    }
+    const { data, project } = result;
+    const db = project.dbs.find(db => db.isSelected === true);
+    if (!db) {
+        void showError('Select a database before running tests.');
+        return false;
+    }
+
+    project.testingConfig = ensureTestingConfigModel(project.testingConfig);
+
+    if (!project.testingConfig.isEnabled) {
+        const confirm = await showModalWarning(
+            'Enable testing mode? Current module selections (install/upgrade) will be saved and cleared, and restored when testing is disabled.',
+            'Enable Testing'
+        );
+        if (confirm !== 'Enable Testing') {
+            return false;
+        }
+        project.testingConfig.savedModuleStates = db.modules.map(module => ({
+            name: module.name,
+            state: module.state
+        }));
+        db.modules = [];
+        project.testingConfig.isEnabled = true;
+        updateTestingContext(true);
+    }
+
+    project.testingConfig.testFile = filePath;
+
+    const existingTag = project.testingConfig.testTags.find(
+        tag => tag.type === 'module' && tag.value === moduleName
+    );
+    if (existingTag) {
+        existingTag.state = 'include';
+    } else {
+        project.testingConfig.testTags.push({
+            id: `tag-${Date.now()}`,
+            value: moduleName,
+            state: 'include',
+            type: 'module'
+        });
+    }
+
+    await SettingsStore.saveWithoutComments(stripSettings(data));
+    await setupDebugger();
+    return true;
+}
+
 export async function toggleStopAfterInit(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();

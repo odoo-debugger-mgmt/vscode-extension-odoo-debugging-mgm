@@ -17,6 +17,7 @@ import { registerTestingCommands } from './testingCommands';
 import { registerVersionCommands } from './versionCommands';
 import { registerDebugCommands } from './debugCommands';
 import { registerReposExplorerCommands } from './reposExplorerCommands';
+import { registerEditorCommands } from './editorCommands';
 
 export type RefreshReason = 'ui' | 'debugger' | 'all';
 
@@ -40,6 +41,8 @@ export interface CommandDeps {
     providers: Providers;
     versionsService: VersionsService;
     sortPreferences: SortPreferences;
+    /** TreeView handle for the Modules view (needed for reveal + multi-select). */
+    moduleTreeView: vscode.TreeView<vscode.TreeItem>;
     refreshAll(options?: { reason?: RefreshReason; debounceMs?: number }): Promise<void>;
 }
 
@@ -54,4 +57,5 @@ export function registerAllCommands(deps: CommandDeps): void {
     registerVersionCommands(deps);
     registerDebugCommands(deps);
     registerReposExplorerCommands(deps);
+    registerEditorCommands(deps);
 }

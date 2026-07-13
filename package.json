@@ -535,6 +535,24 @@
         "icon": "$(terminal)"
       },
       {
+        "command": "odoo.runTestsForCurrentFile",
+        "title": "Run Odoo Tests for Current File",
+        "category": "Odoo DevTools",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "odoo.upgradeCurrentModule",
+        "title": "Upgrade Current Module",
+        "category": "Odoo DevTools",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "odoo.revealModuleInView",
+        "title": "Reveal Module in Modules View",
+        "category": "Odoo DevTools",
+        "icon": "$(eye)"
+      },
+      {
         "command": "odoo.toggleTestingMode",
         "title": "Toggle Testing Mode",
         "category": "Odoo DevTools"
@@ -552,6 +570,23 @@
       }
     ],
     "menus": {
+      "editor/context": [
+        {
+          "command": "odoo.runTestsForCurrentFile",
+          "when": "odoo-debugger.is_active && config.odooDebugger.editorActions.enabled && resourceScheme == file && resourceFilename =~ /^test_.*\\.py$/",
+          "group": "odoo@1"
+        },
+        {
+          "command": "odoo.upgradeCurrentModule",
+          "when": "odoo-debugger.is_active && config.odooDebugger.editorActions.enabled && resourceScheme == file",
+          "group": "odoo@2"
+        },
+        {
+          "command": "odoo.revealModuleInView",
+          "when": "odoo-debugger.is_active && config.odooDebugger.editorActions.enabled && resourceScheme == file",
+          "group": "odoo@3"
+        }
+      ],
       "view/title": [
         {
           "command": "projectSelector.create",
@@ -1400,6 +1435,11 @@
           "type": "boolean",
           "default": false,
           "description": "After starting the Odoo server, open the web client in the browser once the server port accepts connections."
+        },
+        "odooDebugger.editorActions.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Odoo actions (Run Tests for Current File, Upgrade Current Module, Reveal Module) in the editor right-click menu."
         }
       }
     },

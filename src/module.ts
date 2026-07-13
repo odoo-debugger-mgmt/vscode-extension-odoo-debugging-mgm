@@ -37,6 +37,7 @@ type ModuleTreeNode = vscode.TreeItem & {
     moduleData?: ModuleData;
     psaeState?: PsaeDirectoryState;
     psaeChildren?: ModuleTreeNode[];
+    parentNode?: ModuleTreeNode;
 };
 
 const CORE_HINT = 'Core/other module (not in this project\'s repos)';
@@ -193,6 +194,7 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
             parent.psaeState = psaeState;
             parent.psaeChildren = members.map(buildModuleNode);
+            parent.psaeChildren.forEach(child => (child.parentNode = parent));
             treeItems.push(parent);
         }
 
@@ -205,7 +207,33 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         regularModules.sort((a, b) => this.compareModules(a, b, sortId));
 
         treeItems.push(...regularModules);
+        this.lastRootNodes = treeItems;
         return treeItems;
+    }
+
+    /** Root nodes from the latest build, used by getParent/findModuleNode. */
+    private lastRootNodes: ModuleTreeNode[] = [];
+
+    /** Required for TreeView.reveal: psae children report their group node. */
+    getParent(element: vscode.TreeItem): vscode.TreeItem | undefined {
+        return (element as ModuleTreeNode).parentNode;
+    }
+
+    /** Locates the tree node for a module by name (for TreeView.reveal). */
+    async findModuleNode(moduleName: string): Promise<vscode.TreeItem | undefined> {
+        if (this.lastRootNodes.length === 0) {
+            await this.getChildren();
+        }
+        for (const node of this.lastRootNodes) {
+            if (node.moduleData?.name === moduleName) {
+                return node;
+            }
+            const child = node.psaeChildren?.find(entry => entry.moduleData?.name === moduleName);
+            if (child) {
+                return child;
+            }
+        }
+        return undefined;
     }
 
     /** Lazily lists a module's manifest dependencies (one level deep). */
@@ -513,34 +541,33 @@ export async function setModuleToInstall(event: any): Promise<void> {
 /**
  * Set a module to 'upgrade' state
  */
-export async function setModuleToUpgrade(event: any): Promise<void> {
+export async function setModuleToUpgrade(event: any): Promise<boolean> {
     const moduleData = event.moduleData || event;
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        return;
+        return false;
     }
     const { data, project } = result;
     const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
         void showError('Select a database before running this action.');
-        return;
+        return false;
     }
 
     // Check if testing is enabled
     if (project.testingConfig && project.testingConfig.isEnabled) {
         void showError('Disable testing mode before changing module selections.');
-        return;
+        return false;
     }
 
     const moduleExistsInDb = db.modules.find(mod => mod.name === moduleData.name);
     if (!moduleExistsInDb) {
         db.modules.push(new ModuleModel(moduleData.name, 'upgrade'));
-        showAutoInfo(`Module "${moduleData.name}" set to upgrade`, 2000);
     } else {
         moduleExistsInDb.state = 'upgrade';
-        showAutoInfo(`Module "${moduleData.name}" state changed to upgrade`, 2000);
     }
     await SettingsStore.saveWithoutComments(stripSettings(data));
+    return true;
 }
 
 /**

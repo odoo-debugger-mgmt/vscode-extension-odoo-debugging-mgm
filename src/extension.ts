@@ -105,7 +105,14 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.window.registerTreeDataProvider('projectSelector', providers.project));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('repoSelector', providers.repo));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('dbSelector', providers.db));
-    context.subscriptions.push(vscode.window.registerTreeDataProvider('moduleSelector', providers.module));
+    // The Modules view needs a TreeView handle: reveal() for the editor
+    // "Reveal Module" command and canSelectMany for bulk state changes.
+    const moduleTreeView = vscode.window.createTreeView('moduleSelector', {
+        treeDataProvider: providers.module,
+        canSelectMany: true,
+        showCollapseAll: true
+    });
+    context.subscriptions.push(moduleTreeView);
     context.subscriptions.push(vscode.window.registerTreeDataProvider('testingSelector', providers.testing));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('versionsManager', providers.versions));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('odt.projectReposExplorer', providers.projectReposExplorer));
@@ -175,7 +182,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     };
 
-    registerAllCommands({ context, providers, versionsService, sortPreferences, refreshAll });
+    registerAllCommands({ context, providers, versionsService, sortPreferences, moduleTreeView, refreshAll });
 
     void statusBar.update();
 }

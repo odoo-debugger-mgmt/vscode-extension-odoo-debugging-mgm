@@ -104,6 +104,29 @@ export async function readModuleManifest(modulePath: string): Promise<ModuleMani
  * Extracts ticket-id candidates from a branch name (PS convention:
  * "17.0-project-1234567-dev" carries the task id as a long digit run).
  */
+/**
+ * Finds the Odoo module a file belongs to by walking up the directory
+ * tree until a folder containing __manifest__.py is found.
+ */
+export async function findModuleForFile(filePath: string): Promise<{ name: string; path: string } | undefined> {
+    let dir = path.dirname(filePath);
+    // Bounded walk so a weird path can never loop forever.
+    for (let depth = 0; depth < 40; depth++) {
+        try {
+            await fs.access(path.join(dir, '__manifest__.py'));
+            return { name: path.basename(dir), path: dir };
+        } catch {
+            // not a module root - keep walking up
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir) {
+            return undefined;
+        }
+        dir = parent;
+    }
+    return undefined;
+}
+
 export function extractTicketIdsFromBranch(branchName: string | null | undefined): string[] {
     if (!branchName) {
         return [];
