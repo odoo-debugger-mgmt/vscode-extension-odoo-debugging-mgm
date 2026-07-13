@@ -507,6 +507,34 @@
         "icon": "$(debug-stop)"
       },
       {
+        "command": "odoo.startServerNoDebug",
+        "title": "Run Server Without Debugging",
+        "category": "Odoo DevTools",
+        "icon": "$(run)"
+      },
+      {
+        "command": "odoo.restartServer",
+        "title": "Restart Server",
+        "category": "Odoo DevTools",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "odoo.openInBrowser",
+        "title": "Open Odoo in Browser",
+        "category": "Odoo DevTools",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "dbSelector.openInBrowser",
+        "title": "Open in Browser",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "dbSelector.openPsqlShell",
+        "title": "Open psql Shell",
+        "icon": "$(terminal)"
+      },
+      {
         "command": "odoo.toggleTestingMode",
         "title": "Toggle Testing Mode",
         "category": "Odoo DevTools"
@@ -888,6 +916,16 @@
           "group": "database@6"
         },
         {
+          "command": "dbSelector.openInBrowser",
+          "when": "view == dbSelector && viewItem == database",
+          "group": "databaseOpen@1"
+        },
+        {
+          "command": "dbSelector.openPsqlShell",
+          "when": "view == dbSelector && viewItem == database",
+          "group": "databaseOpen@2"
+        },
+        {
           "command": "odooDebugger.relocateRepo",
           "when": "view == odt.projectReposExplorer && viewItem == projectRepoRootMissing",
           "group": "inline"
@@ -938,6 +976,14 @@
         },
         {
           "command": "dbSelector.selectDb",
+          "when": "false"
+        },
+        {
+          "command": "dbSelector.openInBrowser",
+          "when": "false"
+        },
+        {
+          "command": "dbSelector.openPsqlShell",
           "when": "false"
         },
         {
@@ -1122,6 +1168,24 @@
         "command": "odoo.stopServer",
         "key": "ctrl+alt+o x",
         "mac": "cmd+alt+o x",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "odoo.startServerNoDebug",
+        "key": "ctrl+alt+o n",
+        "mac": "cmd+alt+o n",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "odoo.restartServer",
+        "key": "ctrl+alt+o r",
+        "mac": "cmd+alt+o r",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "odoo.openInBrowser",
+        "key": "ctrl+alt+o b",
+        "mac": "cmd+alt+o b",
         "when": "odoo-debugger.is_active"
       },
       {
@@ -1331,6 +1395,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show the active project, database and version in the status bar (click to switch)."
+        },
+        "odooDebugger.server.openBrowserOnStart": {
+          "type": "boolean",
+          "default": false,
+          "description": "After starting the Odoo server, open the web client in the browser once the server port accepts connections."
         }
       }
     },

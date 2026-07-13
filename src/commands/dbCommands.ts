@@ -20,6 +20,7 @@ import {
     extractDatabaseFromEvent
 } from '../dbs';
 import { showBriefStatus } from '../services/notifications';
+import { openServerInBrowser } from '../services/server';
 
 export function registerDbCommands(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
@@ -112,6 +113,27 @@ export function registerDbCommands(deps: CommandDeps): void {
             void showError(`Failed to manage database templates: ${errorMessage(err)}`);
             logger.error('Error in database template management:', err);
         }
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.openInBrowser', async (event) => {
+        const db = extractDatabaseFromEvent(event);
+        if (!db) {
+            void showError('Could not identify the database to open in the browser.');
+            return;
+        }
+        await openServerInBrowser(db.id);
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.openPsqlShell', async (event) => {
+        const db = extractDatabaseFromEvent(event);
+        if (!db) {
+            void showError('Could not identify the database to open in psql.');
+            return;
+        }
+        const terminal = vscode.window.createTerminal({ name: `psql: ${db.id}` });
+        terminal.show();
+        // db names are validated on creation, but quote defensively anyway
+        terminal.sendText(`psql ${JSON.stringify(db.id)}`);
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand('dbSelector.copyName', async (event) => {

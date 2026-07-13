@@ -54,12 +54,13 @@ const settingsStore_1 = __webpack_require__(5);
 const versionsTreeProvider_1 = __webpack_require__(61);
 const versionsService_1 = __webpack_require__(23);
 const context_1 = __webpack_require__(58);
-const sortPreferences_1 = __webpack_require__(62);
-const projectReposExplorer_1 = __webpack_require__(63);
+const server_1 = __webpack_require__(62);
+const sortPreferences_1 = __webpack_require__(64);
+const projectReposExplorer_1 = __webpack_require__(65);
 const logger_1 = __webpack_require__(11);
 const reconcile_1 = __webpack_require__(45);
-const statusBar_1 = __webpack_require__(65);
-const commands_1 = __webpack_require__(66);
+const statusBar_1 = __webpack_require__(67);
+const commands_1 = __webpack_require__(68);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -106,6 +107,17 @@ async function activate(context) {
     context.subscriptions.push(...Object.values(providers));
     const statusBar = new statusBar_1.StatusBarIndicators();
     context.subscriptions.push(statusBar);
+    // Track the extension's own debug session for when-clauses and the
+    // optional open-browser-on-start automation.
+    (0, context_1.updateServerRunningContext)(false);
+    (0, server_1.registerServerLifecycle)(context, {
+        onRunningChanged: context_1.updateServerRunningContext,
+        getSelectedDbName: async () => {
+            const result = await settingsStore_1.SettingsStore.getSelectedProject();
+            const db = result?.project.dbs?.find(entry => entry.isSelected);
+            return db?.id;
+        }
+    });
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('odooDebugger.statusBar.enabled')) {
             void statusBar.update();
@@ -11409,6 +11421,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.updateTestingContext = updateTestingContext;
 exports.updateActiveContext = updateActiveContext;
+exports.updateServerRunningContext = updateServerRunningContext;
 /**
  * VS Code context keys ('odoo-debugger.is_active', 'odoo-debugger.testing_enabled') used by when-clauses.
  */
@@ -11422,6 +11435,9 @@ function updateTestingContext(isTestingEnabled) {
 }
 function updateActiveContext(isActive) {
     void vscode.commands.executeCommand('setContext', 'odoo-debugger.is_active', isActive);
+}
+function updateServerRunningContext(isRunning) {
+    void vscode.commands.executeCommand('setContext', 'odoo-debugger.server_running', isRunning);
 }
 
 
@@ -11793,18 +11809,26 @@ function quoteShellArg(value) {
     const escapedValue = value.replaceAll("'", String.raw `'\''`);
     return `'${escapedValue}'`;
 }
-/** Stops the debug session launched from the extension's configuration. */
-async function stopDebugServer() {
+/** Finds the running debug session launched from the extension's configuration. */
+async function findOwnDebugSession() {
     const versionsService = versionsService_1.VersionsService.getInstance();
     const settings = await versionsService.getActiveVersionSettings();
     const session = vscode.debug.activeDebugSession;
     if (session && session.configuration?.name === settings.debuggerName) {
+        return session;
+    }
+    return undefined;
+}
+/** Stops the debug session launched from the extension's configuration. */
+async function stopDebugServer() {
+    const session = await findOwnDebugSession();
+    if (session) {
         await vscode.debug.stopDebugging(session);
         return;
     }
     void (0, utils_1.showInfo)('No Odoo debug session is currently running.');
 }
-async function startDebugServer() {
+async function startDebugServer(options = {}) {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
         void (0, utils_1.showError)("Open a workspace to use this command.");
@@ -11823,7 +11847,7 @@ async function startDebugServer() {
     if (existingSession && existingSession.configuration?.name === workspaceSettings.debuggerName) {
         await vscode.debug.stopDebugging(existingSession);
     }
-    void vscode.debug.startDebugging(workspaceFolders[0], workspaceSettings.debuggerName);
+    void vscode.debug.startDebugging(workspaceFolders[0], workspaceSettings.debuggerName, { noDebug: options.noDebug === true });
 }
 
 
@@ -12115,6 +12139,161 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 /***/ }),
 /* 62 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getActiveServerPort = getActiveServerPort;
+exports.buildServerUrl = buildServerUrl;
+exports.waitForPort = waitForPort;
+exports.openServerInBrowser = openServerInBrowser;
+exports.registerServerLifecycle = registerServerLifecycle;
+/**
+ * Server URL helpers: resolves the local Odoo URL from the active
+ * version's port setting and opens databases in the browser, optionally
+ * waiting for the HTTP port to accept connections first.
+ */
+const vscode = __importStar(__webpack_require__(1));
+const net = __importStar(__webpack_require__(63));
+const versionsService_1 = __webpack_require__(23);
+const logger_1 = __webpack_require__(11);
+const DEFAULT_ODOO_PORT = 8069;
+/** Port the Odoo server listens on, from the active version's settings. */
+async function getActiveServerPort() {
+    try {
+        const settings = await versionsService_1.VersionsService.getInstance().getActiveVersionSettings();
+        const port = Number(settings.portNumber);
+        if (Number.isInteger(port) && port > 0 && port <= 65535) {
+            return port;
+        }
+    }
+    catch (error) {
+        logger_1.logger.debug('Could not read active version port, using default:', error);
+    }
+    return DEFAULT_ODOO_PORT;
+}
+/** Local server URL, optionally routed straight into a database. */
+function buildServerUrl(port, dbName) {
+    const base = `http://localhost:${port}`;
+    if (!dbName) {
+        return vscode.Uri.parse(base);
+    }
+    return vscode.Uri.parse(`${base}/web?db=${encodeURIComponent(dbName)}`);
+}
+/** Resolves true once the port accepts a TCP connection, false on timeout. */
+function waitForPort(port, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    const tryOnce = () => new Promise(resolve => {
+        const socket = net.connect({ port, host: '127.0.0.1' });
+        const finish = (result) => {
+            socket.destroy();
+            resolve(result);
+        };
+        socket.setTimeout(1000, () => finish(false));
+        socket.once('connect', () => finish(true));
+        socket.once('error', () => finish(false));
+    });
+    return (async () => {
+        while (Date.now() < deadline) {
+            if (await tryOnce()) {
+                return true;
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        return false;
+    })();
+}
+/** Opens the Odoo web client for the given (or server-selected) database. */
+async function openServerInBrowser(dbName) {
+    const port = await getActiveServerPort();
+    await vscode.env.openExternal(buildServerUrl(port, dbName));
+}
+/** Whether the debug session is the one launched by the extension. */
+async function isOwnSession(session) {
+    try {
+        const settings = await versionsService_1.VersionsService.getInstance().getActiveVersionSettings();
+        return session.configuration?.name === settings.debuggerName;
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * Tracks the extension's own debug session: maintains the
+ * 'odoo-debugger.server_running' context key and, when
+ * odooDebugger.server.openBrowserOnStart is enabled, opens the web
+ * client once the server port starts accepting connections.
+ */
+function registerServerLifecycle(context, hooks) {
+    context.subscriptions.push(vscode.debug.onDidStartDebugSession(async (session) => {
+        if (!(await isOwnSession(session))) {
+            return;
+        }
+        hooks.onRunningChanged(true);
+        const openBrowser = vscode.workspace
+            .getConfiguration('odooDebugger')
+            .get('server.openBrowserOnStart', false);
+        if (!openBrowser) {
+            return;
+        }
+        const port = await getActiveServerPort();
+        if (await waitForPort(port, 60000)) {
+            const dbName = await hooks.getSelectedDbName();
+            await vscode.env.openExternal(buildServerUrl(port, dbName));
+        }
+        else {
+            logger_1.logger.debug(`Server port ${port} did not open within 60s; not opening browser.`);
+        }
+    }));
+    context.subscriptions.push(vscode.debug.onDidTerminateDebugSession(async (session) => {
+        if (await isOwnSession(session)) {
+            hooks.onRunningChanged(false);
+        }
+    }));
+}
+
+
+/***/ }),
+/* 63 */
+/***/ ((module) => {
+
+module.exports = require("node:net");
+
+/***/ }),
+/* 64 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -12137,7 +12316,7 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 63 */
+/* 65 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12189,7 +12368,7 @@ const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
 const runtimeCache_1 = __webpack_require__(12);
-const filesExclude_1 = __webpack_require__(64);
+const filesExclude_1 = __webpack_require__(66);
 const baseTreeProvider_1 = __webpack_require__(4);
 const sortOptions_1 = __webpack_require__(26);
 const branches_1 = __webpack_require__(29);
@@ -12505,7 +12684,7 @@ async function selectProjectForExplorer() {
 
 
 /***/ }),
-/* 64 */
+/* 66 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12651,7 +12830,7 @@ function createFilesExcludeMatcher(scopeUri) {
 
 
 /***/ }),
-/* 65 */
+/* 67 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12773,21 +12952,21 @@ exports.StatusBarIndicators = StatusBarIndicators;
 
 
 /***/ }),
-/* 66 */
+/* 68 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(67);
-const projectCommands_1 = __webpack_require__(69);
-const repoCommands_1 = __webpack_require__(72);
-const dbCommands_1 = __webpack_require__(73);
-const moduleCommands_1 = __webpack_require__(74);
-const testingCommands_1 = __webpack_require__(75);
-const versionCommands_1 = __webpack_require__(76);
-const debugCommands_1 = __webpack_require__(78);
-const reposExplorerCommands_1 = __webpack_require__(79);
+const viewCommands_1 = __webpack_require__(69);
+const projectCommands_1 = __webpack_require__(71);
+const repoCommands_1 = __webpack_require__(74);
+const dbCommands_1 = __webpack_require__(75);
+const moduleCommands_1 = __webpack_require__(76);
+const testingCommands_1 = __webpack_require__(77);
+const versionCommands_1 = __webpack_require__(78);
+const debugCommands_1 = __webpack_require__(80);
+const reposExplorerCommands_1 = __webpack_require__(81);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -12803,7 +12982,7 @@ function registerAllCommands(deps) {
 
 
 /***/ }),
-/* 67 */
+/* 69 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12843,7 +13022,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(68);
+const quickSearch_1 = __webpack_require__(70);
 const sortOptions_1 = __webpack_require__(26);
 const notifications_1 = __webpack_require__(13);
 const module_1 = __webpack_require__(55);
@@ -12975,7 +13154,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 68 */
+/* 70 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13087,7 +13266,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 69 */
+/* 71 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13135,8 +13314,8 @@ const notifications_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(11);
 const project_1 = __webpack_require__(47);
 const dbs_1 = __webpack_require__(32);
-const odooInstaller_1 = __webpack_require__(70);
-const projectWorkspace_1 = __webpack_require__(71);
+const odooInstaller_1 = __webpack_require__(72);
+const projectWorkspace_1 = __webpack_require__(73);
 function registerProjectCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('projectSelector.create', async () => {
@@ -13252,7 +13431,7 @@ function registerProjectCommands(deps) {
 
 
 /***/ }),
-/* 70 */
+/* 72 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13451,7 +13630,7 @@ Continue?`;
 
 
 /***/ }),
-/* 71 */
+/* 73 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13589,7 +13768,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 72 */
+/* 74 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13633,7 +13812,7 @@ exports.registerRepoCommands = registerRepoCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const repos_1 = __webpack_require__(54);
-const projectWorkspace_1 = __webpack_require__(71);
+const projectWorkspace_1 = __webpack_require__(73);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
@@ -13645,7 +13824,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 73 */
+/* 75 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13693,6 +13872,7 @@ const notifications_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(11);
 const dbs_1 = __webpack_require__(32);
 const notifications_2 = __webpack_require__(13);
+const server_1 = __webpack_require__(62);
 function registerDbCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('dbSelector.create', async () => {
@@ -13784,6 +13964,25 @@ function registerDbCommands(deps) {
             logger_1.logger.error('Error in database template management:', err);
         }
     }));
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.openInBrowser', async (event) => {
+        const db = (0, dbs_1.extractDatabaseFromEvent)(event);
+        if (!db) {
+            void (0, notifications_1.showError)('Could not identify the database to open in the browser.');
+            return;
+        }
+        await (0, server_1.openServerInBrowser)(db.id);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.openPsqlShell', async (event) => {
+        const db = (0, dbs_1.extractDatabaseFromEvent)(event);
+        if (!db) {
+            void (0, notifications_1.showError)('Could not identify the database to open in psql.');
+            return;
+        }
+        const terminal = vscode.window.createTerminal({ name: `psql: ${db.id}` });
+        terminal.show();
+        // db names are validated on creation, but quote defensively anyway
+        terminal.sendText(`psql ${JSON.stringify(db.id)}`);
+    }));
     context.subscriptions.push(vscode.commands.registerCommand('dbSelector.copyName', async (event) => {
         const db = (0, dbs_1.extractDatabaseFromEvent)(event);
         if (!db) {
@@ -13817,7 +14016,7 @@ function registerDbCommands(deps) {
 
 
 /***/ }),
-/* 74 */
+/* 76 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13910,7 +14109,7 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 75 */
+/* 77 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14003,7 +14202,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 76 */
+/* 78 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14047,7 +14246,7 @@ exports.registerVersionCommands = registerVersionCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(41));
-const args_1 = __webpack_require__(77);
+const args_1 = __webpack_require__(79);
 const utils_1 = __webpack_require__(7);
 const notifications_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(11);
@@ -14550,7 +14749,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 77 */
+/* 79 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14643,7 +14842,7 @@ function extractUri(arg) {
 
 
 /***/ }),
-/* 78 */
+/* 80 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14683,13 +14882,24 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerDebugCommands = registerDebugCommands;
 /**
- * Start/stop server and shell commands.
+ * Start/stop/restart server (with and without debugging) and shell commands.
  */
 const vscode = __importStar(__webpack_require__(1));
 const debugger_1 = __webpack_require__(59);
+const server_1 = __webpack_require__(62);
+const settingsStore_1 = __webpack_require__(5);
 function registerDebugCommands(deps) {
     const { context } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('odoo.startServer', async () => {
+        await (0, debugger_1.startDebugServer)();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.startServerNoDebug', async () => {
+        await (0, debugger_1.startDebugServer)({ noDebug: true });
+    }));
+    // startDebugServer already stops the extension's own session first, so a
+    // restart is a plain start; the separate command exists for
+    // discoverability (palette + keybinding).
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.restartServer', async () => {
         await (0, debugger_1.startDebugServer)();
     }));
     context.subscriptions.push(vscode.commands.registerCommand('odoo.startShell', async () => {
@@ -14698,11 +14908,16 @@ function registerDebugCommands(deps) {
     context.subscriptions.push(vscode.commands.registerCommand('odoo.stopServer', async () => {
         await (0, debugger_1.stopDebugServer)();
     }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.openInBrowser', async () => {
+        const result = await settingsStore_1.SettingsStore.getSelectedProject();
+        const selectedDb = result?.project.dbs?.find(db => db.isSelected);
+        await (0, server_1.openServerInBrowser)(selectedDb?.id);
+    }));
 }
 
 
 /***/ }),
-/* 79 */
+/* 81 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14748,13 +14963,13 @@ exports.registerReposExplorerCommands = registerReposExplorerCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(41));
 const path = __importStar(__webpack_require__(3));
-const args_1 = __webpack_require__(77);
+const args_1 = __webpack_require__(79);
 const notifications_1 = __webpack_require__(13);
 const notifications_2 = __webpack_require__(13);
 const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
 const runtimeCache_1 = __webpack_require__(12);
-const projectReposExplorer_1 = __webpack_require__(63);
+const projectReposExplorer_1 = __webpack_require__(65);
 async function copyPathToClipboard(uri, relative) {
     if (!uri) {
         void (0, notifications_1.showInfo)('Select a file or folder first.');

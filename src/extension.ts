@@ -11,7 +11,9 @@ import { setupDebugger } from './debugger';
 import { SettingsStore } from './settingsStore';
 import { VersionsTreeProvider } from './versionsTreeProvider';
 import { VersionsService } from './versionsService';
-import { updateTestingContext, updateActiveContext } from './context';
+import { updateTestingContext, updateActiveContext, updateServerRunningContext } from './context';
+import { registerServerLifecycle } from './services/server';
+import type { DatabaseModel } from './models/db';
 import { SortPreferences } from './sortPreferences';
 import { ProjectReposExplorerProvider } from './projectReposExplorer';
 import { logger, registerLogger } from './services/logger';
@@ -73,6 +75,18 @@ export async function activate(context: vscode.ExtensionContext) {
 
     const statusBar = new StatusBarIndicators();
     context.subscriptions.push(statusBar);
+
+    // Track the extension's own debug session for when-clauses and the
+    // optional open-browser-on-start automation.
+    updateServerRunningContext(false);
+    registerServerLifecycle(context, {
+        onRunningChanged: updateServerRunningContext,
+        getSelectedDbName: async () => {
+            const result = await SettingsStore.getSelectedProject();
+            const db = (result?.project.dbs as DatabaseModel[] | undefined)?.find(entry => entry.isSelected);
+            return db?.id;
+        }
+    });
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('odooDebugger.statusBar.enabled')) {
             void statusBar.update();

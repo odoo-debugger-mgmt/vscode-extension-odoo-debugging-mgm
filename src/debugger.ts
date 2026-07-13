@@ -364,19 +364,28 @@ function quoteShellArg(value: string): string {
     return `'${escapedValue}'`;
 }
 
-/** Stops the debug session launched from the extension's configuration. */
-export async function stopDebugServer(): Promise<void> {
+/** Finds the running debug session launched from the extension's configuration. */
+async function findOwnDebugSession(): Promise<vscode.DebugSession | undefined> {
     const versionsService = VersionsService.getInstance();
     const settings = await versionsService.getActiveVersionSettings();
     const session = vscode.debug.activeDebugSession;
     if (session && session.configuration?.name === settings.debuggerName) {
+        return session;
+    }
+    return undefined;
+}
+
+/** Stops the debug session launched from the extension's configuration. */
+export async function stopDebugServer(): Promise<void> {
+    const session = await findOwnDebugSession();
+    if (session) {
         await vscode.debug.stopDebugging(session);
         return;
     }
     void showInfo('No Odoo debug session is currently running.');
 }
 
-export async function startDebugServer(): Promise<void> {
+export async function startDebugServer(options: { noDebug?: boolean } = {}): Promise<void> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
         void showError("Open a workspace to use this command.");
@@ -397,6 +406,7 @@ export async function startDebugServer(): Promise<void> {
     }
     void vscode.debug.startDebugging(
         workspaceFolders[0],
-        workspaceSettings.debuggerName
+        workspaceSettings.debuggerName,
+        { noDebug: options.noDebug === true }
     );
 }
