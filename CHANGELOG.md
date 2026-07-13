@@ -20,6 +20,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - The command palette no longer lists tree-only commands that errored when invoked without a selection (~50 commands hidden); user-invokable commands are grouped under the **Odoo DevTools** category.
 - Testing view: the Add Test Target / Set Test File buttons only appear while testing is enabled; naming-convention hints are shown inline in the input box; the command preview includes `--log-level`.
 - Dump restore runs entirely without a shell (database names and paths are passed as process arguments), and the development neutralization tolerates missing tables (e.g. dumps without `hr`).
+- **Every view now uses theme icons** — the emoji markers in Projects, Repos, Databases, Testing and the version pickers are replaced by consistent codicons: a green check-circle marks the active project/database/version, filled/outline circles mark selection, and database origin ("backup"/"existing") moved into the description text.
+- Project Repos (Explorer): file operations moved from hover icons into the right-click menu (grouped like the built-in Explorer) and now actually work; **Delete, Cut, Copy and Paste were removed** — destructive file management stays in the built-in Explorer. Reveal in Explorer is available on every item.
+- Empty views show welcome content with action buttons (Create Project, Create Database, Manage Versions, Select Project) instead of placeholder rows, and loading an empty state no longer fires error notifications.
+- Projects show a "N repos • N dbs" description; projects, versions and repos have detailed markdown tooltips (branches, ports, paths, active database).
 
 ### Added
 
@@ -34,6 +38,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - **Getting Started walkthrough** (VS Code Welcome page).
 - New sort options: modules by installed state, repos by branch.
 - All diagnostics now go to the **Odoo DevTools** output channel.
+- **Run Server Without Debugging** (`Ctrl+Alt+O N`) and **Restart Server** (`Ctrl+Alt+O R`).
+- **Open Odoo in Browser** (`Ctrl+Alt+O B`) using the active version's port and the selected database; per-database *Open in Browser* and *Open psql Shell* context actions; optional `odooDebugger.server.openBrowserOnStart` opens the web client automatically once the server port is up.
+- **Editor actions** on files inside an Odoo module (toggle with `odooDebugger.editorActions.enabled`): *Run Odoo Tests for Current File* (`test_*.py` — enables testing, targets the file and its module, starts the server), *Upgrade Current Module* (marks for `-u`, offers a restart) and *Reveal Module in Modules View*.
+- **Multi-select in the Modules view**: set install/upgrade/clear for the whole selection at once.
 
 ### Removed
 

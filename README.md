@@ -90,13 +90,14 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 - Create databases four ways: **Fresh**, **From Dump** (folder with `dump.sql`, `.zip`, `.sql`, `.sql.gz` — streamed straight into psql), **From Template** (`createdb -T` clone), or **Connect to Existing** (picked from your live PostgreSQL instance).
 - Restored dumps are neutralized for development: crons and outgoing mail disabled, passwords reset (`admin`/`admin`), fresh database UUID, extended expiration, mailcatcher entry.
 - The Odoo version is **auto-detected** from the database contents and linked to the matching version profile.
-- Context actions: restore, delete, clone, copy name, change linked version, configure per-repo branches.
+- Context actions: restore, delete, clone, copy name, **open in browser**, **open psql shell**, change linked version, configure per-repo branches.
 - **Templates** (`Manage Database Templates`): register or create template databases and clone from them in seconds; import/export template lists as JSON.
 - **Reconcile Databases** finds stored references whose PostgreSQL database no longer exists and removes them in one pass.
 
 ### Modules
 
 - Modules discovered from the project's repos; click to cycle install → upgrade → unmanaged (green/yellow icons; filled/outline shows installed state).
+- **Multi-select** (Ctrl/Shift-click) to set install/upgrade/clear on several modules at once.
 - Expand a module to see its manifest dependencies (project modules vs core).
 - Bulk actions: install all, update all, update installed, clear; browse the modules actually installed in the database.
 - **Create Module** scaffolds a new module via `odoo-bin scaffold` into a chosen repo.
@@ -117,13 +118,23 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 ### Project Repos (Explorer)
 
 - Browse only the active project's repositories, with the current branch shown per repo.
-- File operations: new file/folder, rename, delete, copy/cut/paste, open in terminal, reveal.
+- Right-click actions: reveal in Explorer/OS, copy path, open in terminal, new file/folder, rename. Destructive operations (delete, cut/paste) are intentionally left to the built-in Explorer.
 - Repos whose folder was moved or deleted are flagged with a **Relocate Repository** action.
 - Honors your `files.exclude` settings.
 
 ## Debugging & launch.json
 
 The extension maintains a single launch configuration (named after the version's `debuggerName`) in `.vscode/launch.json`, and rewrites **only that entry** — your own configurations and comments are preserved. It assembles `--addons-path`, `-d`, `-i`/`-u` from your module selections, ports, time limits, dev mode and testing flags automatically.
+
+Server commands: **Start Server**, **Run Server Without Debugging**, **Restart Server**, **Stop Server**, **Open Odoo in Browser** (uses the active version's port and the selected database). With `odooDebugger.server.openBrowserOnStart` enabled, the browser opens automatically once the server port accepts connections.
+
+## Editor Actions
+
+Right-click inside a file that belongs to an Odoo module (toggle with `odooDebugger.editorActions.enabled`):
+
+- **Run Odoo Tests for Current File** (on `test_*.py`) — enables testing mode, targets the file and its module, and starts the server.
+- **Upgrade Current Module** — marks the module for `-u` and offers a server restart.
+- **Reveal Module in Modules View** — highlights the module in the tree, including inside `ps*-internal` groups.
 
 ## Branch Checkout Hooks
 
@@ -147,6 +158,9 @@ The extension maintains a single launch configuration (named after the version's
 | `Ctrl+Alt+P` | Search Projects (quick switch) |
 | `Ctrl+Alt+O S` | Start Server |
 | `Ctrl+Alt+O X` | Stop Server |
+| `Ctrl+Alt+O N` | Run Server Without Debugging |
+| `Ctrl+Alt+O R` | Restart Server |
+| `Ctrl+Alt+O B` | Open Odoo in Browser |
 | `Ctrl+Alt+O T` | Toggle Testing Mode |
 | `Ctrl+Alt+O D` | Search Databases (quick switch) |
 | `Ctrl+Alt+O V` | Switch Active Version |
@@ -158,6 +172,8 @@ Every view also has search (`$(search)`) and sort (`$(sort-precedence)`) actions
 - `odooDebugger.defaultVersion.*` — defaults applied to newly created versions (paths, ports, params, checkout hooks). Existing versions are edited from the Versions view.
 - `odooDebugger.databaseSwitchBehavior` — `auto` / `ask` / `never` (see above).
 - `odooDebugger.statusBar.enabled` — show the project/database/version status bar items.
+- `odooDebugger.server.openBrowserOnStart` — open the web client automatically after the server starts (default off).
+- `odooDebugger.editorActions.enabled` — show the Odoo actions in the editor right-click menu (default on).
 - `odooDebugger.ticketBaseUrl` — base URL used by Open Project Ticket.
 - `odooDebugger.search.*` — module/repository discovery tuning (max depth, max entries, exclude patterns) for large workspaces.
 
