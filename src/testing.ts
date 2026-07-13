@@ -15,6 +15,7 @@ import { getInstalledModules } from './services/database';
 import { logger } from './services/logger';
 import { showModalWarning } from './services/notifications';
 import { BaseTreeProvider } from './views/baseTreeProvider';
+import { includeIcon, excludeIcon, disabledIcon, selectedIcon, unselectedIcon } from './views/icons';
 
 export class TestingTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
@@ -52,30 +53,27 @@ export class TestingTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             const tagItems: vscode.TreeItem[] = [];
 
             for (const tag of testingConfig.testTags) {
-                let prefix = '';
-                let stateText = '';
+                let stateIcon: vscode.ThemeIcon;
+                let stateText: string;
                 switch (tag.state) {
                     case 'include':
-                        prefix = '🟢';
+                        stateIcon = includeIcon;
                         stateText = 'included';
                         break;
                     case 'exclude':
-                        prefix = '🔴';
+                        stateIcon = excludeIcon;
                         stateText = 'excluded';
                         break;
-                    case 'disabled':
-                        prefix = '⚪';
+                    default:
+                        stateIcon = disabledIcon;
                         stateText = 'disabled';
                         break;
                 }
 
-                const typeIcon = this.getTypeIcon(tag.type);
-
-                const tagItem = new vscode.TreeItem(
-                    `${prefix} ${typeIcon} ${tag.value}`,
-                    vscode.TreeItemCollapsibleState.None
-                );
+                const tagItem = new vscode.TreeItem(tag.value, vscode.TreeItemCollapsibleState.None);
                 tagItem.id = tag.id; // Store the tag ID for context menu actions
+                tagItem.iconPath = stateIcon;
+                tagItem.description = tag.type;
                 tagItem.tooltip = `${tag.type}: ${tag.value} (${stateText})`;
                 tagItem.contextValue = 'testTag';
                 tagItem.command = {
@@ -98,9 +96,12 @@ export class TestingTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
         // Testing enabled/disabled toggle
         const enableToggle = new vscode.TreeItem(
-            testingConfig.isEnabled ? '🟢 Testing Enabled' : '⚪ Testing Disabled',
+            testingConfig.isEnabled ? 'Testing Enabled' : 'Testing Disabled',
             vscode.TreeItemCollapsibleState.None
         );
+        enableToggle.iconPath = testingConfig.isEnabled
+            ? new vscode.ThemeIcon('beaker', new vscode.ThemeColor('charts.green'))
+            : new vscode.ThemeIcon('beaker');
         enableToggle.command = {
             command: 'testingSelector.toggleTesting',
             title: 'Toggle Testing',
@@ -115,20 +116,22 @@ export class TestingTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             // Test Tags section - Auto-expand if there are test tags
             const activeTags = testingConfig.testTags.filter(tag => tag.state !== 'disabled');
             const testTagsSection = new vscode.TreeItem(
-                `📋 Test Targets (${testingConfig.testTags.length} total, ${activeTags.length} active)`,
+                `Test Targets (${testingConfig.testTags.length} total, ${activeTags.length} active)`,
                 testingConfig.testTags.length > 0
                     ? vscode.TreeItemCollapsibleState.Expanded
                     : vscode.TreeItemCollapsibleState.Collapsed
             );
+            testTagsSection.iconPath = new vscode.ThemeIcon('list-unordered');
             testTagsSection.contextValue = 'testTagsSection';
-            testTagsSection.tooltip = 'Test targets - Click targets to cycle states: 🟢 Include → 🔴 Exclude → ⚪ Disabled. Right-click to remove.';
+            testTagsSection.tooltip = 'Test targets - Click targets to cycle states: Include → Exclude → Disabled. Right-click to remove.';
             treeItems.push(testTagsSection);
 
             // Test File section
             const testFileSection = new vscode.TreeItem(
-                testingConfig.testFile ? `📄 Test File: ${testingConfig.testFile}` : '📄 No Test File Set',
+                testingConfig.testFile ? `Test File: ${testingConfig.testFile}` : 'No Test File Set',
                 vscode.TreeItemCollapsibleState.None
             );
+            testFileSection.iconPath = new vscode.ThemeIcon('file-code');
             testFileSection.command = {
                 command: 'testingSelector.setTestFile',
                 title: 'Set Test File'
@@ -138,9 +141,11 @@ export class TestingTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
             // Stop After Init toggle
             const stopAfterInitToggle = new vscode.TreeItem(
-                testingConfig.stopAfterInit ? '🟢 Stop After Init' : '⚪ Stop After Init',
+                'Stop After Init',
                 vscode.TreeItemCollapsibleState.None
             );
+            stopAfterInitToggle.iconPath = testingConfig.stopAfterInit ? selectedIcon : unselectedIcon;
+            stopAfterInitToggle.description = testingConfig.stopAfterInit ? 'on' : 'off';
             stopAfterInitToggle.command = {
                 command: 'testingSelector.toggleStopAfterInit',
                 title: 'Toggle Stop After Init'
@@ -149,23 +154,22 @@ export class TestingTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             treeItems.push(stopAfterInitToggle);
 
             // Log Level toggle
-            const getLogLevelIcon = (level: LogLevel): string => {
+            const getLogLevelIcon = (level: LogLevel): vscode.ThemeIcon => {
                 switch (level) {
-                    case 'disabled': return '⚪';
-                    case 'critical': return '🔴';
-                    case 'error': return '🟠';
-                    case 'warn': return '🟡';
-                    case 'debug': return '🔵';
-                    default: return '⚪';
+                    case 'critical': return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.red'));
+                    case 'error': return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.orange'));
+                    case 'warn': return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.yellow'));
+                    case 'debug': return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.blue'));
+                    default: return new vscode.ThemeIcon('circle-outline');
                 }
             };
 
-            const logLevelIcon = getLogLevelIcon(testingConfig.logLevel);
             const logLevelDisplay = testingConfig.logLevel === 'disabled' ? 'Log Level: Disabled' : `Log Level: ${testingConfig.logLevel.charAt(0).toUpperCase() + testingConfig.logLevel.slice(1)}`;
             const logLevelToggle = new vscode.TreeItem(
-                `${logLevelIcon} ${logLevelDisplay}`,
+                logLevelDisplay,
                 vscode.TreeItemCollapsibleState.None
             );
+            logLevelToggle.iconPath = getLogLevelIcon(testingConfig.logLevel);
             logLevelToggle.command = {
                 command: 'testingSelector.toggleLogLevel',
                 title: 'Toggle Log Level'
@@ -178,35 +182,25 @@ export class TestingTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             const commandPreview = this.generateCommandPreview(testingConfig);
             if (commandPreview) {
                 const previewItem = new vscode.TreeItem(
-                    `⚡ Command: ${commandPreview}`,
+                    `Command: ${commandPreview}`,
                     vscode.TreeItemCollapsibleState.None
                 );
+                previewItem.iconPath = new vscode.ThemeIcon('terminal');
                 previewItem.tooltip = `Full command: ${commandPreview}`;
                 treeItems.push(previewItem);
             }
         } else if (testingConfig.savedModuleStates && testingConfig.savedModuleStates.length > 0) {
             // Show info about saved states when testing is disabled
             const savedStatesInfo = new vscode.TreeItem(
-                `💾 ${testingConfig.savedModuleStates.length} module states saved`,
+                `${testingConfig.savedModuleStates.length} module states saved`,
                 vscode.TreeItemCollapsibleState.None
             );
+            savedStatesInfo.iconPath = new vscode.ThemeIcon('save');
             savedStatesInfo.tooltip = 'Module states from before enabling testing are saved and will be restored';
             treeItems.push(savedStatesInfo);
         }
 
         return treeItems;
-    }
-
-    private getTypeIcon(type: string): string {
-        switch (type) {
-            case 'module': return '📦';
-            case 'class': return '🔧';
-            case 'method': return '⚙️';
-            case 'tag': return '🏷️';
-            default:
-                logger.warn(`Unknown test tag type: "${type}"`);
-                return '❓'; // Changed to question mark for debugging unknown types
-        }
     }
 
     private generateCommandPreview(testingConfig: TestingConfigModel): string {
@@ -697,27 +691,27 @@ export async function setSpecificLogLevel(): Promise<void> {
 
         const logLevelOptions = [
             {
-                label: '⚪ Disabled',
+                label: 'Disabled',
                 detail: 'No --log-level argument (default Odoo logging)',
                 value: 'disabled' as LogLevel
             },
             {
-                label: '🔴 Critical',
+                label: 'Critical',
                 detail: 'Only critical errors',
                 value: 'critical' as LogLevel
             },
             {
-                label: '🟠 Error',
+                label: 'Error',
                 detail: 'Critical and error messages',
                 value: 'error' as LogLevel
             },
             {
-                label: '🟡 Warn',
+                label: 'Warn',
                 detail: 'Critical, error, and warning messages',
                 value: 'warn' as LogLevel
             },
             {
-                label: '🔵 Debug',
+                label: 'Debug',
                 detail: 'All messages including debug information',
                 value: 'debug' as LogLevel
             }

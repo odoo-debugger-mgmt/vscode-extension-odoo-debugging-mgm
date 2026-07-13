@@ -183,7 +183,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
                 const items = versions.map(v => ({
                     label: v.name,
                     description: v.odooVersion,
-                    detail: v.isActive ? '⭐ Currently active' : '',
+                    detail: v.isActive ? '$(check) Currently active' : '',
                     versionId: v.id
                 }));
 

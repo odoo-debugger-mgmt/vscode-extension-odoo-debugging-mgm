@@ -14,6 +14,7 @@ import { getDefaultSortOption } from './sortOptions';
 import { getRepoBranch } from './services/branches';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
 import { BaseTreeProvider } from './views/baseTreeProvider';
+import { selectedIcon, unselectedIcon } from './views/icons';
 
 interface RepoEntry {
     name: string;
@@ -124,8 +125,8 @@ export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         repoEntries.sort((a, b) => this.compareRepos(a, b, sortId));
 
         return repoEntries.map(entry => {
-            const repoIcon = entry.isSelected ? "☑️" : "⬜️";
-            const treeItem = new vscode.TreeItem(`${repoIcon} ${entry.name}`);
+            const treeItem = new vscode.TreeItem(entry.name);
+            treeItem.iconPath = entry.isSelected ? selectedIcon : unselectedIcon;
             treeItem.tooltip = `Repo: ${entry.name}\nPath: ${entry.path}`;
             treeItem.id = entry.path;
             treeItem.description = entry.branch ?? '';

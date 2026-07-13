@@ -7,7 +7,8 @@ import * as os from 'os';
 import { ProjectModel, ProjectTicketModel } from './models/project';
 import { DatabaseModel } from './models/db';
 import { RepoModel } from './models/repo';
-import { findRepositories, showError, showInfo, normalizePath, showAutoInfo, addActiveIndicator, stripSettings, getDatabaseLabel } from './utils';
+import { findRepositories, showError, showInfo, normalizePath, showAutoInfo, stripSettings, getDatabaseLabel } from './utils';
+import { activeIcon } from './views/icons';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import { randomUUID } from 'crypto';
@@ -168,8 +169,9 @@ export class ProjectTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         const sortedProjects = [...projects].sort((a, b) => this.compareProjects(a, b, sortId));
 
         return sortedProjects.map(project => {
-            const treeItem = new vscode.TreeItem(addActiveIndicator(project.name, project.isSelected));
+            const treeItem = new vscode.TreeItem(project.name);
             treeItem.id = project.uid; // Use UID instead of name for uniqueness
+            treeItem.iconPath = project.isSelected ? activeIcon : new vscode.ThemeIcon('folder');
 
             let tooltip = `Project: ${project.name}`;
             treeItem.tooltip = tooltip;

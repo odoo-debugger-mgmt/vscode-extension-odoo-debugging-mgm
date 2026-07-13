@@ -6,8 +6,9 @@ import { SettingsStore } from '../settingsStore';
 import { VersionsService } from '../versionsService';
 import { SortPreferences } from '../sortPreferences';
 import { getDefaultSortOption } from '../sortOptions';
-import { addActiveIndicator, getDatabaseLabel } from '../utils';
+import { getDatabaseLabel } from '../utils';
 import { showError } from '../services/notifications';
+import { activeIcon } from './icons';
 import { sanitizeProjectRepoBranchAssignments } from '../services/environment';
 import { getEffectiveOdooVersion } from '../dbs';
 
@@ -51,11 +52,10 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         const formattedDate = `${editedDate.toISOString().split('T')[0]} ${editedDate.toTimeString().split(' ')[0]}`;
 
         const dbLabel = getDatabaseLabel(db);
-        const badges = `${db.isItABackup ? ' ☁️' : ''}${db.isExisting ? ' 📂' : ''}`;
-        const mainLabel = addActiveIndicator(dbLabel, db.isSelected) + badges;
 
-        const treeItem = new vscode.TreeItem(mainLabel, vscode.TreeItemCollapsibleState.None);
+        const treeItem = new vscode.TreeItem(dbLabel, vscode.TreeItemCollapsibleState.None);
         treeItem.id = db.id;
+        treeItem.iconPath = db.isSelected ? activeIcon : new vscode.ThemeIcon('database');
         treeItem.description = this.buildDescription(db);
         treeItem.tooltip = new vscode.MarkdownString(this.buildTooltip(db, dbLabel, formattedDate));
         treeItem.contextValue = 'database';
@@ -71,28 +71,38 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         return treeItem;
     }
 
-    /** Description shows branch and version info as subtext. */
+    /** Description shows branch, version and origin info as subtext. */
     private buildDescription(db: DatabaseModel): string {
+        const parts: string[] = [];
+
         if (db.versionId) {
             const version = this.lookupVersion(db.versionId);
             const versionLabel = version ? version.name : `${db.versionId.substring(0, 8)}...`;
             if (db.branchName && db.branchName !== version?.odooVersion) {
-                return `🌿 ${db.branchName} • 📦 ${versionLabel}`;
+                parts.push(db.branchName);
             }
-            return `📦 ${versionLabel}`;
-        }
-
-        if (db.branchName && db.branchName.trim() !== '') {
-            let description = `🌿 ${db.branchName}`;
+            parts.push(versionLabel);
+        } else if (db.branchName && db.branchName.trim() !== '') {
+            parts.push(db.branchName);
             const effectiveOdooVersion = getEffectiveOdooVersion(db);
             if (effectiveOdooVersion && effectiveOdooVersion !== db.branchName) {
-                description += ` • 🛠️ ${effectiveOdooVersion}`;
+                parts.push(effectiveOdooVersion);
             }
-            return description;
+        } else {
+            const effectiveOdooVersion = getEffectiveOdooVersion(db);
+            if (effectiveOdooVersion && effectiveOdooVersion.trim() !== '') {
+                parts.push(effectiveOdooVersion);
+            }
         }
 
-        const effectiveOdooVersion = getEffectiveOdooVersion(db);
-        return effectiveOdooVersion && effectiveOdooVersion.trim() !== '' ? `🛠️ ${effectiveOdooVersion}` : '';
+        if (db.isItABackup) {
+            parts.push('backup');
+        }
+        if (db.isExisting) {
+            parts.push('existing');
+        }
+
+        return parts.join(' • ');
     }
 
     private buildTooltip(db: DatabaseModel, dbLabel: string, formattedDate: string): string {

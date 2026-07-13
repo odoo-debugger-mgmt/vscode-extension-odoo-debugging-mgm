@@ -118,7 +118,7 @@ Continue?`;
 
             // Clone Odoo repository
             progress.report({ message: 'Cloning Odoo repository…', increment: 15 });
-            logger.debug(`🔄 Cloning Odoo repository (branch: ${branch})`);
+            logger.debug(`Cloning Odoo repository (branch: ${branch})`);
 
             terminal.sendText(`echo "🔄 Cloning Odoo repository (branch: ${branch})..."`);
             terminal.sendText(`git clone --depth 1 --branch ${branch} https://github.com/odoo/odoo.git`);
@@ -128,7 +128,7 @@ Continue?`;
 
             // Clone Enterprise repository
             progress.report({ message: 'Cloning Enterprise repository…', increment: 35 });
-            logger.debug(`🔄 Cloning Enterprise repository (branch: ${branch})`);
+            logger.debug(`Cloning Enterprise repository (branch: ${branch})`);
 
             terminal.sendText(`echo "🔄 Cloning Enterprise repository (branch: ${branch})..."`);
             terminal.sendText(`git clone --depth 1 --branch ${branch} git@github.com:odoo/enterprise.git || git clone --depth 1 --branch ${branch} https://github.com/odoo/enterprise.git`);
@@ -138,7 +138,7 @@ Continue?`;
 
             // Check Python availability
             progress.report({ message: 'Checking Python installation…', increment: 55 });
-            logger.debug('🐍 Checking Python installation');
+            logger.debug('Checking Python installation');
 
             let pythonCmd = 'python3';
             if (await tryRunCommand('python3', ['--version']) === undefined) {
@@ -151,7 +151,7 @@ Continue?`;
 
             // Create virtual environment
             progress.report({ message: 'Creating Python virtual environment…', increment: 75 });
-            logger.debug('🔧 Creating Python virtual environment');
+            logger.debug('Creating Python virtual environment');
 
             terminal.sendText(`echo "🔧 Creating Python virtual environment..."`);
             terminal.sendText(`${pythonCmd} -m venv venv`);
@@ -161,7 +161,7 @@ Continue?`;
 
             // Activate venv and install basic requirements
             progress.report({ message: 'Installing basic Python packages…', increment: 85 });
-            logger.debug('📦 Installing basic Python packages');
+            logger.debug('Installing basic Python packages');
 
             terminal.sendText(`echo "📦 Installing basic Python packages..."`);
 

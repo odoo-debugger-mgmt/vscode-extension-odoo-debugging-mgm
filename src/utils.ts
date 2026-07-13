@@ -82,17 +82,6 @@ export const CONFIG = {
 // ============================================================================
 
 /**
- * Adds the pointing hand emoji (👉) to the beginning of a string if the condition is true
- * Used consistently across the extension for indicating active/selected items
- * @param text The text to potentially prefix
- * @param isActive Whether to add the pointing hand emoji
- * @returns The text with or without the pointing hand prefix
- */
-export function addActiveIndicator(text: string, isActive: boolean): string {
-    return `${isActive ? '👉' : ''} ${text}`;
-}
-
-/**
  * Returns a user-friendly database label prioritizing displayName, then name, then id.
  */
 export function getDatabaseLabel(db: { displayName?: string; name?: string; id?: string } | null | undefined): string {

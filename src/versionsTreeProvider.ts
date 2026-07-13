@@ -4,7 +4,8 @@
 import * as vscode from 'vscode';
 import { VersionModel } from './models/version';
 import { VersionsService } from './versionsService';
-import { addActiveIndicator, getSettingDisplayName, getSettingDisplayValue } from './utils';
+import { getSettingDisplayName, getSettingDisplayValue } from './utils';
+import { activeIcon } from './views/icons';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { logger } from './services/logger';
@@ -15,15 +16,13 @@ export class VersionTreeItem extends vscode.TreeItem {
         public readonly version: VersionModel,
         public override readonly collapsibleState: vscode.TreeItemCollapsibleState
     ) {
-        // Use the same pattern as projects and databases - emoji in label
-        super(addActiveIndicator(version.name, version.isActive), collapsibleState);
+        super(version.name, collapsibleState);
 
         this.id = version.id;
         this.tooltip = `${version.name} (${version.odooVersion})`;
         this.description = version.odooVersion;
         this.contextValue = version.isActive ? 'activeVersion' : 'version';
-
-        // No icon needed - using emoji in label like other tabs
+        this.iconPath = version.isActive ? activeIcon : new vscode.ThemeIcon('versions');
 
         // Add command to switch to this version when clicked
         this.command = {
