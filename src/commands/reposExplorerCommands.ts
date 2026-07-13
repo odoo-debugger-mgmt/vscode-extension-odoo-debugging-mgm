@@ -16,11 +16,7 @@ import {
     createNewFile as explorerCreateNewFile,
     createNewFolder as explorerCreateNewFolder,
     renameEntry as explorerRenameEntry,
-    deleteEntry as explorerDeleteEntry,
-    openTerminalHere as explorerOpenTerminalHere,
-    selectProjectForExplorer,
-    copyEntries as explorerCopyEntries,
-    pasteEntries as explorerPasteEntries
+    selectProjectForExplorer
 } from '../projectReposExplorer';
 
 async function copyPathToClipboard(uri: vscode.Uri | undefined, relative: boolean): Promise<void> {
@@ -66,45 +62,22 @@ async function openUriInIntegratedTerminal(uri: vscode.Uri | undefined): Promise
 export function registerReposExplorerCommands(deps: CommandDeps): void {
     const { context, providers } = deps;
 
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFile', async (uri?: vscode.Uri) => {
-        await explorerCreateNewFile(uri);
+    // Tree context menus pass the tree node (which carries `.uri`), while
+    // programmatic calls may pass a Uri directly — extractUri handles both.
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFile', async (arg?: unknown) => {
+        await explorerCreateNewFile(extractUri(arg));
         providers.projectReposExplorer.refresh();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFolder', async (uri?: vscode.Uri) => {
-        await explorerCreateNewFolder(uri);
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFolder', async (arg?: unknown) => {
+        await explorerCreateNewFolder(extractUri(arg));
         providers.projectReposExplorer.refresh();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.rename', async (uri?: vscode.Uri) => {
-        await explorerRenameEntry(uri);
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.rename', async (arg?: unknown) => {
+        await explorerRenameEntry(extractUri(arg));
         providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.delete', async (uri?: vscode.Uri) => {
-        await explorerDeleteEntry(uri);
-        providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.openTerminalHere', async (uri?: vscode.Uri) => {
-        await explorerOpenTerminalHere(uri);
     }));
     context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.selectProject', async () => {
         await selectProjectForExplorer();
-        providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.copy', async (uri?: vscode.Uri, uris?: vscode.Uri[]) => {
-        const list = uris && uris.length ? uris : uri ? [uri] : [];
-        if (!list.length) {
-            return;
-        }
-        explorerCopyEntries(list, false);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.cut', async (uri?: vscode.Uri, uris?: vscode.Uri[]) => {
-        const list = uris && uris.length ? uris : uri ? [uri] : [];
-        if (!list.length) {
-            return;
-        }
-        explorerCopyEntries(list, true);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.paste', async (uri?: vscode.Uri) => {
-        await explorerPasteEntries(uri);
         providers.projectReposExplorer.refresh();
     }));
 

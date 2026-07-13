@@ -12116,11 +12116,7 @@ exports.ProjectReposExplorerProvider = void 0;
 exports.createNewFile = createNewFile;
 exports.createNewFolder = createNewFolder;
 exports.renameEntry = renameEntry;
-exports.deleteEntry = deleteEntry;
-exports.openTerminalHere = openTerminalHere;
 exports.selectProjectForExplorer = selectProjectForExplorer;
-exports.copyEntries = copyEntries;
-exports.pasteEntries = pasteEntries;
 /**
  * Project Repos view (Explorer sidebar): a project-scoped file tree with
  * file operations, file watchers, branch display and missing-path detection.
@@ -12131,7 +12127,6 @@ const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
 const runtimeCache_1 = __webpack_require__(12);
 const filesExclude_1 = __webpack_require__(63);
-const notifications_1 = __webpack_require__(13);
 const baseTreeProvider_1 = __webpack_require__(4);
 const sortOptions_1 = __webpack_require__(26);
 const branches_1 = __webpack_require__(28);
@@ -12349,37 +12344,65 @@ class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
     }
 }
 exports.ProjectReposExplorerProvider = ProjectReposExplorerProvider;
-async function promptName(placeHolder, value) {
-    return vscode.window.showInputBox({
-        prompt: placeHolder,
-        value,
-        ignoreFocusOut: true
+async function promptName(prompt, options) {
+    const name = await vscode.window.showInputBox({
+        prompt,
+        value: options?.value,
+        placeHolder: options?.placeHolder,
+        ignoreFocusOut: true,
+        validateInput: input => {
+            const trimmed = input.trim();
+            if (!trimmed) {
+                return 'Name cannot be empty';
+            }
+            if (trimmed === '.' || trimmed === '..' || /[/\\]/.test(trimmed)) {
+                return 'Name cannot contain path separators';
+            }
+            return undefined;
+        }
     });
+    return name?.trim();
+}
+async function entryExists(uri) {
+    try {
+        await vscode.workspace.fs.stat(uri);
+        return true;
+    }
+    catch {
+        return false;
+    }
 }
 async function createNewFile(folderUri) {
-    const baseUri = folderUri ?? (vscode.window.activeTextEditor?.document.uri);
-    if (!baseUri) {
+    if (!folderUri) {
         void (0, utils_1.showInfo)('Select a folder to create a file.');
         return;
     }
-    const folderPath = baseUri.fsPath;
-    const name = await promptName('New file name', 'untitled.txt');
+    const name = await promptName('New file name', { placeHolder: 'my_file.py' });
     if (!name) {
         return;
     }
-    const target = vscode.Uri.file(path.join(folderPath, name));
+    const target = vscode.Uri.file(path.join(folderUri.fsPath, name));
+    if (await entryExists(target)) {
+        void (0, utils_1.showError)(`"${name}" already exists in this folder.`);
+        return;
+    }
     await vscode.workspace.fs.writeFile(target, new Uint8Array());
+    await vscode.window.showTextDocument(target, { preview: false });
 }
 async function createNewFolder(folderUri) {
     if (!folderUri) {
         void (0, utils_1.showInfo)('Select a folder to create a new folder.');
         return;
     }
-    const name = await promptName('New folder name', 'new-folder');
+    const name = await promptName('New folder name', { placeHolder: 'my_folder' });
     if (!name) {
         return;
     }
     const target = vscode.Uri.file(path.join(folderUri.fsPath, name));
+    if (await entryExists(target)) {
+        void (0, utils_1.showError)(`"${name}" already exists in this folder.`);
+        return;
+    }
     await vscode.workspace.fs.createDirectory(target);
 }
 async function renameEntry(uri) {
@@ -12388,31 +12411,16 @@ async function renameEntry(uri) {
         return;
     }
     const currentName = path.basename(uri.fsPath);
-    const newName = await promptName('Rename to', currentName);
+    const newName = await promptName('Rename to', { value: currentName });
     if (!newName || newName === currentName) {
         return;
     }
     const target = vscode.Uri.file(path.join(path.dirname(uri.fsPath), newName));
+    if (await entryExists(target)) {
+        void (0, utils_1.showError)(`"${newName}" already exists in this folder.`);
+        return;
+    }
     await vscode.workspace.fs.rename(uri, target, { overwrite: false });
-}
-async function deleteEntry(uri) {
-    if (!uri) {
-        void (0, utils_1.showInfo)('Select a file or folder to delete.');
-        return;
-    }
-    const choice = await (0, notifications_1.showModalWarning)(`Delete "${path.basename(uri.fsPath)}"?`, 'Delete');
-    if (choice !== 'Delete') {
-        return;
-    }
-    await vscode.workspace.fs.delete(uri, { recursive: true, useTrash: true });
-}
-async function openTerminalHere(uri) {
-    if (!uri) {
-        void (0, utils_1.showInfo)('Select a folder to open in terminal.');
-        return;
-    }
-    const terminal = vscode.window.createTerminal({ cwd: uri.fsPath });
-    terminal.show();
 }
 async function selectProjectForExplorer() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
@@ -12430,64 +12438,6 @@ async function selectProjectForExplorer() {
     }
     data.projects.forEach((p, idx) => (p.isSelected = idx === pick.index));
     await settingsStore_1.SettingsStore.saveWithoutComments(data);
-}
-// Clipboard for copy/cut
-let clipboard = null;
-function copyEntries(uris, cut = false) {
-    clipboard = { uris, cut };
-    const action = cut ? 'Cut' : 'Copied';
-    vscode.window.setStatusBarMessage(`${action} ${uris.length} item(s)`, 2000);
-}
-function getTargetFolderUri(uri) {
-    if (!uri) {
-        return undefined;
-    }
-    return uri;
-}
-async function pathExists(uri) {
-    try {
-        await vscode.workspace.fs.stat(uri);
-        return true;
-    }
-    catch {
-        return false;
-    }
-}
-async function pasteEntries(targetUri) {
-    if (!clipboard || clipboard.uris.length === 0) {
-        void (0, utils_1.showInfo)('Nothing to paste.');
-        return;
-    }
-    const folderUri = getTargetFolderUri(targetUri);
-    if (!folderUri) {
-        void (0, utils_1.showInfo)('Select a destination folder.');
-        return;
-    }
-    for (const source of clipboard.uris) {
-        const base = path.basename(source.fsPath);
-        const destination = vscode.Uri.file(path.join(folderUri.fsPath, base));
-        const exists = await pathExists(destination);
-        if (exists) {
-            const choice = await (0, notifications_1.showModalWarning)(`"${base}" already exists. Overwrite?`, 'Overwrite', 'Skip');
-            if (choice !== 'Overwrite') {
-                continue;
-            }
-        }
-        try {
-            if (clipboard.cut) {
-                await vscode.workspace.fs.rename(source, destination, { overwrite: true });
-            }
-            else {
-                await vscode.workspace.fs.copy(source, destination, { overwrite: true });
-            }
-        }
-        catch (error) {
-            void (0, utils_1.showError)(`Failed to paste "${base}": ${error?.message ?? error}`);
-        }
-    }
-    if (clipboard.cut) {
-        clipboard = null;
-    }
 }
 
 
@@ -14777,45 +14727,22 @@ async function openUriInIntegratedTerminal(uri) {
 }
 function registerReposExplorerCommands(deps) {
     const { context, providers } = deps;
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFile', async (uri) => {
-        await (0, projectReposExplorer_1.createNewFile)(uri);
+    // Tree context menus pass the tree node (which carries `.uri`), while
+    // programmatic calls may pass a Uri directly — extractUri handles both.
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFile', async (arg) => {
+        await (0, projectReposExplorer_1.createNewFile)((0, args_1.extractUri)(arg));
         providers.projectReposExplorer.refresh();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFolder', async (uri) => {
-        await (0, projectReposExplorer_1.createNewFolder)(uri);
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFolder', async (arg) => {
+        await (0, projectReposExplorer_1.createNewFolder)((0, args_1.extractUri)(arg));
         providers.projectReposExplorer.refresh();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.rename', async (uri) => {
-        await (0, projectReposExplorer_1.renameEntry)(uri);
+    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.rename', async (arg) => {
+        await (0, projectReposExplorer_1.renameEntry)((0, args_1.extractUri)(arg));
         providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.delete', async (uri) => {
-        await (0, projectReposExplorer_1.deleteEntry)(uri);
-        providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.openTerminalHere', async (uri) => {
-        await (0, projectReposExplorer_1.openTerminalHere)(uri);
     }));
     context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.selectProject', async () => {
         await (0, projectReposExplorer_1.selectProjectForExplorer)();
-        providers.projectReposExplorer.refresh();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.copy', async (uri, uris) => {
-        const list = uris && uris.length ? uris : uri ? [uri] : [];
-        if (!list.length) {
-            return;
-        }
-        (0, projectReposExplorer_1.copyEntries)(list, false);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.cut', async (uri, uris) => {
-        const list = uris && uris.length ? uris : uri ? [uri] : [];
-        if (!list.length) {
-            return;
-        }
-        (0, projectReposExplorer_1.copyEntries)(list, true);
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.paste', async (uri) => {
-        await (0, projectReposExplorer_1.pasteEntries)(uri);
         providers.projectReposExplorer.refresh();
     }));
     context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyFilePath', async (arg) => {

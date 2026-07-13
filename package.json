@@ -188,32 +188,8 @@
         "title": "Rename (Project Repos)"
       },
       {
-        "command": "odt.projectReposExplorer.delete",
-        "title": "Delete (Project Repos)"
-      },
-      {
-        "command": "odt.projectReposExplorer.openTerminalHere",
-        "title": "Open in Terminal (Project Repos)",
-        "icon": "$(terminal)"
-      },
-      {
         "command": "odt.projectReposExplorer.selectProject",
         "title": "Select Project (Project Repos)"
-      },
-      {
-        "command": "odt.projectReposExplorer.copy",
-        "title": "Copy (Project Repos)",
-        "icon": "$(copy)"
-      },
-      {
-        "command": "odt.projectReposExplorer.cut",
-        "title": "Cut (Project Repos)",
-        "icon": "$(cut)"
-      },
-      {
-        "command": "odt.projectReposExplorer.paste",
-        "title": "Paste (Project Repos)",
-        "icon": "$(paste)"
       },
       {
         "command": "projectSelector.delete",
@@ -822,39 +798,9 @@
           "group": "version"
         },
         {
-          "command": "odt.projectReposExplorer.newFile",
-          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
-          "group": "inline"
-        },
-        {
-          "command": "odt.projectReposExplorer.newFolder",
-          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
-          "group": "inline"
-        },
-        {
-          "command": "odt.projectReposExplorer.rename",
-          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoFolder|projectRepoFile)$/",
-          "group": "inline"
-        },
-        {
-          "command": "odt.projectReposExplorer.delete",
-          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoFolder|projectRepoFile)$/",
-          "group": "inline"
-        },
-        {
-          "command": "odt.projectReposExplorer.copy",
+          "command": "odooDebugger.revealInExplorer",
           "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder|projectRepoFile)$/",
           "group": "navigation@1"
-        },
-        {
-          "command": "odt.projectReposExplorer.cut",
-          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoFolder|projectRepoFile)$/",
-          "group": "navigation@2"
-        },
-        {
-          "command": "odt.projectReposExplorer.paste",
-          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
-          "group": "navigation@3"
         },
         {
           "command": "odooDebugger.revealFileInOS",
@@ -862,24 +808,34 @@
           "group": "navigation@2"
         },
         {
+          "command": "odooDebugger.openInIntegratedTerminal",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
+          "group": "navigation@3"
+        },
+        {
+          "command": "odt.projectReposExplorer.newFile",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
+          "group": "2_workspace@1"
+        },
+        {
+          "command": "odt.projectReposExplorer.newFolder",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
+          "group": "2_workspace@2"
+        },
+        {
           "command": "odooDebugger.copyFilePath",
           "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder|projectRepoFile)$/",
-          "group": "navigation@3"
+          "group": "5_cutcopypaste@1"
         },
         {
           "command": "odooDebugger.copyRelativePath",
           "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder|projectRepoFile)$/",
-          "group": "navigation@4"
+          "group": "5_cutcopypaste@2"
         },
         {
-          "command": "odooDebugger.openInIntegratedTerminal",
-          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
-          "group": "navigation@5"
-        },
-        {
-          "command": "odt.projectReposExplorer.openTerminalHere",
-          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
-          "group": "navigation@6"
+          "command": "odt.projectReposExplorer.rename",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoFolder|projectRepoFile)$/",
+          "group": "7_modification@1"
         },
         {
           "command": "odoo.cloneVersion",
@@ -910,11 +866,6 @@
           "command": "odoo.setAllSettingsAsDefault",
           "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
           "group": "versionDefaults@2"
-        },
-        {
-          "command": "odooDebugger.revealInExplorer",
-          "when": "view == odt.projectReposExplorer && viewItem == projectRepoRoot",
-          "group": "navigation@1"
         },
         {
           "command": "moduleSelector.togglePsaeInternalModule",
@@ -1067,26 +1018,6 @@
         },
         {
           "command": "odt.projectReposExplorer.rename",
-          "when": "false"
-        },
-        {
-          "command": "odt.projectReposExplorer.delete",
-          "when": "false"
-        },
-        {
-          "command": "odt.projectReposExplorer.openTerminalHere",
-          "when": "false"
-        },
-        {
-          "command": "odt.projectReposExplorer.copy",
-          "when": "false"
-        },
-        {
-          "command": "odt.projectReposExplorer.cut",
-          "when": "false"
-        },
-        {
-          "command": "odt.projectReposExplorer.paste",
           "when": "false"
         },
         {

@@ -10,7 +10,6 @@ import { RepoModel } from './models/repo';
 import { showError, showInfo, normalizePath } from './utils';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
 import { createFilesExcludeMatcher } from './services/filesExclude';
-import { showModalWarning } from './services/notifications';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
@@ -278,27 +277,51 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
     }
 }
 
-async function promptName(placeHolder: string, value?: string): Promise<string | undefined> {
-    return vscode.window.showInputBox({
-        prompt: placeHolder,
-        value,
-        ignoreFocusOut: true
+async function promptName(prompt: string, options?: { value?: string; placeHolder?: string }): Promise<string | undefined> {
+    const name = await vscode.window.showInputBox({
+        prompt,
+        value: options?.value,
+        placeHolder: options?.placeHolder,
+        ignoreFocusOut: true,
+        validateInput: input => {
+            const trimmed = input.trim();
+            if (!trimmed) {
+                return 'Name cannot be empty';
+            }
+            if (trimmed === '.' || trimmed === '..' || /[/\\]/.test(trimmed)) {
+                return 'Name cannot contain path separators';
+            }
+            return undefined;
+        }
     });
+    return name?.trim();
+}
+
+async function entryExists(uri: vscode.Uri): Promise<boolean> {
+    try {
+        await vscode.workspace.fs.stat(uri);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 export async function createNewFile(folderUri?: vscode.Uri): Promise<void> {
-    const baseUri = folderUri ?? (vscode.window.activeTextEditor?.document.uri);
-    if (!baseUri) {
+    if (!folderUri) {
         void showInfo('Select a folder to create a file.');
         return;
     }
-    const folderPath = baseUri.fsPath;
-    const name = await promptName('New file name', 'untitled.txt');
+    const name = await promptName('New file name', { placeHolder: 'my_file.py' });
     if (!name) {
         return;
     }
-    const target = vscode.Uri.file(path.join(folderPath, name));
+    const target = vscode.Uri.file(path.join(folderUri.fsPath, name));
+    if (await entryExists(target)) {
+        void showError(`"${name}" already exists in this folder.`);
+        return;
+    }
     await vscode.workspace.fs.writeFile(target, new Uint8Array());
+    await vscode.window.showTextDocument(target, { preview: false });
 }
 
 export async function createNewFolder(folderUri?: vscode.Uri): Promise<void> {
@@ -306,11 +329,15 @@ export async function createNewFolder(folderUri?: vscode.Uri): Promise<void> {
         void showInfo('Select a folder to create a new folder.');
         return;
     }
-    const name = await promptName('New folder name', 'new-folder');
+    const name = await promptName('New folder name', { placeHolder: 'my_folder' });
     if (!name) {
         return;
     }
     const target = vscode.Uri.file(path.join(folderUri.fsPath, name));
+    if (await entryExists(target)) {
+        void showError(`"${name}" already exists in this folder.`);
+        return;
+    }
     await vscode.workspace.fs.createDirectory(target);
 }
 
@@ -320,36 +347,16 @@ export async function renameEntry(uri?: vscode.Uri): Promise<void> {
         return;
     }
     const currentName = path.basename(uri.fsPath);
-    const newName = await promptName('Rename to', currentName);
+    const newName = await promptName('Rename to', { value: currentName });
     if (!newName || newName === currentName) {
         return;
     }
     const target = vscode.Uri.file(path.join(path.dirname(uri.fsPath), newName));
+    if (await entryExists(target)) {
+        void showError(`"${newName}" already exists in this folder.`);
+        return;
+    }
     await vscode.workspace.fs.rename(uri, target, { overwrite: false });
-}
-
-export async function deleteEntry(uri?: vscode.Uri): Promise<void> {
-    if (!uri) {
-        void showInfo('Select a file or folder to delete.');
-        return;
-    }
-    const choice = await showModalWarning(
-        `Delete "${path.basename(uri.fsPath)}"?`,
-        'Delete'
-    );
-    if (choice !== 'Delete') {
-        return;
-    }
-    await vscode.workspace.fs.delete(uri, { recursive: true, useTrash: true });
-}
-
-export async function openTerminalHere(uri?: vscode.Uri): Promise<void> {
-    if (!uri) {
-        void showInfo('Select a folder to open in terminal.');
-        return;
-    }
-    const terminal = vscode.window.createTerminal({ cwd: uri.fsPath });
-    terminal.show();
 }
 
 export async function selectProjectForExplorer(): Promise<void> {
@@ -373,73 +380,4 @@ export async function selectProjectForExplorer(): Promise<void> {
 
     data.projects.forEach((p: ProjectModel, idx: number) => (p.isSelected = idx === pick.index));
     await SettingsStore.saveWithoutComments(data);
-}
-
-// Clipboard for copy/cut
-let clipboard: { uris: vscode.Uri[]; cut: boolean } | null = null;
-
-export function copyEntries(uris: vscode.Uri[], cut = false): void {
-    clipboard = { uris, cut };
-    const action = cut ? 'Cut' : 'Copied';
-    vscode.window.setStatusBarMessage(`${action} ${uris.length} item(s)`, 2000);
-}
-
-function getTargetFolderUri(uri?: vscode.Uri): vscode.Uri | undefined {
-    if (!uri) {
-        return undefined;
-    }
-    return uri;
-}
-
-async function pathExists(uri: vscode.Uri): Promise<boolean> {
-    try {
-        await vscode.workspace.fs.stat(uri);
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-export async function pasteEntries(targetUri?: vscode.Uri): Promise<void> {
-    if (!clipboard || clipboard.uris.length === 0) {
-        void showInfo('Nothing to paste.');
-        return;
-    }
-
-    const folderUri = getTargetFolderUri(targetUri);
-    if (!folderUri) {
-        void showInfo('Select a destination folder.');
-        return;
-    }
-
-    for (const source of clipboard.uris) {
-        const base = path.basename(source.fsPath);
-        const destination = vscode.Uri.file(path.join(folderUri.fsPath, base));
-
-        const exists = await pathExists(destination);
-        if (exists) {
-            const choice = await showModalWarning(
-                `"${base}" already exists. Overwrite?`,
-                'Overwrite',
-                'Skip'
-            );
-            if (choice !== 'Overwrite') {
-                continue;
-            }
-        }
-
-        try {
-            if (clipboard.cut) {
-                await vscode.workspace.fs.rename(source, destination, { overwrite: true });
-            } else {
-                await vscode.workspace.fs.copy(source, destination, { overwrite: true });
-            }
-        } catch (error: any) {
-            void showError(`Failed to paste "${base}": ${error?.message ?? error}`);
-        }
-    }
-
-    if (clipboard.cut) {
-        clipboard = null;
-    }
 }
