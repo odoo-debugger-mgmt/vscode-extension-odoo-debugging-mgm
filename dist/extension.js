@@ -1108,9 +1108,16 @@ function discoverDirectories(targetPath, kind, options) {
     const stack = [{ dir: normalizedRoot, depth: 0 }];
     const visited = new Set();
     const results = [];
+    const resultPaths = new Set();
     let processed = 0;
     let limitWarningShown = false;
     const rootNormalized = normalizedRoot.split(path.sep).join('/');
+    const addResult = (dirPath) => {
+        if (!resultPaths.has(dirPath)) {
+            resultPaths.add(dirPath);
+            results.push({ path: dirPath, name: path.basename(dirPath) });
+        }
+    };
     while (stack.length > 0) {
         if (options.token?.isCancellationRequested) {
             break;
@@ -1143,12 +1150,23 @@ function discoverDirectories(targetPath, kind, options) {
         const hasManifest = entries.some(entry => entry.isFile() && entry.name === '__manifest__.py');
         const hasGitDir = entries.some(entry => entry.isDirectory() && entry.name === '.git');
         if (kind === 'modules' && hasManifest) {
-            results.push({ path: resolved, name: path.basename(resolved) });
+            addResult(resolved);
             continue;
         }
         if (kind === 'repositories' && hasGitDir) {
-            results.push({ path: resolved, name: path.basename(resolved) });
+            addResult(resolved);
             // Do not recurse into repository contents.
+            continue;
+        }
+        if (kind === 'repositories' && hasManifest) {
+            // An Odoo module without a surrounding git repo: its parent folder
+            // is an addons directory Odoo can load, even before `git init`
+            // (folders are often filled with modules before the repo exists).
+            const parent = path.dirname(resolved);
+            if (!path.relative(normalizedRoot, parent).startsWith('..')) {
+                addResult(parent);
+            }
+            // Do not recurse into the module itself.
             continue;
         }
         if (current.depth >= options.maxDepth) {
@@ -9838,8 +9856,8 @@ class RepoTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         const repoEntries = await mapWithConcurrency(devsRepos, 6, async (repo) => {
             const existingRepo = repos.find(r => r.name === repo.name);
             let branch = null;
-            const gitPath = path.join(repo.path, '.git');
-            if (fs.existsSync(gitPath)) {
+            const isGitRepo = fs.existsSync(path.join(repo.path, '.git'));
+            if (isGitRepo) {
                 try {
                     branch = await (0, branches_1.getRepoBranch)(repo.path);
                 }
@@ -9860,6 +9878,7 @@ class RepoTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
                 path: repo.path,
                 isSelected: !!existingRepo,
                 branch,
+                isGitRepo,
                 repoModel: existingRepo,
                 fsCreatedAt
             };
@@ -9872,10 +9891,11 @@ class RepoTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
             treeItem.tooltip = new vscode.MarkdownString([
                 `**${entry.name}**${entry.isSelected ? ' (in project)' : ''}`,
                 `**Path:** ${entry.path}`,
-                entry.branch ? `**Branch:** ${entry.branch}` : ''
+                entry.branch ? `**Branch:** ${entry.branch}` : '',
+                entry.isGitRepo ? '' : '**Type:** addons folder (not a git repository)'
             ].filter(Boolean).join('\n\n'));
             treeItem.id = entry.path;
-            treeItem.description = entry.branch ?? '';
+            treeItem.description = entry.isGitRepo ? (entry.branch ?? '') : 'addons folder';
             treeItem.command = {
                 command: 'repoSelector.selectRepo',
                 title: 'Select Module',
@@ -13611,161 +13631,277 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.setupOdooBranch = setupOdooBranch;
 /**
- * Setup Odoo flow: clones odoo/enterprise for a chosen branch and creates a
- * Python virtualenv in the workspace.
+ * Setup Odoo flow: clones the Odoo repositories for a chosen branch
+ * (shallow single-branch or full history), optionally continues with a
+ * Python virtualenv + requirements, and offers to create a matching
+ * version profile.
  */
-// VSCode Extension Utility: Clone Odoo & Enterprise for a selected branch and setup venv with progress
 const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(9));
-const fs = __importStar(__webpack_require__(8));
+const path = __importStar(__webpack_require__(3));
+const fs = __importStar(__webpack_require__(41));
 const utils_1 = __webpack_require__(7);
 const process_1 = __webpack_require__(14);
 const logger_1 = __webpack_require__(11);
 const notifications_1 = __webpack_require__(13);
-async function setupOdooBranch() {
-    // Show confirmation dialog with detailed information
-    const confirmMessage = `This will:
-• Clone Odoo and Enterprise repositories
-• Create a Python virtual environment
-• Allow you to select a specific branch
-
-This may take several minutes depending on your internet connection.
-
-Continue?`;
-    const confirm = await (0, notifications_1.showModalWarning)(confirmMessage, 'Continue');
-    if (confirm !== 'Continue') {
-        return;
+const versionsService_1 = __webpack_require__(23);
+const CLONE_TARGETS = {
+    odoo: {
+        dirName: 'odoo',
+        urls: ['https://github.com/odoo/odoo.git'],
+        label: 'Community (odoo)'
+    },
+    enterprise: {
+        dirName: 'enterprise',
+        urls: ['git@github.com:odoo/enterprise.git', 'https://github.com/odoo/enterprise.git'],
+        label: 'Enterprise'
+    },
+    designThemes: {
+        dirName: 'design-themes',
+        urls: ['https://github.com/odoo/design-themes.git'],
+        label: 'Design Themes'
     }
+};
+const BRANCH_OPTIONS = [
+    { label: '18.0', description: 'Latest stable version' },
+    { label: '17.0', description: 'Stable version' },
+    { label: '16.0', description: 'Previous stable version' },
+    { label: 'master', description: 'Development branch (unstable)' },
+    { label: 'saas-18.2', description: 'SaaS version' },
+    { label: 'saas-18.1', description: 'SaaS version' },
+    { label: 'saas-17.4', description: 'SaaS version' },
+    { label: 'Custom', description: 'Enter a custom branch name' }
+];
+async function pickBranch() {
+    const selected = await vscode.window.showQuickPick(BRANCH_OPTIONS, {
+        placeHolder: 'Select an Odoo branch to clone',
+        ignoreFocusOut: true
+    });
+    if (!selected) {
+        return undefined;
+    }
+    if (selected.label !== 'Custom') {
+        return selected.label;
+    }
+    const custom = await vscode.window.showInputBox({
+        prompt: 'Enter the branch name',
+        placeHolder: 'e.g., 18.0, master, saas-18.2',
+        ignoreFocusOut: true
+    });
+    return custom?.trim() || undefined;
+}
+async function pickCloneDepth() {
+    const choice = await vscode.window.showQuickPick([
+        {
+            label: 'Shallow copy (recommended)',
+            description: 'Single branch, no history — fast and small (--depth 1)',
+            shallow: true
+        },
+        {
+            label: 'Full clone',
+            description: 'All branches and full history — several GB for odoo',
+            shallow: false
+        }
+    ], { placeHolder: 'How should the repositories be cloned?', ignoreFocusOut: true });
+    return choice?.shallow;
+}
+async function pickCloneTargets() {
+    const picks = await vscode.window.showQuickPick([
+        { label: CLONE_TARGETS.odoo.label, target: CLONE_TARGETS.odoo, picked: true },
+        { label: CLONE_TARGETS.enterprise.label, target: CLONE_TARGETS.enterprise, picked: true },
+        { label: CLONE_TARGETS.designThemes.label, target: CLONE_TARGETS.designThemes, picked: false }
+    ], {
+        placeHolder: 'Select the repositories to clone',
+        canPickMany: true,
+        ignoreFocusOut: true
+    });
+    if (!picks) {
+        return undefined;
+    }
+    if (picks.length === 0) {
+        void (0, utils_1.showInfo)('Select at least one repository to clone.');
+        return undefined;
+    }
+    return picks.map(pick => pick.target);
+}
+async function confirmExistingDirectories(baseDir, dirNames) {
+    const existing = dirNames.filter(name => fs.existsSync(path.join(baseDir, name)));
+    if (existing.length === 0) {
+        return true;
+    }
+    const confirm = await (0, notifications_1.showModalWarning)(`The following directories already exist: ${existing.join(', ')}\n\ngit clone will fail on non-empty directories. Continue anyway?`, 'Continue Anyway');
+    return confirm === 'Continue Anyway';
+}
+/** Clones one repository, trying each URL in order; reports git progress. */
+async function cloneRepository(target, options, progress, token) {
+    const args = ['clone', '--progress', '--branch', options.branch];
+    if (options.shallow) {
+        args.push('--depth', '1', '--single-branch');
+    }
+    let lastError;
+    for (const url of target.urls) {
+        if (token.isCancellationRequested) {
+            throw new Error('Cancelled');
+        }
+        try {
+            await (0, process_1.runCommand)('git', [...args, url, target.dirName], {
+                cwd: options.baseDir,
+                token,
+                onStderrLine: line => {
+                    const trimmed = line.trim();
+                    if (trimmed) {
+                        progress.report({ message: `${target.dirName}: ${trimmed}` });
+                    }
+                }
+            });
+            return;
+        }
+        catch (error) {
+            lastError = error;
+            logger_1.logger.warn(`Clone of ${url} failed:`, error);
+        }
+    }
+    throw lastError instanceof Error ? lastError : new Error(`Failed to clone ${target.dirName}`);
+}
+/** Creates the venv and installs Odoo requirements in a visible terminal. */
+async function setupPythonEnvironment(baseDir, branch) {
+    let pythonCmd = 'python3';
+    if (await (0, process_1.tryRunCommand)('python3', ['--version']) === undefined) {
+        if (await (0, process_1.tryRunCommand)('python', ['--version']) !== undefined) {
+            pythonCmd = 'python';
+        }
+        else {
+            throw new Error('Python not found. Please install Python 3.8+ first.');
+        }
+    }
+    const terminal = vscode.window.createTerminal({
+        name: `Odoo Setup (${branch})`,
+        cwd: baseDir
+    });
+    terminal.show();
+    const isWindows = process.platform === 'win32';
+    const activateCmd = isWindows ? '.\\venv\\Scripts\\activate' : 'source venv/bin/activate';
+    terminal.sendText(`${pythonCmd} -m venv venv`);
+    terminal.sendText(`${activateCmd} && pip install --upgrade pip setuptools wheel`);
+    terminal.sendText(`${activateCmd} && if [ -f odoo/requirements.txt ]; then pip install -r odoo/requirements.txt; else echo "No requirements.txt found in odoo directory"; fi`);
+    terminal.sendText(`echo "✅ Odoo ${branch} environment setup running — wait for pip to finish."`);
+}
+/** Creates a version profile pointing at the freshly cloned repositories. */
+async function createVersionForClone(baseDir, branch, clonedDirNames) {
+    const versionsService = versionsService_1.VersionsService.getInstance();
+    const existingNames = new Set(versionsService.getVersions().map(version => version.name));
+    let name = branch;
+    for (let counter = 2; existingNames.has(name); counter++) {
+        name = `${branch} (${counter})`;
+    }
+    const overrides = {};
+    if (clonedDirNames.includes('odoo')) {
+        overrides.odooPath = path.join(baseDir, 'odoo');
+    }
+    if (clonedDirNames.includes('enterprise')) {
+        overrides.enterprisePath = path.join(baseDir, 'enterprise');
+    }
+    if (clonedDirNames.includes('design-themes')) {
+        overrides.designThemesPath = path.join(baseDir, 'design-themes');
+    }
+    const venvPython = path.join(baseDir, 'venv', process.platform === 'win32' ? 'Scripts\\python.exe' : 'bin/python');
+    if (fs.existsSync(venvPython)) {
+        overrides.pythonPath = venvPython;
+    }
+    const version = await versionsService.createVersion(name, branch, overrides);
+    const activate = await (0, utils_1.showInfo)(`Version profile "${version.name}" created for the cloned repositories.`, 'Set Active');
+    if (activate === 'Set Active') {
+        await versionsService.setActiveVersion(version.id);
+    }
+}
+async function setupOdooBranch() {
     const baseDir = (0, utils_1.getWorkspacePath)();
     if (!baseDir) {
         void (0, utils_1.showError)('Open a workspace folder before running this command.');
         return;
     }
-    // Check if directories already exist
-    const odooPath = path.join(baseDir, 'odoo');
-    const enterprisePath = path.join(baseDir, 'enterprise');
-    const venvPath = path.join(baseDir, 'venv');
-    const existingPaths = [];
-    if (fs.existsSync(odooPath)) {
-        existingPaths.push('odoo');
-    }
-    if (fs.existsSync(enterprisePath)) {
-        existingPaths.push('enterprise');
-    }
-    if (fs.existsSync(venvPath)) {
-        existingPaths.push('venv');
-    }
-    if (existingPaths.length > 0) {
-        const overwriteConfirm = await (0, notifications_1.showModalWarning)(`The following directories already exist: ${existingPaths.join(', ')}\n\nDo you want to continue? This may overwrite existing files.`, 'Continue Anyway', 'Cancel');
-        if (overwriteConfirm !== 'Continue Anyway') {
-            return;
+    const scope = await vscode.window.showQuickPick([
+        {
+            label: 'Full setup',
+            description: 'Clone repositories, create a Python venv and install requirements',
+            cloneOnly: false
+        },
+        {
+            label: 'Clone repositories only',
+            description: 'Just clone the Odoo repositories — no venv, no requirements',
+            cloneOnly: true
         }
-    }
-    // Let user select branch
-    const branchOptions = [
-        { label: '17.0', description: 'Latest stable version' },
-        { label: '16.0', description: 'Previous stable version' },
-        { label: '15.0', description: 'Legacy stable version' },
-        { label: '14.0', description: 'Legacy stable version' },
-        { label: 'master', description: 'Development branch (unstable)' },
-        { label: 'saas-17.4', description: 'SaaS version' },
-        { label: 'saas-17.3', description: 'SaaS version' },
-        { label: 'saas-17.2', description: 'SaaS version' },
-        { label: 'Custom', description: 'Enter a custom branch name' }
-    ];
-    const selectedBranch = await vscode.window.showQuickPick(branchOptions, {
-        placeHolder: 'Select an Odoo branch to clone',
-        ignoreFocusOut: true
-    });
-    if (!selectedBranch) {
+    ], { placeHolder: 'What should the setup do?', ignoreFocusOut: true });
+    if (!scope) {
         return;
     }
-    let branch = selectedBranch.label;
-    if (branch === 'Custom') {
-        const customBranch = await vscode.window.showInputBox({
-            prompt: 'Enter the branch name',
-            placeHolder: 'e.g., 17.0, master, saas-17.4',
-            ignoreFocusOut: true
-        });
-        if (!customBranch) {
-            return;
-        }
-        branch = customBranch.trim();
+    const targets = await pickCloneTargets();
+    if (!targets) {
+        return;
     }
-    await vscode.window.withProgress({
+    const branch = await pickBranch();
+    if (!branch) {
+        return;
+    }
+    const shallow = await pickCloneDepth();
+    if (shallow === undefined) {
+        return;
+    }
+    const dirNames = targets.map(target => target.dirName);
+    if (!(await confirmExistingDirectories(baseDir, scope.cloneOnly ? dirNames : [...dirNames, 'venv']))) {
+        return;
+    }
+    const cloned = [];
+    const succeeded = await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
-        title: `Setting up Odoo ${branch}…`,
-        cancellable: false
-    }, async (progress) => {
+        title: `Cloning Odoo ${branch}${shallow ? ' (shallow)' : ''}…`,
+        cancellable: true
+    }, async (progress, token) => {
         try {
-            progress.report({ message: 'Preparing setup…', increment: 5 });
-            // Create terminal for operations
-            const terminal = vscode.window.createTerminal({
-                name: `Odoo Setup (${branch})`,
-                cwd: baseDir
-            });
-            terminal.show();
-            // Clone Odoo repository
-            progress.report({ message: 'Cloning Odoo repository…', increment: 15 });
-            logger_1.logger.debug(`Cloning Odoo repository (branch: ${branch})`);
-            terminal.sendText(`echo "🔄 Cloning Odoo repository (branch: ${branch})..."`);
-            terminal.sendText(`git clone --depth 1 --branch ${branch} https://github.com/odoo/odoo.git`);
-            // Wait a bit for the clone to start
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            // Clone Enterprise repository
-            progress.report({ message: 'Cloning Enterprise repository…', increment: 35 });
-            logger_1.logger.debug(`Cloning Enterprise repository (branch: ${branch})`);
-            terminal.sendText(`echo "🔄 Cloning Enterprise repository (branch: ${branch})..."`);
-            terminal.sendText(`git clone --depth 1 --branch ${branch} git@github.com:odoo/enterprise.git || git clone --depth 1 --branch ${branch} https://github.com/odoo/enterprise.git`);
-            // Wait for enterprise clone
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            // Check Python availability
-            progress.report({ message: 'Checking Python installation…', increment: 55 });
-            logger_1.logger.debug('Checking Python installation');
-            let pythonCmd = 'python3';
-            if (await (0, process_1.tryRunCommand)('python3', ['--version']) === undefined) {
-                if (await (0, process_1.tryRunCommand)('python', ['--version']) !== undefined) {
-                    pythonCmd = 'python';
-                }
-                else {
-                    throw new Error('Python not found. Please install Python 3.8+ first.');
-                }
+            for (const target of targets) {
+                progress.report({ message: `Cloning ${target.dirName}…` });
+                await cloneRepository(target, { baseDir, branch, shallow }, progress, token);
+                cloned.push(target.dirName);
             }
-            // Create virtual environment
-            progress.report({ message: 'Creating Python virtual environment…', increment: 75 });
-            logger_1.logger.debug('Creating Python virtual environment');
-            terminal.sendText(`echo "🔧 Creating Python virtual environment..."`);
-            terminal.sendText(`${pythonCmd} -m venv venv`);
-            // Wait for venv creation
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            // Activate venv and install basic requirements
-            progress.report({ message: 'Installing basic Python packages…', increment: 85 });
-            logger_1.logger.debug('Installing basic Python packages');
-            terminal.sendText(`echo "📦 Installing basic Python packages..."`);
-            // Platform-specific activation
-            const isWindows = process.platform === 'win32';
-            const activateCmd = isWindows ? '.\\venv\\Scripts\\activate' : 'source venv/bin/activate';
-            terminal.sendText(`${activateCmd} && pip install --upgrade pip setuptools wheel`);
-            // Install Odoo requirements if they exist
-            terminal.sendText(`${activateCmd} && if [ -f odoo/requirements.txt ]; then pip install -r odoo/requirements.txt; else echo "No requirements.txt found in odoo directory"; fi`);
-            progress.report({ message: 'Setup complete!', increment: 100 });
-            // Show completion message with next steps
-            terminal.sendText(`echo ""`);
-            terminal.sendText(`echo "✅ Odoo ${branch} setup complete!"`);
-            terminal.sendText(`echo ""`);
-            terminal.sendText(`echo "Next steps:"`);
-            terminal.sendText(`echo "1. Configure your VS Code settings to point to these directories"`);
-            terminal.sendText(`echo "2. Activate the virtual environment: ${activateCmd}"`);
-            terminal.sendText(`echo "3. Install additional dependencies if needed"`);
-            terminal.sendText(`echo "4. Create your custom addons directory"`);
-            terminal.sendText(`echo ""`);
-            void (0, utils_1.showInfo)(`Odoo ${branch} setup completed successfully!\n\nCheck the terminal for next steps.`);
+            return true;
         }
         catch (error) {
-            logger_1.logger.error('Setup failed:', error);
-            void (0, utils_1.showError)(`Setup failed: ${error.message}`);
+            if (token.isCancellationRequested) {
+                void (0, utils_1.showInfo)(`Clone cancelled.${cloned.length ? ` Completed: ${cloned.join(', ')}.` : ''}`);
+            }
+            else {
+                logger_1.logger.error('Setup clone failed:', error);
+                void (0, utils_1.showError)(`Clone failed: ${(0, logger_1.errorMessage)(error)}`);
+            }
+            return false;
         }
     });
+    if (!succeeded) {
+        return;
+    }
+    if (!scope.cloneOnly) {
+        try {
+            await setupPythonEnvironment(baseDir, branch);
+        }
+        catch (error) {
+            void (0, utils_1.showError)(`Python environment setup failed: ${(0, logger_1.errorMessage)(error)}`);
+        }
+        await createVersionForClone(baseDir, branch, cloned);
+        return;
+    }
+    // Clone-only: offer the follow-ups instead of running them.
+    const next = await (0, utils_1.showInfo)(`Cloned ${cloned.join(', ')} (${branch}${shallow ? ', shallow' : ''}).`, 'Create Version Profile', 'Continue Full Setup');
+    if (next === 'Continue Full Setup') {
+        try {
+            await setupPythonEnvironment(baseDir, branch);
+        }
+        catch (error) {
+            void (0, utils_1.showError)(`Python environment setup failed: ${(0, logger_1.errorMessage)(error)}`);
+        }
+        await createVersionForClone(baseDir, branch, cloned);
+    }
+    else if (next === 'Create Version Profile') {
+        await createVersionForClone(baseDir, branch, cloned);
+    }
 }
 
 
@@ -14199,6 +14335,7 @@ exports.registerModuleCommands = registerModuleCommands;
  * Command handlers for the Modules view.
  */
 const vscode = __importStar(__webpack_require__(1));
+const notifications_1 = __webpack_require__(13);
 const module_1 = __webpack_require__(55);
 /**
  * Tree context menus pass (clickedItem, selectedItems); with canSelectMany
@@ -14261,6 +14398,25 @@ function registerModuleCommands(deps) {
     }));
     context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.viewInstalled', async () => {
         await (0, module_1.viewInstalledModules)();
+    }));
+    // Same reveal behavior as the Project Repos view, triggered from a
+    // module item (module nodes carry moduleData.path, not a resourceUri).
+    const modulePathOf = (event) => event?.moduleData?.path;
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.revealInExplorer', async (event) => {
+        const modulePath = modulePathOf(event);
+        if (!modulePath) {
+            void (0, notifications_1.showInfo)('Could not identify the module to reveal.');
+            return;
+        }
+        await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(modulePath));
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.revealInOS', async (event) => {
+        const modulePath = modulePathOf(event);
+        if (!modulePath) {
+            void (0, notifications_1.showInfo)('Could not identify the module to reveal.');
+            return;
+        }
+        await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(modulePath));
     }));
 }
 
@@ -15354,17 +15510,17 @@ function registerEditorCommands(deps) {
 /******/ 	]);
 /************************************************************************/
 /******/ 	// The module cache
-/******/ 	var __webpack_module_cache__ = {};
+/******/ 	const __webpack_module_cache__ = {};
 /******/ 	
 /******/ 	// The require function
 /******/ 	function __webpack_require__(moduleId) {
 /******/ 		// Check if module is in cache
-/******/ 		var cachedModule = __webpack_module_cache__[moduleId];
+/******/ 		const cachedModule = __webpack_module_cache__[moduleId];
 /******/ 		if (cachedModule !== undefined) {
 /******/ 			return cachedModule.exports;
 /******/ 		}
 /******/ 		// Create a new module (and put it into the cache)
-/******/ 		var module = __webpack_module_cache__[moduleId] = {
+/******/ 		const module = __webpack_module_cache__[moduleId] = {
 /******/ 			// no module.id needed
 /******/ 			// no module.loaded needed
 /******/ 			exports: {}
@@ -15380,11 +15536,26 @@ function registerEditorCommands(deps) {
 /************************************************************************/
 /******/ 	/* webpack/runtime/define property getters */
 /******/ 	(() => {
-/******/ 		// define getter functions for harmony exports
+/******/ 		// define getter/value functions for harmony exports
 /******/ 		__webpack_require__.d = (exports, definition) => {
-/******/ 			for(var key in definition) {
-/******/ 				if(__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
-/******/ 					Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+/******/ 			if(Array.isArray(definition)) {
+/******/ 				var i = 0;
+/******/ 				while(i < definition.length) {
+/******/ 					var key = definition[i++];
+/******/ 					var binding = definition[i++];
+/******/ 					if(!__webpack_require__.o(exports, key)) {
+/******/ 						if(binding === 0) {
+/******/ 							Object.defineProperty(exports, key, { enumerable: true, value: definition[i++] });
+/******/ 						} else {
+/******/ 							Object.defineProperty(exports, key, { enumerable: true, get: binding });
+/******/ 						}
+/******/ 					} else if(binding === 0) { i++; }
+/******/ 				}
+/******/ 			} else {
+/******/ 				for(var key in definition) {
+/******/ 					if(__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
+/******/ 						Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+/******/ 					}
 /******/ 				}
 /******/ 			}
 /******/ 		};
@@ -15399,7 +15570,7 @@ function registerEditorCommands(deps) {
 /******/ 	(() => {
 /******/ 		// define __esModule on exports
 /******/ 		__webpack_require__.r = (exports) => {
-/******/ 			if(typeof Symbol !== 'undefined' && Symbol.toStringTag) {
+/******/ 			if(Symbol.toStringTag) {
 /******/ 				Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
 /******/ 			}
 /******/ 			Object.defineProperty(exports, '__esModule', { value: true });
@@ -15411,7 +15582,7 @@ function registerEditorCommands(deps) {
 /******/ 	// startup
 /******/ 	// Load entry module and return exports
 /******/ 	// This entry module is referenced by other modules so it can't be inlined
-/******/ 	var __webpack_exports__ = __webpack_require__(0);
+/******/ 	let __webpack_exports__ = __webpack_require__(0);
 /******/ 	module.exports = __webpack_exports__;
 /******/ 	
 /******/ })()

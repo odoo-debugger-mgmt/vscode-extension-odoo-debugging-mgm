@@ -21,6 +21,7 @@ interface RepoEntry {
     path: string;
     isSelected: boolean;
     branch: string | null;
+    isGitRepo: boolean;
     repoModel?: RepoModel;
     fsCreatedAt: number;
 }
@@ -90,8 +91,8 @@ export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         const repoEntries = await mapWithConcurrency(devsRepos, 6, async repo => {
             const existingRepo = repos.find(r => r.name === repo.name);
             let branch: string | null = null;
-            const gitPath = path.join(repo.path, '.git');
-            if (fs.existsSync(gitPath)) {
+            const isGitRepo = fs.existsSync(path.join(repo.path, '.git'));
+            if (isGitRepo) {
                 try {
                     branch = await getRepoBranch(repo.path);
                 } catch {
@@ -110,6 +111,7 @@ export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
                 path: repo.path,
                 isSelected: !!existingRepo,
                 branch,
+                isGitRepo,
                 repoModel: existingRepo,
                 fsCreatedAt
             };
@@ -124,10 +126,11 @@ export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             treeItem.tooltip = new vscode.MarkdownString([
                 `**${entry.name}**${entry.isSelected ? ' (in project)' : ''}`,
                 `**Path:** ${entry.path}`,
-                entry.branch ? `**Branch:** ${entry.branch}` : ''
+                entry.branch ? `**Branch:** ${entry.branch}` : '',
+                entry.isGitRepo ? '' : '**Type:** addons folder (not a git repository)'
             ].filter(Boolean).join('\n\n'));
             treeItem.id = entry.path;
-            treeItem.description = entry.branch ?? '';
+            treeItem.description = entry.isGitRepo ? (entry.branch ?? '') : 'addons folder';
             treeItem.command = {
                 command: 'repoSelector.selectRepo',
                 title: 'Select Module',

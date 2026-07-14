@@ -16,8 +16,8 @@ A **Get Started with Odoo DevTools** walkthrough is available from VS Code's Wel
 1. Open a folder in VS Code.
    The extension stores its state in `.vscode/odoo-debugger-data.json`, so projects/versions/databases are **workspace-specific**.
 
-2. **(Optional — skip if Odoo is already set up; running this again might overwrite your setup)** Run `Setup Odoo` from the Projects view title bar.
-   This clones `odoo` and `enterprise` for a chosen branch and creates a Python virtual environment.
+2. **(Optional — skip if Odoo is already set up)** Run `Setup Odoo` from the Projects view title bar.
+   Pick **Full setup** (clone + Python venv + requirements) or **Clone repositories only**, choose the repositories (community/enterprise/design-themes), the branch, and whether to make a **shallow copy** (single branch, no history — fast and small) or a full clone. After a clone-only run you can continue the full setup or have a matching **version profile created for you** in one click.
 
    ![Odoo Setup](resources/assets/odoo-setup.gif)
 
@@ -82,8 +82,8 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 
 ### Repos
 
-- Choose which git repositories (discovered under your custom addons folder) belong to the active project.
-- Each repo shows its current branch; sort by name, creation date or branch.
+- Choose which addons sources (discovered under your custom addons folder) belong to the active project: **git repositories and plain folders containing Odoo modules** — a folder full of modules is picked up even before `git init`.
+- Git repos show their current branch; git-less folders are marked *addons folder*. Sort by name, creation date or branch.
 
 ### Databases
 
@@ -98,6 +98,7 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 
 - Modules discovered from the project's repos; click to cycle install → upgrade → unmanaged (green/yellow icons; filled/outline shows installed state).
 - **Multi-select** (Ctrl/Shift-click) to set install/upgrade/clear on several modules at once.
+- Right-click a module to **Reveal in Explorer** (VS Code file tree) or **Reveal in OS**.
 - Expand a module to see its manifest dependencies (project modules vs core).
 - Bulk actions: install all, update all, update installed, clear; browse the modules actually installed in the database.
 - **Create Module** scaffolds a new module via `odoo-bin scaffold` into a chosen repo.

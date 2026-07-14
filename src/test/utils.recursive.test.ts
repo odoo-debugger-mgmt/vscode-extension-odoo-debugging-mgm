@@ -31,6 +31,10 @@ suite('Recursive discovery utilities', () => {
         // Repository B nested deeper
         fs.mkdirSync(path.join(repoBPath, '.git'), { recursive: true });
 
+        // A git-less addons folder: modules exist before `git init` ran
+        createModule(path.join(customRoot, 'bare-addons', 'bare_mod'));
+        createModule(path.join(customRoot, 'bare-addons', 'bare_mod_two'));
+
         // Manual include path outside repositories
         createModule(path.join(manualInternalPath, 'manual_mod'));
     });
@@ -39,10 +43,14 @@ suite('Recursive discovery utilities', () => {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     });
 
-    test('findRepositories discovers nested git roots once', () => {
+    test('findRepositories discovers nested git roots and git-less addons folders once', () => {
         const repositories = findRepositories(customRoot);
         const names = repositories.map(repo => repo.name).sort();
-        assert.deepStrictEqual(names, ['repoA', 'repoB'], 'Expected both repositories to be discovered');
+        assert.deepStrictEqual(
+            names,
+            ['bare-addons', 'repoA', 'repoB'],
+            'Expected both git repositories and the module-bearing folder to be discovered'
+        );
     });
 
     test('findModules walks nested structure and skips excluded paths', () => {

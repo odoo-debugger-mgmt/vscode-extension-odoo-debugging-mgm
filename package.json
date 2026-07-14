@@ -3,7 +3,7 @@
   "displayName": "Odoo DevTools for VSCode",
   "description": "All-in-one VS Code extension for managing Odoo projects, databases, modules, and debugging.",
   "icon": "resources/extension-icon.png",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "publisher": "AhmadMansour",
   "contributors": [
     {
@@ -553,6 +553,14 @@
         "icon": "$(eye)"
       },
       {
+        "command": "moduleSelector.revealInExplorer",
+        "title": "Reveal in Explorer"
+      },
+      {
+        "command": "moduleSelector.revealInOS",
+        "title": "Reveal in OS"
+      },
+      {
         "command": "odoo.toggleTestingMode",
         "title": "Toggle Testing Mode",
         "category": "Odoo DevTools"
@@ -846,6 +854,16 @@
           "group": "module@3"
         },
         {
+          "when": "view == moduleSelector && viewItem == module",
+          "command": "moduleSelector.revealInExplorer",
+          "group": "moduleNavigation@1"
+        },
+        {
+          "when": "view == moduleSelector && viewItem == module",
+          "command": "moduleSelector.revealInOS",
+          "group": "moduleNavigation@2"
+        },
+        {
           "command": "testingSelector.removeTestTag",
           "when": "view == testingSelector && viewItem == testTag",
           "group": "inline"
@@ -1055,6 +1073,14 @@
         },
         {
           "command": "moduleSelector.togglePsaeInternalModule",
+          "when": "false"
+        },
+        {
+          "command": "moduleSelector.revealInExplorer",
+          "when": "false"
+        },
+        {
+          "command": "moduleSelector.revealInOS",
           "when": "false"
         },
         {
@@ -1571,16 +1597,7 @@
     "webpack-cli": "^6.0.1"
   },
   "dependencies": {
-    "jsonc-parser": "^3.3.1"
-  },
-  "files": [
-    "dist/extension.js",
-    "dist/**/*.map",
-    "dist/**/*.LICENSE.txt",
-    "resources/**",
-    "package.json",
-    "README.md",
-    "LICENSE",
-    "CHANGELOG.md"
-  ]
+    "jsonc-parser": "^3.3.1",
+    "node": "^26.5.0"
+  }
 }

@@ -42,6 +42,9 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - **Open Odoo in Browser** (`Ctrl+Alt+O B`) using the active version's port and the selected database; per-database *Open in Browser* and *Open psql Shell* context actions; optional `odooDebugger.server.openBrowserOnStart` opens the web client automatically once the server port is up.
 - **Editor actions** on files inside an Odoo module (toggle with `odooDebugger.editorActions.enabled`): *Run Odoo Tests for Current File* (`test_*.py` — enables testing, targets the file and its module, starts the server), *Upgrade Current Module* (marks for `-u`, offers a restart) and *Reveal Module in Modules View*.
 - **Multi-select in the Modules view**: set install/upgrade/clear for the whole selection at once.
+- **Setup Odoo rework**: choose *Full setup* or *Clone repositories only*, pick which repositories to clone (community/enterprise/design-themes) and whether to make a **shallow copy** (`--depth 1 --single-branch`) or a full clone. Clones run with live git progress and are cancellable; after a clone-only run the extension offers to continue the full setup and/or **create a version profile** pointing at the cloned repositories.
+- **Reveal in Explorer / Reveal in OS** context actions on module items in the Modules view.
+- **Git-less addons folders are now discovered as repos**: a folder under the custom addons path that contains Odoo modules shows up in the Repos view (marked *addons folder*) even before `git init` — branch display and checkout are simply skipped for it.
 
 ### Removed
 

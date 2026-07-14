@@ -3,6 +3,7 @@
  */
 import * as vscode from 'vscode';
 import type { CommandDeps } from './index';
+import { showInfo } from '../services/notifications';
 import {
     selectModule,
     setModuleToInstall,
@@ -90,5 +91,28 @@ export function registerModuleCommands(deps: CommandDeps): void {
 
     context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.viewInstalled', async () => {
         await viewInstalledModules();
+    }));
+
+    // Same reveal behavior as the Project Repos view, triggered from a
+    // module item (module nodes carry moduleData.path, not a resourceUri).
+    const modulePathOf = (event: unknown): string | undefined =>
+        (event as { moduleData?: { path?: string } } | undefined)?.moduleData?.path;
+
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.revealInExplorer', async (event) => {
+        const modulePath = modulePathOf(event);
+        if (!modulePath) {
+            void showInfo('Could not identify the module to reveal.');
+            return;
+        }
+        await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(modulePath));
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.revealInOS', async (event) => {
+        const modulePath = modulePathOf(event);
+        if (!modulePath) {
+            void showInfo('Could not identify the module to reveal.');
+            return;
+        }
+        await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(modulePath));
     }));
 }

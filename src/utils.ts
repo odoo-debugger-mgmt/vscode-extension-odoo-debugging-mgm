@@ -287,9 +287,17 @@ function discoverDirectories(targetPath: string, kind: DiscoveryKind, options: S
     const stack: StackEntry[] = [{ dir: normalizedRoot, depth: 0 }];
     const visited = new Set<string>();
     const results: { path: string; name: string }[] = [];
+    const resultPaths = new Set<string>();
     let processed = 0;
     let limitWarningShown = false;
     const rootNormalized = normalizedRoot.split(path.sep).join('/');
+
+    const addResult = (dirPath: string) => {
+        if (!resultPaths.has(dirPath)) {
+            resultPaths.add(dirPath);
+            results.push({ path: dirPath, name: path.basename(dirPath) });
+        }
+    };
 
     while (stack.length > 0) {
         if (options.token?.isCancellationRequested) {
@@ -328,13 +336,25 @@ function discoverDirectories(targetPath: string, kind: DiscoveryKind, options: S
         const hasGitDir = entries.some(entry => entry.isDirectory() && entry.name === '.git');
 
         if (kind === 'modules' && hasManifest) {
-            results.push({ path: resolved, name: path.basename(resolved) });
+            addResult(resolved);
             continue;
         }
 
         if (kind === 'repositories' && hasGitDir) {
-            results.push({ path: resolved, name: path.basename(resolved) });
+            addResult(resolved);
             // Do not recurse into repository contents.
+            continue;
+        }
+
+        if (kind === 'repositories' && hasManifest) {
+            // An Odoo module without a surrounding git repo: its parent folder
+            // is an addons directory Odoo can load, even before `git init`
+            // (folders are often filled with modules before the repo exists).
+            const parent = path.dirname(resolved);
+            if (!path.relative(normalizedRoot, parent).startsWith('..')) {
+                addResult(parent);
+            }
+            // Do not recurse into the module itself.
             continue;
         }
 
