@@ -40,13 +40,13 @@ const CLONE_TARGETS: Record<string, CloneTarget> = {
 };
 
 const BRANCH_OPTIONS = [
-    { label: '18.0', description: 'Latest stable version' },
-    { label: '17.0', description: 'Stable version' },
-    { label: '16.0', description: 'Previous stable version' },
+    { label: '19.0', description: 'Latest stable version' },
+    { label: '18.0', description: 'Stable version' },
+    { label: '17.0', description: 'Previous stable version' },
     { label: 'master', description: 'Development branch (unstable)' },
-    { label: 'saas-18.2', description: 'SaaS version' },
-    { label: 'saas-18.1', description: 'SaaS version' },
-    { label: 'saas-17.4', description: 'SaaS version' },
+    { label: 'saas-19.2', description: 'SaaS version' },
+    { label: 'saas-19.1', description: 'SaaS version' },
+    { label: 'saas-18.4', description: 'SaaS version' },
     { label: 'Custom', description: 'Enter a custom branch name' }
 ];
 
@@ -63,10 +63,44 @@ async function pickBranch(): Promise<string | undefined> {
     }
     const custom = await vscode.window.showInputBox({
         prompt: 'Enter the branch name',
-        placeHolder: 'e.g., 18.0, master, saas-18.2',
+        placeHolder: 'e.g., 19.0, master, saas-19.2',
         ignoreFocusOut: true
     });
     return custom?.trim() || undefined;
+}
+
+/** Where to clone: the workspace folder by default, or any picked folder. */
+async function pickDestination(workspaceDir: string): Promise<string | undefined> {
+    const choice = await vscode.window.showQuickPick(
+        [
+            {
+                label: 'Workspace folder',
+                description: workspaceDir,
+                custom: false
+            },
+            {
+                label: 'Choose a different folder…',
+                description: 'The repositories are cloned inside the selected folder',
+                custom: true
+            }
+        ],
+        { placeHolder: 'Where should the repositories be cloned?', ignoreFocusOut: true }
+    );
+    if (!choice) {
+        return undefined;
+    }
+    if (!choice.custom) {
+        return workspaceDir;
+    }
+    const picked = await vscode.window.showOpenDialog({
+        canSelectFolders: true,
+        canSelectFiles: false,
+        canSelectMany: false,
+        defaultUri: vscode.Uri.file(workspaceDir),
+        openLabel: 'Clone Here',
+        title: 'Select the folder to clone the repositories into'
+    });
+    return picked?.[0]?.fsPath;
 }
 
 async function pickCloneDepth(): Promise<boolean | undefined> {
@@ -226,8 +260,8 @@ async function createVersionForClone(
 }
 
 export async function setupOdooBranch() {
-    const baseDir = getWorkspacePath();
-    if (!baseDir) {
+    const workspaceDir = getWorkspacePath();
+    if (!workspaceDir) {
         void showError('Open a workspace folder before running this command.');
         return;
     }
@@ -248,6 +282,11 @@ export async function setupOdooBranch() {
         { placeHolder: 'What should the setup do?', ignoreFocusOut: true }
     );
     if (!scope) {
+        return;
+    }
+
+    const baseDir = await pickDestination(workspaceDir);
+    if (!baseDir) {
         return;
     }
 

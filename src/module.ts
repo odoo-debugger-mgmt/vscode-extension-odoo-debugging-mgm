@@ -364,6 +364,142 @@ export async function selectModule(event: any) {
     await SettingsStore.saveWithoutComments(stripSettings(data));
 }
 
+/**
+ * Quick-configure picker for module states: lists every discovered module
+ * with its current state, Enter cycles install → upgrade → unmanaged (like
+ * clicking in the tree) and the per-item buttons set a state directly. The
+ * picker stays open across changes; the caller refreshes views afterwards.
+ */
+export async function quickConfigureModules(): Promise<void> {
+    type ModulePick = vscode.QuickPickItem & { moduleName: string };
+
+    const installButton: vscode.QuickInputButton = {
+        iconPath: new vscode.ThemeIcon('desktop-download'),
+        tooltip: 'Set to install'
+    };
+    const upgradeButton: vscode.QuickInputButton = {
+        iconPath: new vscode.ThemeIcon('arrow-up'),
+        tooltip: 'Set to upgrade'
+    };
+    const clearButton: vscode.QuickInputButton = {
+        iconPath: new vscode.ThemeIcon('circle-slash'),
+        tooltip: 'Clear state'
+    };
+
+    const loadItems = async (): Promise<ModulePick[] | undefined> => {
+        const result = await SettingsStore.getSelectedProject();
+        if (!result) {
+            void showInfo('Select a project before configuring modules.');
+            return undefined;
+        }
+        const { project } = result;
+        const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+        if (!db) {
+            void showError('Select a database before configuring modules.');
+            return undefined;
+        }
+        if (project.testingConfig && project.testingConfig.isEnabled) {
+            void showError('Disable testing mode before changing module selections.');
+            return undefined;
+        }
+
+        const { modules } = collectModuleDiscovery(project);
+        const statesByName = new Map((db.modules ?? []).map(module => [module.name, module.state]));
+        let installedNames = new Set<string>();
+        try {
+            installedNames = await getInstalledModuleNames(db.id);
+        } catch {
+            // Database unreachable: still list modules, just without the installed hint.
+        }
+
+        const stateRank = (name: string): number => {
+            const state = statesByName.get(name);
+            if (state === 'install' || state === 'upgrade') {
+                return 0;
+            }
+            return installedNames.has(name) ? 1 : 2;
+        };
+
+        return modules
+            .filter(module => !PSAE_INTERNAL_REGEX.test(module.name))
+            .sort((a, b) => stateRank(a.name) - stateRank(b.name) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+            .map(module => {
+                const state = statesByName.get(module.name);
+                const statusParts: string[] = [];
+                if (state) {
+                    statusParts.push(state);
+                }
+                if (installedNames.has(module.name)) {
+                    statusParts.push('installed');
+                }
+                const marker = state === 'install' || state === 'upgrade' ? '$(circle-filled)' : '$(circle-outline)';
+                return {
+                    label: `${marker} ${module.name}`,
+                    description: statusParts.join(' • '),
+                    detail: module.repoName,
+                    moduleName: module.name,
+                    buttons: [installButton, upgradeButton, clearButton]
+                };
+            });
+    };
+
+    const initialItems = await loadItems();
+    if (!initialItems) {
+        return;
+    }
+
+    const picker = vscode.window.createQuickPick<ModulePick>();
+    picker.title = 'Configure Modules';
+    picker.placeholder = 'Enter cycles install → upgrade → unmanaged; item buttons set a state directly';
+    picker.matchOnDescription = true;
+    picker.matchOnDetail = true;
+    picker.ignoreFocusOut = true;
+    picker.keepScrollPosition = true;
+    picker.items = initialItems;
+
+    const applyAndReload = async (action: () => Promise<unknown>) => {
+        picker.busy = true;
+        try {
+            await action();
+            const items = await loadItems();
+            if (!items) {
+                picker.hide();
+                return;
+            }
+            picker.items = items;
+        } finally {
+            picker.busy = false;
+        }
+    };
+
+    picker.onDidAccept(() => {
+        const active = picker.selectedItems[0] ?? picker.activeItems[0];
+        if (!active) {
+            return;
+        }
+        void applyAndReload(() => selectModule({ name: active.moduleName }));
+    });
+
+    picker.onDidTriggerItemButton(event => {
+        const target = { name: event.item.moduleName };
+        if (event.button === installButton) {
+            void applyAndReload(() => setModuleToInstall(target));
+        } else if (event.button === upgradeButton) {
+            void applyAndReload(() => setModuleToUpgrade(target));
+        } else {
+            void applyAndReload(() => clearModuleState(target));
+        }
+    });
+
+    await new Promise<void>(resolve => {
+        picker.onDidHide(() => {
+            picker.dispose();
+            resolve();
+        });
+        picker.show();
+    });
+}
+
 async function runScaffoldCommand(
     pythonPath: string,
     odooBinPath: string,
@@ -532,10 +668,8 @@ export async function setModuleToInstall(event: any): Promise<void> {
     const moduleExistsInDb = db.modules.find(mod => mod.name === moduleData.name);
     if (!moduleExistsInDb) {
         db.modules.push(new ModuleModel(moduleData.name, 'install'));
-        showAutoInfo(`Module "${moduleData.name}" set to install`, 2000);
     } else {
         moduleExistsInDb.state = 'install';
-        showAutoInfo(`Module "${moduleData.name}" state changed to install`, 2000);
     }
     await SettingsStore.saveWithoutComments(stripSettings(data));
 }
@@ -597,9 +731,6 @@ export async function clearModuleState(event: any): Promise<void> {
     const moduleExistsInDb = db.modules.find(mod => mod.name === moduleData.name);
     if (moduleExistsInDb) {
         db.modules = db.modules.filter(mod => mod.name !== moduleData.name);
-        showAutoInfo(`Module "${moduleData.name}" state cleared`, 2000);
-    } else {
-        showAutoInfo(`Module "${moduleData.name}" was already not managed`, 1500);
     }
     await SettingsStore.saveWithoutComments(stripSettings(data));
 }

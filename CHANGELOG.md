@@ -45,6 +45,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - **Setup Odoo rework**: choose *Full setup* or *Clone repositories only*, pick which repositories to clone (community/enterprise/design-themes) and whether to make a **shallow copy** (`--depth 1 --single-branch`) or a full clone. Clones run with live git progress and are cancellable; after a clone-only run the extension offers to continue the full setup and/or **create a version profile** pointing at the cloned repositories.
 - **Reveal in Explorer / Reveal in OS** context actions on module items in the Modules view.
 - **Git-less addons folders are now discovered as repos**: a folder under the custom addons path that contains Odoo modules shows up in the Repos view (marked *addons folder*) even before `git init` — branch display and checkout are simply skipped for it.
+- **Configure Modules quick pick** (`Ctrl+Alt+O M`, also in the Modules view title bar): Enter cycles install → upgrade → unmanaged, per-item buttons set a state directly, and the picker stays open for several changes.
+- **Repos view context menu**: reveal in Explorer/OS, copy path, open in terminal on repo items; unselected repos use the same small open-circle icon as the Modules view.
+- **Project quick search matches metadata**: typing a repo, database, module or ticket id in the project picker (`Ctrl+Alt+P`) finds the project that owns it.
+- Setup Odoo: branch list refreshed for Odoo 19.0, and the clone destination is selectable (workspace folder by default).
 
 ### Removed
 

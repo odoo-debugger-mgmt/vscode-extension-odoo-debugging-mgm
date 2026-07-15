@@ -553,6 +553,12 @@
         "icon": "$(eye)"
       },
       {
+        "command": "moduleSelector.quickConfigure",
+        "title": "Configure Modules",
+        "category": "Odoo DevTools",
+        "icon": "$(checklist)"
+      },
+      {
         "command": "moduleSelector.revealInExplorer",
         "title": "Reveal in Explorer"
       },
@@ -732,6 +738,11 @@
           "group": "navigation@7.5"
         },
         {
+          "command": "moduleSelector.quickConfigure",
+          "when": "view == moduleSelector",
+          "group": "navigation@7.6"
+        },
+        {
           "command": "testingSelector.addTestTag",
           "when": "view == testingSelector && odoo-debugger.testing_enabled",
           "group": "navigation@1"
@@ -877,6 +888,26 @@
           "command": "odoo.changeBranch",
           "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
           "group": "version"
+        },
+        {
+          "command": "odooDebugger.revealInExplorer",
+          "when": "view == repoSelector && viewItem == repo",
+          "group": "repoNavigation@1"
+        },
+        {
+          "command": "odooDebugger.revealFileInOS",
+          "when": "view == repoSelector && viewItem == repo",
+          "group": "repoNavigation@2"
+        },
+        {
+          "command": "odooDebugger.copyFilePath",
+          "when": "view == repoSelector && viewItem == repo",
+          "group": "repoNavigation@3"
+        },
+        {
+          "command": "odooDebugger.openInIntegratedTerminal",
+          "when": "view == repoSelector && viewItem == repo",
+          "group": "repoNavigation@4"
         },
         {
           "command": "odooDebugger.revealInExplorer",
@@ -1281,6 +1312,12 @@
         "command": "odoo.openInBrowser",
         "key": "ctrl+alt+o b",
         "mac": "cmd+alt+o b",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "moduleSelector.quickConfigure",
+        "key": "ctrl+alt+o m",
+        "mac": "cmd+alt+o m",
         "when": "odoo-debugger.is_active"
       },
       {

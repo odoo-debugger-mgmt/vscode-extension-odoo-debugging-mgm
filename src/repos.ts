@@ -131,6 +131,9 @@ export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             ].filter(Boolean).join('\n\n'));
             treeItem.id = entry.path;
             treeItem.description = entry.isGitRepo ? (entry.branch ?? '') : 'addons folder';
+            treeItem.contextValue = 'repo';
+            // Carried for the shared reveal/copy-path/terminal commands (extractUri).
+            (treeItem as vscode.TreeItem & { uri?: vscode.Uri }).uri = vscode.Uri.file(entry.path);
             treeItem.command = {
                 command: 'repoSelector.selectRepo',
                 title: 'Select Module',

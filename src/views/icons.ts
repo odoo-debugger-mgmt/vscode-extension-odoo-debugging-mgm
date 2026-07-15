@@ -15,8 +15,8 @@ export const activeIcon = new vscode.ThemeIcon('pass-filled', GREEN);
 /** Item included in the current selection (repos, toggles). */
 export const selectedIcon = new vscode.ThemeIcon('circle-filled', GREEN);
 
-/** Item not included in the current selection. */
-export const unselectedIcon = new vscode.ThemeIcon('circle-large-outline');
+/** Item not included in the current selection (same small open circle as the Modules view). */
+export const unselectedIcon = new vscode.ThemeIcon('circle-outline');
 
 /** Test target states. */
 export const includeIcon = new vscode.ThemeIcon('check', GREEN);

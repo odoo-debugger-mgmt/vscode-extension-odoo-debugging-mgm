@@ -4937,8 +4937,8 @@ const RED = new vscode.ThemeColor('charts.red');
 exports.activeIcon = new vscode.ThemeIcon('pass-filled', GREEN);
 /** Item included in the current selection (repos, toggles). */
 exports.selectedIcon = new vscode.ThemeIcon('circle-filled', GREEN);
-/** Item not included in the current selection. */
-exports.unselectedIcon = new vscode.ThemeIcon('circle-large-outline');
+/** Item not included in the current selection (same small open circle as the Modules view). */
+exports.unselectedIcon = new vscode.ThemeIcon('circle-outline');
 /** Test target states. */
 exports.includeIcon = new vscode.ThemeIcon('check', GREEN);
 exports.excludeIcon = new vscode.ThemeIcon('close', RED);
@@ -9310,16 +9310,27 @@ async function quickProjectSearch() {
             void (0, utils_1.showError)('No projects are configured. Create a project first.');
             return;
         }
-        // Create quick pick items with project information
+        // The quick pick filters on label + description + detail, so pack the
+        // project's searchable metadata (repos, databases, selected modules,
+        // tickets) into those fields — typing a repo, database, module or
+        // ticket id finds the project that owns it.
+        const listSome = (values, max = 8) => values.length > max ? `${values.slice(0, max).join(', ')} +${values.length - max}` : values.join(', ');
         const quickPickItems = projects.map(project => {
             const selectedDb = project.dbs?.find((db) => db.isSelected);
-            const repoCount = project.repos.length;
-            const ticketCount = sanitizeProjectTickets(project.tickets).length;
-            const dbInfo = selectedDb ? ` | DB: ${selectedDb.name}` : ' | No DB';
+            const repoNames = (project.repos ?? []).map((repo) => repo.name);
+            const dbNames = (project.dbs ?? []).map((db) => (0, utils_1.getDatabaseLabel)(db));
+            const moduleNames = (selectedDb?.modules ?? []).map(module => module.name);
+            const ticketIds = sanitizeProjectTickets(project.tickets).map(ticket => ticket.id);
+            const detailParts = [
+                repoNames.length ? `Repos: ${listSome(repoNames)}` : '',
+                dbNames.length ? `DBs: ${listSome(dbNames)}` : '',
+                moduleNames.length ? `Modules: ${listSome(moduleNames)}` : '',
+                ticketIds.length ? `Tickets: ${listSome(ticketIds)}` : ''
+            ].filter(Boolean);
             return {
                 label: `${project.isSelected ? '$(arrow-right) ' : ''}${project.name}`,
-                description: `${repoCount} repo${repoCount === 1 ? '' : 's'} | ${ticketCount} ticket${ticketCount === 1 ? '' : 's'}${dbInfo}`,
-                detail: `Created: ${new Date(project.createdAt).toLocaleDateString()} | Repositories: ${project.repos.map(r => r.name).join(', ')}`,
+                description: `${repoNames.length} repos • ${dbNames.length} dbs${selectedDb ? ` • DB: ${(0, utils_1.getDatabaseLabel)(selectedDb)}` : ''}`,
+                detail: detailParts.join('  |  ') || `Created: ${new Date(project.createdAt).toLocaleDateString()}`,
                 projectUid: project.uid
             };
         });
@@ -9896,6 +9907,9 @@ class RepoTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
             ].filter(Boolean).join('\n\n'));
             treeItem.id = entry.path;
             treeItem.description = entry.isGitRepo ? (entry.branch ?? '') : 'addons folder';
+            treeItem.contextValue = 'repo';
+            // Carried for the shared reveal/copy-path/terminal commands (extractUri).
+            treeItem.uri = vscode.Uri.file(entry.path);
             treeItem.command = {
                 command: 'repoSelector.selectRepo',
                 title: 'Select Module',
@@ -9998,6 +10012,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ModuleTreeProvider = void 0;
 exports.selectModule = selectModule;
+exports.quickConfigureModules = quickConfigureModules;
 exports.createModuleFromScaffold = createModuleFromScaffold;
 exports.setModuleToInstall = setModuleToInstall;
 exports.setModuleToUpgrade = setModuleToUpgrade;
@@ -10328,6 +10343,133 @@ async function selectModule(event) {
     }
     await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
 }
+/**
+ * Quick-configure picker for module states: lists every discovered module
+ * with its current state, Enter cycles install → upgrade → unmanaged (like
+ * clicking in the tree) and the per-item buttons set a state directly. The
+ * picker stays open across changes; the caller refreshes views afterwards.
+ */
+async function quickConfigureModules() {
+    const installButton = {
+        iconPath: new vscode.ThemeIcon('desktop-download'),
+        tooltip: 'Set to install'
+    };
+    const upgradeButton = {
+        iconPath: new vscode.ThemeIcon('arrow-up'),
+        tooltip: 'Set to upgrade'
+    };
+    const clearButton = {
+        iconPath: new vscode.ThemeIcon('circle-slash'),
+        tooltip: 'Clear state'
+    };
+    const loadItems = async () => {
+        const result = await settingsStore_1.SettingsStore.getSelectedProject();
+        if (!result) {
+            void (0, utils_1.showInfo)('Select a project before configuring modules.');
+            return undefined;
+        }
+        const { project } = result;
+        const db = project.dbs.find((db) => db.isSelected === true);
+        if (!db) {
+            void (0, utils_1.showError)('Select a database before configuring modules.');
+            return undefined;
+        }
+        if (project.testingConfig && project.testingConfig.isEnabled) {
+            void (0, utils_1.showError)('Disable testing mode before changing module selections.');
+            return undefined;
+        }
+        const { modules } = (0, psaeInternal_1.collectModuleDiscovery)(project);
+        const statesByName = new Map((db.modules ?? []).map(module => [module.name, module.state]));
+        let installedNames = new Set();
+        try {
+            installedNames = await (0, database_1.getInstalledModuleNames)(db.id);
+        }
+        catch {
+            // Database unreachable: still list modules, just without the installed hint.
+        }
+        const stateRank = (name) => {
+            const state = statesByName.get(name);
+            if (state === 'install' || state === 'upgrade') {
+                return 0;
+            }
+            return installedNames.has(name) ? 1 : 2;
+        };
+        return modules
+            .filter(module => !psaeInternal_1.PSAE_INTERNAL_REGEX.test(module.name))
+            .sort((a, b) => stateRank(a.name) - stateRank(b.name) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+            .map(module => {
+            const state = statesByName.get(module.name);
+            const statusParts = [];
+            if (state) {
+                statusParts.push(state);
+            }
+            if (installedNames.has(module.name)) {
+                statusParts.push('installed');
+            }
+            const marker = state === 'install' || state === 'upgrade' ? '$(circle-filled)' : '$(circle-outline)';
+            return {
+                label: `${marker} ${module.name}`,
+                description: statusParts.join(' • '),
+                detail: module.repoName,
+                moduleName: module.name,
+                buttons: [installButton, upgradeButton, clearButton]
+            };
+        });
+    };
+    const initialItems = await loadItems();
+    if (!initialItems) {
+        return;
+    }
+    const picker = vscode.window.createQuickPick();
+    picker.title = 'Configure Modules';
+    picker.placeholder = 'Enter cycles install → upgrade → unmanaged; item buttons set a state directly';
+    picker.matchOnDescription = true;
+    picker.matchOnDetail = true;
+    picker.ignoreFocusOut = true;
+    picker.keepScrollPosition = true;
+    picker.items = initialItems;
+    const applyAndReload = async (action) => {
+        picker.busy = true;
+        try {
+            await action();
+            const items = await loadItems();
+            if (!items) {
+                picker.hide();
+                return;
+            }
+            picker.items = items;
+        }
+        finally {
+            picker.busy = false;
+        }
+    };
+    picker.onDidAccept(() => {
+        const active = picker.selectedItems[0] ?? picker.activeItems[0];
+        if (!active) {
+            return;
+        }
+        void applyAndReload(() => selectModule({ name: active.moduleName }));
+    });
+    picker.onDidTriggerItemButton(event => {
+        const target = { name: event.item.moduleName };
+        if (event.button === installButton) {
+            void applyAndReload(() => setModuleToInstall(target));
+        }
+        else if (event.button === upgradeButton) {
+            void applyAndReload(() => setModuleToUpgrade(target));
+        }
+        else {
+            void applyAndReload(() => clearModuleState(target));
+        }
+    });
+    await new Promise(resolve => {
+        picker.onDidHide(() => {
+            picker.dispose();
+            resolve();
+        });
+        picker.show();
+    });
+}
 async function runScaffoldCommand(pythonPath, odooBinPath, moduleName, targetPath) {
     try {
         await (0, process_1.runCommand)(pythonPath, [odooBinPath, 'scaffold', moduleName, targetPath]);
@@ -10462,11 +10604,9 @@ async function setModuleToInstall(event) {
     const moduleExistsInDb = db.modules.find(mod => mod.name === moduleData.name);
     if (!moduleExistsInDb) {
         db.modules.push(new module_1.ModuleModel(moduleData.name, 'install'));
-        (0, utils_1.showAutoInfo)(`Module "${moduleData.name}" set to install`, 2000);
     }
     else {
         moduleExistsInDb.state = 'install';
-        (0, utils_1.showAutoInfo)(`Module "${moduleData.name}" state changed to install`, 2000);
     }
     await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
 }
@@ -10523,10 +10663,6 @@ async function clearModuleState(event) {
     const moduleExistsInDb = db.modules.find(mod => mod.name === moduleData.name);
     if (moduleExistsInDb) {
         db.modules = db.modules.filter(mod => mod.name !== moduleData.name);
-        (0, utils_1.showAutoInfo)(`Module "${moduleData.name}" state cleared`, 2000);
-    }
-    else {
-        (0, utils_1.showAutoInfo)(`Module "${moduleData.name}" was already not managed`, 1500);
     }
     await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
 }
@@ -13662,13 +13798,13 @@ const CLONE_TARGETS = {
     }
 };
 const BRANCH_OPTIONS = [
-    { label: '18.0', description: 'Latest stable version' },
-    { label: '17.0', description: 'Stable version' },
-    { label: '16.0', description: 'Previous stable version' },
+    { label: '19.0', description: 'Latest stable version' },
+    { label: '18.0', description: 'Stable version' },
+    { label: '17.0', description: 'Previous stable version' },
     { label: 'master', description: 'Development branch (unstable)' },
-    { label: 'saas-18.2', description: 'SaaS version' },
-    { label: 'saas-18.1', description: 'SaaS version' },
-    { label: 'saas-17.4', description: 'SaaS version' },
+    { label: 'saas-19.2', description: 'SaaS version' },
+    { label: 'saas-19.1', description: 'SaaS version' },
+    { label: 'saas-18.4', description: 'SaaS version' },
     { label: 'Custom', description: 'Enter a custom branch name' }
 ];
 async function pickBranch() {
@@ -13684,10 +13820,40 @@ async function pickBranch() {
     }
     const custom = await vscode.window.showInputBox({
         prompt: 'Enter the branch name',
-        placeHolder: 'e.g., 18.0, master, saas-18.2',
+        placeHolder: 'e.g., 19.0, master, saas-19.2',
         ignoreFocusOut: true
     });
     return custom?.trim() || undefined;
+}
+/** Where to clone: the workspace folder by default, or any picked folder. */
+async function pickDestination(workspaceDir) {
+    const choice = await vscode.window.showQuickPick([
+        {
+            label: 'Workspace folder',
+            description: workspaceDir,
+            custom: false
+        },
+        {
+            label: 'Choose a different folder…',
+            description: 'The repositories are cloned inside the selected folder',
+            custom: true
+        }
+    ], { placeHolder: 'Where should the repositories be cloned?', ignoreFocusOut: true });
+    if (!choice) {
+        return undefined;
+    }
+    if (!choice.custom) {
+        return workspaceDir;
+    }
+    const picked = await vscode.window.showOpenDialog({
+        canSelectFolders: true,
+        canSelectFiles: false,
+        canSelectMany: false,
+        defaultUri: vscode.Uri.file(workspaceDir),
+        openLabel: 'Clone Here',
+        title: 'Select the folder to clone the repositories into'
+    });
+    return picked?.[0]?.fsPath;
 }
 async function pickCloneDepth() {
     const choice = await vscode.window.showQuickPick([
@@ -13814,8 +13980,8 @@ async function createVersionForClone(baseDir, branch, clonedDirNames) {
     }
 }
 async function setupOdooBranch() {
-    const baseDir = (0, utils_1.getWorkspacePath)();
-    if (!baseDir) {
+    const workspaceDir = (0, utils_1.getWorkspacePath)();
+    if (!workspaceDir) {
         void (0, utils_1.showError)('Open a workspace folder before running this command.');
         return;
     }
@@ -13832,6 +13998,10 @@ async function setupOdooBranch() {
         }
     ], { placeHolder: 'What should the setup do?', ignoreFocusOut: true });
     if (!scope) {
+        return;
+    }
+    const baseDir = await pickDestination(workspaceDir);
+    if (!baseDir) {
         return;
     }
     const targets = await pickCloneTargets();
@@ -14398,6 +14568,11 @@ function registerModuleCommands(deps) {
     }));
     context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.viewInstalled', async () => {
         await (0, module_1.viewInstalledModules)();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.quickConfigure', async () => {
+        await (0, module_1.quickConfigureModules)();
+        // One refresh when the picker closes, however many states changed.
+        await refreshAll();
     }));
     // Same reveal behavior as the Project Repos view, triggered from a
     // module item (module nodes carry moduleData.path, not a resourceUri).

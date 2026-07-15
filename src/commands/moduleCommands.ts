@@ -15,7 +15,8 @@ import {
     clearAllModuleSelections,
     updateInstalledModules,
     viewInstalledModules,
-    createModuleFromScaffold
+    createModuleFromScaffold,
+    quickConfigureModules
 } from '../module';
 
 /**
@@ -91,6 +92,12 @@ export function registerModuleCommands(deps: CommandDeps): void {
 
     context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.viewInstalled', async () => {
         await viewInstalledModules();
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.quickConfigure', async () => {
+        await quickConfigureModules();
+        // One refresh when the picker closes, however many states changed.
+        await refreshAll();
     }));
 
     // Same reveal behavior as the Project Repos view, triggered from a

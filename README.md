@@ -17,7 +17,7 @@ A **Get Started with Odoo DevTools** walkthrough is available from VS Code's Wel
    The extension stores its state in `.vscode/odoo-debugger-data.json`, so projects/versions/databases are **workspace-specific**.
 
 2. **(Optional — skip if Odoo is already set up)** Run `Setup Odoo` from the Projects view title bar.
-   Pick **Full setup** (clone + Python venv + requirements) or **Clone repositories only**, choose the repositories (community/enterprise/design-themes), the branch, and whether to make a **shallow copy** (single branch, no history — fast and small) or a full clone. After a clone-only run you can continue the full setup or have a matching **version profile created for you** in one click.
+   Pick **Full setup** (clone + Python venv + requirements) or **Clone repositories only**, choose the destination folder (workspace by default), the repositories (community/enterprise/design-themes), the branch, and whether to make a **shallow copy** (single branch, no history — fast and small) or a full clone. After a clone-only run you can continue the full setup or have a matching **version profile created for you** in one click.
 
    ![Odoo Setup](resources/assets/odoo-setup.gif)
 
@@ -84,6 +84,7 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 
 - Choose which addons sources (discovered under your custom addons folder) belong to the active project: **git repositories and plain folders containing Odoo modules** — a folder full of modules is picked up even before `git init`.
 - Git repos show their current branch; git-less folders are marked *addons folder*. Sort by name, creation date or branch.
+- Right-click a repo to reveal it in the Explorer or OS, copy its path, or open it in a terminal.
 
 ### Databases
 
@@ -98,6 +99,7 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 
 - Modules discovered from the project's repos; click to cycle install → upgrade → unmanaged (green/yellow icons; filled/outline shows installed state).
 - **Multi-select** (Ctrl/Shift-click) to set install/upgrade/clear on several modules at once.
+- **Configure Modules** (`Ctrl+Alt+O M`): a quick pick over all modules — Enter cycles install → upgrade → unmanaged, and per-item buttons set a state directly; stays open for several changes.
 - Right-click a module to **Reveal in Explorer** (VS Code file tree) or **Reveal in OS**.
 - Expand a module to see its manifest dependencies (project modules vs core).
 - Bulk actions: install all, update all, update installed, clear; browse the modules actually installed in the database.
@@ -162,6 +164,7 @@ Right-click inside a file that belongs to an Odoo module (toggle with `odooDebug
 | `Ctrl+Alt+O N` | Run Server Without Debugging |
 | `Ctrl+Alt+O R` | Restart Server |
 | `Ctrl+Alt+O B` | Open Odoo in Browser |
+| `Ctrl+Alt+O M` | Configure Modules (quick pick) |
 | `Ctrl+Alt+O T` | Toggle Testing Mode |
 | `Ctrl+Alt+O D` | Search Databases (quick switch) |
 | `Ctrl+Alt+O V` | Switch Active Version |

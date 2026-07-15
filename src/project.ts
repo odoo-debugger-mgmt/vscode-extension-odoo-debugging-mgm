@@ -1154,17 +1154,31 @@ export async function quickProjectSearch(): Promise<void> {
             return;
         }
 
-        // Create quick pick items with project information
+        // The quick pick filters on label + description + detail, so pack the
+        // project's searchable metadata (repos, databases, selected modules,
+        // tickets) into those fields — typing a repo, database, module or
+        // ticket id finds the project that owns it.
+        const listSome = (values: string[], max = 8): string =>
+            values.length > max ? `${values.slice(0, max).join(', ')} +${values.length - max}` : values.join(', ');
+
         const quickPickItems = projects.map(project => {
             const selectedDb = project.dbs?.find((db: DatabaseModel) => db.isSelected);
-            const repoCount = project.repos.length;
-            const ticketCount = sanitizeProjectTickets(project.tickets).length;
-            const dbInfo = selectedDb ? ` | DB: ${selectedDb.name}` : ' | No DB';
+            const repoNames = (project.repos ?? []).map((repo: RepoModel) => repo.name);
+            const dbNames = (project.dbs ?? []).map((db: DatabaseModel) => getDatabaseLabel(db));
+            const moduleNames = (selectedDb?.modules ?? []).map(module => module.name);
+            const ticketIds = sanitizeProjectTickets(project.tickets).map(ticket => ticket.id);
+
+            const detailParts = [
+                repoNames.length ? `Repos: ${listSome(repoNames)}` : '',
+                dbNames.length ? `DBs: ${listSome(dbNames)}` : '',
+                moduleNames.length ? `Modules: ${listSome(moduleNames)}` : '',
+                ticketIds.length ? `Tickets: ${listSome(ticketIds)}` : ''
+            ].filter(Boolean);
 
             return {
                 label: `${project.isSelected ? '$(arrow-right) ' : ''}${project.name}`,
-                description: `${repoCount} repo${repoCount === 1 ? '' : 's'} | ${ticketCount} ticket${ticketCount === 1 ? '' : 's'}${dbInfo}`,
-                detail: `Created: ${new Date(project.createdAt).toLocaleDateString()} | Repositories: ${project.repos.map(r => r.name).join(', ')}`,
+                description: `${repoNames.length} repos • ${dbNames.length} dbs${selectedDb ? ` • DB: ${getDatabaseLabel(selectedDb)}` : ''}`,
+                detail: detailParts.join('  |  ') || `Created: ${new Date(project.createdAt).toLocaleDateString()}`,
                 projectUid: project.uid
             };
         });
