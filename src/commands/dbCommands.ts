@@ -21,6 +21,8 @@ import {
 } from '../dbs';
 import { showBriefStatus } from '../services/notifications';
 import { openServerInBrowser } from '../services/server';
+import { getDatabaseLabel, stripSettings } from '../utils';
+import type { DatabaseModel } from '../models/db';
 
 export function registerDbCommands(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
@@ -134,6 +136,40 @@ export function registerDbCommands(deps: CommandDeps): void {
         terminal.show();
         // db names are validated on creation, but quote defensively anyway
         terminal.sendText(`psql ${JSON.stringify(db.id)}`);
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.rename', async (event) => {
+        const db = extractDatabaseFromEvent(event);
+        if (!db) {
+            void showError('Could not identify the database to rename.');
+            return;
+        }
+        const current = getDatabaseLabel(db);
+        const entered = await vscode.window.showInputBox({
+            prompt: `New display name for "${db.id}" (the PostgreSQL database is not renamed)`,
+            value: current,
+            ignoreFocusOut: true,
+            validateInput: value => (value.trim() ? undefined : 'Display name cannot be empty')
+        });
+        const newName = entered?.trim();
+        if (!newName || newName === current) {
+            return;
+        }
+
+        const result = await SettingsStore.getSelectedProject();
+        if (!result) {
+            return;
+        }
+        const { data, project } = result;
+        const target = (project.dbs as DatabaseModel[] | undefined)?.find(entry => entry.id === db.id);
+        if (!target) {
+            void showError('The database could not be found in the current project.');
+            return;
+        }
+        target.displayName = newName;
+        target.name = newName;
+        await SettingsStore.saveWithoutComments(stripSettings(data));
+        await refreshAll({ reason: 'ui' });
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand('dbSelector.copyName', async (event) => {

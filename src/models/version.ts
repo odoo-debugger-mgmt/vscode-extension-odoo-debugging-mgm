@@ -58,10 +58,10 @@ export class VersionModel {
 
         // Baseline settings for partial payloads (full defaults are managed by VersionsService/config).
         this.settings = {
-            debuggerName: 'odoo:18.0',
+            debuggerName: 'odoo:19.0',
             debuggerVersion: "1.0.0",
-            portNumber: 8018,
-            shellPortNumber: 5018,
+            portNumber: 8019,
+            shellPortNumber: 5019,
             limitTimeReal: 0,
             limitTimeCpu: 0,
             maxCronThreads: 0,

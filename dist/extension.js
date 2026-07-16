@@ -797,10 +797,10 @@ exports.SettingsModel = void 0;
  * Runtime settings shape shared by versions (paths, ports, params).
  */
 class SettingsModel {
-    debuggerName = "odoo:18.0";
+    debuggerName = "odoo:19.0";
     debuggerVersion = "1.0.0";
-    portNumber = 8018;
-    shellPortNumber = 5018;
+    portNumber = 8019;
+    shellPortNumber = 5019;
     limitTimeReal = 0;
     limitTimeCpu = 0;
     maxCronThreads = 0;
@@ -1512,10 +1512,10 @@ async function getGitBranches(repoPath) {
 function getDefaultVersionSettings() {
     const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
     return {
-        debuggerName: config.get('debuggerName', 'odoo:18.0'),
+        debuggerName: config.get('debuggerName', 'odoo:19.0'),
         debuggerVersion: config.get('debuggerVersion', '1.0.0'),
-        portNumber: config.get('portNumber', 8018),
-        shellPortNumber: config.get('shellPortNumber', 5018),
+        portNumber: config.get('portNumber', 8019),
+        shellPortNumber: config.get('shellPortNumber', 5019),
         limitTimeReal: config.get('limitTimeReal', 0),
         limitTimeCpu: config.get('limitTimeCpu', 0),
         maxCronThreads: config.get('maxCronThreads', 0),
@@ -4761,10 +4761,10 @@ class VersionModel {
         this.updatedAt = new Date();
         // Baseline settings for partial payloads (full defaults are managed by VersionsService/config).
         this.settings = {
-            debuggerName: 'odoo:18.0',
+            debuggerName: 'odoo:19.0',
             debuggerVersion: "1.0.0",
-            portNumber: 8018,
-            shellPortNumber: 5018,
+            portNumber: 8019,
+            shellPortNumber: 5019,
             limitTimeReal: 0,
             limitTimeCpu: 0,
             maxCronThreads: 0,
@@ -13262,6 +13262,7 @@ const versionCommands_1 = __webpack_require__(78);
 const debugCommands_1 = __webpack_require__(80);
 const reposExplorerCommands_1 = __webpack_require__(81);
 const editorCommands_1 = __webpack_require__(82);
+const helpCommands_1 = __webpack_require__(83);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -13274,6 +13275,7 @@ function registerAllCommands(deps) {
     (0, debugCommands_1.registerDebugCommands)(deps);
     (0, reposExplorerCommands_1.registerReposExplorerCommands)(deps);
     (0, editorCommands_1.registerEditorCommands)(deps);
+    (0, helpCommands_1.registerHelpCommands)(deps);
 }
 
 
@@ -14319,6 +14321,7 @@ const logger_1 = __webpack_require__(11);
 const dbs_1 = __webpack_require__(32);
 const notifications_2 = __webpack_require__(13);
 const server_1 = __webpack_require__(62);
+const utils_1 = __webpack_require__(7);
 function registerDbCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('dbSelector.create', async () => {
@@ -14428,6 +14431,38 @@ function registerDbCommands(deps) {
         terminal.show();
         // db names are validated on creation, but quote defensively anyway
         terminal.sendText(`psql ${JSON.stringify(db.id)}`);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.rename', async (event) => {
+        const db = (0, dbs_1.extractDatabaseFromEvent)(event);
+        if (!db) {
+            void (0, notifications_1.showError)('Could not identify the database to rename.');
+            return;
+        }
+        const current = (0, utils_1.getDatabaseLabel)(db);
+        const entered = await vscode.window.showInputBox({
+            prompt: `New display name for "${db.id}" (the PostgreSQL database is not renamed)`,
+            value: current,
+            ignoreFocusOut: true,
+            validateInput: value => (value.trim() ? undefined : 'Display name cannot be empty')
+        });
+        const newName = entered?.trim();
+        if (!newName || newName === current) {
+            return;
+        }
+        const result = await settingsStore_1.SettingsStore.getSelectedProject();
+        if (!result) {
+            return;
+        }
+        const { data, project } = result;
+        const target = project.dbs?.find(entry => entry.id === db.id);
+        if (!target) {
+            void (0, notifications_1.showError)('The database could not be found in the current project.');
+            return;
+        }
+        target.displayName = newName;
+        target.name = newName;
+        await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+        await refreshAll({ reason: 'ui' });
     }));
     context.subscriptions.push(vscode.commands.registerCommand('dbSelector.copyName', async (event) => {
         const db = (0, dbs_1.extractDatabaseFromEvent)(event);
@@ -15677,6 +15712,93 @@ function registerEditorCommands(deps) {
             return;
         }
         await moduleTreeView.reveal(node, { select: true, focus: true });
+    }));
+}
+
+
+/***/ }),
+/* 83 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerHelpCommands = registerHelpCommands;
+/**
+ * Help commands: a keyboard-shortcut cheat sheet generated from the
+ * extension's own package.json contributions, so it never goes stale.
+ * Picking an entry runs the command; the last entry opens the Keyboard
+ * Shortcuts editor for customization.
+ */
+const vscode = __importStar(__webpack_require__(1));
+/** 'ctrl+alt+o s' → 'Ctrl+Alt+O S' */
+function formatKey(key) {
+    return key
+        .split(' ')
+        .map(chord => chord
+        .split('+')
+        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+        .join('+'))
+        .join(' ');
+}
+function registerHelpCommands(deps) {
+    const { context } = deps;
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.showKeyboardShortcuts', async () => {
+        const contributes = vscode.extensions.getExtension('AhmadMansour.odoo-devtools-vscode')?.packageJSON?.contributes;
+        const keybindings = contributes?.keybindings ?? [];
+        const titles = new Map((contributes?.commands ?? []).map(entry => [entry.command, entry.title]));
+        const isMac = process.platform === 'darwin';
+        const picks = keybindings.map(binding => ({
+            label: titles.get(binding.command) ?? binding.command,
+            description: formatKey(isMac && binding.mac ? binding.mac : binding.key),
+            command: binding.command
+        }));
+        picks.push({ label: '', kind: vscode.QuickPickItemKind.Separator }, { label: '$(gear) Customize Keyboard Shortcuts…', description: 'Open the Keyboard Shortcuts editor filtered to Odoo' });
+        const selected = await vscode.window.showQuickPick(picks, {
+            title: 'Odoo DevTools Keyboard Shortcuts',
+            placeHolder: 'Pick an entry to run its command',
+            matchOnDescription: true
+        });
+        if (!selected) {
+            return;
+        }
+        if (!selected.command) {
+            await vscode.commands.executeCommand('workbench.action.openGlobalKeybindings', 'odoo');
+            return;
+        }
+        await vscode.commands.executeCommand(selected.command);
     }));
 }
 

@@ -91,7 +91,7 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 - Create databases four ways: **Fresh**, **From Dump** (folder with `dump.sql`, `.zip`, `.sql`, `.sql.gz` — streamed straight into psql), **From Template** (`createdb -T` clone), or **Connect to Existing** (picked from your live PostgreSQL instance).
 - Restored dumps are neutralized for development: crons and outgoing mail disabled, passwords reset (`admin`/`admin`), fresh database UUID, extended expiration, mailcatcher entry.
 - The Odoo version is **auto-detected** from the database contents and linked to the matching version profile.
-- Context actions: restore, delete, clone, copy name, **open in browser**, **open psql shell**, change linked version, configure per-repo branches.
+- Context actions: **rename display name**, copy name, clone, restore, **open in browser**, **open psql shell**, change linked version, configure per-repo branches, delete. Renaming only changes the label — the PostgreSQL database keeps its name.
 - **Templates** (`Manage Database Templates`): register or create template databases and clone from them in seconds; import/export template lists as JSON.
 - **Reconcile Databases** finds stored references whose PostgreSQL database no longer exists and removes them in one pass.
 
@@ -165,6 +165,9 @@ Right-click inside a file that belongs to an Odoo module (toggle with `odooDebug
 | `Ctrl+Alt+O R` | Restart Server |
 | `Ctrl+Alt+O B` | Open Odoo in Browser |
 | `Ctrl+Alt+O M` | Configure Modules (quick pick) |
+| `Ctrl+Alt+O K` | Keyboard Shortcuts cheat sheet |
+
+Forgot a chord? `Ctrl+Alt+O K` (or **Odoo DevTools: Keyboard Shortcuts** in the palette / the Projects view `…` menu) lists every shortcut — picking one runs its command.
 | `Ctrl+Alt+O T` | Toggle Testing Mode |
 | `Ctrl+Alt+O D` | Search Databases (quick switch) |
 | `Ctrl+Alt+O V` | Switch Active Version |

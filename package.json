@@ -535,6 +535,17 @@
         "icon": "$(terminal)"
       },
       {
+        "command": "dbSelector.rename",
+        "title": "Rename Display Name",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "odoo.showKeyboardShortcuts",
+        "title": "Keyboard Shortcuts",
+        "category": "Odoo DevTools",
+        "icon": "$(record-keys)"
+      },
+      {
         "command": "odoo.runTestsForCurrentFile",
         "title": "Run Odoo Tests for Current File",
         "category": "Odoo DevTools",
@@ -608,139 +619,154 @@
           "group": "navigation@1"
         },
         {
-          "command": "projectSelector.setup",
-          "when": "view == projectSelector",
-          "group": "navigation@2"
-        },
-        {
-          "command": "projectSelector.importProject",
-          "when": "view == projectSelector",
-          "group": "navigation@3"
-        },
-        {
-          "command": "projectSelector.editSettings",
-          "when": "view == projectSelector",
-          "group": "navigation@4"
-        },
-        {
-          "command": "projectSelector.openTicket",
-          "when": "view == projectSelector",
-          "group": "navigation@4.5"
-        },
-        {
-          "command": "projectSelector.sort",
-          "when": "view == projectSelector",
-          "group": "navigation@8"
-        },
-        {
           "command": "odoo-debugger.quickProjectSearch",
           "when": "view == projectSelector",
-          "group": "navigation@7.5"
+          "group": "navigation@2"
         },
         {
           "command": "odoo.startServer",
           "when": "view == projectSelector",
-          "group": "navigation@5"
+          "group": "navigation@3"
+        },
+        {
+          "command": "projectSelector.setup",
+          "when": "view == projectSelector",
+          "group": "1_project@1"
+        },
+        {
+          "command": "projectSelector.importProject",
+          "when": "view == projectSelector",
+          "group": "1_project@2"
+        },
+        {
+          "command": "projectSelector.editSettings",
+          "when": "view == projectSelector",
+          "group": "1_project@3"
+        },
+        {
+          "command": "projectSelector.openTicket",
+          "when": "view == projectSelector",
+          "group": "1_project@4"
+        },
+        {
+          "command": "proj.openProjectWorkspace",
+          "when": "view == projectSelector",
+          "group": "1_project@5"
         },
         {
           "command": "odoo.startShell",
           "when": "view == projectSelector",
-          "group": "navigation@6"
+          "group": "2_server@1"
+        },
+        {
+          "command": "projectSelector.sort",
+          "when": "view == projectSelector",
+          "group": "3_view@1"
         },
         {
           "command": "projectSelector.refresh",
           "when": "view == projectSelector",
-          "group": "navigation@7"
+          "group": "3_view@2"
         },
         {
-          "command": "dbSelector.refresh",
-          "when": "view == dbSelector",
-          "group": "navigation"
+          "command": "odoo.showKeyboardShortcuts",
+          "when": "view == projectSelector",
+          "group": "4_help@1"
         },
         {
           "command": "dbSelector.create",
           "when": "view == dbSelector",
-          "group": "navigation"
-        },
-        {
-          "command": "dbSelector.manageTemplates",
-          "when": "view == dbSelector",
-          "group": "navigation"
-        },
-        {
-          "command": "dbSelector.sort",
-          "when": "view == dbSelector",
-          "group": "navigation"
+          "group": "navigation@1"
         },
         {
           "command": "dbSelector.quickSearch",
           "when": "view == dbSelector",
-          "group": "navigation"
+          "group": "navigation@2"
         },
         {
-          "command": "repoSelector.refresh",
-          "when": "view == repoSelector",
-          "group": "navigation"
+          "command": "dbSelector.manageTemplates",
+          "when": "view == dbSelector",
+          "group": "1_database@1"
         },
         {
-          "command": "repoSelector.sort",
-          "when": "view == repoSelector",
-          "group": "navigation"
+          "command": "dbSelector.reconcile",
+          "when": "view == dbSelector",
+          "group": "1_database@2"
+        },
+        {
+          "command": "dbSelector.sort",
+          "when": "view == dbSelector",
+          "group": "2_view@1"
+        },
+        {
+          "command": "dbSelector.refresh",
+          "when": "view == dbSelector",
+          "group": "2_view@2"
         },
         {
           "command": "repoSelector.quickSearch",
           "when": "view == repoSelector",
-          "group": "navigation"
-        },
-        {
-          "command": "moduleSelector.create",
-          "when": "view == moduleSelector",
-          "group": "navigation@0"
-        },
-        {
-          "command": "moduleSelector.installAll",
-          "when": "view == moduleSelector && !odoo-debugger.testing_enabled",
           "group": "navigation@1"
         },
         {
-          "command": "moduleSelector.updateInstalled",
-          "when": "view == moduleSelector && !odoo-debugger.testing_enabled",
-          "group": "navigation@2"
+          "command": "repoSelector.sort",
+          "when": "view == repoSelector",
+          "group": "1_view@1"
         },
         {
-          "command": "moduleSelector.updateAll",
-          "when": "view == moduleSelector && !odoo-debugger.testing_enabled",
-          "group": "navigation@3"
-        },
-        {
-          "command": "moduleSelector.clearAll",
-          "when": "view == moduleSelector && !odoo-debugger.testing_enabled",
-          "group": "navigation@4"
-        },
-        {
-          "command": "moduleSelector.viewInstalled",
-          "when": "view == moduleSelector",
-          "group": "navigation@5"
-        },
-        {
-          "command": "moduleSelector.refresh",
-          "when": "view == moduleSelector",
-          "group": "navigation@6"
-        },
-        {
-          "command": "moduleSelector.sort",
-          "when": "view == moduleSelector",
-          "group": "navigation@7"
-        },
-        {
-          "command": "moduleSelector.quickSearch",
-          "when": "view == moduleSelector",
-          "group": "navigation@7.5"
+          "command": "repoSelector.refresh",
+          "when": "view == repoSelector",
+          "group": "1_view@2"
         },
         {
           "command": "moduleSelector.quickConfigure",
           "when": "view == moduleSelector",
-          "group": "navigation@7.6"
+          "group": "navigation@1"
+        },
+        {
+          "command": "moduleSelector.quickSearch",
+          "when": "view == moduleSelector",
+          "group": "navigation@2"
+        },
+        {
+          "command": "moduleSelector.create",
+          "when": "view == moduleSelector",
+          "group": "navigation@3"
+        },
+        {
+          "command": "moduleSelector.installAll",
+          "when": "view == moduleSelector && !odoo-debugger.testing_enabled",
+          "group": "1_bulk@1"
+        },
+        {
+          "command": "moduleSelector.updateAll",
+          "when": "view == moduleSelector && !odoo-debugger.testing_enabled",
+          "group": "1_bulk@2"
+        },
+        {
+          "command": "moduleSelector.updateInstalled",
+          "when": "view == moduleSelector && !odoo-debugger.testing_enabled",
+          "group": "1_bulk@3"
+        },
+        {
+          "command": "moduleSelector.clearAll",
+          "when": "view == moduleSelector && !odoo-debugger.testing_enabled",
+          "group": "1_bulk@4"
+        },
+        {
+          "command": "moduleSelector.viewInstalled",
+          "when": "view == moduleSelector",
+          "group": "1_bulk@5"
+        },
+        {
+          "command": "moduleSelector.sort",
+          "when": "view == moduleSelector",
+          "group": "2_view@1"
+        },
+        {
+          "command": "moduleSelector.refresh",
+          "when": "view == moduleSelector",
+          "group": "2_view@2"
         },
         {
           "command": "testingSelector.addTestTag",
@@ -755,7 +781,7 @@
         {
           "command": "testingSelector.refresh",
           "when": "view == testingSelector",
-          "group": "navigation@3"
+          "group": "1_view@1"
         },
         {
           "command": "odoo.createVersion",
@@ -763,91 +789,96 @@
           "group": "navigation@1"
         },
         {
-          "command": "odoo.openVersionDefaults",
+          "command": "versionsManager.quickSearch",
           "when": "view == versionsManager",
           "group": "navigation@2"
         },
         {
-          "command": "versionsManager.sort",
+          "command": "odoo.openVersionDefaults",
           "when": "view == versionsManager",
-          "group": "navigation@2.5"
+          "group": "1_version@1"
         },
         {
-          "command": "versionsManager.quickSearch",
+          "command": "odoo.manageVersions",
           "when": "view == versionsManager",
-          "group": "navigation@2.6"
+          "group": "1_version@2"
+        },
+        {
+          "command": "versionsManager.sort",
+          "when": "view == versionsManager",
+          "group": "2_view@1"
         },
         {
           "command": "odoo.refreshVersions",
           "when": "view == versionsManager",
-          "group": "navigation@3"
-        },
-        {
-          "command": "projectRepos.sort",
-          "when": "view == odt.projectReposExplorer",
-          "group": "navigation@1"
+          "group": "2_view@2"
         },
         {
           "command": "projectRepos.quickSearch",
           "when": "view == odt.projectReposExplorer",
-          "group": "navigation@1.1"
+          "group": "navigation@1"
         },
         {
-          "command": "dbSelector.reconcile",
-          "when": "view == dbSelector",
-          "group": "navigation@4.5"
+          "command": "projectRepos.sort",
+          "when": "view == odt.projectReposExplorer",
+          "group": "1_view@1"
         }
       ],
       "view/item/context": [
         {
-          "command": "projectSelector.delete",
-          "when": "view == projectSelector",
-          "group": "inline"
-        },
-        {
           "command": "projectSelector.editSettings",
           "when": "view == projectSelector",
-          "group": "project"
+          "group": "1_project@1"
         },
         {
           "command": "projectSelector.manageTickets",
           "when": "view == projectSelector",
-          "group": "project"
+          "group": "1_project@2"
         },
         {
           "command": "projectSelector.openTicket",
           "when": "view == projectSelector",
-          "group": "project"
+          "group": "1_project@3"
         },
         {
           "command": "projectSelector.duplicateProject",
           "when": "view == projectSelector",
-          "group": "project"
+          "group": "2_share@1"
         },
         {
           "command": "projectSelector.exportProject",
           "when": "view == projectSelector",
-          "group": "project"
+          "group": "2_share@2"
+        },
+        {
+          "command": "projectSelector.delete",
+          "when": "view == projectSelector",
+          "group": "9_danger@1"
+        },
+        {
+          "when": "view == dbSelector && viewItem == database",
+          "command": "dbSelector.rename",
+          "group": "1_database@1"
         },
         {
           "when": "view == dbSelector && viewItem == database",
           "command": "dbSelector.restore",
-          "group": "database@1"
-        },
-        {
-          "when": "view == dbSelector && viewItem == database",
-          "command": "dbSelector.delete",
-          "group": "database@2"
+          "group": "1_database@4"
         },
         {
           "when": "view == dbSelector && viewItem == database",
           "command": "dbSelector.changeVersion",
-          "group": "database@3"
+          "group": "3_config@1"
         },
         {
           "when": "view == dbSelector && viewItem == database",
           "command": "dbSelector.configureRepoBranches",
-          "group": "database@4"
+          "group": "3_config@2"
+        },
+        {
+          "when": "view == dbSelector && viewItem == database",
+          "command": "dbSelector.delete",
+          "group": "9_danger@1"
         },
         {
           "when": "view == moduleSelector && viewItem == module",
@@ -887,7 +918,7 @@
         {
           "command": "odoo.changeBranch",
           "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
-          "group": "version"
+          "group": "1_version@1"
         },
         {
           "command": "odooDebugger.revealInExplorer",
@@ -952,12 +983,12 @@
         {
           "command": "odoo.cloneVersion",
           "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
-          "group": "version"
+          "group": "1_version@2"
         },
         {
           "command": "odoo.deleteVersion",
           "when": "view == versionsManager && viewItem == version",
-          "group": "version"
+          "group": "9_danger@1"
         },
         {
           "command": "odoo.setSettingToDefault",
@@ -972,12 +1003,12 @@
         {
           "command": "odoo.setAllSettingsToDefault",
           "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
-          "group": "versionDefaults@1"
+          "group": "2_defaults@1"
         },
         {
           "command": "odoo.setAllSettingsAsDefault",
           "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
-          "group": "versionDefaults@2"
+          "group": "2_defaults@2"
         },
         {
           "command": "moduleSelector.togglePsaeInternalModule",
@@ -992,22 +1023,22 @@
         {
           "command": "dbSelector.copyName",
           "when": "view == dbSelector && viewItem == database",
-          "group": "database@5"
+          "group": "1_database@2"
         },
         {
           "command": "dbSelector.clone",
           "when": "view == dbSelector && viewItem == database",
-          "group": "database@6"
+          "group": "1_database@3"
         },
         {
           "command": "dbSelector.openInBrowser",
           "when": "view == dbSelector && viewItem == database",
-          "group": "databaseOpen@1"
+          "group": "2_open@1"
         },
         {
           "command": "dbSelector.openPsqlShell",
           "when": "view == dbSelector && viewItem == database",
-          "group": "databaseOpen@2"
+          "group": "2_open@2"
         },
         {
           "command": "odooDebugger.relocateRepo",
@@ -1022,7 +1053,7 @@
         {
           "command": "projectSelector.detectTickets",
           "when": "view == projectSelector",
-          "group": "project@9"
+          "group": "1_project@4"
         }
       ],
       "commandPalette": [
@@ -1068,6 +1099,10 @@
         },
         {
           "command": "dbSelector.openPsqlShell",
+          "when": "false"
+        },
+        {
+          "command": "dbSelector.rename",
           "when": "false"
         },
         {
@@ -1321,6 +1356,12 @@
         "when": "odoo-debugger.is_active"
       },
       {
+        "command": "odoo.showKeyboardShortcuts",
+        "key": "ctrl+alt+o k",
+        "mac": "cmd+alt+o k",
+        "when": "odoo-debugger.is_active"
+      },
+      {
         "command": "odoo.toggleTestingMode",
         "key": "ctrl+alt+o t",
         "mac": "cmd+alt+o t",
@@ -1344,7 +1385,7 @@
       "properties": {
         "odooDebugger.defaultVersion.debuggerName": {
           "type": "string",
-          "default": "odoo:18.0",
+          "default": "odoo:19.0",
           "description": "Default debugger name for new versions"
         },
         "odooDebugger.defaultVersion.debuggerVersion": {
@@ -1354,12 +1395,12 @@
         },
         "odooDebugger.defaultVersion.portNumber": {
           "type": "number",
-          "default": 8018,
+          "default": 8019,
           "description": "Default port number for new versions"
         },
         "odooDebugger.defaultVersion.shellPortNumber": {
           "type": "number",
-          "default": 5018,
+          "default": 5019,
           "description": "Default shell port number for new versions"
         },
         "odooDebugger.defaultVersion.limitTimeReal": {

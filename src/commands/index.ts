@@ -18,6 +18,7 @@ import { registerVersionCommands } from './versionCommands';
 import { registerDebugCommands } from './debugCommands';
 import { registerReposExplorerCommands } from './reposExplorerCommands';
 import { registerEditorCommands } from './editorCommands';
+import { registerHelpCommands } from './helpCommands';
 
 export type RefreshReason = 'ui' | 'debugger' | 'all';
 
@@ -58,4 +59,5 @@ export function registerAllCommands(deps: CommandDeps): void {
     registerDebugCommands(deps);
     registerReposExplorerCommands(deps);
     registerEditorCommands(deps);
+    registerHelpCommands(deps);
 }

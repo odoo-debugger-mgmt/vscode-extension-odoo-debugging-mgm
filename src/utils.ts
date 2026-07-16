@@ -781,10 +781,10 @@ export function getDefaultVersionSettings(): any {
     const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
 
     return {
-        debuggerName: config.get('debuggerName', 'odoo:18.0'),
+        debuggerName: config.get('debuggerName', 'odoo:19.0'),
         debuggerVersion: config.get('debuggerVersion', '1.0.0'),
-        portNumber: config.get('portNumber', 8018),
-        shellPortNumber: config.get('shellPortNumber', 5018),
+        portNumber: config.get('portNumber', 8019),
+        shellPortNumber: config.get('shellPortNumber', 5019),
         limitTimeReal: config.get('limitTimeReal', 0),
         limitTimeCpu: config.get('limitTimeCpu', 0),
         maxCronThreads: config.get('maxCronThreads', 0),

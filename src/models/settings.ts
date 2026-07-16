@@ -2,10 +2,10 @@
  * Runtime settings shape shared by versions (paths, ports, params).
  */
 export class SettingsModel {
-    debuggerName: string = "odoo:18.0";
+    debuggerName: string = "odoo:19.0";
     debuggerVersion: string = "1.0.0";
-    portNumber: number = 8018;
-    shellPortNumber: number = 5018;
+    portNumber: number = 8019;
+    shellPortNumber: number = 5019;
     limitTimeReal: number = 0;
     limitTimeCpu: number = 0;
     maxCronThreads: number = 0;

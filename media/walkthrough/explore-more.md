@@ -5,4 +5,4 @@
 - **Database templates**: save a prepared database as a template (`createdb -T`) and spin up clones in seconds from the Databases view.
 - **Project Repos** in the Explorer sidebar: a project-scoped file tree with file operations, current branch per repo, and a relocate action when a repo folder moved.
 - **Editor actions**: right-click inside a module file to run its tests, mark the module for upgrade, or reveal it in the Modules view.
-- **Keybindings**: `Ctrl+Alt+P` project search, `Ctrl+Alt+O` + `S`/`X`/`N`/`R` for start/stop/run-without-debug/restart server, `T` testing mode, `D` database switch, `V` version switch, `B` open in browser, `M` configure modules.
+- **Keybindings**: `Ctrl+Alt+P` project search, `Ctrl+Alt+O` + `S`/`X`/`N`/`R` for start/stop/run-without-debug/restart server, `T` testing mode, `D` database switch, `V` version switch, `B` open in browser, `M` configure modules — and `Ctrl+Alt+O K` shows this list as a runnable cheat sheet whenever you forget one.
