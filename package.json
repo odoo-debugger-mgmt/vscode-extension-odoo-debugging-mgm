@@ -1362,6 +1362,66 @@
         "when": "odoo-debugger.is_active"
       },
       {
+        "command": "projectSelector.create",
+        "key": "ctrl+alt+o c",
+        "mac": "cmd+alt+o c",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "dbSelector.create",
+        "key": "ctrl+alt+o shift+d",
+        "mac": "cmd+alt+o shift+d",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "moduleSelector.create",
+        "key": "ctrl+alt+o shift+m",
+        "mac": "cmd+alt+o shift+m",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "odoo.createVersion",
+        "key": "ctrl+alt+o shift+v",
+        "mac": "cmd+alt+o shift+v",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "projectSelector.manageTickets",
+        "key": "ctrl+alt+o l",
+        "mac": "cmd+alt+o l",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "projectSelector.openTicket",
+        "key": "ctrl+alt+o o",
+        "mac": "cmd+alt+o o",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "proj.openProjectWorkspace",
+        "key": "ctrl+alt+o w",
+        "mac": "cmd+alt+o w",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "odoo.startShell",
+        "key": "ctrl+alt+o h",
+        "mac": "cmd+alt+o h",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "odoo.upgradeCurrentModule",
+        "key": "ctrl+alt+o u",
+        "mac": "cmd+alt+o u",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "odoo.runTestsForCurrentFile",
+        "key": "ctrl+alt+o f",
+        "mac": "cmd+alt+o f",
+        "when": "odoo-debugger.is_active"
+      },
+      {
         "command": "odoo.toggleTestingMode",
         "key": "ctrl+alt+o t",
         "mac": "cmd+alt+o t",

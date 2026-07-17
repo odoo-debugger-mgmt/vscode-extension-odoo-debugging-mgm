@@ -51,6 +51,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - Setup Odoo: branch list refreshed for Odoo 19.0, and the clone destination is selectable (workspace folder by default).
 - **Rename Display Name** context action on databases — change the label shown in the extension without touching the PostgreSQL database.
 - **Keyboard Shortcuts cheat sheet** (`Ctrl+Alt+O K`, palette, Projects view `…` menu): lists every keybinding straight from the extension manifest; picking an entry runs its command, and a last entry opens the Keyboard Shortcuts editor.
+- **Chords for all common actions**: `Ctrl+Alt+O` + `C` create project, `Shift+D` create database, `Shift+M` create module, `Shift+V` create version, `L` manage/link tickets, `O` open ticket, `W` open project workspace, `H` Odoo shell, `U` upgrade current module, `F` run tests for current file — plain letters act, `Shift` variants create the matching thing.
 - **Menu reorganization**: view title bars keep at most three icons (create/search plus the view's primary action) with everything else in the `…` overflow, grouped (project/server/view, bulk/view, database/view); context menus are grouped semantically with destructive actions (Delete Project/Database/Version) isolated at the bottom — and Delete Project is no longer an inline hover icon.
 - Default version settings refreshed to the 19.0 era (`odoo:19.0`, ports 8019/5019) — existing version profiles keep their stored values.
 

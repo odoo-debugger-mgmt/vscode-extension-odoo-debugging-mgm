@@ -158,19 +158,33 @@ Right-click inside a file that belongs to an Odoo module (toggle with `odooDebug
 
 | Keybinding | Command |
 | --- | --- |
-| `Ctrl+Alt+P` | Search Projects (quick switch) |
+| **Server** | |
 | `Ctrl+Alt+O S` | Start Server |
 | `Ctrl+Alt+O X` | Stop Server |
 | `Ctrl+Alt+O N` | Run Server Without Debugging |
 | `Ctrl+Alt+O R` | Restart Server |
+| `Ctrl+Alt+O H` | Start Odoo Shell |
 | `Ctrl+Alt+O B` | Open Odoo in Browser |
-| `Ctrl+Alt+O M` | Configure Modules (quick pick) |
-| `Ctrl+Alt+O K` | Keyboard Shortcuts cheat sheet |
-
-Forgot a chord? `Ctrl+Alt+O K` (or **Odoo DevTools: Keyboard Shortcuts** in the palette / the Projects view `…` menu) lists every shortcut — picking one runs its command.
-| `Ctrl+Alt+O T` | Toggle Testing Mode |
+| **Switch** | |
+| `Ctrl+Alt+P` | Search Projects (quick switch) |
 | `Ctrl+Alt+O D` | Search Databases (quick switch) |
 | `Ctrl+Alt+O V` | Switch Active Version |
+| `Ctrl+Alt+O W` | Open Project Workspace |
+| **Create** | |
+| `Ctrl+Alt+O C` | Create Project |
+| `Ctrl+Alt+O Shift+D` | Create Database |
+| `Ctrl+Alt+O Shift+M` | Create Module (scaffold) |
+| `Ctrl+Alt+O Shift+V` | Create Version |
+| **Work** | |
+| `Ctrl+Alt+O M` | Configure Modules (quick pick) |
+| `Ctrl+Alt+O U` | Upgrade Current Module |
+| `Ctrl+Alt+O F` | Run Odoo Tests for Current File |
+| `Ctrl+Alt+O T` | Toggle Testing Mode |
+| `Ctrl+Alt+O L` | Manage (Link) Project Tickets |
+| `Ctrl+Alt+O O` | Open Project Ticket |
+| `Ctrl+Alt+O K` | Keyboard Shortcuts cheat sheet |
+
+The scheme: plain letters act, `Shift` variants create the matching thing (`D` switches databases, `Shift+D` creates one). Forgot a chord? `Ctrl+Alt+O K` (or **Odoo DevTools: Keyboard Shortcuts** in the palette / the Projects view `…` menu) lists every shortcut — picking one runs its command.
 
 Every view also has search (`$(search)`) and sort (`$(sort-precedence)`) actions in its title bar. All palette commands live under the **Odoo DevTools** category.
 
