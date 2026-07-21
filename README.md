@@ -97,7 +97,7 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 
 ### Modules
 
-- Modules discovered from the project's repos; click to cycle install → upgrade → unmanaged (green/yellow icons; filled/outline shows installed state).
+- Modules discovered from the project's repos; click to cycle install → upgrade → unmanaged. State reads by icon shape (down-arrow = install, up-arrow = upgrade, filled circle = installed, outline = not installed), so it stays legible even when a row is highlighted.
 - **Multi-select** (Ctrl/Shift-click) to set install/upgrade/clear on several modules at once.
 - **Configure Modules** (`Ctrl+Alt+O M`): a quick pick over all modules — Enter cycles install → upgrade → unmanaged, and per-item buttons set a state directly; stays open for several changes.
 - Right-click a module to **Reveal in Explorer** (VS Code file tree) or **Reveal in OS**.

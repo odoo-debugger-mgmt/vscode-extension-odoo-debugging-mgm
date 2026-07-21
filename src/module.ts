@@ -263,11 +263,16 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
     }
 
     private getModuleIcon(state: string, isInstalled: boolean): vscode.ThemeIcon {
+        // State is encoded by glyph SHAPE, not just color: when a tree row is
+        // selected VS Code repaints the icon with list.activeSelectionForeground
+        // and the charts.* tint is lost, so install/upgrade/installed must stay
+        // distinguishable without color. Directional arrows for the pending
+        // actions, filled vs outline circle for installed vs absent.
         switch (state) {
             case 'install':
-                return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.green'));
+                return new vscode.ThemeIcon('arrow-circle-down', new vscode.ThemeColor('charts.green'));
             case 'upgrade':
-                return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.yellow'));
+                return new vscode.ThemeIcon('arrow-circle-up', new vscode.ThemeColor('charts.yellow'));
             default:
                 return isInstalled
                     ? new vscode.ThemeIcon('circle-filled')
@@ -432,7 +437,13 @@ export async function quickConfigureModules(): Promise<void> {
                 if (installedNames.has(module.name)) {
                     statusParts.push('installed');
                 }
-                const marker = state === 'install' || state === 'upgrade' ? '$(circle-filled)' : '$(circle-outline)';
+                const marker = state === 'install'
+                    ? '$(arrow-circle-down)'
+                    : state === 'upgrade'
+                        ? '$(arrow-circle-up)'
+                        : installedNames.has(module.name)
+                            ? '$(circle-filled)'
+                            : '$(circle-outline)';
                 return {
                     label: `${marker} ${module.name}`,
                     description: statusParts.join(' • '),

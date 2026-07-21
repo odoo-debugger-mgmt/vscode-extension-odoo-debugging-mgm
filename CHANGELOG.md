@@ -15,7 +15,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - **Version creation is 2 prompts**: pick the branch (listed from your odoo repo), confirm the suggested name. Paths and ports come from `odooDebugger.defaultVersion.*` and stay editable in the Versions tree.
 - New databases use their plain PostgreSQL identifier as the display name (the "Project • Kind • Date • #hash" format is retired; existing names are kept).
 
-- The Modules view uses theme icons instead of emoji (green/yellow = install/upgrade, filled/outline = installed or not), and `ps*-internal` directories are collapsible groups with an explicit include/exclude toggle instead of inline pseudo-modules.
+- The Modules view uses theme icons instead of emoji (down-arrow = install, up-arrow = upgrade, filled circle = installed, outline = not installed), and `ps*-internal` directories are collapsible groups with an explicit include/exclude toggle instead of inline pseudo-modules.
 - launch.json is updated surgically: only the extension's own configuration entry is rewritten — user comments, formatting and other configurations are preserved.
 - The command palette no longer lists tree-only commands that errored when invoked without a selection (~50 commands hidden); user-invokable commands are grouped under the **Odoo DevTools** category.
 - Testing view: the Add Test Target / Set Test File buttons only appear while testing is enabled; naming-convention hints are shown inline in the input box; the command preview includes `--log-level`.
@@ -63,6 +63,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Fixed
 
+- Module and repo status icons stayed legible when a row is highlighted: state is now carried by icon **shape** (module install = down-arrow, upgrade = up-arrow, installed = filled circle, absent = outline; repo in-project = check, otherwise outline) instead of color alone, which VS Code strips on the selected row. Previously the install/upgrade/installed states all collapsed into one indistinguishable dot when clicked.
 - "Configure Version Defaults" opened the Settings UI with a wrong extension id filter (showed nothing).
 - The Projects view welcome content ("Open a folder…") never rendered due to a broken `when` clause.
 - Starting the server no longer kills unrelated debug sessions — only the extension's own session is restarted.

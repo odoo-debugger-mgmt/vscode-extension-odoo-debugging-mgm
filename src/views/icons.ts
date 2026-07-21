@@ -12,10 +12,13 @@ const RED = new vscode.ThemeColor('charts.red');
 /** The single currently-active item of a view (project, database, version). */
 export const activeIcon = new vscode.ThemeIcon('pass-filled', GREEN);
 
+// A check (included) vs an empty circle (not) so the state reads by SHAPE:
+// when a row is selected VS Code repaints the icon with the selection
+// foreground and the green tint is lost, but check-vs-circle still differs.
 /** Item included in the current selection (repos, toggles). */
-export const selectedIcon = new vscode.ThemeIcon('circle-filled', GREEN);
+export const selectedIcon = new vscode.ThemeIcon('check', GREEN);
 
-/** Item not included in the current selection (same small open circle as the Modules view). */
+/** Item not included in the current selection. */
 export const unselectedIcon = new vscode.ThemeIcon('circle-outline');
 
 /** Test target states. */
