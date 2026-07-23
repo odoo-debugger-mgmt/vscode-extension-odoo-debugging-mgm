@@ -1,23 +1,28 @@
+/**
+ * Versions view: version profiles with their settings as editable children.
+ */
 import * as vscode from 'vscode';
 import { VersionModel } from './models/version';
 import { VersionsService } from './versionsService';
-import { addActiveIndicator, getSettingDisplayName, getSettingDisplayValue } from './utils';
+import { getSettingDisplayName, getSettingDisplayValue } from './utils';
+import { activeIcon } from './views/icons';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
+import { logger } from './services/logger';
+import { BaseTreeProvider } from './views/baseTreeProvider';
 
 export class VersionTreeItem extends vscode.TreeItem {
     constructor(
         public readonly version: VersionModel,
-        public readonly collapsibleState: vscode.TreeItemCollapsibleState
+        public override readonly collapsibleState: vscode.TreeItemCollapsibleState
     ) {
-        // Use the same pattern as projects and databases - emoji in label
-        super(addActiveIndicator(version.name, version.isActive), collapsibleState);
+        super(version.name, collapsibleState);
 
-        this.tooltip = `${version.name} (${version.odooVersion})`;
+        this.id = version.id;
+        this.tooltip = VersionTreeItem.buildTooltip(version);
         this.description = version.odooVersion;
         this.contextValue = version.isActive ? 'activeVersion' : 'version';
-
-        // No icon needed - using emoji in label like other tabs
+        this.iconPath = version.isActive ? activeIcon : new vscode.ThemeIcon('versions');
 
         // Add command to switch to this version when clicked
         this.command = {
@@ -25,6 +30,27 @@ export class VersionTreeItem extends vscode.TreeItem {
             title: '',
             arguments: [version.id]
         };
+    }
+
+    private static buildTooltip(version: VersionModel): vscode.MarkdownString {
+        const lines: string[] = [
+            `**${version.name}**${version.isActive ? ' (active)' : ''}`,
+            `**Odoo Version:** ${version.odooVersion}`
+        ];
+        const settings = version.settings ?? {};
+        if (settings.portNumber) {
+            lines.push(`**Port:** ${settings.portNumber}`);
+        }
+        if (settings.odooPath) {
+            lines.push(`**Odoo Path:** ${settings.odooPath}`);
+        }
+        if (settings.pythonPath) {
+            lines.push(`**Python:** ${settings.pythonPath}`);
+        }
+        if (settings.customAddonsPath) {
+            lines.push(`**Custom Addons:** ${settings.customAddonsPath}`);
+        }
+        return new vscode.MarkdownString(lines.join('\n\n'));
     }
 }
 
@@ -38,6 +64,7 @@ export class VersionSettingTreeItem extends vscode.TreeItem {
         const displayValue = getSettingDisplayValue(key, value);
         super(`${displayName}: ${displayValue}`, vscode.TreeItemCollapsibleState.None);
 
+        this.id = `${versionId}:${key}`;
         this.tooltip = `${displayName}: ${displayValue}`;
         this.contextValue = 'versionSetting';
 
@@ -73,25 +100,12 @@ export class VersionSettingTreeItem extends vscode.TreeItem {
     }
 }
 
-type TreeDataChangeEvent = VersionTreeItem | VersionSettingTreeItem | undefined | null | void;
-
-export class VersionsTreeProvider implements vscode.TreeDataProvider<VersionTreeItem | VersionSettingTreeItem> {
-    private readonly _onDidChangeTreeData: vscode.EventEmitter<TreeDataChangeEvent> = new vscode.EventEmitter<TreeDataChangeEvent>();
-    readonly onDidChangeTreeData: vscode.Event<TreeDataChangeEvent> = this._onDidChangeTreeData.event;
-
+export class VersionsTreeProvider extends BaseTreeProvider<VersionTreeItem | VersionSettingTreeItem> {
     private readonly versionsService: VersionsService;
 
     constructor(private readonly sortPreferences: SortPreferences) {
+        super();
         this.versionsService = VersionsService.getInstance();
-
-        // Listen for version changes
-        vscode.commands.registerCommand('odoo.versionsChanged', () => {
-            this.refresh();
-        });
-    }
-
-    refresh(): void {
-        this._onDidChangeTreeData.fire();
     }
 
     getTreeItem(element: VersionTreeItem | VersionSettingTreeItem): vscode.TreeItem {
@@ -108,7 +122,7 @@ export class VersionsTreeProvider implements vscode.TreeDataProvider<VersionTree
                     new VersionTreeItem(version, vscode.TreeItemCollapsibleState.Collapsed)
                 );
             }).catch(error => {
-                console.error('Failed to load versions for tree view:', error);
+                logger.error('Failed to load versions for tree view:', error);
                 return [];
             });
         } else if (element instanceof VersionTreeItem) {

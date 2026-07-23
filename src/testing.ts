@@ -1,23 +1,26 @@
+/**
+ * Testing view and testing mode: toggling stashes/restores module
+ * selections and injects --test-enable/--test-tags/--test-file/
+ * --stop-after-init/--log-level into the launch configuration.
+ */
 import * as vscode from "vscode";
 import { SettingsStore } from './settingsStore';
 import { TestTag, TestingConfigModel, LogLevel, ensureTestingConfigModel } from './models/testing';
 import { ModuleModel } from './models/module';
 import { InstalledModuleInfo } from './models/module';
-import { showError, showInfo, showAutoInfo, showWarning, stripSettings, createInfoTreeItem } from './utils';
+import { showError, showInfo, showAutoInfo, stripSettings, createInfoTreeItem } from './utils';
 import { updateTestingContext } from './context';
 import { setupDebugger } from './debugger';
 import { getInstalledModules } from './services/database';
+import { logger } from './services/logger';
+import { showModalWarning } from './services/notifications';
+import { BaseTreeProvider } from './views/baseTreeProvider';
+import { includeIcon, excludeIcon, disabledIcon, selectedIcon, unselectedIcon } from './views/icons';
 
-export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-    private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
-    readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
+export class TestingTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
-    refresh(): void {
-        this._onDidChangeTreeData.fire();
-    }
-
-    constructor(private context: vscode.ExtensionContext) {
-        this.context = context;
+    constructor(_context: vscode.ExtensionContext) {
+        super();
     }
 
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -25,15 +28,17 @@ export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
     }
 
     async getChildren(element?: any): Promise<vscode.TreeItem[] | undefined> {
+        // Empty lists fall through to the view's welcome content, which
+        // explains that a project and database must be selected first.
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            return [createInfoTreeItem('Select a project before running this action.')];
+            return [];
         }
 
         const { data, project } = result;
         const db = project.dbs.find(db => db.isSelected === true);
         if (!db) {
-            return [createInfoTreeItem('Select a database before running this action.')];
+            return [];
         }
 
         let testingConfig = ensureTestingConfigModel(project.testingConfig);
@@ -41,7 +46,7 @@ export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
             // Save the converted model back to persist the conversion
             project.testingConfig = testingConfig;
             await SettingsStore.saveWithoutComments(stripSettings(data)).catch(error => {
-                console.warn('Failed to save converted testing config:', error);
+                logger.warn('Failed to save converted testing config:', error);
             });
         }
 
@@ -50,30 +55,27 @@ export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
             const tagItems: vscode.TreeItem[] = [];
 
             for (const tag of testingConfig.testTags) {
-                let prefix = '';
-                let stateText = '';
+                let stateIcon: vscode.ThemeIcon;
+                let stateText: string;
                 switch (tag.state) {
                     case 'include':
-                        prefix = '🟢';
+                        stateIcon = includeIcon;
                         stateText = 'included';
                         break;
                     case 'exclude':
-                        prefix = '🔴';
+                        stateIcon = excludeIcon;
                         stateText = 'excluded';
                         break;
-                    case 'disabled':
-                        prefix = '⚪';
+                    default:
+                        stateIcon = disabledIcon;
                         stateText = 'disabled';
                         break;
                 }
 
-                const typeIcon = this.getTypeIcon(tag.type);
-
-                const tagItem = new vscode.TreeItem(
-                    `${prefix} ${typeIcon} ${tag.value}`,
-                    vscode.TreeItemCollapsibleState.None
-                );
+                const tagItem = new vscode.TreeItem(tag.value, vscode.TreeItemCollapsibleState.None);
                 tagItem.id = tag.id; // Store the tag ID for context menu actions
+                tagItem.iconPath = stateIcon;
+                tagItem.description = tag.type;
                 tagItem.tooltip = `${tag.type}: ${tag.value} (${stateText})`;
                 tagItem.contextValue = 'testTag';
                 tagItem.command = {
@@ -96,9 +98,12 @@ export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
 
         // Testing enabled/disabled toggle
         const enableToggle = new vscode.TreeItem(
-            testingConfig.isEnabled ? '🟢 Testing Enabled' : '⚪ Testing Disabled',
+            testingConfig.isEnabled ? 'Testing Enabled' : 'Testing Disabled',
             vscode.TreeItemCollapsibleState.None
         );
+        enableToggle.iconPath = testingConfig.isEnabled
+            ? new vscode.ThemeIcon('beaker', new vscode.ThemeColor('charts.green'))
+            : new vscode.ThemeIcon('beaker');
         enableToggle.command = {
             command: 'testingSelector.toggleTesting',
             title: 'Toggle Testing',
@@ -113,20 +118,22 @@ export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
             // Test Tags section - Auto-expand if there are test tags
             const activeTags = testingConfig.testTags.filter(tag => tag.state !== 'disabled');
             const testTagsSection = new vscode.TreeItem(
-                `📋 Test Targets (${testingConfig.testTags.length} total, ${activeTags.length} active)`,
+                `Test Targets (${testingConfig.testTags.length} total, ${activeTags.length} active)`,
                 testingConfig.testTags.length > 0
                     ? vscode.TreeItemCollapsibleState.Expanded
                     : vscode.TreeItemCollapsibleState.Collapsed
             );
+            testTagsSection.iconPath = new vscode.ThemeIcon('list-unordered');
             testTagsSection.contextValue = 'testTagsSection';
-            testTagsSection.tooltip = 'Test targets - Click targets to cycle states: 🟢 Include → 🔴 Exclude → ⚪ Disabled. Right-click to remove.';
+            testTagsSection.tooltip = 'Test targets - Click targets to cycle states: Include → Exclude → Disabled. Right-click to remove.';
             treeItems.push(testTagsSection);
 
             // Test File section
             const testFileSection = new vscode.TreeItem(
-                testingConfig.testFile ? `📄 Test File: ${testingConfig.testFile}` : '📄 No Test File Set',
+                testingConfig.testFile ? `Test File: ${testingConfig.testFile}` : 'No Test File Set',
                 vscode.TreeItemCollapsibleState.None
             );
+            testFileSection.iconPath = new vscode.ThemeIcon('file-code');
             testFileSection.command = {
                 command: 'testingSelector.setTestFile',
                 title: 'Set Test File'
@@ -136,9 +143,11 @@ export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
 
             // Stop After Init toggle
             const stopAfterInitToggle = new vscode.TreeItem(
-                testingConfig.stopAfterInit ? '🟢 Stop After Init' : '⚪ Stop After Init',
+                'Stop After Init',
                 vscode.TreeItemCollapsibleState.None
             );
+            stopAfterInitToggle.iconPath = testingConfig.stopAfterInit ? selectedIcon : unselectedIcon;
+            stopAfterInitToggle.description = testingConfig.stopAfterInit ? 'on' : 'off';
             stopAfterInitToggle.command = {
                 command: 'testingSelector.toggleStopAfterInit',
                 title: 'Toggle Stop After Init'
@@ -147,23 +156,22 @@ export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
             treeItems.push(stopAfterInitToggle);
 
             // Log Level toggle
-            const getLogLevelIcon = (level: LogLevel): string => {
+            const getLogLevelIcon = (level: LogLevel): vscode.ThemeIcon => {
                 switch (level) {
-                    case 'disabled': return '⚪';
-                    case 'critical': return '🔴';
-                    case 'error': return '🟠';
-                    case 'warn': return '🟡';
-                    case 'debug': return '🔵';
-                    default: return '⚪';
+                    case 'critical': return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.red'));
+                    case 'error': return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.orange'));
+                    case 'warn': return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.yellow'));
+                    case 'debug': return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.blue'));
+                    default: return new vscode.ThemeIcon('circle-outline');
                 }
             };
 
-            const logLevelIcon = getLogLevelIcon(testingConfig.logLevel);
             const logLevelDisplay = testingConfig.logLevel === 'disabled' ? 'Log Level: Disabled' : `Log Level: ${testingConfig.logLevel.charAt(0).toUpperCase() + testingConfig.logLevel.slice(1)}`;
             const logLevelToggle = new vscode.TreeItem(
-                `${logLevelIcon} ${logLevelDisplay}`,
+                logLevelDisplay,
                 vscode.TreeItemCollapsibleState.None
             );
+            logLevelToggle.iconPath = getLogLevelIcon(testingConfig.logLevel);
             logLevelToggle.command = {
                 command: 'testingSelector.toggleLogLevel',
                 title: 'Toggle Log Level'
@@ -176,35 +184,25 @@ export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
             const commandPreview = this.generateCommandPreview(testingConfig);
             if (commandPreview) {
                 const previewItem = new vscode.TreeItem(
-                    `⚡ Command: ${commandPreview}`,
+                    `Command: ${commandPreview}`,
                     vscode.TreeItemCollapsibleState.None
                 );
+                previewItem.iconPath = new vscode.ThemeIcon('terminal');
                 previewItem.tooltip = `Full command: ${commandPreview}`;
                 treeItems.push(previewItem);
             }
         } else if (testingConfig.savedModuleStates && testingConfig.savedModuleStates.length > 0) {
             // Show info about saved states when testing is disabled
             const savedStatesInfo = new vscode.TreeItem(
-                `💾 ${testingConfig.savedModuleStates.length} module states saved`,
+                `${testingConfig.savedModuleStates.length} module states saved`,
                 vscode.TreeItemCollapsibleState.None
             );
+            savedStatesInfo.iconPath = new vscode.ThemeIcon('save');
             savedStatesInfo.tooltip = 'Module states from before enabling testing are saved and will be restored';
             treeItems.push(savedStatesInfo);
         }
 
         return treeItems;
-    }
-
-    private getTypeIcon(type: string): string {
-        switch (type) {
-            case 'module': return '📦';
-            case 'class': return '🔧';
-            case 'method': return '⚙️';
-            case 'tag': return '🏷️';
-            default:
-                console.warn(`Unknown test tag type: "${type}"`);
-                return '❓'; // Changed to question mark for debugging unknown types
-        }
     }
 
     private generateCommandPreview(testingConfig: TestingConfigModel): string {
@@ -224,6 +222,10 @@ export class TestingTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
             parts.push('--stop-after-init');
         }
 
+        if (testingConfig.logLevel && testingConfig.logLevel !== 'disabled') {
+            parts.push(`--log-level ${testingConfig.logLevel}`);
+        }
+
         return parts.join(' ');
     }
 }
@@ -233,14 +235,14 @@ export async function toggleTesting(event: any): Promise<void> {
         const { isEnabled } = event;
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return;
         }
 
         const { data, project } = result;
         const db = project.dbs.find(db => db.isSelected === true);
         if (!db) {
-            showError('Select a database before running this action.');
+            void showError('Select a database before running this action.');
             return;
         }
 
@@ -249,9 +251,8 @@ export async function toggleTesting(event: any): Promise<void> {
 
         if (isEnabled) {
             // Disable testing - restore module states
-            const confirm = await vscode.window.showWarningMessage(
+            const confirm = await showModalWarning(
                 'Are you sure you want to disable testing? This will restore the previous module states.',
-                { modal: true },
                 'Disable Testing'
             );
 
@@ -276,9 +277,8 @@ export async function toggleTesting(event: any): Promise<void> {
 
         } else {
             // Enable testing - save current states and clear modules
-            const confirm = await vscode.window.showWarningMessage(
+            const confirm = await showModalWarning(
                 'Enabling testing will clear all current module selections (install/upgrade). The current states will be saved and can be restored when testing is disabled. Continue?',
-                { modal: true },
                 'Enable Testing'
             );
 
@@ -302,16 +302,75 @@ export async function toggleTesting(event: any): Promise<void> {
             await setupDebugger();
         }
     } catch (error) {
-        console.error('Error in toggleTesting:', error);
-        showError(`Failed to toggle testing: ${error}`);
+        logger.error('Error in toggleTesting:', error);
+        void showError(`Failed to toggle testing: ${error}`);
     }
+}
+
+/**
+ * Programmatic testing setup used by "Run Odoo Tests for Current File":
+ * enables testing mode (with the usual confirmation) if needed, points
+ * --test-file at the given file and includes the module as a test target.
+ * Returns false when the user cancels or prerequisites are missing.
+ */
+export async function prepareTestRunForFile(filePath: string, moduleName: string): Promise<boolean> {
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
+        void showError('Select a project before running this action.');
+        return false;
+    }
+    const { data, project } = result;
+    const db = project.dbs.find(db => db.isSelected === true);
+    if (!db) {
+        void showError('Select a database before running tests.');
+        return false;
+    }
+
+    project.testingConfig = ensureTestingConfigModel(project.testingConfig);
+
+    if (!project.testingConfig.isEnabled) {
+        const confirm = await showModalWarning(
+            'Enable testing mode? Current module selections (install/upgrade) will be saved and cleared, and restored when testing is disabled.',
+            'Enable Testing'
+        );
+        if (confirm !== 'Enable Testing') {
+            return false;
+        }
+        project.testingConfig.savedModuleStates = db.modules.map(module => ({
+            name: module.name,
+            state: module.state
+        }));
+        db.modules = [];
+        project.testingConfig.isEnabled = true;
+        updateTestingContext(true);
+    }
+
+    project.testingConfig.testFile = filePath;
+
+    const existingTag = project.testingConfig.testTags.find(
+        tag => tag.type === 'module' && tag.value === moduleName
+    );
+    if (existingTag) {
+        existingTag.state = 'include';
+    } else {
+        project.testingConfig.testTags.push({
+            id: `tag-${Date.now()}`,
+            value: moduleName,
+            state: 'include',
+            type: 'module'
+        });
+    }
+
+    await SettingsStore.saveWithoutComments(stripSettings(data));
+    await setupDebugger();
+    return true;
 }
 
 export async function toggleStopAfterInit(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return;
         }
 
@@ -327,8 +386,8 @@ export async function toggleStopAfterInit(): Promise<void> {
         // Update launch.json with new test configuration
         await setupDebugger();
     } catch (error) {
-        console.error('Error in toggleStopAfterInit:', error);
-        showError(`Failed to toggle stop after init: ${error}`);
+        logger.error('Error in toggleStopAfterInit:', error);
+        void showError(`Failed to toggle stop after init: ${error}`);
     }
 }
 
@@ -336,7 +395,7 @@ export async function setTestFile(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return;
         }
 
@@ -364,8 +423,8 @@ export async function setTestFile(): Promise<void> {
             await setupDebugger();
         }
     } catch (error) {
-        console.error('Error in setTestFile:', error);
-        showError(`Failed to set test file: ${error}`);
+        logger.error('Error in setTestFile:', error);
+        void showError(`Failed to set test file: ${error}`);
     }
 }
 
@@ -373,7 +432,7 @@ export async function addTestTag(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return;
         }
 
@@ -381,13 +440,13 @@ export async function addTestTag(): Promise<void> {
         project.testingConfig = ensureTestingConfigModel(project.testingConfig);
 
         if (!project.testingConfig.isEnabled) {
-            showError('Enable testing before running this command.');
+            void showError('Enable testing before running this command.');
             return;
         }
 
         const db = project.dbs.find(db => db.isSelected === true);
         if (!db) {
-            showError('Select a database before running this action.');
+            void showError('Select a database before running this action.');
             return;
         }
 
@@ -434,7 +493,7 @@ export async function addTestTag(): Promise<void> {
             try {
                 const installedModules = await getInstalledModules(db.id);
                 if (installedModules.length === 0) {
-                    showInfo('No installed modules were found.');
+                    void showInfo('No installed modules were found.');
                     return;
                 }
 
@@ -473,7 +532,7 @@ export async function addTestTag(): Promise<void> {
                     await setupDebugger();
                 }
             } catch (error) {
-                showError(`Failed to get installed modules: ${error}`);
+                void showError(`Failed to get installed modules: ${error}`);
             }
         } else {
             // For other types, show a smart input with examples
@@ -489,33 +548,35 @@ export async function addTestTag(): Promise<void> {
                     : `Examples: ${examplesText}`,
                 value: '',
                 ignoreFocusOut: true,
-                validateInput: (value: string) => {
+                validateInput: (value: string): string | vscode.InputBoxValidationMessage | null => {
                     if (!value.trim()) {
                         return 'Please enter a value';
                     }
 
                     const trimmed = value.trim();
 
-                    // Basic validation based on type
+                    // Basic validation based on type; naming-convention hints
+                    // are shown inline but never block accepting the input.
                     switch (selectedType.value) {
                         case 'tag':
-                            // Simple tags: alphanumeric and underscores
                             if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) {
                                 return 'Tag names should contain only letters, numbers, and underscores';
                             }
                             break;
                         case 'class':
-                            // Class format: just the class name (no module: prefix needed)
-                            // Non-blocking check for Test prefix - just log suggestion, don't block
-                            if (!trimmed.startsWith('Test') && !trimmed.includes('Test')) {
-                                console.log(`Class names typically start with "Test" (e.g., "TestSalesAccessRights")`);
+                            if (!trimmed.includes('Test')) {
+                                return {
+                                    message: 'Class names typically start with "Test" (e.g. "TestSalesAccessRights")',
+                                    severity: vscode.InputBoxValidationSeverity.Info
+                                };
                             }
                             break;
                         case 'method':
-                            // Method format: just the method name (no module:Class. prefix needed)
-                            // Non-blocking check for test_ prefix - just log suggestion, don't block
                             if (!trimmed.startsWith('test_')) {
-                                console.log(`Method names typically start with "test_" (e.g., "test_workflow_invoice")`);
+                                return {
+                                    message: 'Method names typically start with "test_" (e.g. "test_workflow_invoice")',
+                                    severity: vscode.InputBoxValidationSeverity.Info
+                                };
                             }
                             break;
                     }
@@ -537,18 +598,8 @@ export async function addTestTag(): Promise<void> {
                 let formatInfo = '';
                 if (selectedType.value === 'class') {
                     formatInfo = ` (will be formatted as :${userInput.trim()})`;
-
-                    // Show naming convention suggestion if applicable
-                    if (!userInput.trim().startsWith('Test') && !userInput.trim().includes('Test')) {
-                        showWarning(`Warning: Class names typically start with "Test" (e.g., "TestSalesAccessRights").`);
-                    }
                 } else if (selectedType.value === 'method') {
                     formatInfo = ` (will be formatted as .${userInput.trim()})`;
-
-                    // Show naming convention suggestion if applicable
-                    if (!userInput.trim().startsWith('test_')) {
-                        showWarning(`Warning: Method names typically start with "test_" (e.g., "test_workflow_invoice").`);
-                    }
                 }
 
                 showAutoInfo(`Added ${selectedType.value} "${userInput.trim()}"${formatInfo} as test target.`, 4000);
@@ -558,8 +609,8 @@ export async function addTestTag(): Promise<void> {
             }
         }
     } catch (error) {
-        console.error('Error in addTestTag:', error);
-        showError(`Failed to add test tag: ${error}`);
+        logger.error('Error in addTestTag:', error);
+        void showError(`Failed to add test tag: ${error}`);
     }
 }
 
@@ -567,7 +618,7 @@ export async function cycleTestTagState(tag: TestTag): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return;
         }
 
@@ -596,11 +647,11 @@ export async function cycleTestTagState(tag: TestTag): Promise<void> {
             // Update launch.json with new test configuration
             await setupDebugger();
         } else {
-            showError('Could not find that test tag.');
+            void showError('Could not find that test tag.');
         }
     } catch (error) {
-        console.error('Error in cycleTestTagState:', error);
-        showError(`Failed to cycle test tag state: ${error}`);
+        logger.error('Error in cycleTestTagState:', error);
+        void showError(`Failed to cycle test tag state: ${error}`);
     }
 }
 
@@ -608,7 +659,7 @@ export async function removeTestTag(tagOrTreeItem: TestTag | vscode.TreeItem): P
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return;
         }
 
@@ -636,8 +687,8 @@ export async function removeTestTag(tagOrTreeItem: TestTag | vscode.TreeItem): P
                 tagValue = tag.value;
             }
         } else {
-            console.error('Could not find the referenced test tag:', tagOrTreeItem);
-            showError('Could not find the referenced test tag.');
+            logger.error('Could not find the referenced test tag:', tagOrTreeItem);
+            void showError('Could not find the referenced test tag.');
             return;
         }
 
@@ -650,11 +701,11 @@ export async function removeTestTag(tagOrTreeItem: TestTag | vscode.TreeItem): P
             // Update launch.json with new test configuration
             await setupDebugger();
         } else {
-            showError('Could not find that test tag.');
+            void showError('Could not find that test tag.');
         }
     } catch (error) {
-        console.error('Error in removeTestTag:', error);
-        showError(`Failed to remove test tag: ${error}`);
+        logger.error('Error in removeTestTag:', error);
+        void showError(`Failed to remove test tag: ${error}`);
     }
 }
 
@@ -662,7 +713,7 @@ export async function toggleLogLevel(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return;
         }
 
@@ -683,8 +734,8 @@ export async function toggleLogLevel(): Promise<void> {
         // Update launch.json with new test configuration
         await setupDebugger();
     } catch (error) {
-        console.error('Error in toggleLogLevel:', error);
-        showError(`Failed to toggle log level: ${error}`);
+        logger.error('Error in toggleLogLevel:', error);
+        void showError(`Failed to toggle log level: ${error}`);
     }
 }
 
@@ -692,7 +743,7 @@ export async function setSpecificLogLevel(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return;
         }
 
@@ -701,27 +752,27 @@ export async function setSpecificLogLevel(): Promise<void> {
 
         const logLevelOptions = [
             {
-                label: '⚪ Disabled',
+                label: 'Disabled',
                 detail: 'No --log-level argument (default Odoo logging)',
                 value: 'disabled' as LogLevel
             },
             {
-                label: '🔴 Critical',
+                label: 'Critical',
                 detail: 'Only critical errors',
                 value: 'critical' as LogLevel
             },
             {
-                label: '🟠 Error',
+                label: 'Error',
                 detail: 'Critical and error messages',
                 value: 'error' as LogLevel
             },
             {
-                label: '🟡 Warn',
+                label: 'Warn',
                 detail: 'Critical, error, and warning messages',
                 value: 'warn' as LogLevel
             },
             {
-                label: '🔵 Debug',
+                label: 'Debug',
                 detail: 'All messages including debug information',
                 value: 'debug' as LogLevel
             }
@@ -744,7 +795,7 @@ export async function setSpecificLogLevel(): Promise<void> {
             await setupDebugger();
         }
     } catch (error) {
-        console.error('Error in setSpecificLogLevel:', error);
-        showError(`Failed to set log level: ${error}`);
+        logger.error('Error in setSpecificLogLevel:', error);
+        void showError(`Failed to set log level: ${error}`);
     }
 }

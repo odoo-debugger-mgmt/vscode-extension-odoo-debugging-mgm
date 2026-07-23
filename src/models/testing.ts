@@ -1,3 +1,9 @@
+/**
+ * Testing configuration model: test targets, file, log level and the
+ * stashed module states used while testing mode is on.
+ */
+import { logger } from '../services/logger';
+
 export interface TestTag {
     id: string;
     value: string;
@@ -104,7 +110,7 @@ export function ensureTestingConfigModel(testingConfig: any): TestingConfigModel
             Array.isArray(testingConfig.savedModuleStates) ? testingConfig.savedModuleStates : undefined
         );
     } catch (error) {
-        console.warn('Error converting testing config, creating new instance:', error);
+        logger.warn('Error converting testing config, creating new instance:', error);
         return new TestingConfigModel();
     }
 }

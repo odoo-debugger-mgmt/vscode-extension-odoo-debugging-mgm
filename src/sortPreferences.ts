@@ -1,3 +1,6 @@
+/**
+ * Per-view sort preference persistence (workspaceState).
+ */
 import * as vscode from 'vscode';
 
 export class SortPreferences {

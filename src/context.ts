@@ -1,3 +1,6 @@
+/**
+ * VS Code context keys ('odoo-debugger.is_active', 'odoo-debugger.testing_enabled') used by when-clauses.
+ */
 import * as vscode from 'vscode';
 
 /**
@@ -10,4 +13,8 @@ export function updateTestingContext(isTestingEnabled: boolean): void {
 
 export function updateActiveContext(isActive: boolean): void {
     void vscode.commands.executeCommand('setContext', 'odoo-debugger.is_active', isActive);
+}
+
+export function updateServerRunningContext(isRunning: boolean): void {
+    void vscode.commands.executeCommand('setContext', 'odoo-debugger.server_running', isRunning);
 }

@@ -1,7 +1,14 @@
+/**
+ * Version management singleton: stores version profiles (settings + target
+ * branch) in the workspace data file, tracks the active version, and applies
+ * default-value operations against odooDebugger.defaultVersion.*.
+ */
 import * as vscode from 'vscode';
 import { VersionModel, VersionSettings } from './models/version';
 import { SettingsStore } from './settingsStore';
 import { getDefaultVersionSettings, stripSettings, getDatabaseLabel } from './utils';
+import { logger } from './services/logger';
+import { showError, showInfo, showWarning } from './services/notifications';
 
 export class VersionsService {
     private static instance: VersionsService;
@@ -87,7 +94,7 @@ export class VersionsService {
                 }
             }
         } catch (error) {
-            console.error('Failed to load versions:', error);
+            logger.error('Failed to load versions:', error);
             // Create default version on error
             const defaultVersion = new VersionModel('Default Version', '17.0', getDefaultVersionSettings());
             defaultVersion.isActive = true;
@@ -111,9 +118,9 @@ export class VersionsService {
             data.versions = versionsData;
             data.activeVersion = this.activeVersionId;
             await SettingsStore.saveWithoutComments(stripSettings(data));
-            console.log(`Saved ${this.versions.size} versions successfully`);
+            logger.debug(`Saved ${this.versions.size} versions successfully`);
         } catch (error) {
-            console.error('Failed to save versions:', error);
+            logger.error('Failed to save versions:', error);
             throw error; // Re-throw to propagate error up the chain
         }
     }
@@ -135,9 +142,9 @@ export class VersionsService {
 
             // During migration, don't strip settings - they'll be cleared by clearLegacySettings
             await SettingsStore.saveWithoutComments(data);
-            console.log(`Saved ${this.versions.size} versions during migration`);
+            logger.debug(`Saved ${this.versions.size} versions during migration`);
         } catch (error) {
-            console.error('Failed to save versions during migration:', error);
+            logger.error('Failed to save versions during migration:', error);
             throw error;
         }
     }
@@ -175,12 +182,12 @@ export class VersionsService {
 
         const activeVersion = this.getActiveVersion();
         if (activeVersion?.settings) {
-            console.log(`Using settings from active version: ${activeVersion.name}`);
+            logger.debug(`Using settings from active version: ${activeVersion.name}`);
             return activeVersion.settings;
         }
 
         // Fallback: if no active version or no settings, create a temporary default
-        console.warn('No active version or settings found, creating temporary default settings');
+        logger.warn('No active version or settings found, creating temporary default settings');
 
         // Create a version with default settings if none exists
         if (this.versions.size === 0) {
@@ -203,7 +210,7 @@ export class VersionsService {
         await this.initialize(); // Ensure initialization
 
         if (!this.versions.has(id)) {
-            console.error(`Version with id ${id} not found`);
+            logger.error(`Version with id ${id} not found`);
             return false;
         }
 
@@ -221,10 +228,10 @@ export class VersionsService {
 
             // Fire event for UI updates
             vscode.commands.executeCommand('odoo.versionsChanged');
-            console.log(`Successfully set active version from ${oldActiveVersionId} to ${id}`);
+            logger.debug(`Successfully set active version from ${oldActiveVersionId} to ${id}`);
             return true;
         } catch (error) {
-            console.error('Error saving active version:', error);
+            logger.error('Error saving active version:', error);
             // Revert on error
             this.activeVersionId = oldActiveVersionId;
             this.versions.forEach((version, versionId) => {
@@ -271,7 +278,7 @@ export class VersionsService {
             Object.assign(version.settings, settingsPatch);
         }
 
-        const { settings, ...otherUpdates } = updatesCopy;
+        const { settings: _settings, ...otherUpdates } = updatesCopy;
         Object.assign(version, otherUpdates);
 
         // Update the updatedAt timestamp
@@ -295,7 +302,7 @@ export class VersionsService {
 
         // Don't allow deleting the last version
         if (this.versions.size <= 1) {
-            vscode.window.showWarningMessage('Cannot delete the last version. At least one version must exist.');
+            void showWarning('Cannot delete the last version. At least one version must exist.');
             return false;
         }
 
@@ -333,7 +340,7 @@ export class VersionsService {
                     if (project.dbs && Array.isArray(project.dbs)) {
                         for (const db of project.dbs) {
                             if (db.versionId === deletedVersionId) {
-                                console.log(`Clearing version reference from database "${getDatabaseLabel(db)}" (was using deleted version)`);
+                                logger.debug(`Clearing version reference from database "${getDatabaseLabel(db)}" (was using deleted version)`);
                                 db.versionId = undefined;
                                 // Don't touch odooVersion - let it remain as is for backward compatibility
                                 needsSave = true;
@@ -344,11 +351,11 @@ export class VersionsService {
             }
 
             if (needsSave) {
-                console.log('Saving cleaned database references after version deletion');
+                logger.debug('Saving cleaned database references after version deletion');
                 await SettingsStore.saveWithoutComments(stripSettings(data));
             }
         } catch (error) {
-            console.warn('Failed to clean up database version references:', error);
+            logger.warn('Failed to clean up database version references:', error);
             // Don't throw - this shouldn't prevent version deletion
         }
     }
@@ -361,7 +368,7 @@ export class VersionsService {
 
         const sourceVersion = this.versions.get(sourceId);
         if (!sourceVersion) {
-            console.error(`Source version with id ${sourceId} not found`);
+            logger.error(`Source version with id ${sourceId} not found`);
             return undefined;
         }
 
@@ -372,21 +379,12 @@ export class VersionsService {
             await this.saveVersions();
             vscode.commands.executeCommand('odoo.versionsChanged');
 
-            console.log(`Successfully cloned version ${sourceVersion.name} to ${newName}`);
+            logger.debug(`Successfully cloned version ${sourceVersion.name} to ${newName}`);
             return clonedVersion;
         } catch (error) {
-            console.error('Error cloning version:', error);
+            logger.error('Error cloning version:', error);
             return undefined;
         }
-    }
-
-    /**
-     * Get settings for active version
-     */
-    public async getActiveSettings(): Promise<any> {
-        await this.initialize(); // Ensure initialization
-        const activeVersion = this.getActiveVersion();
-        return activeVersion ? activeVersion.settings : getDefaultVersionSettings();
     }
 
     /**
@@ -396,7 +394,7 @@ export class VersionsService {
         await this.initialize(); // Ensure initialization
         const activeVersion = this.getActiveVersion();
         if (!activeVersion) {
-            console.warn('No active version is configured, cannot update settings');
+            logger.warn('No active version is configured, cannot update settings');
             return;
         }
 
@@ -415,7 +413,7 @@ export class VersionsService {
 
         // Also attempt migration in case legacy settings were added externally
         await this.migrateFromLegacySettings().catch(error => {
-            console.warn('Settings migration during refresh failed (this is non-critical):', error);
+            logger.warn('Settings migration during refresh failed (this is non-critical):', error);
         });
 
         vscode.commands.executeCommand('odoo.versionsChanged');
@@ -429,7 +427,7 @@ export class VersionsService {
 
         // Ensure we have at least one version
         if (this.versions.size === 0) {
-            console.log('No versions found, creating default version');
+            logger.debug('No versions found, creating default version');
             const defaultVersion = new VersionModel('Default Version', '17.0', getDefaultVersionSettings());
             defaultVersion.isActive = true;
             this.versions.set(defaultVersion.id, defaultVersion);
@@ -439,7 +437,7 @@ export class VersionsService {
 
         // Ensure we have an active version
         if (!this.activeVersionId || !this.versions.has(this.activeVersionId)) {
-            console.log('Invalid active version, selecting first available version');
+            logger.debug('Invalid active version, selecting first available version');
             this.activeVersionId = this.versions.keys().next().value;
             needsRepair = true;
         }
@@ -469,7 +467,7 @@ export class VersionsService {
 
         // Save if repairs were needed
         if (needsRepair) {
-            console.log('Version data repaired, saving...');
+            logger.debug('Version data repaired, saving...');
             await this.saveVersions();
         }
     }
@@ -479,36 +477,36 @@ export class VersionsService {
      */
     public async migrateFromLegacySettings(): Promise<void> {
         try {
-            console.log('Starting migration check...');
+            logger.debug('Starting migration check...');
 
             // Check if legacy settings actually exist in the file
             if (!(await this.hasLegacySettings())) {
-                console.log('No legacy settings found, migration not needed');
+                logger.debug('No legacy settings found, migration not needed');
                 return;
             }
 
-            console.log('Legacy settings found, proceeding with migration...');
+            logger.debug('Legacy settings found, proceeding with migration...');
 
             // Read raw legacy settings without model-default inflation so workspace defaults
             // can still apply for missing keys during migration.
             const rawData = await SettingsStore.get('odoo-debugger-data.json');
             const existingSettings = rawData.settings as Partial<VersionSettings> | undefined;
             if (!existingSettings || Object.keys(existingSettings).length === 0) {
-                console.log('Legacy settings exist but are empty, clearing them');
+                logger.debug('Legacy settings exist but are empty, clearing them');
                 await this.clearLegacySettings();
                 return;
             }
 
-            console.log('Retrieved legacy settings:', existingSettings);
+            logger.debug('Retrieved legacy settings:', existingSettings);
 
             // Check if we already have a migrated version (avoid duplicate migration)
             if (this.getVersion('migrated-version')) {
-                console.log('Migration already completed, clearing legacy settings');
+                logger.debug('Migration already completed, clearing legacy settings');
                 await this.clearLegacySettings();
                 return;
             }
 
-            console.log('Migrating legacy settings to version management...');
+            logger.debug('Migrating legacy settings to version management...');
             const defaultSettings = getDefaultVersionSettings();
 
             // Convert SettingsModel to VersionSettings format
@@ -560,20 +558,20 @@ export class VersionsService {
             this.versions.set(migratedVersion.id, migratedVersion);
             this.activeVersionId = migratedVersion.id;
 
-            console.log('Saving migrated version to versions system...');
+            logger.debug('Saving migrated version to versions system...');
             await this.saveVersionsDuringMigration();
 
-            console.log('Clearing legacy settings after successful version save...');
+            logger.debug('Clearing legacy settings after successful version save...');
             // Clear the legacy settings to prevent repeated migration
             await this.clearLegacySettings();
 
             // Now that legacy settings are cleared, save versions normally to ensure proper state
-            console.log('Final save of versions with settings properly cleared...');
+            logger.debug('Final save of versions with settings properly cleared...');
             await this.saveVersions();
 
-            console.log('Successfully migrated legacy settings to version management');
+            logger.debug('Successfully migrated legacy settings to version management');
         } catch (error) {
-            console.warn('Failed to migrate legacy settings:', error);
+            logger.warn('Failed to migrate legacy settings:', error);
             // Don't throw - migration failure shouldn't break the extension
         }
     }
@@ -589,10 +587,10 @@ export class VersionsService {
             if (data.settings) {
                 delete data.settings;
                 await SettingsStore.saveWithoutComments(data);
-                console.log('Legacy settings cleared after successful migration');
+                logger.debug('Legacy settings cleared after successful migration');
             }
         } catch (error) {
-            console.warn('Failed to clear legacy settings:', error);
+            logger.warn('Failed to clear legacy settings:', error);
             // Don't throw - clearing failure shouldn't break anything
         }
     }
@@ -605,7 +603,7 @@ export class VersionsService {
             const data = await SettingsStore.load();
             return !!(data.settings && Object.keys(data.settings).length > 0);
         } catch (error) {
-            console.warn('Failed to check for legacy settings:', error);
+            logger.warn('Failed to check for legacy settings:', error);
             return false;
         }
     }
@@ -616,7 +614,7 @@ export class VersionsService {
     public async setSettingToDefault(versionId: string, settingKey: string): Promise<boolean> {
         const version = this.versions.get(versionId);
         if (!version) {
-            vscode.window.showErrorMessage('The selected version could not be found.');
+            void showError('The selected version could not be found.');
             return false;
         }
 
@@ -626,7 +624,7 @@ export class VersionsService {
             const defaultValue = defaultSettings[settingKey];
 
             if (defaultValue === undefined) {
-                vscode.window.showErrorMessage('Default value not found for this setting.');
+                void showError('Default value not found for this setting.');
                 return false;
             }
 
@@ -637,11 +635,11 @@ export class VersionsService {
             await this.saveVersions();
             vscode.commands.executeCommand('odoo.versionsChanged');
 
-            vscode.window.showInformationMessage(`Setting "${settingKey}" reset to default value.`);
+            void showInfo(`Setting "${settingKey}" reset to default value.`);
             return true;
         } catch (error) {
-            console.error('Failed to set setting to default:', error);
-            vscode.window.showErrorMessage('Failed to set setting to default value.');
+            logger.error('Failed to set setting to default:', error);
+            void showError('Failed to set setting to default value.');
             return false;
         }
     }
@@ -652,14 +650,14 @@ export class VersionsService {
     public async setSettingAsDefault(versionId: string, settingKey: string): Promise<boolean> {
         const version = this.versions.get(versionId);
         if (!version) {
-            vscode.window.showErrorMessage('The selected version could not be found.');
+            void showError('The selected version could not be found.');
             return false;
         }
 
         try {
             const currentValue = (version.settings as any)[settingKey];
             if (currentValue === undefined) {
-                vscode.window.showErrorMessage('Setting value not found.');
+                void showError('Setting value not found.');
                 return false;
             }
 
@@ -667,11 +665,11 @@ export class VersionsService {
             const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
             await config.update(settingKey, currentValue, vscode.ConfigurationTarget.Workspace);
 
-            vscode.window.showInformationMessage(`Setting "${settingKey}" value saved as new default.`);
+            void showInfo(`Setting "${settingKey}" value saved as new default.`);
             return true;
         } catch (error) {
-            console.error('Unable to save this setting as the default:', error);
-            vscode.window.showErrorMessage('Unable to save this setting as the default.');
+            logger.error('Unable to save this setting as the default:', error);
+            void showError('Unable to save this setting as the default.');
             return false;
         }
     }
@@ -682,7 +680,7 @@ export class VersionsService {
     public async setAllSettingsToDefault(versionId: string): Promise<boolean> {
         const version = this.versions.get(versionId);
         if (!version) {
-            vscode.window.showErrorMessage('The selected version could not be found.');
+            void showError('The selected version could not be found.');
             return false;
         }
 
@@ -695,11 +693,11 @@ export class VersionsService {
             await this.saveVersions();
             vscode.commands.executeCommand('odoo.versionsChanged');
 
-            vscode.window.showInformationMessage(`All settings reset to default values for version "${version.name}".`);
+            void showInfo(`All settings reset to default values for version "${version.name}".`);
             return true;
         } catch (error) {
-            console.error('Failed to set all settings to default:', error);
-            vscode.window.showErrorMessage('Unable to reset all settings to their default values.');
+            logger.error('Failed to set all settings to default:', error);
+            void showError('Unable to reset all settings to their default values.');
             return false;
         }
     }
@@ -710,7 +708,7 @@ export class VersionsService {
     public async setAllSettingsAsDefault(versionId: string): Promise<boolean> {
         const version = this.versions.get(versionId);
         if (!version) {
-            vscode.window.showErrorMessage('The selected version could not be found.');
+            void showError('The selected version could not be found.');
             return false;
         }
 
@@ -723,11 +721,11 @@ export class VersionsService {
                 await config.update(key, value, vscode.ConfigurationTarget.Workspace);
             }
 
-            vscode.window.showInformationMessage(`All settings from version "${version.name}" saved as new defaults.`);
+            void showInfo(`All settings from version "${version.name}" saved as new defaults.`);
             return true;
         } catch (error) {
-            console.error('Failed to set all settings as default:', error);
-            vscode.window.showErrorMessage('Unable to save these settings as the new defaults.');
+            logger.error('Failed to set all settings as default:', error);
+            void showError('Unable to save these settings as the new defaults.');
             return false;
         }
     }

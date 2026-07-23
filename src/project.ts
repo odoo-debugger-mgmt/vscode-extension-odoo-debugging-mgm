@@ -1,15 +1,27 @@
+/**
+ * Projects view and project lifecycle: create/select/delete/duplicate,
+ * import/export, ticket management and quick project search.
+ */
 import * as vscode from 'vscode';
 import * as os from 'os';
 import { ProjectModel, ProjectTicketModel } from './models/project';
 import { DatabaseModel } from './models/db';
 import { RepoModel } from './models/repo';
-import { findRepositories, showError, showInfo, getGitBranch, normalizePath, showAutoInfo, addActiveIndicator, stripSettings, getDatabaseLabel } from './utils';
+import { findRepositories, showError, showInfo, normalizePath, showAutoInfo, stripSettings, getDatabaseLabel } from './utils';
+import { activeIcon } from './views/icons';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import { randomUUID } from 'crypto';
-import { checkoutBranch, applyProjectRepoBranchAssignments } from './dbs';
+import { alignEnvironment, buildDatabaseEnvironmentTarget } from './services/environment';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
+import { logger } from './services/logger';
+import { showModalInfo, showWarning } from './services/notifications';
+import { showModalWarning } from './services/notifications';
+import { BaseTreeProvider } from './views/baseTreeProvider';
+import { getRepoBranch } from './services/branches';
+import { readModuleManifest, extractTicketIdsFromBranch } from './services/manifest';
+import { collectModuleDiscovery } from './services/psaeInternal';
 
 let projectMetadataMigrationCompleted = false;
 
@@ -60,15 +72,74 @@ function formatTicketLabel(ticket: ProjectTicketModel): string {
     return ticket.title ? `${ticket.id} - ${ticket.title}` : ticket.id;
 }
 
-export class ProjectTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-    private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
-    readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
-
-    refresh(): void {
-        this._onDidChangeTreeData.fire();
+/**
+ * Scans the project's repo branches and module manifests for ticket/task ids
+ * (Odoo PS conventions) and offers to add the new ones to the project.
+ */
+export async function detectProjectTickets(): Promise<void> {
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
+        return;
     }
-    constructor(private context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
-        this.context = context;
+    const { data, project } = result;
+    project.tickets = sanitizeProjectTickets(project.tickets);
+    const known = new Set(project.tickets.map(ticket => ticket.id.toLowerCase()));
+
+    const candidates = new Map<string, string>();
+    const offer = (id: string, source: string) => {
+        if (!known.has(id.toLowerCase()) && !candidates.has(id)) {
+            candidates.set(id, source);
+        }
+    };
+
+    for (const repo of project.repos ?? []) {
+        const branch = await getRepoBranch(normalizePath(repo.path));
+        for (const id of extractTicketIdsFromBranch(branch)) {
+            offer(id, `branch "${branch}" (${repo.name})`);
+        }
+    }
+
+    const discovery = collectModuleDiscovery(project);
+    for (const module of discovery.modules) {
+        const manifest = await readModuleManifest(module.path);
+        for (const id of manifest?.ticketIds ?? []) {
+            offer(id, `manifest of "${module.name}"`);
+        }
+    }
+
+    if (candidates.size === 0) {
+        showAutoInfo('No new ticket ids found in repo branches or module manifests.', 3000);
+        return;
+    }
+
+    const picks = Array.from(candidates.entries()).map(([id, source]) => ({
+        label: id,
+        description: `Found in ${source}`,
+        picked: true,
+        id
+    }));
+    const chosen = await vscode.window.showQuickPick(picks, {
+        canPickMany: true,
+        placeHolder: 'Add detected ticket ids to the project?',
+        ignoreFocusOut: true
+    });
+    if (!chosen || chosen.length === 0) {
+        return;
+    }
+
+    project.tickets.push(...chosen.map(pick => ({ id: pick.id })));
+    project.tickets = sanitizeProjectTickets(project.tickets);
+    await SettingsStore.saveWithoutComments(stripSettings(data));
+
+    const action = await showInfo(`Added ${chosen.length} ticket(s) to "${project.name}".`, 'Open Ticket');
+    if (action === 'Open Ticket') {
+        await vscode.commands.executeCommand('projectSelector.openTicket');
+    }
+}
+
+export class ProjectTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
+    constructor(_context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
+        super();
     }
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
         return element;
@@ -79,9 +150,9 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
             return [];
         }
 
+        // Empty list: the view's welcome content offers "Create Project".
         const projects: ProjectModel[] = data.projects;
         if (!projects) {
-            showError('Unable to load projects, please create a project first');
             return [];
         }
 
@@ -98,11 +169,11 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
         const sortedProjects = [...projects].sort((a, b) => this.compareProjects(a, b, sortId));
 
         return sortedProjects.map(project => {
-            const treeItem = new vscode.TreeItem(addActiveIndicator(project.name, project.isSelected));
+            const treeItem = new vscode.TreeItem(project.name);
             treeItem.id = project.uid; // Use UID instead of name for uniqueness
-
-            let tooltip = `Project: ${project.name}`;
-            treeItem.tooltip = tooltip;
+            treeItem.iconPath = project.isSelected ? activeIcon : new vscode.ThemeIcon('folder');
+            treeItem.description = `${project.repos?.length ?? 0} repos • ${project.dbs?.length ?? 0} dbs`;
+            treeItem.tooltip = this.buildProjectTooltip(project);
 
             // Set context value for menu commands
             treeItem.contextValue = 'project';
@@ -116,6 +187,39 @@ export class ProjectTreeProvider implements vscode.TreeDataProvider<vscode.TreeI
             (treeItem as any).projectUid = project.uid;
             return treeItem;
         });
+    }
+
+    private buildProjectTooltip(project: ProjectModel): vscode.MarkdownString {
+        const lines: string[] = [`**${project.name}**${project.isSelected ? ' (active)' : ''}`];
+
+        const repos = project.repos ?? [];
+        if (repos.length > 0) {
+            const shown = repos.slice(0, 8).map(repo => `- ${repo.name}`);
+            if (repos.length > 8) {
+                shown.push(`- … ${repos.length - 8} more`);
+            }
+            lines.push(`**Repositories (${repos.length}):**\n${shown.join('\n')}`);
+        } else {
+            lines.push('**Repositories:** none');
+        }
+
+        const dbs = project.dbs ?? [];
+        const selectedDb = dbs.find(db => db.isSelected);
+        lines.push(`**Databases:** ${dbs.length}${selectedDb ? ` (active: ${getDatabaseLabel(selectedDb)})` : ''}`);
+
+        if (project.tickets && project.tickets.length > 0) {
+            lines.push(`**Tickets:** ${project.tickets.length}`);
+        }
+        if (project.testingConfig?.isEnabled) {
+            lines.push('**Testing mode:** enabled');
+        }
+
+        const created = project.createdAt ? new Date(project.createdAt as string | Date) : undefined;
+        if (created && !Number.isNaN(created.getTime())) {
+            lines.push(`**Created:** ${created.toISOString().split('T')[0]}`);
+        }
+
+        return new vscode.MarkdownString(lines.join('\n\n'));
     }
 
     private compareProjects(a: ProjectModel, b: ProjectModel, sortId: string): number {
@@ -172,27 +276,8 @@ export async function createProject(name: string, repos: RepoModel[], db?: Datab
     // Save the entire updated data
     await SettingsStore.saveWithoutComments(stripSettings(data));
 
-    // If the project has a database with a version, check if branches need switching
-    if (db && db.odooVersion && db.odooVersion !== '') {
-        // Get settings from active version
-        const versionsService = VersionsService.getInstance();
-        const settings = await versionsService.getActiveVersionSettings();
-
-        const currentOdooBranch = await getGitBranch(settings.odooPath);
-        const currentEnterpriseBranch = await getGitBranch(settings.enterprisePath);
-        const currentDesignThemesBranch = await getGitBranch(settings.designThemesPath ?? './design-themes');
-
-        const shouldSwitch = await promptBranchSwitch(db.odooVersion, {
-            odoo: currentOdooBranch,
-            enterprise: currentEnterpriseBranch,
-            designThemes: currentDesignThemesBranch
-        });
-
-        if (shouldSwitch) {
-            await checkoutBranch(settings, db.odooVersion);
-        }
-    }
-
+    // Environment alignment happens when the database is selected right after
+    // creation, so no branch switching is needed here.
     const databaseMessage = db ? ` and database ${getDatabaseLabel(db)}` : '';
     showAutoInfo(`Created project "${project.name}" with ${repos.length} repositories${databaseMessage}`, 4000);    // Force a small delay to ensure data is persisted before refresh
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -237,39 +322,11 @@ async function ensureProjectUIDs(data: any): Promise<boolean> {
     return needsSave;
 }
 
-async function promptBranchSwitch(targetVersion: string, currentBranches: {odoo: string | null, enterprise: string | null, designThemes: string | null}): Promise<boolean> {
-    const mismatchedRepos = [];
-    if (currentBranches.odoo !== targetVersion) {
-        mismatchedRepos.push(`Odoo (currently: ${currentBranches.odoo || 'unknown'})`);
-    }
-    if (currentBranches.enterprise !== targetVersion) {
-        mismatchedRepos.push(`Enterprise (currently: ${currentBranches.enterprise || 'unknown'})`);
-    }
-    if (currentBranches.designThemes !== targetVersion) {
-        mismatchedRepos.push(`Design Themes (currently: ${currentBranches.designThemes || 'unknown'})`);
-    }
-
-    if (mismatchedRepos.length === 0) {
-        return false; // No switch needed
-    }
-
-    const message = `Database requires Odoo version ${targetVersion}, but the following repositories are on different branches:\n\n${mismatchedRepos.join('\n')}\n\nWould you like to switch all repositories to version ${targetVersion}?`;
-
-    const choice = await vscode.window.showWarningMessage(
-        message,
-        { modal: false },
-        'Switch Branches',
-        'Keep Current Branches'
-    );
-
-    return choice === 'Switch Branches';
-}
-
 export async function selectProject(projectUid: string) {
     const data = await SettingsStore.get('odoo-debugger-data.json');
     const projects: ProjectModel[] = data.projects;
     if (!projects) {
-        showError('Unable to load projects.');
+        void showError('Unable to load projects.');
         return;
     }
 
@@ -294,76 +351,28 @@ export async function selectProject(projectUid: string) {
         // Get the newly selected project
         const selectedProject = projects[newSelectedIndex];
 
-        // Check if the project has a selected database with a specific version
+        // Align the workbench to the project's selected database, if any.
         const selectedDb = selectedProject.dbs?.find((db: DatabaseModel) => db.isSelected);
         if (selectedDb) {
-            await handleDatabaseVersionSwitchForProject(selectedDb, selectedProject.repos ?? []);
+            await alignEnvironment(
+                buildDatabaseEnvironmentTarget(selectedDb, selectedProject.repos ?? []),
+                { label: `Project "${selectedProject.name}"` }
+            );
         }
 
-        showInfo(`Project switched to: ${selectedProject.name}`);
+        void showInfo(`Project switched to: ${selectedProject.name}`);
 
         // Force a small delay and refresh to ensure UI is updated
         await new Promise(resolve => setTimeout(resolve, 100));
     } else {
-        showError('The selected project could not be found.');
+        void showError('The selected project could not be found.');
     }
-}
-
-async function handleDatabaseVersionSwitchForProject(database: DatabaseModel, projectRepos: RepoModel[]): Promise<void> {
-    const versionsService = VersionsService.getInstance();
-    await versionsService.initialize();
-    const settings = await versionsService.getActiveVersionSettings();
-
-    // Check if database has a version associated with it
-    if (database.versionId) {
-        const dbVersion = versionsService.getVersion(database.versionId);
-        if (dbVersion) {
-            // Silently activate the version for project switching (no user prompt)
-            await versionsService.setActiveVersion(dbVersion.id);
-
-            const currentOdooBranch = await getGitBranch(settings.odooPath);
-
-            // Check if branch switching is needed
-            if (currentOdooBranch !== dbVersion.odooVersion) {
-                const shouldSwitch = await promptBranchSwitch(dbVersion.odooVersion, {
-                    odoo: currentOdooBranch,
-                    enterprise: await getGitBranch(settings.enterprisePath),
-                    designThemes: await getGitBranch(settings.designThemesPath ?? './design-themes')
-                });
-
-                if (shouldSwitch) {
-                    await checkoutBranch(settings, dbVersion.odooVersion);
-                }
-            }
-            await applyProjectRepoBranchAssignments(database, projectRepos);
-            return;
-        }
-    }
-
-    // Fallback to old behavior for databases without version
-    if (database.odooVersion && database.odooVersion !== '') {
-        const currentOdooBranch = await getGitBranch(settings.odooPath);
-        const currentEnterpriseBranch = await getGitBranch(settings.enterprisePath);
-        const currentDesignThemesBranch = await getGitBranch(settings.designThemesPath ?? './design-themes');
-
-        const shouldSwitch = await promptBranchSwitch(database.odooVersion, {
-            odoo: currentOdooBranch,
-            enterprise: currentEnterpriseBranch,
-            designThemes: currentDesignThemesBranch
-        });
-
-        if (shouldSwitch) {
-            await checkoutBranch(settings, database.odooVersion);
-        }
-    }
-
-    await applyProjectRepoBranchAssignments(database, projectRepos);
 }
 
 export async function getRepo(targetPath:string, searchFilter?: string): Promise<RepoModel[] > {
     const devsRepos = findRepositories(targetPath);
     if (devsRepos.length === 0) {
-        showInfo('No repositories found in the custom-addons path.');
+        void showInfo('No repositories found in the custom-addons path.');
         throw new Error('No repositories found in the custom-addons path.');
     }
 
@@ -408,7 +417,7 @@ export async function getRepo(targetPath:string, searchFilter?: string): Promise
             return new RepoModel(item.label, item.description, true);
         });
     }else{
-        showError("Select at least one folder to continue.");
+        void showError("Select at least one folder to continue.");
         throw new Error("Select at least one folder to continue.");
     }
 }
@@ -420,7 +429,7 @@ export async function getProjectName(_workspaceFolder?: vscode.WorkspaceFolder):
         placeHolder: "e.g., My Odoo Project"
     });
     if (!name) {
-        showError('Enter a project name to continue.');
+        void showError('Enter a project name to continue.');
         throw new Error('Enter a project name to continue.');
     }
     return name;
@@ -446,14 +455,14 @@ export async function deleteProject(event: any) {
         // Tree item with custom projectUid property
         projectUid = event.projectUid;
     } else {
-        showError('The project data is invalid for deletion');
+        void showError('The project data is invalid for deletion');
         return;
     }
 
     const data = await SettingsStore.get('odoo-debugger-data.json');
     const projects: ProjectModel[] = data.projects;
     if (!projects) {
-        showError('Unable to load projects.');
+        void showError('Unable to load projects.');
         return;
     }
 
@@ -463,9 +472,8 @@ export async function deleteProject(event: any) {
         const projectToDelete = projects[projectIndex];
 
         // Ask for confirmation
-        const confirm = await vscode.window.showWarningMessage(
+        const confirm = await showModalWarning(
             `Are you sure you want to delete the project "${projectToDelete.name}"?`,
-            { modal: true },
             'Delete'
         );
 
@@ -477,7 +485,7 @@ export async function deleteProject(event: any) {
         data.projects.splice(projectIndex, 1);
         await SettingsStore.saveWithoutComments(stripSettings(data));
 
-        showInfo(`Project "${projectToDelete.name}" deleted successfully`);
+        void showInfo(`Project "${projectToDelete.name}" deleted successfully`);
 
         // If the deleted project was selected and there are other projects, select the first one
         if (projectToDelete.isSelected && data.projects.length > 0) {
@@ -485,7 +493,7 @@ export async function deleteProject(event: any) {
             await vscode.commands.executeCommand('projectSelector.selectProject', data.projects[0].uid);
         }
     } else {
-        showError('The selected project could not be found. It may have already been deleted.');
+        void showError('The selected project could not be found. It may have already been deleted.');
     }
 }
 
@@ -502,20 +510,20 @@ export async function duplicateProject(event: any) {
     } else if (event && event.projectUid) {
         projectUid = event.projectUid;
     } else {
-        showError('The project data is invalid.');
+        void showError('The project data is invalid.');
         return;
     }
 
     const data = await SettingsStore.get('odoo-debugger-data.json');
     const projects: ProjectModel[] = data.projects;
     if (!projects) {
-        showError('Unable to load projects.');
+        void showError('Unable to load projects.');
         return;
     }
 
     const projectIndex = projects.findIndex((p: ProjectModel) => p.uid === projectUid);
     if (projectIndex === -1) {
-        showError('The selected project could not be found.');
+        void showError('The selected project could not be found.');
         return;
     }
 
@@ -534,7 +542,7 @@ export async function duplicateProject(event: any) {
 
     // Check if name already exists
     if (projects.some(p => p.name === duplicateName)) {
-        showError('A project with this name already exists. Choose a different name.');
+        void showError('A project with this name already exists. Choose a different name.');
         return;
     }
 
@@ -557,7 +565,7 @@ export async function duplicateProject(event: any) {
     projects.push(duplicateProject);
 
     await SettingsStore.saveWithoutComments(stripSettings(data));
-    showInfo(`Project "${duplicateName}" created as a duplicate of "${sourceProject.name}"`);
+    void showInfo(`Project "${duplicateName}" created as a duplicate of "${sourceProject.name}"`);
 }
 
 async function getProjectContextFromEvent(event: any): Promise<{ data: any; project: ProjectModel; projectIndex: number } | null> {
@@ -576,14 +584,14 @@ async function getProjectContextFromEvent(event: any): Promise<{ data: any; proj
     const data = await SettingsStore.get('odoo-debugger-data.json');
     const projects: ProjectModel[] = data.projects ?? [];
     if (projects.length === 0) {
-        showError('No projects are configured.');
+        void showError('No projects are configured.');
         return null;
     }
 
     if (!projectUid) {
         const selectedProject = projects.find((p: ProjectModel) => p.isSelected);
         if (!selectedProject) {
-            showError('Select a project first.');
+            void showError('Select a project first.');
             return null;
         }
         projectUid = selectedProject.uid;
@@ -591,7 +599,7 @@ async function getProjectContextFromEvent(event: any): Promise<{ data: any; proj
 
     const projectIndex = projects.findIndex((p: ProjectModel) => p.uid === projectUid);
     if (projectIndex === -1) {
-        showError('The selected project could not be found.');
+        void showError('The selected project could not be found.');
         return null;
     }
 
@@ -688,7 +696,7 @@ async function editProjectName(project: ProjectModel, data: any) {
         const oldName = project.name;
         project.name = newName.trim();
         await SettingsStore.saveWithoutComments(stripSettings(data));
-        showInfo(`Project renamed from "${oldName}" to "${project.name}"`);
+        void showInfo(`Project renamed from "${oldName}" to "${project.name}"`);
     }
 }
 
@@ -781,7 +789,7 @@ async function manageProjectTicketsForProject(project: ProjectModel, data: any):
         }
 
         if (tickets.length === 0) {
-            showInfo('No project tickets available. Add one first.');
+            void showInfo('No project tickets available. Add one first.');
             continue;
         }
 
@@ -873,7 +881,7 @@ export async function openProjectTicket(event?: any): Promise<void> {
     const tickets = project.tickets;
 
     if (tickets.length === 0) {
-        const addNow = await vscode.window.showInformationMessage(
+        const addNow = await showInfo(
             `Project "${project.name}" has no linked tickets yet.`,
             'Add Ticket',
             'Cancel'
@@ -929,7 +937,7 @@ Databases: ${dbCount}${selectedDb ? `
 Active Database: ${selectedDb.name}` : `
 No active database`}`;
 
-    await vscode.window.showInformationMessage(infoMessage, { modal: true }, 'OK');
+    await showModalInfo(infoMessage, 'OK');
 }
 
 export async function exportProject(event: any): Promise<void> {
@@ -946,20 +954,20 @@ export async function exportProject(event: any): Promise<void> {
         } else if (event && event.projectUid) {
             projectUid = event.projectUid;
         } else {
-            showError('The project data is invalid.');
+            void showError('The project data is invalid.');
             return;
         }
 
         const data = await SettingsStore.get('odoo-debugger-data.json');
         const projects: ProjectModel[] = data.projects;
         if (!projects) {
-            showError('No projects are configured.');
+            void showError('No projects are configured.');
             return;
         }
 
         const project = projects.find(p => p.uid === projectUid);
         if (!project) {
-            showError('The selected project could not be found.');
+            void showError('The selected project could not be found.');
             return;
         }
 
@@ -993,7 +1001,7 @@ export async function exportProject(event: any): Promise<void> {
         const content = JSON.stringify(exportData, null, 2);
         await vscode.workspace.fs.writeFile(saveUri, Buffer.from(content, 'utf8'));
 
-        const action = await vscode.window.showInformationMessage(
+        const action = await showInfo(
             `Project "${project.name}" exported successfully!`,
             'Open Export Location',
             'Import Instructions'
@@ -1010,12 +1018,12 @@ export async function exportProject(event: any): Promise<void> {
 
 Note: Repository paths use ~ for home directory and may need adjustment on different systems.`;
 
-            await vscode.window.showInformationMessage(instructions, { modal: true });
+            await showModalInfo(instructions);
         }
 
     } catch (error) {
-        console.error('Error exporting project:', error);
-        vscode.window.showErrorMessage(`Failed to export project: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        logger.error('Error exporting project:', error);
+        void showError(`Failed to export project: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 }
 
@@ -1043,7 +1051,7 @@ export async function importProject(): Promise<void> {
 
         // Validate import data
         if (!importData.name || !importData.repositories || !Array.isArray(importData.repositories)) {
-            showError('The selected file is not a valid project export.');
+            void showError('The selected file is not a valid project export.');
             return;
         }
         const importedTickets = sanitizeProjectTickets(importData.tickets);
@@ -1065,7 +1073,7 @@ export async function importProject(): Promise<void> {
         }
 
         if (projectName !== importData.name) {
-            const useNewName = await vscode.window.showWarningMessage(
+            const useNewName = await showWarning(
                 `A project named "${importData.name}" already exists. Import as "${projectName}"?`,
                 'Yes, Import with New Name',
                 'Cancel'
@@ -1124,14 +1132,14 @@ export async function importProject(): Promise<void> {
             message += `\n\nYou can manage repositories from the Repositories tab.`;
         }
 
-        await vscode.window.showInformationMessage(message, 'OK');
+        await showInfo(message, 'OK');
 
     } catch (error) {
-        console.error('Error importing project:', error);
+        logger.error('Error importing project:', error);
         if (error instanceof SyntaxError) {
-            showError('The selected file is not valid JSON.');
+            void showError('The selected file is not valid JSON.');
         } else {
-            showError(`Failed to import project: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            void showError(`Failed to import project: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
     }
 }
@@ -1142,21 +1150,35 @@ export async function quickProjectSearch(): Promise<void> {
         const projects: ProjectModel[] = data.projects;
 
         if (!projects || projects.length === 0) {
-            showError('No projects are configured. Create a project first.');
+            void showError('No projects are configured. Create a project first.');
             return;
         }
 
-        // Create quick pick items with project information
+        // The quick pick filters on label + description + detail, so pack the
+        // project's searchable metadata (repos, databases, selected modules,
+        // tickets) into those fields — typing a repo, database, module or
+        // ticket id finds the project that owns it.
+        const listSome = (values: string[], max = 8): string =>
+            values.length > max ? `${values.slice(0, max).join(', ')} +${values.length - max}` : values.join(', ');
+
         const quickPickItems = projects.map(project => {
             const selectedDb = project.dbs?.find((db: DatabaseModel) => db.isSelected);
-            const repoCount = project.repos.length;
-            const ticketCount = sanitizeProjectTickets(project.tickets).length;
-            const dbInfo = selectedDb ? ` | DB: ${selectedDb.name}` : ' | No DB';
+            const repoNames = (project.repos ?? []).map((repo: RepoModel) => repo.name);
+            const dbNames = (project.dbs ?? []).map((db: DatabaseModel) => getDatabaseLabel(db));
+            const moduleNames = (selectedDb?.modules ?? []).map(module => module.name);
+            const ticketIds = sanitizeProjectTickets(project.tickets).map(ticket => ticket.id);
+
+            const detailParts = [
+                repoNames.length ? `Repos: ${listSome(repoNames)}` : '',
+                dbNames.length ? `DBs: ${listSome(dbNames)}` : '',
+                moduleNames.length ? `Modules: ${listSome(moduleNames)}` : '',
+                ticketIds.length ? `Tickets: ${listSome(ticketIds)}` : ''
+            ].filter(Boolean);
 
             return {
                 label: `${project.isSelected ? '$(arrow-right) ' : ''}${project.name}`,
-                description: `${repoCount} repo${repoCount === 1 ? '' : 's'} | ${ticketCount} ticket${ticketCount === 1 ? '' : 's'}${dbInfo}`,
-                detail: `Created: ${new Date(project.createdAt).toLocaleDateString()} | Repositories: ${project.repos.map(r => r.name).join(', ')}`,
+                description: `${repoNames.length} repos • ${dbNames.length} dbs${selectedDb ? ` • DB: ${getDatabaseLabel(selectedDb)}` : ''}`,
+                detail: detailParts.join('  |  ') || `Created: ${new Date(project.createdAt).toLocaleDateString()}`,
                 projectUid: project.uid
             };
         });
@@ -1176,7 +1198,7 @@ export async function quickProjectSearch(): Promise<void> {
         }
 
     } catch (error) {
-        console.error('Error in quick project search:', error);
-        showError('Unable to load projects for search.');
+        logger.error('Error in quick project search:', error);
+        void showError('Unable to load projects for search.');
     }
 }

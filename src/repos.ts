@@ -1,20 +1,27 @@
+/**
+ * Repos view: lists git repositories discovered under the version's custom
+ * addons folder and toggles their membership in the active project.
+ */
 import { RepoModel } from "./models/repo";
 import * as vscode from "vscode";
-import { findRepositories, getWorkspacePath, normalizePath, showError, showInfo, stripSettings, getGitBranch } from './utils';
+import { findRepositories, getWorkspacePath, normalizePath, stripSettings } from './utils';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import * as path from 'path';
 import * as fs from 'fs';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
-import { getCurrentBranchViaSourceControl } from './services/gitService';
-import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache, runtimeCache } from './services/runtimeCache';
+import { getRepoBranch } from './services/branches';
+import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
+import { BaseTreeProvider } from './views/baseTreeProvider';
+import { selectedIcon, unselectedIcon } from './views/icons';
 
 interface RepoEntry {
     name: string;
     path: string;
     isSelected: boolean;
     branch: string | null;
+    isGitRepo: boolean;
     repoModel?: RepoModel;
     fsCreatedAt: number;
 }
@@ -42,26 +49,11 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item
     return results;
 }
 
-async function resolveRepoBranch(repoPath: string): Promise<string | null> {
-    return runtimeCache.getGitBranch(repoPath, async () => {
-        const sourceControlBranch = await getCurrentBranchViaSourceControl(repoPath);
-        if (sourceControlBranch) {
-            return sourceControlBranch;
-        }
-        return getGitBranch(repoPath);
-    });
-}
 
-export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-    private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
-    readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
+export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
-    refresh(): void {
-        this._onDidChangeTreeData.fire();
-    }
-
-    constructor(private context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
-        this.context = context;
+    constructor(_context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
+        super();
     }
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
         return element;
@@ -85,30 +77,24 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
         const settings = await versionsService.getActiveVersionSettings();
         const customAddonsPath = normalizePath(settings.customAddonsPath);
 
-        // Check if path exists first
+        // Empty lists fall through to the view's welcome content, which
+        // points at the version's custom addons folder setting.
         if (!fs.existsSync(customAddonsPath)) {
-            showError(`Path does not exist: ${customAddonsPath}`);
             return [];
         }
 
         const devsRepos = findRepositories(customAddonsPath);
-        if (devsRepos.length === 0) {
-            showInfo('No repositories found in the custom addons directory.');
-            return [];
-        }
-
-        if (!repos) {
-            showError('No modules are configured for this database.');
+        if (devsRepos.length === 0 || !repos) {
             return [];
         }
 
         const repoEntries = await mapWithConcurrency(devsRepos, 6, async repo => {
             const existingRepo = repos.find(r => r.name === repo.name);
             let branch: string | null = null;
-            const gitPath = path.join(repo.path, '.git');
-            if (fs.existsSync(gitPath)) {
+            const isGitRepo = fs.existsSync(path.join(repo.path, '.git'));
+            if (isGitRepo) {
                 try {
-                    branch = await resolveRepoBranch(repo.path);
+                    branch = await getRepoBranch(repo.path);
                 } catch {
                     branch = null;
                 }
@@ -125,6 +111,7 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 path: repo.path,
                 isSelected: !!existingRepo,
                 branch,
+                isGitRepo,
                 repoModel: existingRepo,
                 fsCreatedAt
             };
@@ -134,11 +121,19 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
         repoEntries.sort((a, b) => this.compareRepos(a, b, sortId));
 
         return repoEntries.map(entry => {
-            const repoIcon = entry.isSelected ? "☑️" : "⬜️";
-            const treeItem = new vscode.TreeItem(`${repoIcon} ${entry.name}`);
-            treeItem.tooltip = `Repo: ${entry.name}\nPath: ${entry.path}`;
+            const treeItem = new vscode.TreeItem(entry.name);
+            treeItem.iconPath = entry.isSelected ? selectedIcon : unselectedIcon;
+            treeItem.tooltip = new vscode.MarkdownString([
+                `**${entry.name}**${entry.isSelected ? ' (in project)' : ''}`,
+                `**Path:** ${entry.path}`,
+                entry.branch ? `**Branch:** ${entry.branch}` : '',
+                entry.isGitRepo ? '' : '**Type:** addons folder (not a git repository)'
+            ].filter(Boolean).join('\n\n'));
             treeItem.id = entry.path;
-            treeItem.description = entry.branch ?? '';
+            treeItem.description = entry.isGitRepo ? (entry.branch ?? '') : 'addons folder';
+            treeItem.contextValue = 'repo';
+            // Carried for the shared reveal/copy-path/terminal commands (extractUri).
+            (treeItem as vscode.TreeItem & { uri?: vscode.Uri }).uri = vscode.Uri.file(entry.path);
             treeItem.command = {
                 command: 'repoSelector.selectRepo',
                 title: 'Select Module',
@@ -163,6 +158,10 @@ export class RepoTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem
                 return this.getRepoTimestamp(b) - this.getRepoTimestamp(a);
             case 'repo:created:oldest':
                 return this.getRepoTimestamp(a) - this.getRepoTimestamp(b);
+            case 'repo:branch:asc':
+                return (a.branch ?? '').localeCompare(b.branch ?? '') || a.name.localeCompare(b.name);
+            case 'repo:branch:desc':
+                return (b.branch ?? '').localeCompare(a.branch ?? '') || a.name.localeCompare(b.name);
             default:
                 return a.name.localeCompare(b.name);
         }

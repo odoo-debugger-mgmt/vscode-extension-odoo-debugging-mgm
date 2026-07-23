@@ -1,0 +1,18 @@
+# Ship only the bundled extension (dist/), manifest, README/CHANGELOG/LICENSE and resources.
+.vscode/**
+.vscode-test/**
+.vscode-test.mjs
+.github/**
+.gitignore
+src/**
+out/**
+node_modules/**
+docs/**
+image/**
+VERSION_MANAGEMENT.md
+webpack.config.js
+tsconfig.json
+eslint.config.mjs
+package-lock.json
+**/*.vsix
+**/*.map

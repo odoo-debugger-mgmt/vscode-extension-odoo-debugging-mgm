@@ -1,10 +1,15 @@
+/**
+ * Workspace data store for .vscode/odoo-debugger-data.json: mtime-based
+ * read cache and debounced, single-flight writes.
+ */
 import { SettingsModel } from './models/settings';
 import { readFromFile, DebuggerData, showError, getWorkspacePath, stripSettings, getDefaultVersionSettings } from './utils';
 import { ProjectModel } from './models/project';
 import { DatabaseTemplateModel } from './models/dbTemplate';
 import { modify, applyEdits, parse } from 'jsonc-parser';
-import fs from 'fs';
+import * as fs from 'node:fs/promises';
 import path from 'path';
+import { logger } from './services/logger';
 
 interface CachedFileEntry {
     mtimeMs: number;
@@ -41,14 +46,10 @@ export class SettingsStore {
         return path.join(workspacePath, '.vscode', fileName);
     }
 
-    private static updateCache(fileName: string, filePath: string, raw: string, data: DebuggerData): void {
-        let mtimeMs = Date.now();
-        try {
-            const stats = fs.statSync(filePath);
-            mtimeMs = stats.mtimeMs;
-        } catch {
-            // Keep fallback timestamp when stat fails.
-        }
+    private static async updateCache(fileName: string, filePath: string, raw: string, data: DebuggerData): Promise<void> {
+        // Fall back to "now" when stat fails (e.g. file not written yet).
+        const stats = await fs.stat(filePath).catch(() => undefined);
+        const mtimeMs = stats?.mtimeMs ?? Date.now();
 
         this.cache.set(fileName, {
             mtimeMs,
@@ -63,8 +64,8 @@ export class SettingsStore {
             throw new Error(`Error reading file: ${fileName}`);
         }
 
-        const raw = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : JSON.stringify(loaded, null, 4);
-        this.updateCache(fileName, filePath, raw, loaded);
+        const raw = await fs.readFile(filePath, 'utf-8').catch(() => JSON.stringify(loaded, null, 4));
+        await this.updateCache(fileName, filePath, raw, loaded);
         return this.cloneData(loaded);
     }
 
@@ -82,8 +83,8 @@ export class SettingsStore {
 
         try {
             const jsonString = JSON.stringify(pending.data, null, 4);
-            fs.writeFileSync(pending.filePath, jsonString, 'utf8');
-            this.updateCache(fileName, pending.filePath, jsonString, pending.data);
+            await fs.writeFile(pending.filePath, jsonString, 'utf8');
+            await this.updateCache(fileName, pending.filePath, jsonString, pending.data);
             pending.waiters.forEach(waiter => waiter.resolve());
         } catch (error) {
             pending.waiters.forEach(waiter => waiter.reject(error));
@@ -101,22 +102,22 @@ export class SettingsStore {
         }
 
         try {
-            if (!fs.existsSync(filePath)) {
+            const stats = await fs.stat(filePath).catch(() => undefined);
+            if (!stats) {
                 return null;
             }
 
-            const stats = fs.statSync(filePath);
             const cached = this.cache.get(fileName);
             if (cached && cached.mtimeMs === stats.mtimeMs) {
                 return cached.raw;
             }
 
-            const raw = fs.readFileSync(filePath, 'utf-8');
+            const raw = await fs.readFile(filePath, 'utf-8');
             const parsed = parse(raw) as DebuggerData;
-            this.updateCache(fileName, filePath, raw, parsed ?? {});
+            await this.updateCache(fileName, filePath, raw, parsed ?? {});
             return raw;
         } catch (error) {
-            showError(`Failed to read raw content from ${fileName}: ${error}`);
+            void showError(`Failed to read raw content from ${fileName}: ${error}`);
             return null;
         }
     }
@@ -129,8 +130,8 @@ export class SettingsStore {
 
         await this.flushPendingWrite(fileName);
 
-        if (fs.existsSync(filePath)) {
-            const stats = fs.statSync(filePath);
+        const stats = await fs.stat(filePath).catch(() => undefined);
+        if (stats) {
             const cached = this.cache.get(fileName);
             if (cached && cached.mtimeMs === stats.mtimeMs) {
                 return this.cloneData(cached.data);
@@ -155,9 +156,9 @@ export class SettingsStore {
 
         const edits = modify(rawData, jsonPath, value, options);
         const updatedJson = applyEdits(rawData, edits);
-        fs.writeFileSync(filePath, updatedJson, 'utf8');
+        await fs.writeFile(filePath, updatedJson, 'utf8');
         const parsed = parse(updatedJson) as DebuggerData;
-        this.updateCache(fileName, filePath, updatedJson, parsed ?? {});
+        await this.updateCache(fileName, filePath, updatedJson, parsed ?? {});
     }
 
     /**
@@ -181,7 +182,7 @@ export class SettingsStore {
                 }
                 existing.timer = setTimeout(() => {
                     this.flushPendingWrite(fileName).catch(error => {
-                        console.warn(`Failed to flush pending write for ${fileName}:`, error);
+                        logger.warn(`Failed to flush pending write for ${fileName}:`, error);
                     });
                 }, WRITE_DEBOUNCE_MS);
                 return;
@@ -196,7 +197,7 @@ export class SettingsStore {
 
             pending.timer = setTimeout(() => {
                 this.flushPendingWrite(fileName).catch(error => {
-                    console.warn(`Failed to flush pending write for ${fileName}:`, error);
+                    logger.warn(`Failed to flush pending write for ${fileName}:`, error);
                 });
             }, WRITE_DEBOUNCE_MS);
             this.pendingWrites.set(fileName, pending);
@@ -218,23 +219,6 @@ export class SettingsStore {
         };
     }
 
-    static async getSettings(): Promise<SettingsModel | null> {
-        const data = await this.load();
-        return data.settings || null;
-    }
-
-    /**
-     * @deprecated Settings should only be managed through VersionsService now.
-     * This method should not be used as it violates the versions-exclusive settings management.
-     */
-    static async updateSettings(partial: Partial<SettingsModel>): Promise<void> {
-        const data = await this.load();
-        const updated = Object.assign(new SettingsModel(getDefaultVersionSettings()), data.settings, partial);
-        data.settings = updated;
-        // Even though this method sets settings, we must strip them to prevent persistence
-        await this.saveWithoutComments(stripSettings(data));
-    }
-
     static async getProjects(): Promise<ProjectModel[]> {
         const data = await this.load();
         return data.projects || [];
@@ -254,18 +238,18 @@ export class SettingsStore {
 
         const projects: ProjectModel[] = data.projects;
         if (!projects || projects.length === 0) {
-            showError('Unable to load projects, please create a project first');
+            void showError('Unable to load projects, please create a project first');
             return null;
         }
 
         if (typeof projects !== 'object') {
-            showError('Unable to load projects.');
+            void showError('Unable to load projects.');
             return null;
         }
 
         const project = projects.find((p: ProjectModel) => p.isSelected === true);
         if (!project) {
-            showError('Select a project before running this action.');
+            void showError('Select a project before running this action.');
             return null;
         }
 

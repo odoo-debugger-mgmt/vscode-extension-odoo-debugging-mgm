@@ -1,14 +1,24 @@
+/**
+ * Debugger integration: keeps the managed launch.json entry in sync with the
+ * active version/database/module selections, builds odoo-bin arguments
+ * (addons path, -i/-u, testing flags), and starts/stops the server and shell.
+ */
 import * as vscode from "vscode";
-import * as fs from 'fs';
 import * as path from 'node:path';
 import { ProjectModel } from "./models/project";
 import { SettingsModel } from "./models/settings";
-import { getWorkspacePath, normalizePath, showError, showInfo, showAutoInfo, discoverModulesInRepos } from './utils';
+import { getWorkspacePath, normalizePath, showError, showInfo, showAutoInfo } from './utils';
+import { collectModuleDiscovery, resolvePsaeDirectories } from './services/psaeInternal';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import { ensureTestingConfigModel } from './models/testing';
 import { getInstalledModuleNames, databaseHasModuleTable } from './services/database';
-import { parse } from 'jsonc-parser';
+import { logger, errorMessage } from './services/logger';
+import { updateManagedLaunchConfig } from './services/launchConfig';
+
+// Databases we already told the user about; prepareArgs re-runs on every
+// debounced sync, so without this the toast repeats until the DB is initialized.
+const baseInstallNotifiedDbs = new Set<string>();
 
 async function selectPythonInterpreter(pythonPath: string): Promise<void> {
     if (!pythonPath || pythonPath.trim().length === 0) {
@@ -37,34 +47,9 @@ async function selectPythonInterpreter(pythonPath: string): Promise<void> {
             config.update('pythonPath', pythonPath, vscode.ConfigurationTarget.Workspace)
         ]);
     } catch (error) {
-        console.warn(`Failed to set Python interpreter to "${pythonPath}":`, error);
+        logger.warn(`Failed to set Python interpreter to "${pythonPath}":`, error);
     }
 }
-
-function readLaunchData(workspacePath: string, debuggerName: string): { launchPath: string; launchData: any; configurations: any[]; existingIndex: number } {
-    const vscodeDir = path.join(workspacePath, '.vscode');
-    const launchPath = path.join(vscodeDir, 'launch.json');
-
-    fs.mkdirSync(vscodeDir, { recursive: true });
-
-    let content: string;
-    if (fs.existsSync(launchPath)) {
-        content = fs.readFileSync(launchPath, 'utf8');
-    } else {
-        content = JSON.stringify({ version: '0.2.0', configurations: [] }, null, 2) + '\n';
-        fs.writeFileSync(launchPath, content, 'utf8');
-    }
-
-    let launchData = parse(content);
-    if (!launchData || typeof launchData !== 'object') {
-        launchData = { version: '0.2.0', configurations: [] };
-    }
-
-    const configurations = Array.isArray(launchData.configurations) ? [...launchData.configurations] : [];
-    const existingIndex = configurations.findIndex(conf => conf?.name === debuggerName);
-    return { launchPath, launchData, configurations, existingIndex };
-}
-
 
 export async function setupDebugger(): Promise<any> {
     const workspacePath = getWorkspacePath();
@@ -86,45 +71,36 @@ export async function setupDebugger(): Promise<any> {
     try {
         args = await prepareArgs(project, settings);
     } catch (error) {
-        console.warn('Could not prepare debugger launch arguments:', error);
+        logger.warn('Could not prepare debugger launch arguments:', error);
         if (error instanceof Error) {
             if (error.message === 'Select a database before running this action.') {
-                showInfo('Select a database before configuring the debugger.');
+                void showInfo('Select a database before configuring the debugger.');
             } else {
-                showError(error.message);
+                void showError(error.message);
             }
         } else {
-            showError('Could not prepare debugger launch arguments.');
+            void showError('Could not prepare debugger launch arguments.');
         }
         return undefined;
     }
 
-    const { launchPath, launchData, configurations, existingIndex } = readLaunchData(workspacePath, settings.debuggerName);
-    const existingConfig = existingIndex >= 0 ? configurations[existingIndex] : undefined;
-
-    const newOdooConfig = {
-        ...existingConfig,
-        name: settings.debuggerName,
-        type: "debugpy",
-        request: "launch",
-        cwd: workspacePath,
-        program: `${normalizedOdooPath}/odoo-bin`,
-        python: normalizedPythonPath,
-        console: "integratedTerminal",
-        args
-    };
-
-    if (existingIndex >= 0) {
-        configurations.splice(existingIndex, 1);
-    }
-    configurations.unshift(newOdooConfig);
-    launchData.version = launchData.version ?? '0.2.0';
-    launchData.configurations = configurations;
-
+    let newOdooConfig;
     try {
-        fs.writeFileSync(launchPath, JSON.stringify(launchData, null, 2) + '\n', 'utf8');
+        // Only the extension's own entry in launch.json is rewritten; user
+        // comments and other configurations are preserved.
+        newOdooConfig = await updateManagedLaunchConfig(workspacePath, {
+            name: settings.debuggerName,
+            type: 'debugpy',
+            request: 'launch',
+            cwd: workspacePath,
+            program: `${normalizedOdooPath}/odoo-bin`,
+            python: normalizedPythonPath,
+            console: 'integratedTerminal',
+            args
+        });
     } catch (error) {
-        showError(`Unable to update launch.json: ${error}`);
+        void showError(`Unable to update launch.json: ${errorMessage(error)}`);
+        return undefined;
     }
 
     await selectPythonInterpreter(settings.pythonPath);
@@ -172,23 +148,9 @@ async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShe
     }
     const projectModules = db.modules ?? [];
 
-    // Auto-detect ps*-internal paths needed based on selected modules
-    const psInternalPaths = new Set<string>();
-    const manualIncludes = new Set<string>();
-    const manualExcludes = new Set<string>();
-
-    for (const entry of project.includedPsaeInternalPaths ?? []) {
-        if (entry.startsWith('!')) {
-            manualExcludes.add(normalizePath(entry.substring(1)));
-        } else {
-            const normalized = normalizePath(entry);
-            manualIncludes.add(normalized);
-            psInternalPaths.add(normalized);
-        }
-    }
-
-    const manualPsaeIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
-    const discovery = discoverModulesInRepos(project.repos, { manualIncludePaths: manualPsaeIncludes });
+    // psae-internal directories: resolved through the shared service so the
+    // Modules tree and the launch args always agree on what is included.
+    const discovery = collectModuleDiscovery(project);
 
     const containerPathMap = new Map<string, string>();
 
@@ -214,12 +176,6 @@ async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShe
         addAddonPath(containerPath);
     }
 
-    const foundPsInternalDirs = new Map<string, string[]>(); // path -> modules
-
-    for (const dir of discovery.psaeDirectories) {
-        foundPsInternalDirs.set(normalizePath(dir.path), dir.moduleNames);
-    }
-
     const selectedModuleNames = new Set(
         projectModules
             .filter(module => module.state === 'install' || module.state === 'upgrade')
@@ -230,27 +186,18 @@ async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShe
     try {
         installedModuleNames = await getInstalledModuleNames(db.id);
     } catch (error) {
-        console.warn('Failed to get installed modules from database:', error);
+        logger.warn('Failed to get installed modules from database:', error);
     }
 
-    for (const [psPath, psModules] of foundPsInternalDirs.entries()) {
-        if (manualExcludes.has(psPath)) {
-            continue;
-        }
-
-        const isManuallyIncluded = manualIncludes.has(psPath);
-        const hasSelectedModules = psModules.some(psModule => selectedModuleNames.has(psModule));
-        const hasDbModules = psModules.some(psModule => installedModuleNames.has(psModule));
-
-        if (isManuallyIncluded || hasSelectedModules || hasDbModules) {
-            psInternalPaths.add(psPath);
-        }
-    }
-
-    // Add auto-detected ps*-internal paths to addons paths
-    if (psInternalPaths.size > 0) {
-        for (const psPath of psInternalPaths) {
-            addAddonPath(psPath);
+    const psaeStates = resolvePsaeDirectories({
+        psaeDirectories: discovery.psaeDirectories,
+        includedPsaeInternalPaths: project.includedPsaeInternalPaths,
+        selectedModuleNames,
+        installedModuleNames
+    });
+    for (const psaeState of psaeStates) {
+        if (psaeState.isIncluded) {
+            addAddonPath(psaeState.path);
         }
     }
 
@@ -278,10 +225,13 @@ async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShe
             const hasModuleTable = await databaseHasModuleTable(db.id);
             if (!hasModuleTable) {
                 installs = ['base'];
-                showAutoInfo('Added "base" during initialization so the new database can install core tables.', 3000);
+                if (!baseInstallNotifiedDbs.has(db.id)) {
+                    baseInstallNotifiedDbs.add(db.id);
+                    showAutoInfo('Added "base" during initialization so the new database can install core tables.', 3000);
+                }
             }
         } catch (error) {
-            console.warn('Failed to verify module table state:', error);
+            logger.warn('Failed to verify module table state:', error);
         }
     }
     const args: string[] = [];
@@ -358,45 +308,57 @@ async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShe
 
 }
 
-export async function startDebugShell(): Promise<void> {
-    const workspacePath = getWorkspacePath();
-    if (!workspacePath) {
-        return undefined;
-    }
+/**
+ * Assembles the full `python odoo-bin …` command line for the selected
+ * project's active version, quoted for a POSIX shell — the same command
+ * the debugger runs (server) or the shell terminal sends (`isShell`).
+ * Returns undefined after surfacing the reason when prerequisites are
+ * missing.
+ */
+export async function buildOdooCommandLine(isShell = false): Promise<string | undefined> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
         return undefined;
     }
     const { project } = result;
-    // Get settings from active version instead of legacy settings
     const versionsService = VersionsService.getInstance();
     const workspaceSettings = await versionsService.getActiveVersionSettings();
-    // Normalize paths for terminal commands
     const normalizedOdooPath = normalizePath(workspaceSettings.odooPath);
     const normalizedPythonPath = normalizePath(workspaceSettings.pythonPath);
 
     let args: string[];
     try {
-        args = await prepareArgs(project, workspaceSettings, true);
+        args = await prepareArgs(project, workspaceSettings, isShell);
     } catch (error) {
         if (error instanceof Error) {
             if (error.message === 'Select a database before running this action.') {
-                showInfo('Select a database before opening the Odoo shell.');
+                void showInfo('Select a database first.');
             } else {
-                showError(error.message);
+                void showError(error.message);
             }
         } else {
-            showError('Could not prepare shell arguments.');
+            void showError('Could not prepare the Odoo command.');
         }
         return undefined;
     }
     const odooBinPath = `${normalizedOdooPath}/odoo-bin`;
 
-    const fullCommand = [
+    return [
         quoteShellArg(normalizedPythonPath),
         quoteShellArg(odooBinPath),
         ...args.map(quoteShellArg)
     ].join(' ');
+}
+
+export async function startDebugShell(): Promise<void> {
+    const workspacePath = getWorkspacePath();
+    if (!workspacePath) {
+        return undefined;
+    }
+    const fullCommand = await buildOdooCommandLine(true);
+    if (!fullCommand) {
+        return undefined;
+    }
     const terminal = vscode.window.createTerminal({
         name: 'Odoo Shell',
         cwd: workspacePath,
@@ -414,10 +376,31 @@ function quoteShellArg(value: string): string {
     return `'${escapedValue}'`;
 }
 
-export async function startDebugServer(): Promise<void> {
+/** Finds the running debug session launched from the extension's configuration. */
+async function findOwnDebugSession(): Promise<vscode.DebugSession | undefined> {
+    const versionsService = VersionsService.getInstance();
+    const settings = await versionsService.getActiveVersionSettings();
+    const session = vscode.debug.activeDebugSession;
+    if (session && session.configuration?.name === settings.debuggerName) {
+        return session;
+    }
+    return undefined;
+}
+
+/** Stops the debug session launched from the extension's configuration. */
+export async function stopDebugServer(): Promise<void> {
+    const session = await findOwnDebugSession();
+    if (session) {
+        await vscode.debug.stopDebugging(session);
+        return;
+    }
+    void showInfo('No Odoo debug session is currently running.');
+}
+
+export async function startDebugServer(options: { noDebug?: boolean } = {}): Promise<void> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
-        showError("Open a workspace to use this command.");
+        void showError("Open a workspace to use this command.");
         return undefined;
     }
     const result = await SettingsStore.getSelectedProject();
@@ -427,12 +410,15 @@ export async function startDebugServer(): Promise<void> {
     // Get settings from active version instead of legacy settings
     const versionsService = VersionsService.getInstance();
     const workspaceSettings = await versionsService.getActiveVersionSettings();
+    // Stop only the session launched from the extension's own configuration;
+    // unrelated debug sessions must survive a server (re)start.
     const existingSession = vscode.debug.activeDebugSession;
-    if (existingSession) {
+    if (existingSession && existingSession.configuration?.name === workspaceSettings.debuggerName) {
         await vscode.debug.stopDebugging(existingSession);
     }
-    vscode.debug.startDebugging(
+    void vscode.debug.startDebugging(
         workspaceFolders[0],
-        workspaceSettings.debuggerName
+        workspaceSettings.debuggerName,
+        { noDebug: options.noDebug === true }
     );
 }

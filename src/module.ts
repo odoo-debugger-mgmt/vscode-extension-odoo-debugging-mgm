@@ -1,56 +1,92 @@
+/**
+ * Modules view and module workflows: discovery across project repos,
+ * install/upgrade state management, psae-internal groups, manifest
+ * dependencies, bulk actions and odoo-bin scaffolding.
+ */
 import { ModuleModel, InstalledModuleInfo } from "./models/module";
 import { DatabaseModel } from "./models/db";
-import { ProjectModel } from "./models/project";
 import { RepoModel } from "./models/repo";
 import * as vscode from "vscode";
-import { discoverModulesInRepos, showError, showInfo, showAutoInfo, stripSettings, createInfoTreeItem, ModuleDiscoveryResult, getDatabaseLabel, normalizePath } from './utils';
-import { spawn, execFileSync } from 'child_process';
+import { showError, showInfo, showAutoInfo, stripSettings, getDatabaseLabel, normalizePath } from './utils';
+import { collectModuleDiscovery, resolvePsaeDirectories, setPsaeDirectoryIncluded, PSAE_INTERNAL_REGEX, PsaeDirectoryState } from './services/psaeInternal';
+
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-function collectModuleDiscovery(project: ProjectModel): ModuleDiscoveryResult {
-    const manualIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
-    return discoverModulesInRepos(project.repos, { manualIncludePaths: manualIncludes });
-}
 import { SettingsStore } from './settingsStore';
 import { getInstalledModuleNames, getInstalledModules } from './services/database';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { VersionsService } from './versionsService';
+import { showModalWarning } from './services/notifications';
+import { BaseTreeProvider } from './views/baseTreeProvider';
+import { runCommand, tryRunCommand } from './services/process';
+import { errorMessage } from './services/logger';
+import { readModuleManifest } from './services/manifest';
 
-export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-    private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
-    readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
+interface ModuleData {
+    name: string;
+    path: string;
+    state: string;
+    repoName: string;
+    isPsaeInternal: boolean;
+    isInstalled: boolean;
+}
 
-    refresh(): void {
-        this._onDidChangeTreeData.fire();
+type ModuleTreeNode = vscode.TreeItem & {
+    moduleData?: ModuleData;
+    psaeState?: PsaeDirectoryState;
+    psaeChildren?: ModuleTreeNode[];
+    parentNode?: ModuleTreeNode;
+};
+
+const CORE_HINT = 'Core/other module (not in this project\'s repos)';
+
+export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
+
+    constructor(_context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
+        super();
     }
 
-    constructor(private context: vscode.ExtensionContext, private sortPreferences: SortPreferences) {
-        this.context = context;
-    }
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
         return element;
     }
-    async getChildren(_element?: any): Promise<vscode.TreeItem[] | undefined> {
+
+    /** Module names discovered in the project's repos (for dependency hints). */
+    private knownModuleNames = new Set<string>();
+
+    async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[] | undefined> {
+        if (element) {
+            const node = element as ModuleTreeNode;
+            if (node.psaeChildren) {
+                return node.psaeChildren;
+            }
+            if (node.moduleData) {
+                return this.buildDependencyItems(node.moduleData);
+            }
+            return [];
+        }
+
+        // Empty lists fall through to the view's welcome content, which
+        // explains that a project and database must be selected first.
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            return [createInfoTreeItem('Select a project to manage modules.')];
+            return [];
         }
         const { project } = result;
         const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
         if (!db) {
-            return [createInfoTreeItem('Select a database to view modules.')];
+            return [];
         }
         const modules: ModuleModel[] = db.modules;
         if (!modules) {
-            return [createInfoTreeItem('No modules configured for this database.')];
+            return [];
         }
 
-        // Check if testing is enabled
-        const isTestingEnabled = project.testingConfig && project.testingConfig.isEnabled;
+        const isTestingEnabled = !!(project.testingConfig && project.testingConfig.isEnabled);
 
         const { modules: allModules, psaeDirectories } = collectModuleDiscovery(project);
+        this.knownModuleNames = new Set(allModules.map(module => module.name));
         const installedModuleNames = await getInstalledModuleNames(db.id);
         const dbModulesByName = new Map(modules.map(module => [module.name, module]));
         const selectedDbModuleNames = new Set(
@@ -58,221 +94,195 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
                 .filter(module => module.state === 'install' || module.state === 'upgrade')
                 .map(module => module.name)
         );
-        const manuallyIncludedPaths = new Set((project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!')));
-        const manuallyExcludedPaths = new Set((project.includedPsaeInternalPaths ?? []).filter(entry => entry.startsWith('!')).map(entry => entry.substring(1)));
 
+        const psaeStates = resolvePsaeDirectories({
+            psaeDirectories,
+            includedPsaeInternalPaths: project.includedPsaeInternalPaths,
+            selectedModuleNames: selectedDbModuleNames,
+            installedModuleNames
+        });
+
+        const buildModuleNode = (module: { name: string; path: string; repoName: string; isPsaeInternal: boolean; psInternalDirName?: string }): ModuleTreeNode => {
+            const repoPath = module.isPsaeInternal ? `${module.repoName}/${module.psInternalDirName}` : module.repoName;
+            const managed = dbModulesByName.get(module.name);
+            const isInstalledInDb = installedModuleNames.has(module.name);
+            if (managed) {
+                managed.isInstalled = isInstalledInDb;
+            }
+            const state = managed?.state ?? 'none';
+
+            // Collapsed: expanding a module lazily lists its manifest dependencies.
+            const item: ModuleTreeNode = new vscode.TreeItem(module.name, vscode.TreeItemCollapsibleState.Collapsed);
+            item.id = module.path;
+            item.iconPath = this.getModuleIcon(state, isInstalledInDb);
+            item.description = repoPath;
+            item.contextValue = 'module';
+
+            const stateLabel = state !== 'none' ? state : isInstalledInDb ? 'Installed' : 'none';
+            item.tooltip = new vscode.MarkdownString([
+                `**Module:** ${module.name}`,
+                `**State:** ${stateLabel}`,
+                `**Source:** ${repoPath}`,
+                `**Path:** ${module.path}`
+            ].join('\n\n'));
+
+            const moduleData: ModuleData = {
+                name: module.name,
+                path: module.path,
+                state,
+                repoName: module.repoName,
+                isPsaeInternal: module.isPsaeInternal,
+                isInstalled: isInstalledInDb
+            };
+            item.moduleData = moduleData;
+            item.command = isTestingEnabled ? undefined : {
+                command: 'moduleSelector.select',
+                title: 'Select Module',
+                arguments: [moduleData]
+            };
+            return item;
+        };
+
+        const treeItems: ModuleTreeNode[] = [];
+
+        if (isTestingEnabled) {
+            const testingModeItem: ModuleTreeNode = new vscode.TreeItem(
+                'Module management disabled (testing mode)',
+                vscode.TreeItemCollapsibleState.None
+            );
+            testingModeItem.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
+            testingModeItem.tooltip = 'Testing is enabled. Disable testing in the Testing view to manage modules again.';
+            testingModeItem.contextValue = 'info';
+            treeItems.push(testingModeItem);
+        }
+
+        // psae-internal directories become collapsible groups with their
+        // modules as children; the toggle lives on the group.
         const modulesByPsaeDir = new Map<string, typeof allModules>();
         for (const module of allModules) {
             if (!module.isPsaeInternal || !module.psInternalDirPath) {
                 continue;
             }
-            const existing = modulesByPsaeDir.get(module.psInternalDirPath) ?? [];
+            const key = normalizePath(module.psInternalDirPath);
+            const existing = modulesByPsaeDir.get(key) ?? [];
             existing.push(module);
-            modulesByPsaeDir.set(module.psInternalDirPath, existing);
+            modulesByPsaeDir.set(key, existing);
         }
 
-        let treeItems: vscode.TreeItem[] = [];
+        for (const psaeState of psaeStates) {
+            const members = (modulesByPsaeDir.get(psaeState.path) ?? [])
+                .filter(m => !PSAE_INTERNAL_REGEX.test(m.name))
+                .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
-        // ALWAYS add testing mode notification first when testing is enabled
-        if (isTestingEnabled) {
-            const testingModeItem = new vscode.TreeItem(
-                '⚠️ Module Management Disabled (Testing Mode)',
-                vscode.TreeItemCollapsibleState.None
-            );
-            testingModeItem.tooltip = 'Testing is enabled. Disable testing to manage modules again.';
-            testingModeItem.description = 'Go to Testing tab to disable';
-            treeItems.push(testingModeItem);
+            const parent: ModuleTreeNode = new vscode.TreeItem(psaeState.dirName, vscode.TreeItemCollapsibleState.Collapsed);
+            parent.id = psaeState.path;
+            parent.iconPath = psaeState.isIncluded
+                ? new vscode.ThemeIcon('package', new vscode.ThemeColor('charts.green'))
+                : new vscode.ThemeIcon('package');
+            parent.description = `${psaeState.repoName} • ${members.length} modules • ${psaeState.isIncluded ? 'in addons path' : 'excluded'}`;
+            parent.contextValue = isTestingEnabled ? 'psaeDirectoryDisabled' : 'psaeDirectory';
+
+            const reasons: string[] = [];
+            if (psaeState.isManuallyIncluded) { reasons.push('manually included'); }
+            if (psaeState.isManuallyExcluded) { reasons.push('manually excluded'); }
+            if (psaeState.hasSelectedModules) { reasons.push('has selected modules'); }
+            if (psaeState.hasDbModules) { reasons.push('has database modules'); }
+            parent.tooltip = [
+                `${psaeState.dirName}: ${psaeState.isIncluded ? 'Included in addons path' : 'Not included'}${reasons.length ? ` (${reasons.join(' + ')})` : ''}`,
+                `Repo: ${psaeState.repoName}`,
+                `Path: ${psaeState.path}`,
+                isTestingEnabled ? 'Module management disabled while testing is enabled' : 'Use the toggle action to include/exclude it'
+            ].join('\n');
+
+            parent.psaeState = psaeState;
+            parent.psaeChildren = members.map(buildModuleNode);
+            parent.psaeChildren.forEach(child => (child.parentNode = parent));
+            treeItems.push(parent);
         }
 
-        // Add psae-internal directories as special meta-modules
-        for (const psaeDir of psaeDirectories) {
-            const psaeInternalModules = modulesByPsaeDir.get(psaeDir.path) ?? [];
-
-            // Check if any modules from this ps*-internal are selected OR installed in DB
-            const hasSelectedModules = psaeInternalModules.some(m =>
-                selectedDbModuleNames.has(m.name)
-            );
-
-            // Check if any modules from this ps*-internal directory are installed/to upgrade in DB
-            const hasDbModules = psaeInternalModules.some(m =>
-                installedModuleNames.has(m.name)
-            );
-
-            const isManuallyIncluded = manuallyIncludedPaths.has(psaeDir.path);
-
-            // Auto-include if has selected OR database modules
-            // If not manually set: auto-include if has selected OR database modules
-            const shouldBeIncluded = isManuallyIncluded || (!manuallyExcludedPaths.has(psaeDir.path) && (hasSelectedModules || hasDbModules));
-
-            // Determine icon and tooltip based on status
-            let psaeIcon: string;
-            let psaeTooltip: string;
-
-            if (shouldBeIncluded) {
-                psaeIcon = '📦'; // Package icon when included in addons path
-                const reasons = [];
-                if (isManuallyIncluded) {
-                    reasons.push('manually included');
-                }
-                if (hasSelectedModules) {
-                    reasons.push('has selected modules');
-                }
-                if (hasDbModules) {
-                    reasons.push('has database modules');
-                }
-
-                psaeTooltip = `${psaeDir.dirName}: Included (${reasons.join(' + ')})\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to exclude from addons path`;
-            } else {
-                psaeIcon = '📋'; // Clipboard icon when not included
-                const reason = manuallyExcludedPaths.has(psaeDir.path) ? 'manually excluded' : 'no modules';
-                psaeTooltip = `${psaeDir.dirName}: Not included (${reason})\nRepo: ${psaeDir.repoName}\nPath: ${psaeDir.path}\nClick to include in addons path`;
-            }
-
-            treeItems.push({
-                label: `${psaeIcon} ${psaeDir.dirName}`,
-                tooltip: isTestingEnabled
-                    ? `${psaeTooltip}\n⚠️ Module management disabled while testing is enabled`
-                    : psaeTooltip,
-                description: `${psaeDir.repoName} (${psaeInternalModules.length} modules)`,
-                command: isTestingEnabled ? undefined : {
-                    command: 'moduleSelector.togglePsaeInternalModule',
-                    title: `Toggle ${psaeDir.dirName}`,
-                    arguments: [{
-                        path: psaeDir.path,
-                        repoName: psaeDir.repoName,
-                        dirName: psaeDir.dirName,
-                        hasSelectedModules: hasSelectedModules,
-                        hasDbModules: hasDbModules,
-                        isManuallyIncluded: isManuallyIncluded,
-                        shouldBeIncluded: shouldBeIncluded,
-                        modules: psaeInternalModules
-                    }]
-                }
-            });
-        }
-
-        // Add regular modules (excluding ps*-internal from the name display since we show them separately)
-        for (const module of allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i))) {
-            const repoPath = module.isPsaeInternal ? `${module.repoName}/${module.psInternalDirName}` : module.repoName;
-            const existingModule = dbModulesByName.get(module.name);
-            const isInstalledInDb = installedModuleNames.has(module.name);
-
-            if (existingModule) {
-                // Update the isInstalled flag based on database state
-                existingModule.isInstalled = isInstalledInDb;
-
-                let moduleIcon: string;
-
-                switch (existingModule.state) {
-                    case 'install':
-                        moduleIcon = '🟢';
-                        break;
-                    case 'upgrade':
-                        moduleIcon = '🟡';
-                        break;
-                    default:
-                        moduleIcon = existingModule.isInstalled ? '⚫' : '⚪'; // Black circle for installed but not managed
-                        break;
-                }
-
-                // Create module tooltip with consistent formatting
-                const moduleTooltipDetails = [];
-                moduleTooltipDetails.push(`**Module:** ${module.name}`);
-                moduleTooltipDetails.push(`**State:** ${existingModule.state}`);
-                moduleTooltipDetails.push(`**Source:** ${repoPath}`);
-                moduleTooltipDetails.push(`**Path:** ${module.path}`);
-
-                const managedModuleItem = {
-                    label: `${moduleIcon} ${module.name}`,
-                    tooltip: new vscode.MarkdownString(moduleTooltipDetails.join('\n\n')),
-                    description: repoPath,
-                    contextValue: 'module',
-                    command: isTestingEnabled ? undefined : {
-                        command: 'moduleSelector.select',
-                        title: 'Select Module',
-                        arguments: [{ name: module.name, path: module.path, state: existingModule.state, repoName: module.repoName, isPsaeInternal: module.isPsaeInternal, isInstalled: existingModule.isInstalled }]
-                    }
-                } as vscode.TreeItem & { contextValue: string };
-
-                // Store module data for context menu commands
-                (managedModuleItem as any).moduleData = {
-                    name: module.name,
-                    path: module.path,
-                    state: existingModule.state,
-                    repoName: module.repoName,
-                    isPsaeInternal: module.isPsaeInternal,
-                    isInstalled: existingModule.isInstalled
-                };
-
-                treeItems.push(managedModuleItem);
-            } else {
-                // Module not in our managed list
-                const moduleIcon = isInstalledInDb ? '⚫' : '⚪'; // Black circle for installed, white for not installed
-                const moduleState = isInstalledInDb ? 'Installed' : 'none';
-
-                // Create module tooltip with consistent formatting
-                const moduleTooltipDetails = [];
-                moduleTooltipDetails.push(`**Module:** ${module.name}`);
-                moduleTooltipDetails.push(`**State:** ${moduleState}`);
-                moduleTooltipDetails.push(`**Source:** ${repoPath}`);
-                moduleTooltipDetails.push(`**Path:** ${module.path}`);
-
-                const unmanagedModuleItem = {
-                    label: `${moduleIcon} ${module.name}`,
-                    tooltip: new vscode.MarkdownString(moduleTooltipDetails.join('\n\n')),
-                    description: repoPath,
-                    contextValue: 'module',
-                    command: isTestingEnabled ? undefined : {
-                        command: 'moduleSelector.select',
-                        title: 'Select Module',
-                        arguments: [{ name: module.name, path: module.path, state: 'none', repoName: module.repoName, isPsaeInternal: module.isPsaeInternal, isInstalled: isInstalledInDb }]
-                    }
-                } as vscode.TreeItem & { contextValue: string };
-
-                // Store module data for context menu commands
-                (unmanagedModuleItem as any).moduleData = {
-                    name: module.name,
-                    path: module.path,
-                    state: 'none',
-                    repoName: module.repoName,
-                    isPsaeInternal: module.isPsaeInternal,
-                    isInstalled: isInstalledInDb
-                };
-
-                treeItems.push(unmanagedModuleItem);
-            }
-        }
+        // Regular (non-psae) modules at the root.
+        const regularModules = allModules
+            .filter(m => !m.isPsaeInternal && !PSAE_INTERNAL_REGEX.test(m.name))
+            .map(buildModuleNode);
 
         const sortId = this.sortPreferences.get('moduleSelector', getDefaultSortOption('moduleSelector'));
-        return this.sortModuleItems(treeItems, sortId);
+        regularModules.sort((a, b) => this.compareModules(a, b, sortId));
+
+        treeItems.push(...regularModules);
+        this.lastRootNodes = treeItems;
+        return treeItems;
     }
 
-    private sortModuleItems(items: vscode.TreeItem[], sortId: string): vscode.TreeItem[] {
-        const testingItems: vscode.TreeItem[] = [];
-        const psaeItems: vscode.TreeItem[] = [];
-        const moduleItems: vscode.TreeItem[] = [];
-        const otherItems: vscode.TreeItem[] = [];
+    /** Root nodes from the latest build, used by getParent/findModuleNode. */
+    private lastRootNodes: ModuleTreeNode[] = [];
 
-        for (const item of items) {
-            if (typeof item.label === 'string' && item.label.includes('⚠️ Module Management Disabled (Testing Mode)')) {
-                testingItems.push(item);
-            } else if ((item.command?.command === 'moduleSelector.togglePsaeInternalModule') || (typeof item.label === 'string' && /ps[a-z]*-internal/i.test(item.label))) {
-                psaeItems.push(item);
-            } else if ((item as any).moduleData) {
-                moduleItems.push(item);
-            } else {
-                otherItems.push(item);
+    /** Required for TreeView.reveal: psae children report their group node. */
+    getParent(element: vscode.TreeItem): vscode.TreeItem | undefined {
+        return (element as ModuleTreeNode).parentNode;
+    }
+
+    /** Locates the tree node for a module by name (for TreeView.reveal). */
+    async findModuleNode(moduleName: string): Promise<vscode.TreeItem | undefined> {
+        if (this.lastRootNodes.length === 0) {
+            await this.getChildren();
+        }
+        for (const node of this.lastRootNodes) {
+            if (node.moduleData?.name === moduleName) {
+                return node;
+            }
+            const child = node.psaeChildren?.find(entry => entry.moduleData?.name === moduleName);
+            if (child) {
+                return child;
             }
         }
-
-        moduleItems.sort((a, b) => this.compareModules(a, b, sortId));
-
-        return [...testingItems, ...psaeItems, ...moduleItems, ...otherItems];
+        return undefined;
     }
 
-    private compareModules(itemA: vscode.TreeItem, itemB: vscode.TreeItem, sortId: string): number {
-        const dataA = (itemA as any).moduleData;
-        const dataB = (itemB as any).moduleData;
+    /** Lazily lists a module's manifest dependencies (one level deep). */
+    private async buildDependencyItems(moduleData: ModuleData): Promise<vscode.TreeItem[]> {
+        const manifest = await readModuleManifest(moduleData.path);
+        if (!manifest || manifest.depends.length === 0) {
+            const empty = new vscode.TreeItem(manifest ? 'No dependencies' : 'No __manifest__.py found', vscode.TreeItemCollapsibleState.None);
+            empty.contextValue = 'info';
+            empty.iconPath = new vscode.ThemeIcon('info');
+            return [empty];
+        }
+
+        return manifest.depends.map(dep => {
+            const isLocal = this.knownModuleNames.has(dep);
+            const item = new vscode.TreeItem(dep, vscode.TreeItemCollapsibleState.None);
+            item.id = `${moduleData.path}::dep::${dep}`;
+            item.contextValue = 'moduleDependency';
+            item.iconPath = isLocal
+                ? new vscode.ThemeIcon('package', new vscode.ThemeColor('charts.blue'))
+                : new vscode.ThemeIcon('library');
+            item.description = isLocal ? 'project module' : 'core/other';
+            item.tooltip = isLocal ? `Dependency "${dep}" is available in this project's repos.` : `${dep}: ${CORE_HINT}`;
+            return item;
+        });
+    }
+
+    private getModuleIcon(state: string, isInstalled: boolean): vscode.ThemeIcon {
+        // State is encoded by glyph SHAPE, not just color: when a tree row is
+        // selected VS Code repaints the icon with list.activeSelectionForeground
+        // and the charts.* tint is lost, so install/upgrade/installed must stay
+        // distinguishable without color. Directional arrows for the pending
+        // actions, filled vs outline circle for installed vs absent.
+        switch (state) {
+            case 'install':
+                return new vscode.ThemeIcon('arrow-circle-down', new vscode.ThemeColor('charts.green'));
+            case 'upgrade':
+                return new vscode.ThemeIcon('arrow-circle-up', new vscode.ThemeColor('charts.yellow'));
+            default:
+                return isInstalled
+                    ? new vscode.ThemeIcon('circle-filled')
+                    : new vscode.ThemeIcon('circle-outline');
+        }
+    }
+
+    private compareModules(itemA: ModuleTreeNode, itemB: ModuleTreeNode, sortId: string): number {
+        const dataA = itemA.moduleData;
+        const dataB = itemB.moduleData;
 
         if (!dataA || !dataB) {
             return 0;
@@ -296,6 +306,13 @@ export class ModuleTreeProvider implements vscode.TreeDataProvider<vscode.TreeIt
             }
             case 'module:state:active-last': {
                 const diff = statePriority(dataB.state) - statePriority(dataA.state);
+                if (diff !== 0) {
+                    return diff;
+                }
+                return nameCompare;
+            }
+            case 'module:installed:first': {
+                const diff = Number(dataB.isInstalled) - Number(dataA.isInstalled);
                 if (diff !== 0) {
                     return diff;
                 }
@@ -330,13 +347,13 @@ export async function selectModule(event: any) {
     const { data, project } = result;
     const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
     const moduleExistsInDb = db.modules.find(mod => mod.name === module.name);
@@ -352,62 +369,170 @@ export async function selectModule(event: any) {
     await SettingsStore.saveWithoutComments(stripSettings(data));
 }
 
+/**
+ * Quick-configure picker for module states: lists every discovered module
+ * with its current state, Enter cycles install → upgrade → unmanaged (like
+ * clicking in the tree) and the per-item buttons set a state directly. The
+ * picker stays open across changes; the caller refreshes views afterwards.
+ */
+export async function quickConfigureModules(): Promise<void> {
+    type ModulePick = vscode.QuickPickItem & { moduleName: string };
+
+    const installButton: vscode.QuickInputButton = {
+        iconPath: new vscode.ThemeIcon('desktop-download'),
+        tooltip: 'Set to install'
+    };
+    const upgradeButton: vscode.QuickInputButton = {
+        iconPath: new vscode.ThemeIcon('arrow-up'),
+        tooltip: 'Set to upgrade'
+    };
+    const clearButton: vscode.QuickInputButton = {
+        iconPath: new vscode.ThemeIcon('circle-slash'),
+        tooltip: 'Clear state'
+    };
+
+    const loadItems = async (): Promise<ModulePick[] | undefined> => {
+        const result = await SettingsStore.getSelectedProject();
+        if (!result) {
+            void showInfo('Select a project before configuring modules.');
+            return undefined;
+        }
+        const { project } = result;
+        const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+        if (!db) {
+            void showError('Select a database before configuring modules.');
+            return undefined;
+        }
+        if (project.testingConfig && project.testingConfig.isEnabled) {
+            void showError('Disable testing mode before changing module selections.');
+            return undefined;
+        }
+
+        const { modules } = collectModuleDiscovery(project);
+        const statesByName = new Map((db.modules ?? []).map(module => [module.name, module.state]));
+        let installedNames = new Set<string>();
+        try {
+            installedNames = await getInstalledModuleNames(db.id);
+        } catch {
+            // Database unreachable: still list modules, just without the installed hint.
+        }
+
+        const stateRank = (name: string): number => {
+            const state = statesByName.get(name);
+            if (state === 'install' || state === 'upgrade') {
+                return 0;
+            }
+            return installedNames.has(name) ? 1 : 2;
+        };
+
+        return modules
+            .filter(module => !PSAE_INTERNAL_REGEX.test(module.name))
+            .sort((a, b) => stateRank(a.name) - stateRank(b.name) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+            .map(module => {
+                const state = statesByName.get(module.name);
+                const statusParts: string[] = [];
+                if (state) {
+                    statusParts.push(state);
+                }
+                if (installedNames.has(module.name)) {
+                    statusParts.push('installed');
+                }
+                const marker = state === 'install'
+                    ? '$(arrow-circle-down)'
+                    : state === 'upgrade'
+                        ? '$(arrow-circle-up)'
+                        : installedNames.has(module.name)
+                            ? '$(circle-filled)'
+                            : '$(circle-outline)';
+                return {
+                    label: `${marker} ${module.name}`,
+                    description: statusParts.join(' • '),
+                    detail: module.repoName,
+                    moduleName: module.name,
+                    buttons: [installButton, upgradeButton, clearButton]
+                };
+            });
+    };
+
+    const initialItems = await loadItems();
+    if (!initialItems) {
+        return;
+    }
+
+    const picker = vscode.window.createQuickPick<ModulePick>();
+    picker.title = 'Configure Modules';
+    picker.placeholder = 'Enter cycles install → upgrade → unmanaged; item buttons set a state directly';
+    picker.matchOnDescription = true;
+    picker.matchOnDetail = true;
+    picker.ignoreFocusOut = true;
+    picker.keepScrollPosition = true;
+    picker.items = initialItems;
+
+    const applyAndReload = async (action: () => Promise<unknown>) => {
+        picker.busy = true;
+        try {
+            await action();
+            const items = await loadItems();
+            if (!items) {
+                picker.hide();
+                return;
+            }
+            picker.items = items;
+        } finally {
+            picker.busy = false;
+        }
+    };
+
+    picker.onDidAccept(() => {
+        const active = picker.selectedItems[0] ?? picker.activeItems[0];
+        if (!active) {
+            return;
+        }
+        void applyAndReload(() => selectModule({ name: active.moduleName }));
+    });
+
+    picker.onDidTriggerItemButton(event => {
+        const target = { name: event.item.moduleName };
+        if (event.button === installButton) {
+            void applyAndReload(() => setModuleToInstall(target));
+        } else if (event.button === upgradeButton) {
+            void applyAndReload(() => setModuleToUpgrade(target));
+        } else {
+            void applyAndReload(() => clearModuleState(target));
+        }
+    });
+
+    await new Promise<void>(resolve => {
+        picker.onDidHide(() => {
+            picker.dispose();
+            resolve();
+        });
+        picker.show();
+    });
+}
+
 async function runScaffoldCommand(
     pythonPath: string,
     odooBinPath: string,
     moduleName: string,
     targetPath: string
 ): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-        const child = spawn(
-            pythonPath,
-            [odooBinPath, 'scaffold', moduleName, targetPath],
-            { stdio: ['ignore', 'pipe', 'pipe'] }
-        );
-
-        let stderr = '';
-        let stdout = '';
-
-        child.stderr?.on('data', chunk => {
-            stderr += chunk.toString();
-        });
-        child.stdout?.on('data', chunk => {
-            stdout += chunk.toString();
-        });
-
-        child.on('error', error => {
-            reject(new Error(`Failed to start scaffold command: ${error.message}`));
-        });
-
-        child.on('close', code => {
-            if (code === 0) {
-                resolve();
-                return;
-            }
-
-            const details = stderr.trim() || stdout.trim();
-            reject(new Error(details || `Scaffold command exited with code ${code ?? 'unknown'}`));
-        });
-    });
+    try {
+        await runCommand(pythonPath, [odooBinPath, 'scaffold', moduleName, targetPath]);
+    } catch (error) {
+        throw new Error(`Scaffold command failed: ${errorMessage(error)}`);
+    }
 }
 
-function resolveRepositoryRoot(repoPath: string): string {
-    try {
-        const resolved = execFileSync(
-            'git',
-            ['-C', repoPath, 'rev-parse', '--show-toplevel'],
-            { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
-        ).trim();
-
-        if (resolved && fs.existsSync(resolved)) {
-            return resolved;
-        }
-    } catch {
-        // Fall back to the selected path if git resolution is unavailable.
+async function resolveRepositoryRoot(repoPath: string): Promise<string> {
+    const resolved = await tryRunCommand('git', ['-C', repoPath, 'rev-parse', '--show-toplevel']);
+    if (resolved && fs.existsSync(resolved)) {
+        return resolved;
     }
-
+    // Fall back to the selected path if git resolution is unavailable.
     return repoPath;
 }
+
 
 export async function createModuleFromScaffold(): Promise<void> {
     const projectResult = await SettingsStore.getSelectedProject();
@@ -419,7 +544,7 @@ export async function createModuleFromScaffold(): Promise<void> {
 
     const projectRepos = (targetProject.repos ?? []) as RepoModel[];
     if (projectRepos.length === 0) {
-        showError(`Project "${targetProject.name}" has no selected repositories.`);
+        void showError(`Project "${targetProject.name}" has no selected repositories.`);
         return;
     }
 
@@ -446,7 +571,7 @@ export async function createModuleFromScaffold(): Promise<void> {
     }
 
     if (!targetRepo) {
-        showError('Select a destination repository.');
+        void showError('Select a destination repository.');
         return;
     }
 
@@ -456,26 +581,26 @@ export async function createModuleFromScaffold(): Promise<void> {
     const normalizedPythonPath = normalizePath(settings.pythonPath);
     const normalizedOdooPath = normalizePath(settings.odooPath);
     const destinationPath = normalizePath(targetRepo.path);
-    const repositoryRootPath = resolveRepositoryRoot(destinationPath);
+    const repositoryRootPath = await resolveRepositoryRoot(destinationPath);
     const odooBinPath = path.join(normalizedOdooPath, 'odoo-bin');
 
     if (!normalizedPythonPath || !fs.existsSync(normalizedPythonPath)) {
-        showError(`Python executable not found: ${normalizedPythonPath}`);
+        void showError(`Python executable not found: ${normalizedPythonPath}`);
         return;
     }
 
     if (!normalizedOdooPath || !fs.existsSync(normalizedOdooPath)) {
-        showError(`Odoo path not found: ${normalizedOdooPath}`);
+        void showError(`Odoo path not found: ${normalizedOdooPath}`);
         return;
     }
 
     if (!fs.existsSync(odooBinPath)) {
-        showError(`odoo-bin not found at: ${odooBinPath}`);
+        void showError(`odoo-bin not found at: ${odooBinPath}`);
         return;
     }
 
     if (!repositoryRootPath || !fs.existsSync(repositoryRootPath)) {
-        showError(`Destination repository path not found: ${repositoryRootPath}`);
+        void showError(`Destination repository path not found: ${repositoryRootPath}`);
         return;
     }
 
@@ -525,7 +650,7 @@ export async function createModuleFromScaffold(): Promise<void> {
             3500
         );
     } catch (error: any) {
-        showError(`Failed to scaffold module "${sanitizedModuleName}": ${error.message}`);
+        void showError(`Failed to scaffold module "${sanitizedModuleName}": ${error.message}`);
     }
 }
 
@@ -541,23 +666,21 @@ export async function setModuleToInstall(event: any): Promise<void> {
     const { data, project } = result;
     const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
     const moduleExistsInDb = db.modules.find(mod => mod.name === moduleData.name);
     if (!moduleExistsInDb) {
         db.modules.push(new ModuleModel(moduleData.name, 'install'));
-        showAutoInfo(`Module "${moduleData.name}" set to install`, 2000);
     } else {
         moduleExistsInDb.state = 'install';
-        showAutoInfo(`Module "${moduleData.name}" state changed to install`, 2000);
     }
     await SettingsStore.saveWithoutComments(stripSettings(data));
 }
@@ -565,34 +688,33 @@ export async function setModuleToInstall(event: any): Promise<void> {
 /**
  * Set a module to 'upgrade' state
  */
-export async function setModuleToUpgrade(event: any): Promise<void> {
+export async function setModuleToUpgrade(event: any): Promise<boolean> {
     const moduleData = event.moduleData || event;
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        return;
+        return false;
     }
     const { data, project } = result;
     const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
-        return;
+        void showError('Select a database before running this action.');
+        return false;
     }
 
     // Check if testing is enabled
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
-        return;
+        void showError('Disable testing mode before changing module selections.');
+        return false;
     }
 
     const moduleExistsInDb = db.modules.find(mod => mod.name === moduleData.name);
     if (!moduleExistsInDb) {
         db.modules.push(new ModuleModel(moduleData.name, 'upgrade'));
-        showAutoInfo(`Module "${moduleData.name}" set to upgrade`, 2000);
     } else {
         moduleExistsInDb.state = 'upgrade';
-        showAutoInfo(`Module "${moduleData.name}" state changed to upgrade`, 2000);
     }
     await SettingsStore.saveWithoutComments(stripSettings(data));
+    return true;
 }
 
 /**
@@ -607,39 +729,29 @@ export async function clearModuleState(event: any): Promise<void> {
     const { data, project } = result;
     const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
     const moduleExistsInDb = db.modules.find(mod => mod.name === moduleData.name);
     if (moduleExistsInDb) {
         db.modules = db.modules.filter(mod => mod.name !== moduleData.name);
-        showAutoInfo(`Module "${moduleData.name}" state cleared`, 2000);
-    } else {
-        showAutoInfo(`Module "${moduleData.name}" was already not managed`, 1500);
     }
     await SettingsStore.saveWithoutComments(stripSettings(data));
 }
 
-export async function togglePsaeInternalModule(event: any): Promise<void> {
-    const {
-        path: psaeInternalPath,
-        repoName,
-        dirName,
-        hasSelectedModules,
-        hasDbModules,
-        hasInstalledModules,
-        isManuallyIncluded,
-        shouldBeIncluded,
-        modules: psaeModules
-    } = event;
-    const hasInstalledOrDbModules = Boolean(hasInstalledModules ?? hasDbModules);
+export async function togglePsaeInternalModule(event: unknown): Promise<void> {
+    const state = (event as { psaeState?: PsaeDirectoryState })?.psaeState;
+    if (!state) {
+        void showError('Could not identify the psae-internal directory to toggle.');
+        return;
+    }
 
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
@@ -649,107 +761,64 @@ export async function togglePsaeInternalModule(event: any): Promise<void> {
     const { data, project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
-    // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
-    // Initialize includedPsaeInternalPaths if it doesn't exist
-    if (!project.includedPsaeInternalPaths) {
-        project.includedPsaeInternalPaths = [];
+    const include = !state.isIncluded;
+    const { removedModuleNames } = setPsaeDirectoryIncluded(project, state, include);
+    if (removedModuleNames.length > 0) {
+        db.modules = db.modules.filter(dbModule => !removedModuleNames.includes(dbModule.name));
     }
 
-    const excludePath = `!${psaeInternalPath}`;
-    const isManuallyExcluded = project.includedPsaeInternalPaths.includes(excludePath);
+    await SettingsStore.saveWithoutComments(stripSettings(data));
 
-    if (shouldBeIncluded) {
-        if (isManuallyIncluded) {
-            // Currently manually included - remove manual inclusion (may still be auto-included)
-            const pathIndex = project.includedPsaeInternalPaths.indexOf(psaeInternalPath);
-            if (pathIndex > -1) {
-                project.includedPsaeInternalPaths.splice(pathIndex, 1);
-            }
-            // If would still be auto-included, add manual exclusion and remove selected modules
-            if (hasSelectedModules || hasInstalledOrDbModules) {
-                project.includedPsaeInternalPaths.push(excludePath);
-                // Remove selected modules from this psae-internal directory
-                const moduleNamesToRemove = psaeModules.map((m: any) => m.name);
-                db.modules = db.modules.filter(dbModule => !moduleNamesToRemove.includes(dbModule.name));
-                await SettingsStore.saveWithoutComments(stripSettings(data));
-                showInfo(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
-            } else {
-                await SettingsStore.saveWithoutComments(stripSettings(data));
-                showInfo(`Removed manual inclusion of ${dirName} (${repoName})`);
-            }
-        } else {
-            // Currently auto-included - add manual exclusion to override and remove selected modules
-            project.includedPsaeInternalPaths.push(excludePath);
-            // Remove selected modules from this psae-internal directory
-            const moduleNamesToRemove = psaeModules.map((m: any) => m.name);
-            db.modules = db.modules.filter(dbModule => !moduleNamesToRemove.includes(dbModule.name));
-            await SettingsStore.saveWithoutComments(stripSettings(data));
-            showInfo(`Manually excluded ${dirName} (${repoName}) and removed selected modules from addons path`);
-        }
+    if (include) {
+        showAutoInfo(`Included ${state.dirName} (${state.repoName}) in the addons path`, 2500);
+    } else if (removedModuleNames.length > 0) {
+        showAutoInfo(`Excluded ${state.dirName} (${state.repoName}) and cleared ${removedModuleNames.length} selected module(s)`, 3000);
     } else {
-        if (isManuallyExcluded) {
-            // Currently manually excluded - remove exclusion (may auto-include)
-            const pathIndex = project.includedPsaeInternalPaths.indexOf(excludePath);
-            if (pathIndex > -1) {
-                project.includedPsaeInternalPaths.splice(pathIndex, 1);
-            }
-            await SettingsStore.saveWithoutComments(stripSettings(data));
-            if (hasSelectedModules || hasInstalledOrDbModules) {
-                showInfo(`Removed manual exclusion of ${dirName} (${repoName}). Now auto-included due to modules.`);
-            } else {
-                showInfo(`Removed manual exclusion of ${dirName} (${repoName})`);
-            }
-        } else {
-            // Currently not included - add manual inclusion
-            project.includedPsaeInternalPaths.push(psaeInternalPath);
-            await SettingsStore.saveWithoutComments(stripSettings(data));
-            showInfo(`Manually included ${dirName} (${repoName}) in addons path`);
-        }
+        showAutoInfo(`Excluded ${state.dirName} (${state.repoName}) from the addons path`, 2500);
     }
 }
 
 export async function updateAllModules(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        showError('Select a project before running this action.');
+        void showError('Select a project before running this action.');
         return;
     }
 
     const { data, project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
     const { modules: allModules } = collectModuleDiscovery(project);
 
-    const availableModules = allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i));
+    const availableModules = allModules.filter(m => !PSAE_INTERNAL_REGEX.test(m.name));
 
     if (availableModules.length === 0) {
-        showInfo('No modules are available to update.');
+        void showInfo('No modules are available to update.');
         return;
     }
 
     // Confirm action
-    const confirm = await vscode.window.showWarningMessage(
+    const confirm = await showModalWarning(
         `Are you sure you want to set all ${availableModules.length} available modules to "upgrade" state regardless of their current state?`,
-        { modal: true },
         'Update All'
     );
 
@@ -787,38 +856,37 @@ export async function updateAllModules(): Promise<void> {
 export async function updateInstalledModules(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        showError('Select a project before running this action.');
+        void showError('Select a project before running this action.');
         return;
     }
 
     const { data, project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
     if (!db.modules || db.modules.length === 0) {
-        showInfo('No modules are configured for this database to update');
+        void showInfo('No modules are configured for this database to update');
         return;
     }
 
     const installedModules = db.modules.filter(module => module.state === 'install');
     if (installedModules.length === 0) {
-        showInfo('No modules are currently marked with the "install" state.');
+        void showInfo('No modules are currently marked with the "install" state.');
         return;
     }
 
     // Confirm action
-    const confirm = await vscode.window.showWarningMessage(
+    const confirm = await showModalWarning(
         `Are you sure you want to set all ${installedModules.length} modules with "install" state to "upgrade" state?`,
-        { modal: true },
         'Update Installed'
     );
 
@@ -838,36 +906,35 @@ export async function updateInstalledModules(): Promise<void> {
 export async function installAllModules(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        showError('Select a project before running this action.');
+        void showError('Select a project before running this action.');
         return;
     }
 
     const { data, project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
     const { modules: allModules } = collectModuleDiscovery(project);
 
-    const availableModules = allModules.filter(m => !m.name.match(/^ps[a-z]*-internal$/i));
+    const availableModules = allModules.filter(m => !PSAE_INTERNAL_REGEX.test(m.name));
 
     if (availableModules.length === 0) {
-        showInfo('No modules are available to install.');
+        void showInfo('No modules are available to install.');
         return;
     }
 
     // Confirm action
-    const confirm = await vscode.window.showWarningMessage(
+    const confirm = await showModalWarning(
         `Are you sure you want to set all ${availableModules.length} available modules to "install" state?`,
-        { modal: true },
         'Install All'
     );
 
@@ -905,20 +972,20 @@ export async function installAllModules(): Promise<void> {
 export async function clearAllModuleSelections(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        showError('Select a project before running this action.');
+        void showError('Select a project before running this action.');
         return;
     }
 
     const { data, project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
     // Check if testing is enabled - prevent module modifications
     if (project.testingConfig && project.testingConfig.isEnabled) {
-        showError('Disable testing mode before changing module selections.');
+        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -927,9 +994,8 @@ export async function clearAllModuleSelections(): Promise<void> {
     }
 
     // Confirm action
-    const confirm = await vscode.window.showWarningMessage(
+    const confirm = await showModalWarning(
         `Are you sure you want to clear all ${db.modules.length} selected modules?`,
-        { modal: true },
         'Clear All'
     );
 
@@ -947,14 +1013,14 @@ export async function clearAllModuleSelections(): Promise<void> {
 export async function viewInstalledModules(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        showError('Select a project before running this action.');
+        void showError('Select a project before running this action.');
         return;
     }
 
     const { project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        showError('Select a database before running this action.');
+        void showError('Select a database before running this action.');
         return;
     }
 
@@ -963,7 +1029,7 @@ export async function viewInstalledModules(): Promise<void> {
         const installedModules = await getInstalledModules(db.id);
 
         if (installedModules.length === 0) {
-            showInfo('No installed modules were found in the database');
+            void showInfo('No installed modules were found in the database');
             return;
         }
 
@@ -985,6 +1051,6 @@ export async function viewInstalledModules(): Promise<void> {
         });
 
     } catch (error) {
-        showError(`Failed to retrieve installed modules: ${error}`);
+        void showError(`Failed to retrieve installed modules: ${error}`);
     }
 }

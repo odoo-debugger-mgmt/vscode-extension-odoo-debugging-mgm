@@ -1,6 +1,11 @@
+/**
+ * Bridge to the built-in git extension's API: current branch, branch
+ * listings and checkouts via source control (with type-safe fallbacks).
+ */
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import type { GitExtension, Repository, Branch, BranchType } from '../types/git';
+import { logger } from './logger';
 
 function resolveRepoPath(repoPath: string): string {
     if (path.isAbsolute(repoPath)) {
@@ -41,7 +46,7 @@ export async function checkoutBranchViaSourceControl(repoPath: string, branch: s
         await repo.checkout(branch, false);
         return true;
     } catch (error) {
-        console.warn(`Git API checkout failed for ${repoPath}:`, error);
+        logger.warn(`Git API checkout failed for ${repoPath}:`, error);
         return false;
     }
 }
@@ -52,7 +57,7 @@ export async function getCurrentBranchViaSourceControl(repoPath: string): Promis
         const headName = repo?.state?.HEAD?.name;
         return headName && headName.trim().length > 0 ? headName : null;
     } catch (error) {
-        console.warn(`Git API branch lookup failed for ${repoPath}:`, error);
+        logger.warn(`Git API branch lookup failed for ${repoPath}:`, error);
         return null;
     }
 }
@@ -101,7 +106,7 @@ export async function getBranchesWithMetadata(repoPath: string): Promise<Array<{
             .map(([name, type]) => ({ name, type }))
             .sort((a, b) => a.name.localeCompare(b.name));
     } catch (error) {
-        console.warn(`Git API branch listing failed for ${repoPath}:`, error);
+        logger.warn(`Git API branch listing failed for ${repoPath}:`, error);
         return [];
     }
 }

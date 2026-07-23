@@ -1,3 +1,7 @@
+/**
+ * Small TTL caches for expensive lookups (module/repo discovery, installed
+ * modules, git branches) with targeted invalidation.
+ */
 interface TimedEntry<T> {
     value: T;
     expiresAt: number;

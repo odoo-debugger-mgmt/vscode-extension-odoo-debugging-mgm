@@ -1,3 +1,7 @@
+/**
+ * Deterministic database name suggestions (slugified project + kind + date
+ * + collision-resolving hash).
+ */
 import * as crypto from 'crypto';
 
 export type DatabaseKind = 'dump' | 'fresh' | 'dev' | 'test' | 'feature' | 'clone' | 'temp' | 'shell' | 'existing' | 'template';

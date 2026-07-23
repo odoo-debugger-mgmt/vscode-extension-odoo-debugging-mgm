@@ -1,3 +1,6 @@
+/**
+ * Sort option catalogs for every sortable view.
+ */
 export interface SortOption {
     id: string;
     label: string;
@@ -25,7 +28,9 @@ export const SORT_OPTIONS: SortOptionsMap = {
         { id: 'repo:name:asc', label: 'Name (A → Z)' },
         { id: 'repo:name:desc', label: 'Name (Z → A)' },
         { id: 'repo:created:newest', label: 'Creation Date (Newest first)', description: 'Uses filesystem creation time' },
-        { id: 'repo:created:oldest', label: 'Creation Date (Oldest first)', description: 'Uses filesystem creation time' }
+        { id: 'repo:created:oldest', label: 'Creation Date (Oldest first)', description: 'Uses filesystem creation time' },
+        { id: 'repo:branch:asc', label: 'Branch (A → Z)' },
+        { id: 'repo:branch:desc', label: 'Branch (Z → A)' }
     ],
     dbSelector: [
         { id: 'db:name:asc', label: 'Name (A → Z)' },
@@ -38,6 +43,7 @@ export const SORT_OPTIONS: SortOptionsMap = {
     moduleSelector: [
         { id: 'module:state:active-first', label: 'State (Install/Upgrade first)' },
         { id: 'module:state:active-last', label: 'State (Install/Upgrade last)' },
+        { id: 'module:installed:first', label: 'Installed in Database first' },
         { id: 'module:name:asc', label: 'Name (A → Z)' },
         { id: 'module:name:desc', label: 'Name (Z → A)' },
         { id: 'module:repo:asc', label: 'Repository (A → Z)' },

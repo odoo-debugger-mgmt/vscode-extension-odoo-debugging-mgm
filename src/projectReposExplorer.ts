@@ -1,13 +1,22 @@
+/**
+ * Project Repos view (Explorer sidebar): a project-scoped file tree with
+ * file operations, file watchers, branch display and missing-path detection.
+ */
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { SettingsStore } from './settingsStore';
 import { ProjectModel } from './models/project';
 import { RepoModel } from './models/repo';
-import { showError, showInfo } from './utils';
+import { showError, showInfo, normalizePath } from './utils';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
 import { createFilesExcludeMatcher } from './services/filesExclude';
+import { BaseTreeProvider } from './views/baseTreeProvider';
+import { SortPreferences } from './sortPreferences';
+import { getDefaultSortOption } from './sortOptions';
+import { getRepoBranch } from './services/branches';
+import { pathExists as fsPathExists } from './services/dumpImport';
 
-type NodeKind = 'placeholder' | 'repo' | 'folder' | 'file';
+type NodeKind = 'repo' | 'folder' | 'file';
 
 interface BaseNode {
     kind: NodeKind;
@@ -18,6 +27,8 @@ interface RepoNode extends BaseNode {
     kind: 'repo';
     repo: RepoModel;
     uri: vscode.Uri;
+    branch: string | null;
+    missing: boolean;
 }
 
 interface FolderNode extends BaseNode {
@@ -30,25 +41,15 @@ interface FileNode extends BaseNode {
     uri: vscode.Uri;
 }
 
-interface PlaceholderNode extends BaseNode {
-    kind: 'placeholder';
-    command?: vscode.Command;
-}
+type ExplorerNode = RepoNode | FolderNode | FileNode;
 
-type ExplorerNode = RepoNode | FolderNode | FileNode | PlaceholderNode;
-
-export class ProjectReposExplorerProvider implements vscode.TreeDataProvider<ExplorerNode> {
-    private readonly _onDidChangeTreeData = new vscode.EventEmitter<ExplorerNode | undefined | null | void>();
-    readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
-
+export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode> {
     private watchers: vscode.FileSystemWatcher[] = [];
     private watcherKey = '';
     private refreshDebounceTimer: NodeJS.Timeout | undefined;
 
-    constructor() {}
-
-    refresh(): void {
-        this._onDidChangeTreeData.fire();
+    constructor(private readonly sortPreferences: SortPreferences) {
+        super();
     }
 
     private scheduleRefresh(): void {
@@ -89,17 +90,26 @@ export class ProjectReposExplorerProvider implements vscode.TreeDataProvider<Exp
         }
     }
 
+    override dispose(): void {
+        this.disposeWatchers();
+        super.dispose();
+    }
+
     getTreeItem(element: ExplorerNode): vscode.TreeItem {
         switch (element.kind) {
-            case 'placeholder': {
-                const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
-                item.contextValue = 'projectReposExplorerInfo';
-                item.command = (element as PlaceholderNode).command;
-                return item;
-            }
             case 'repo': {
+                if (element.missing) {
+                    const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
+                    item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
+                    item.description = 'path missing';
+                    item.tooltip = `${element.repo.path} does not exist.\nThe folder may have been moved or deleted - use "Relocate Repository" to fix the path.`;
+                    item.contextValue = 'projectRepoRootMissing';
+                    return item;
+                }
                 const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.Collapsed);
                 item.resourceUri = element.uri;
+                item.description = element.branch ?? undefined;
+                item.tooltip = element.branch ? `${element.repo.path}\nBranch: ${element.branch}` : element.repo.path;
                 item.contextValue = 'projectRepoRoot';
                 return item;
             }
@@ -125,36 +135,34 @@ export class ProjectReposExplorerProvider implements vscode.TreeDataProvider<Exp
 
     async getChildren(element?: ExplorerNode): Promise<ExplorerNode[]> {
         if (!element) {
+            // Empty lists fall through to the view's welcome content, which
+            // offers the select-project / select-repos actions.
             const selection = await SettingsStore.getSelectedProject();
             if (!selection) {
-                return [
-                    {
-                        kind: 'placeholder',
-                        label: 'No active project. Select a project to view its repos.',
-                        command: { command: 'odt.projectReposExplorer.selectProject', title: 'Select Project' }
-                    }
-                ];
+                return [];
             }
 
             const { project } = selection;
             const repos = (project.repos ?? []) as RepoModel[];
             if (!repos.length) {
-                return [
-                    {
-                        kind: 'placeholder',
-                        label: 'No repositories selected for this project.',
-                        command: { command: 'repoSelector.selectRepo', title: 'Select Repo' }
-                    }
-                ];
+                return [];
             }
 
             this.resetWatchers(repos);
 
-            return repos.map(repo => ({
-                kind: 'repo',
-                label: repo.name,
-                repo,
-                uri: vscode.Uri.file(repo.path)
+            const sortId = this.sortPreferences.get('projectRepos', getDefaultSortOption('projectRepos'));
+            const sortedRepos = [...repos].sort((a, b) => this.compareRepos(a, b, sortId));
+            return Promise.all(sortedRepos.map(async repo => {
+                const repoPath = normalizePath(repo.path);
+                const missing = !(await fsPathExists(repoPath));
+                return {
+                    kind: 'repo' as const,
+                    label: repo.name,
+                    repo,
+                    uri: vscode.Uri.file(repoPath),
+                    branch: missing ? null : await getRepoBranch(repoPath),
+                    missing
+                };
             }));
         }
 
@@ -163,6 +171,31 @@ export class ProjectReposExplorerProvider implements vscode.TreeDataProvider<Exp
         }
 
         return [];
+    }
+
+    private compareRepos(a: RepoModel, b: RepoModel, sortId: string): number {
+        switch (sortId) {
+            case 'projectRepos:name:asc':
+                return a.name.localeCompare(b.name);
+            case 'projectRepos:name:desc':
+                return b.name.localeCompare(a.name);
+            case 'projectRepos:added:newest':
+                return this.getAddedTimestamp(b) - this.getAddedTimestamp(a);
+            case 'projectRepos:added:oldest':
+                return this.getAddedTimestamp(a) - this.getAddedTimestamp(b);
+            default:
+                return a.name.localeCompare(b.name);
+        }
+    }
+
+    private getAddedTimestamp(repo: RepoModel): number {
+        if (repo.addedAt) {
+            const value = new Date(repo.addedAt).getTime();
+            if (!isNaN(value)) {
+                return value;
+            }
+        }
+        return 0;
     }
 
     private resetWatchers(repos: RepoModel[]) {
@@ -217,91 +250,98 @@ export class ProjectReposExplorerProvider implements vscode.TreeDataProvider<Exp
             });
             return nodes;
         } catch (error: any) {
-            showError(`Unable to read ${dir.fsPath}: ${error?.message ?? error}`);
+            void showError(`Unable to read ${dir.fsPath}: ${error?.message ?? error}`);
             return [];
         }
     }
 }
 
-async function promptName(placeHolder: string, value?: string): Promise<string | undefined> {
-    return vscode.window.showInputBox({
-        prompt: placeHolder,
-        value,
-        ignoreFocusOut: true
+async function promptName(prompt: string, options?: { value?: string; placeHolder?: string }): Promise<string | undefined> {
+    const name = await vscode.window.showInputBox({
+        prompt,
+        value: options?.value,
+        placeHolder: options?.placeHolder,
+        ignoreFocusOut: true,
+        validateInput: input => {
+            const trimmed = input.trim();
+            if (!trimmed) {
+                return 'Name cannot be empty';
+            }
+            if (trimmed === '.' || trimmed === '..' || /[/\\]/.test(trimmed)) {
+                return 'Name cannot contain path separators';
+            }
+            return undefined;
+        }
     });
+    return name?.trim();
+}
+
+async function entryExists(uri: vscode.Uri): Promise<boolean> {
+    try {
+        await vscode.workspace.fs.stat(uri);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 export async function createNewFile(folderUri?: vscode.Uri): Promise<void> {
-    const baseUri = folderUri ?? (vscode.window.activeTextEditor?.document.uri);
-    if (!baseUri) {
-        showInfo('Select a folder to create a file.');
-        return;
-    }
-    const folderPath = baseUri.fsPath;
-    const name = await promptName('New file name', 'untitled.txt');
-    if (!name) {
-        return;
-    }
-    const target = vscode.Uri.file(path.join(folderPath, name));
-    await vscode.workspace.fs.writeFile(target, new Uint8Array());
-}
-
-export async function createNewFolder(folderUri?: vscode.Uri): Promise<void> {
     if (!folderUri) {
-        showInfo('Select a folder to create a new folder.');
+        void showInfo('Select a folder to create a file.');
         return;
     }
-    const name = await promptName('New folder name', 'new-folder');
+    const name = await promptName('New file name', { placeHolder: 'my_file.py' });
     if (!name) {
         return;
     }
     const target = vscode.Uri.file(path.join(folderUri.fsPath, name));
+    if (await entryExists(target)) {
+        void showError(`"${name}" already exists in this folder.`);
+        return;
+    }
+    await vscode.workspace.fs.writeFile(target, new Uint8Array());
+    await vscode.window.showTextDocument(target, { preview: false });
+}
+
+export async function createNewFolder(folderUri?: vscode.Uri): Promise<void> {
+    if (!folderUri) {
+        void showInfo('Select a folder to create a new folder.');
+        return;
+    }
+    const name = await promptName('New folder name', { placeHolder: 'my_folder' });
+    if (!name) {
+        return;
+    }
+    const target = vscode.Uri.file(path.join(folderUri.fsPath, name));
+    if (await entryExists(target)) {
+        void showError(`"${name}" already exists in this folder.`);
+        return;
+    }
     await vscode.workspace.fs.createDirectory(target);
 }
 
 export async function renameEntry(uri?: vscode.Uri): Promise<void> {
     if (!uri) {
-        showInfo('Select a file or folder to rename.');
+        void showInfo('Select a file or folder to rename.');
         return;
     }
     const currentName = path.basename(uri.fsPath);
-    const newName = await promptName('Rename to', currentName);
+    const newName = await promptName('Rename to', { value: currentName });
     if (!newName || newName === currentName) {
         return;
     }
     const target = vscode.Uri.file(path.join(path.dirname(uri.fsPath), newName));
+    if (await entryExists(target)) {
+        void showError(`"${newName}" already exists in this folder.`);
+        return;
+    }
     await vscode.workspace.fs.rename(uri, target, { overwrite: false });
-}
-
-export async function deleteEntry(uri?: vscode.Uri): Promise<void> {
-    if (!uri) {
-        showInfo('Select a file or folder to delete.');
-        return;
-    }
-    const choice = await vscode.window.showWarningMessage(
-        `Delete "${path.basename(uri.fsPath)}"?`,
-        { modal: true },
-        'Delete'
-    );
-    if (choice !== 'Delete') {
-        return;
-    }
-    await vscode.workspace.fs.delete(uri, { recursive: true, useTrash: true });
-}
-
-export async function openTerminalHere(uri?: vscode.Uri): Promise<void> {
-    if (!uri) {
-        showInfo('Select a folder to open in terminal.');
-        return;
-    }
-    const terminal = vscode.window.createTerminal({ cwd: uri.fsPath });
-    terminal.show();
 }
 
 export async function selectProjectForExplorer(): Promise<void> {
     const data = await SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
-        showInfo('No projects found. Create a project first.');
+        void showInfo('No projects found. Create a project first.');
         return;
     }
 
@@ -319,74 +359,4 @@ export async function selectProjectForExplorer(): Promise<void> {
 
     data.projects.forEach((p: ProjectModel, idx: number) => (p.isSelected = idx === pick.index));
     await SettingsStore.saveWithoutComments(data);
-}
-
-// Clipboard for copy/cut
-let clipboard: { uris: vscode.Uri[]; cut: boolean } | null = null;
-
-export function copyEntries(uris: vscode.Uri[], cut = false): void {
-    clipboard = { uris, cut };
-    const action = cut ? 'Cut' : 'Copied';
-    vscode.window.setStatusBarMessage(`${action} ${uris.length} item(s)`, 2000);
-}
-
-function getTargetFolderUri(uri?: vscode.Uri): vscode.Uri | undefined {
-    if (!uri) {
-        return undefined;
-    }
-    return uri;
-}
-
-async function pathExists(uri: vscode.Uri): Promise<boolean> {
-    try {
-        await vscode.workspace.fs.stat(uri);
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-export async function pasteEntries(targetUri?: vscode.Uri): Promise<void> {
-    if (!clipboard || clipboard.uris.length === 0) {
-        showInfo('Nothing to paste.');
-        return;
-    }
-
-    const folderUri = getTargetFolderUri(targetUri);
-    if (!folderUri) {
-        showInfo('Select a destination folder.');
-        return;
-    }
-
-    for (const source of clipboard.uris) {
-        const base = path.basename(source.fsPath);
-        const destination = vscode.Uri.file(path.join(folderUri.fsPath, base));
-
-        const exists = await pathExists(destination);
-        if (exists) {
-            const choice = await vscode.window.showWarningMessage(
-                `"${base}" already exists. Overwrite?`,
-                { modal: true },
-                'Overwrite',
-                'Skip'
-            );
-            if (choice !== 'Overwrite') {
-                continue;
-            }
-        }
-
-        try {
-            if (clipboard.cut) {
-                await vscode.workspace.fs.rename(source, destination, { overwrite: true });
-            } else {
-                await vscode.workspace.fs.copy(source, destination, { overwrite: true });
-            }
-        } catch (error: any) {
-            showError(`Failed to paste "${base}": ${error?.message ?? error}`);
-        }
-    }
-
-    if (clipboard.cut) {
-        clipboard = null;
-    }
 }

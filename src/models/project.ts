@@ -1,3 +1,7 @@
+/**
+ * Project model: repositories, databases, tickets, testing config and the
+ * psae-internal override list.
+ */
 import { DatabaseModel } from "./db";
 import { RepoModel } from "./repo";
 import { TestingConfigModel } from "./testing";
