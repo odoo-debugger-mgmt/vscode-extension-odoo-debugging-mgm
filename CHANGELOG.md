@@ -4,7 +4,7 @@ All notable changes to the "odoo-devtools-vscode" extension will be documented i
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [1.2.0] - Unreleased
+## [1.2.0] - 2026-07-23
 
 ### Changed
 
