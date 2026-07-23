@@ -525,6 +525,12 @@
         "icon": "$(globe)"
       },
       {
+        "command": "odoo.copyCommand",
+        "title": "Copy Odoo Command",
+        "category": "Odoo DevTools",
+        "icon": "$(clippy)"
+      },
+      {
         "command": "dbSelector.openInBrowser",
         "title": "Open in Browser",
         "icon": "$(globe)"
@@ -657,6 +663,11 @@
           "command": "odoo.startShell",
           "when": "view == projectSelector",
           "group": "2_server@1"
+        },
+        {
+          "command": "odoo.copyCommand",
+          "when": "view == projectSelector",
+          "group": "2_server@2"
         },
         {
           "command": "projectSelector.sort",

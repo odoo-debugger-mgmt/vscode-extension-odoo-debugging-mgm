@@ -11785,6 +11785,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.setupDebugger = setupDebugger;
+exports.buildOdooCommandLine = buildOdooCommandLine;
 exports.startDebugShell = startDebugShell;
 exports.stopDebugServer = stopDebugServer;
 exports.startDebugServer = startDebugServer;
@@ -12058,46 +12059,57 @@ async function prepareArgs(project, settings, isShell = false) {
     }
     return args;
 }
-async function startDebugShell() {
-    const workspacePath = (0, utils_1.getWorkspacePath)();
-    if (!workspacePath) {
-        return undefined;
-    }
+/**
+ * Assembles the full `python odoo-bin …` command line for the selected
+ * project's active version, quoted for a POSIX shell — the same command
+ * the debugger runs (server) or the shell terminal sends (`isShell`).
+ * Returns undefined after surfacing the reason when prerequisites are
+ * missing.
+ */
+async function buildOdooCommandLine(isShell = false) {
     const result = await settingsStore_1.SettingsStore.getSelectedProject();
     if (!result) {
         return undefined;
     }
     const { project } = result;
-    // Get settings from active version instead of legacy settings
     const versionsService = versionsService_1.VersionsService.getInstance();
     const workspaceSettings = await versionsService.getActiveVersionSettings();
-    // Normalize paths for terminal commands
     const normalizedOdooPath = (0, utils_1.normalizePath)(workspaceSettings.odooPath);
     const normalizedPythonPath = (0, utils_1.normalizePath)(workspaceSettings.pythonPath);
     let args;
     try {
-        args = await prepareArgs(project, workspaceSettings, true);
+        args = await prepareArgs(project, workspaceSettings, isShell);
     }
     catch (error) {
         if (error instanceof Error) {
             if (error.message === 'Select a database before running this action.') {
-                void (0, utils_1.showInfo)('Select a database before opening the Odoo shell.');
+                void (0, utils_1.showInfo)('Select a database first.');
             }
             else {
                 void (0, utils_1.showError)(error.message);
             }
         }
         else {
-            void (0, utils_1.showError)('Could not prepare shell arguments.');
+            void (0, utils_1.showError)('Could not prepare the Odoo command.');
         }
         return undefined;
     }
     const odooBinPath = `${normalizedOdooPath}/odoo-bin`;
-    const fullCommand = [
+    return [
         quoteShellArg(normalizedPythonPath),
         quoteShellArg(odooBinPath),
         ...args.map(quoteShellArg)
     ].join(' ');
+}
+async function startDebugShell() {
+    const workspacePath = (0, utils_1.getWorkspacePath)();
+    if (!workspacePath) {
+        return undefined;
+    }
+    const fullCommand = await buildOdooCommandLine(true);
+    if (!fullCommand) {
+        return undefined;
+    }
     const terminal = vscode.window.createTerminal({
         name: 'Odoo Shell',
         cwd: workspacePath,
@@ -15424,6 +15436,7 @@ exports.registerDebugCommands = registerDebugCommands;
 const vscode = __importStar(__webpack_require__(1));
 const debugger_1 = __webpack_require__(59);
 const server_1 = __webpack_require__(62);
+const notifications_1 = __webpack_require__(13);
 const settingsStore_1 = __webpack_require__(5);
 function registerDebugCommands(deps) {
     const { context } = deps;
@@ -15449,6 +15462,14 @@ function registerDebugCommands(deps) {
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         const selectedDb = result?.project.dbs?.find(db => db.isSelected);
         await (0, server_1.openServerInBrowser)(selectedDb?.id);
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.copyCommand', async () => {
+        const command = await (0, debugger_1.buildOdooCommandLine)(false);
+        if (!command) {
+            return;
+        }
+        await vscode.env.clipboard.writeText(command);
+        (0, notifications_1.showBriefStatus)('Copied the Odoo command to the clipboard');
     }));
 }
 

@@ -308,45 +308,57 @@ async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShe
 
 }
 
-export async function startDebugShell(): Promise<void> {
-    const workspacePath = getWorkspacePath();
-    if (!workspacePath) {
-        return undefined;
-    }
+/**
+ * Assembles the full `python odoo-bin …` command line for the selected
+ * project's active version, quoted for a POSIX shell — the same command
+ * the debugger runs (server) or the shell terminal sends (`isShell`).
+ * Returns undefined after surfacing the reason when prerequisites are
+ * missing.
+ */
+export async function buildOdooCommandLine(isShell = false): Promise<string | undefined> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
         return undefined;
     }
     const { project } = result;
-    // Get settings from active version instead of legacy settings
     const versionsService = VersionsService.getInstance();
     const workspaceSettings = await versionsService.getActiveVersionSettings();
-    // Normalize paths for terminal commands
     const normalizedOdooPath = normalizePath(workspaceSettings.odooPath);
     const normalizedPythonPath = normalizePath(workspaceSettings.pythonPath);
 
     let args: string[];
     try {
-        args = await prepareArgs(project, workspaceSettings, true);
+        args = await prepareArgs(project, workspaceSettings, isShell);
     } catch (error) {
         if (error instanceof Error) {
             if (error.message === 'Select a database before running this action.') {
-                void showInfo('Select a database before opening the Odoo shell.');
+                void showInfo('Select a database first.');
             } else {
                 void showError(error.message);
             }
         } else {
-            void showError('Could not prepare shell arguments.');
+            void showError('Could not prepare the Odoo command.');
         }
         return undefined;
     }
     const odooBinPath = `${normalizedOdooPath}/odoo-bin`;
 
-    const fullCommand = [
+    return [
         quoteShellArg(normalizedPythonPath),
         quoteShellArg(odooBinPath),
         ...args.map(quoteShellArg)
     ].join(' ');
+}
+
+export async function startDebugShell(): Promise<void> {
+    const workspacePath = getWorkspacePath();
+    if (!workspacePath) {
+        return undefined;
+    }
+    const fullCommand = await buildOdooCommandLine(true);
+    if (!fullCommand) {
+        return undefined;
+    }
     const terminal = vscode.window.createTerminal({
         name: 'Odoo Shell',
         cwd: workspacePath,

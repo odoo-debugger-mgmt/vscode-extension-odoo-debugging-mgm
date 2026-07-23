@@ -3,8 +3,9 @@
  */
 import * as vscode from 'vscode';
 import type { CommandDeps } from './index';
-import { startDebugServer, startDebugShell, stopDebugServer } from '../debugger';
+import { startDebugServer, startDebugShell, stopDebugServer, buildOdooCommandLine } from '../debugger';
 import { openServerInBrowser } from '../services/server';
+import { showBriefStatus } from '../services/notifications';
 import { SettingsStore } from '../settingsStore';
 import type { DatabaseModel } from '../models/db';
 
@@ -38,5 +39,14 @@ export function registerDebugCommands(deps: CommandDeps): void {
         const result = await SettingsStore.getSelectedProject();
         const selectedDb = (result?.project.dbs as DatabaseModel[] | undefined)?.find(db => db.isSelected);
         await openServerInBrowser(selectedDb?.id);
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.copyCommand', async () => {
+        const command = await buildOdooCommandLine(false);
+        if (!command) {
+            return;
+        }
+        await vscode.env.clipboard.writeText(command);
+        showBriefStatus('Copied the Odoo command to the clipboard');
     }));
 }

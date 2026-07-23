@@ -129,7 +129,7 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 
 The extension maintains a single launch configuration (named after the version's `debuggerName`) in `.vscode/launch.json`, and rewrites **only that entry** — your own configurations and comments are preserved. It assembles `--addons-path`, `-d`, `-i`/`-u` from your module selections, ports, time limits, dev mode and testing flags automatically.
 
-Server commands: **Start Server**, **Run Server Without Debugging**, **Restart Server**, **Stop Server**, **Open Odoo in Browser** (uses the active version's port and the selected database). With `odooDebugger.server.openBrowserOnStart` enabled, the browser opens automatically once the server port accepts connections.
+Server commands: **Start Server**, **Run Server Without Debugging**, **Restart Server**, **Stop Server**, **Open Odoo in Browser** (uses the active version's port and the selected database), and **Copy Odoo Command** — copies the exact `python odoo-bin …` command line the debugger runs (assembled from the selected project, active version and database) to the clipboard, ready to paste into a terminal. With `odooDebugger.server.openBrowserOnStart` enabled, the browser opens automatically once the server port accepts connections.
 
 ## Editor Actions
 
