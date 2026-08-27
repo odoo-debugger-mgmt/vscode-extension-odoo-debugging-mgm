@@ -31,6 +31,8 @@ export interface VersionSettings {
     subModulesPaths: string;
     preCheckoutCommands: string[];
     postCheckoutCommands: string[];
+    /** Absolute paths this extension created while provisioning. */
+    managedPaths: string[];
 }
 
 export class VersionModel {
@@ -78,10 +80,12 @@ export class VersionModel {
             upgradeApps: "",
             preCheckoutCommands: [],
             postCheckoutCommands: [],
+            managedPaths: [],
             ...settings
         };
         this.settings.preCheckoutCommands = Array.isArray(this.settings.preCheckoutCommands) ? this.settings.preCheckoutCommands : [];
         this.settings.postCheckoutCommands = Array.isArray(this.settings.postCheckoutCommands) ? this.settings.postCheckoutCommands : [];
+        this.settings.managedPaths = Array.isArray(this.settings.managedPaths) ? this.settings.managedPaths : [];
     }
 
     updateSettings(newSettings: Partial<VersionSettings>): void {

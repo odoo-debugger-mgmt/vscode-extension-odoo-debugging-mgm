@@ -22,11 +22,13 @@ export class SettingsModel {
     upgradeApps: string = "";
     preCheckoutCommands: string[] = [];
     postCheckoutCommands: string[] = [];
+    managedPaths: string[] = [];
     constructor(data?: Partial<SettingsModel>) {
         if (data) {
             Object.assign(this, data);
         }
         this.preCheckoutCommands = Array.isArray(this.preCheckoutCommands) ? this.preCheckoutCommands : [];
         this.postCheckoutCommands = Array.isArray(this.postCheckoutCommands) ? this.postCheckoutCommands : [];
+        this.managedPaths = Array.isArray(this.managedPaths) ? this.managedPaths : [];
     }
 }
