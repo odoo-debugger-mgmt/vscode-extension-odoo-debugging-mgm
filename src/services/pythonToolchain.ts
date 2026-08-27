@@ -6,8 +6,10 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { tryRunCommand } from './process';
+import * as vscode from 'vscode';
+import { runCommand, tryRunCommand } from './process';
 import { OdooPythonWindow } from './odooRequirements';
+import { logger } from './logger';
 
 export interface InterpreterInfo {
     path: string;
@@ -108,4 +110,118 @@ export async function discoverInterpreters(): Promise<InterpreterInfo[]> {
         found.push(entry);
     }
     return found;
+}
+
+/**
+ * Locates uv: the configured path, then PATH. When uv is absent the caller
+ * falls back to the standard library venv and pip, so a missing uv degrades
+ * rather than failing.
+ */
+export async function resolveUv(): Promise<string | undefined> {
+    const configured = vscode.workspace
+        .getConfiguration('odooDebugger.provisioning')
+        .get<string>('uvPath', '')
+        .trim();
+
+    const candidates = configured ? [configured, 'uv'] : ['uv'];
+    for (const candidate of candidates) {
+        if (await tryRunCommand(candidate, ['--version']) !== undefined) {
+            return candidate;
+        }
+    }
+    return undefined;
+}
+
+/**
+ * Returns an interpreter satisfying the version's window, installing one via
+ * uv when nothing on the machine qualifies. The warning names a mismatch when
+ * the best available interpreter is newer than what the branch targets.
+ */
+export async function ensureInterpreter(
+    window: OdooPythonWindow,
+    token?: vscode.CancellationToken
+): Promise<{ path: string; version: [number, number]; warning?: string }> {
+    const ranked = rankInterpreters(await discoverInterpreters(), window);
+
+    if (ranked.length > 0) {
+        const best = ranked[0];
+        const warning = isAbovePreferred(best, window) && window.preferredPython
+            ? `This branch targets Python ${window.preferredPython.join('.')}; using ${best.version.join('.')}.`
+            : undefined;
+        return { path: best.path, version: best.version, warning };
+    }
+
+    const wanted = window.preferredPython ?? window.minPython;
+    const uv = await resolveUv();
+    if (!uv) {
+        throw new Error(
+            `No installed Python satisfies this branch (needs ${window.minPython.join('.')} or newer). ` +
+            `Install Python ${wanted.join('.')}, or install uv so it can be provisioned automatically.`
+        );
+    }
+
+    const target = wanted.join('.');
+    logger.info(`[provisioning] installing Python ${target} via uv`);
+    await runCommand(uv, ['python', 'install', target], { token });
+
+    const rankedAfter = rankInterpreters(await discoverInterpreters(), window);
+    if (rankedAfter.length > 0) {
+        return { path: rankedAfter[0].path, version: rankedAfter[0].version };
+    }
+
+    // uv-managed builds are not always on PATH; ask uv where it put it.
+    const found = await tryRunCommand(uv, ['python', 'find', target], { token });
+    if (!found) {
+        throw new Error(`uv installed Python ${target} but the interpreter could not be located.`);
+    }
+    return { path: found, version: wanted };
+}
+
+export async function ensureVenv(
+    pythonPath: string,
+    venvPath: string,
+    uvPath: string | undefined,
+    token?: vscode.CancellationToken
+): Promise<string> {
+    const interpreter = venvPythonPath(venvPath);
+    if (fs.existsSync(interpreter)) {
+        return interpreter;
+    }
+
+    if (uvPath) {
+        await runCommand(uvPath, ['venv', '--python', pythonPath, venvPath], { token });
+    } else {
+        await runCommand(pythonPath, ['-m', 'venv', venvPath], { token });
+    }
+    return interpreter;
+}
+
+export async function installRequirements(
+    venvPath: string,
+    requirementsPath: string,
+    uvPath: string | undefined,
+    onLine: (line: string) => void,
+    token?: vscode.CancellationToken
+): Promise<void> {
+    const interpreter = venvPythonPath(venvPath);
+
+    if (uvPath) {
+        await runCommand(uvPath, ['pip', 'install', '--python', interpreter, '-r', requirementsPath], {
+            token,
+            onStdoutLine: onLine,
+            onStderrLine: onLine
+        });
+        return;
+    }
+
+    await runCommand(interpreter, ['-m', 'pip', 'install', '--upgrade', 'pip', 'setuptools', 'wheel'], {
+        token,
+        onStdoutLine: onLine,
+        onStderrLine: onLine
+    });
+    await runCommand(interpreter, ['-m', 'pip', 'install', '-r', requirementsPath], {
+        token,
+        onStdoutLine: onLine,
+        onStderrLine: onLine
+    });
 }

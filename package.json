@@ -1574,6 +1574,16 @@
           },
           "markdownDescription": "Commands to run after switching branches when using this version. Each entry runs in a shell; use workspace-absolute paths if needed."
         },
+        "odooDebugger.provisioning.root": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Directory holding per-version worktrees and virtualenvs. Empty means the parent directory of the configured default `odooPath`."
+        },
+        "odooDebugger.provisioning.uvPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to an existing [uv](https://docs.astral.sh/uv/) binary. Empty means look on `PATH`. When uv is not found, provisioning falls back to the standard library `venv` and `pip`."
+        },
         "odooDebugger.ticketBaseUrl": {
           "type": "string",
           "default": "https://www.odoo.com",
