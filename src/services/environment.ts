@@ -156,7 +156,12 @@ export function buildDatabaseEnvironmentTarget(database: DatabaseModel | any, pr
 interface EnvironmentDiff {
     versionToActivate?: VersionModel;
     settings: SettingsModel;
-    coreBranch?: string;
+    /**
+     * Present when the version changed or a branch differs. `needsCheckout` is
+     * false for a provisioned version, whose worktree is already correct - the
+     * pipeline then runs post-switch hooks only.
+     */
+    coreRepoPipeline?: { branch: string; needsCheckout: boolean };
     repoCheckouts: ProjectRepoBranchAssignment[];
     descriptions: string[];
 }
@@ -170,25 +175,27 @@ async function computeEnvironmentDiff(target: EnvironmentTarget): Promise<Enviro
     const settings = new SettingsModel(targetVersion?.settings ?? await versionsService.getActiveVersionSettings());
 
     const coreBranchTarget = target.coreBranch?.trim() || targetVersion?.odooVersion?.trim() || undefined;
-    let coreBranch: string | undefined;
+    let coreRepoPipeline: { branch: string; needsCheckout: boolean } | undefined;
     if (coreBranchTarget) {
         const configuredPaths = [settings.odooPath, settings.enterprisePath, settings.designThemesPath]
             .filter(entry => entry && entry.trim() !== '')
             .map(entry => normalizePath(entry));
         const existingPaths = configuredPaths.filter(entry => fs.existsSync(entry));
 
-        if (existingPaths.length === 0) {
-            // Nothing usable to compare against: request the checkout so the
-            // missing/unconfigured paths are reported instead of silently skipped.
-            coreBranch = coreBranchTarget;
-        } else {
-            for (const repoPath of existingPaths) {
-                const current = await getRepoBranch(repoPath);
-                if (current !== coreBranchTarget) {
-                    coreBranch = coreBranchTarget;
-                    break;
-                }
+        // Nothing usable to compare against: request the checkout so the
+        // missing/unconfigured paths are reported instead of silently skipped.
+        let needsCheckout = existingPaths.length === 0;
+        for (const repoPath of existingPaths) {
+            if (await getRepoBranch(repoPath) !== coreBranchTarget) {
+                needsCheckout = true;
+                break;
             }
+        }
+
+        // A version change alone is enough: post-switch hooks must run even
+        // when every worktree is already on the right branch.
+        if (needsCheckout || versionToActivate) {
+            coreRepoPipeline = { branch: coreBranchTarget, needsCheckout };
         }
     }
 
@@ -212,14 +219,14 @@ async function computeEnvironmentDiff(target: EnvironmentTarget): Promise<Enviro
     if (versionToActivate) {
         descriptions.push(`version "${versionToActivate.name}"`);
     }
-    if (coreBranch) {
-        descriptions.push(`branch "${coreBranch}"`);
+    if (coreRepoPipeline?.needsCheckout) {
+        descriptions.push(`branch "${coreRepoPipeline.branch}"`);
     }
     if (repoCheckouts.length > 0) {
         descriptions.push(`${repoCheckouts.length} project repo branch(es)`);
     }
 
-    return { versionToActivate, settings, coreBranch, repoCheckouts, descriptions };
+    return { versionToActivate, settings, coreRepoPipeline, repoCheckouts, descriptions };
 }
 
 async function applyRepoCheckouts(assignments: ProjectRepoBranchAssignment[]): Promise<Array<{ assignment: ProjectRepoBranchAssignment; ok: boolean; message: string }>> {
@@ -313,7 +320,7 @@ export async function alignEnvironment(target: EnvironmentTarget, options: Align
 }
 
 function isEmptyDiff(diff: EnvironmentDiff): boolean {
-    return !diff.versionToActivate && !diff.coreBranch && diff.repoCheckouts.length === 0;
+    return !diff.versionToActivate && !diff.coreRepoPipeline && diff.repoCheckouts.length === 0;
 }
 
 async function applyEnvironmentDiff(diff: EnvironmentDiff, label: string): Promise<void> {
@@ -330,14 +337,17 @@ async function applyEnvironmentDiff(diff: EnvironmentDiff, label: string): Promi
         }
     }
 
-    if (diff.coreBranch) {
-        const results = await alignCoreRepos(diff.settings, diff.coreBranch, true);
+    if (diff.coreRepoPipeline) {
+        const { branch, needsCheckout } = diff.coreRepoPipeline;
+        const results = await alignCoreRepos(diff.settings, branch, needsCheckout);
         const failed = results.filter(result => !result.success);
         if (failed.length === 0) {
-            applied.push(`branch "${diff.coreBranch}"`);
+            if (needsCheckout) {
+                applied.push(`branch "${branch}"`);
+            }
         } else {
-            if (failed.length < results.length) {
-                applied.push(`branch "${diff.coreBranch}" (partially)`);
+            if (failed.length < results.length && needsCheckout) {
+                applied.push(`branch "${branch}" (partially)`);
             }
             failures.push(...failed.map(result => `${result.name}: ${result.message}`));
         }
@@ -354,7 +364,10 @@ async function applyEnvironmentDiff(diff: EnvironmentDiff, label: string): Promi
     }
 
     if (failures.length === 0) {
-        showAutoInfo(`${label}: switched ${applied.join(', ')}`, 3000);
+        // A hooks-only run applies nothing visible; staying silent is correct.
+        if (applied.length > 0) {
+            showAutoInfo(`${label}: switched ${applied.join(', ')}`, 3000);
+        }
     } else {
         failures.forEach(failure => logger.error(`[environment] ${label}: ${failure}`));
         void showWarning(`${label}: environment switch finished with issues — ${failures.join('; ')}`);
