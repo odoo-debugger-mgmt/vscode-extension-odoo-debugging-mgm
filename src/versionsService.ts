@@ -529,12 +529,9 @@ export class VersionsService {
                 subModulesPaths: existingSettings.subModulesPaths ?? defaultSettings.subModulesPaths,
                 installApps: existingSettings.installApps ?? defaultSettings.installApps,
                 upgradeApps: existingSettings.upgradeApps ?? defaultSettings.upgradeApps,
-                preCheckoutCommands: Array.isArray(existingSettings.preCheckoutCommands)
-                    ? existingSettings.preCheckoutCommands
-                    : defaultSettings.preCheckoutCommands,
-                postCheckoutCommands: Array.isArray(existingSettings.postCheckoutCommands)
-                    ? existingSettings.postCheckoutCommands
-                    : defaultSettings.postCheckoutCommands
+                postSwitchCommands: Array.isArray(existingSettings.postSwitchCommands)
+                    ? existingSettings.postSwitchCommands
+                    : defaultSettings.postSwitchCommands
             };
 
             // Create a new version with migrated settings

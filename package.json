@@ -1558,21 +1558,13 @@
           "default": "",
           "description": "Extra apps appended to -u in addition to the Modules view selections (comma-separated). The Modules view is the primary way to select modules."
         },
-        "odooDebugger.defaultVersion.preCheckoutCommands": {
+        "odooDebugger.defaultVersion.postSwitchCommands": {
           "type": "array",
           "default": [],
           "items": {
             "type": "string"
           },
-          "markdownDescription": "Commands to run before switching branches when using this version. Each entry runs in a shell; use workspace-absolute paths if needed."
-        },
-        "odooDebugger.defaultVersion.postCheckoutCommands": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "markdownDescription": "Commands to run after switching branches when using this version. Each entry runs in a shell; use workspace-absolute paths if needed."
+          "markdownDescription": "Commands to run after this version's environment is aligned, once per core repository with that repository as the working directory. Runs whether or not a branch checkout was needed. Used when the version itself defines none."
         },
         "odooDebugger.provisioning.root": {
           "type": "string",

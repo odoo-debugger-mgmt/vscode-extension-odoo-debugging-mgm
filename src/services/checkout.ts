@@ -18,9 +18,12 @@ function quoteForSingleQuotedShell(value: string): string {
     return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
 
+/** Label used in the hook output channel. */
+type HookPhase = 'post-switch';
+
 function buildHookExecutionScript(
     commands: string[],
-    phase: 'pre-checkout' | 'post-checkout',
+    phase: HookPhase,
     contextLabel: string
 ): string {
     const lines: string[] = ['set -e'];
@@ -45,7 +48,7 @@ function buildHookExecutionScript(
 
 async function runCheckoutHookCommands(
     commands: string[] | undefined,
-    phase: 'pre-checkout' | 'post-checkout',
+    phase: HookPhase,
     cwd: string,
     contextLabel: string,
     progress?: vscode.Progress<{ message?: string; increment?: number; }>
@@ -194,11 +197,17 @@ export async function checkoutRepoBranch(repoPath: string, branch: string): Prom
 }
 
 /**
- * Switches the core Odoo repositories (odoo / enterprise / design-themes) to the
- * given branch, running the configured pre/post checkout hooks per repository.
+ * Aligns the core Odoo repositories (odoo / enterprise / design-themes) to the
+ * given branch, running the version's post-switch commands per repository.
+ * When `needsCheckout` is false the repositories are already on the right
+ * branch - each version owns its worktree - and only the hooks run.
  * Returns per-repo results; callers own the summary messaging.
  */
-export async function checkoutCoreRepos(settings: SettingsModel, branch: string): Promise<RepoCheckoutResult[]> {
+export async function alignCoreRepos(
+    settings: SettingsModel,
+    branch: string,
+    needsCheckout: boolean
+): Promise<RepoCheckoutResult[]> {
     const repos = [
         { name: 'Odoo', path: settings.odooPath },
         { name: 'Enterprise', path: settings.enterprisePath },
@@ -211,13 +220,16 @@ export async function checkoutCoreRepos(settings: SettingsModel, branch: string)
         return [{ name: 'Odoo', success: false, message: 'No core repository paths are configured' }];
     }
 
-    const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
-    const preCheckoutCommands = config.get<string[]>('preCheckoutCommands', []);
-    const postCheckoutCommands = config.get<string[]>('postCheckoutCommands', []);
+    // The version's own commands win; the global default is the fallback, so a
+    // version that defines none still behaves as configured.
+    const configured = vscode.workspace
+        .getConfiguration('odooDebugger.defaultVersion')
+        .get<string[]>('postSwitchCommands', []);
+    const postSwitchCommands = settings.postSwitchCommands.length > 0 ? settings.postSwitchCommands : configured;
 
     return vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
-        title: `Switching to branch: ${branch}`,
+        title: needsCheckout ? `Switching to branch: ${branch}` : `Aligning ${branch}`,
         cancellable: false
     }, async (progress) => {
         const operationStartedAt = Date.now();
@@ -237,33 +249,27 @@ export async function checkoutCoreRepos(settings: SettingsModel, branch: string)
                 };
             }
 
-            const preOk = await runCheckoutHookCommands(preCheckoutCommands, 'pre-checkout', repo.path, repo.name, progress);
-            if (!preOk) {
-                checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline failed in pre-checkout t+${elapsed()}`);
-                return {
-                    name: repo.name,
-                    success: false,
-                    message: 'Pre-checkout hook(s) failed'
-                };
+            let checkoutMessage = 'Already on the target branch';
+            if (needsCheckout) {
+                checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: checkout start t+${elapsed()}`);
+                const checkoutResult = await checkoutRepoBranch(repo.path, branch);
+                if (!checkoutResult.ok) {
+                    checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline failed during checkout t+${elapsed()}`);
+                    return {
+                        name: repo.name,
+                        success: false,
+                        message: checkoutResult.message || 'Failed to checkout branch'
+                    };
+                }
+                checkoutMessage = checkoutResult.message;
             }
 
-            checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: checkout start t+${elapsed()}`);
-            const checkoutResult = await checkoutRepoBranch(repo.path, branch);
-            if (!checkoutResult.ok) {
-                checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline failed during checkout t+${elapsed()}`);
-                return {
-                    name: repo.name,
-                    success: false,
-                    message: checkoutResult.message || 'Failed to checkout branch'
-                };
-            }
-
-            const postOk = await runCheckoutHookCommands(postCheckoutCommands, 'post-checkout', repo.path, repo.name, progress);
+            const postOk = await runCheckoutHookCommands(postSwitchCommands, 'post-switch', repo.path, repo.name, progress);
             checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline ${postOk ? 'complete' : 'complete-with-post-failure'} t+${elapsed()}`);
             return {
                 name: repo.name,
                 success: postOk,
-                message: postOk ? checkoutResult.message : `${checkoutResult.message} (but post-checkout hook(s) failed)`
+                message: postOk ? checkoutMessage : `${checkoutMessage} (but post-switch hook(s) failed)`
             };
         };
 

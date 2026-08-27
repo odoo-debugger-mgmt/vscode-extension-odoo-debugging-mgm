@@ -8,7 +8,7 @@ import { VersionModel } from '../models/version';
 import { VersionsService } from '../versionsService';
 import { normalizePath, showAutoInfo, showWarning } from '../utils';
 import { getRepoBranch } from './branches';
-import { checkoutCoreRepos, checkoutRepoBranch } from './checkout';
+import { alignCoreRepos, checkoutRepoBranch } from './checkout';
 import { logger } from './logger';
 import { showInfo } from './notifications';
 
@@ -331,7 +331,7 @@ async function applyEnvironmentDiff(diff: EnvironmentDiff, label: string): Promi
     }
 
     if (diff.coreBranch) {
-        const results = await checkoutCoreRepos(diff.settings, diff.coreBranch);
+        const results = await alignCoreRepos(diff.settings, diff.coreBranch, true);
         const failed = results.filter(result => !result.success);
         if (failed.length === 0) {
             applied.push(`branch "${diff.coreBranch}"`);

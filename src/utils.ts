@@ -799,7 +799,6 @@ export function getDefaultVersionSettings(): any {
         subModulesPaths: config.get('subModulesPaths', ''),
         installApps: config.get('installApps', ''),
         upgradeApps: config.get('upgradeApps', ''),
-        preCheckoutCommands: config.get('preCheckoutCommands', []),
-        postCheckoutCommands: config.get('postCheckoutCommands', [])
+        postSwitchCommands: config.get('postSwitchCommands', [])
     };
 }

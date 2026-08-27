@@ -29,8 +29,7 @@ export interface VersionSettings {
     customAddonsPath: string;
     pythonPath: string;
     subModulesPaths: string;
-    preCheckoutCommands: string[];
-    postCheckoutCommands: string[];
+    postSwitchCommands: string[];
     /** Absolute paths this extension created while provisioning. */
     managedPaths: string[];
 }
@@ -78,13 +77,11 @@ export class VersionModel {
             subModulesPaths: "",
             installApps: "",
             upgradeApps: "",
-            preCheckoutCommands: [],
-            postCheckoutCommands: [],
+            postSwitchCommands: [],
             managedPaths: [],
             ...settings
         };
-        this.settings.preCheckoutCommands = Array.isArray(this.settings.preCheckoutCommands) ? this.settings.preCheckoutCommands : [];
-        this.settings.postCheckoutCommands = Array.isArray(this.settings.postCheckoutCommands) ? this.settings.postCheckoutCommands : [];
+        this.settings.postSwitchCommands = Array.isArray(this.settings.postSwitchCommands) ? this.settings.postSwitchCommands : [];
         this.settings.managedPaths = Array.isArray(this.settings.managedPaths) ? this.settings.managedPaths : [];
     }
 
