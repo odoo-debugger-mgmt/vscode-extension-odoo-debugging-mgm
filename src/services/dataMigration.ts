@@ -4,6 +4,7 @@ import { VersionModel } from '../models/version';
 import { getDefaultVersionSettings } from '../utils';
 import type { DebuggerData } from '../utils';
 import { logger } from './logger';
+import { showWarning } from './notifications';
 
 /** Branch names that denote a real Odoo series, e.g. "17.0", "saas-17.4", "master". */
 const ODOO_SERIES_PATTERN = /^((saas-)?\d+(\.\d+)?|master)$/i;
@@ -93,7 +94,14 @@ export async function migrateDebuggerData(): Promise<void> {
         }
 
         const changed = applyDatabaseFieldMigration(data);
-        if (changed || missingBranches.length > 0) {
+        const hookResult = applyHookMigration(data);
+        if (hookResult.prependedVersionNames.length > 0) {
+            void showWarning(
+                `Pre-checkout commands were merged into postSwitchCommands for: ${hookResult.prependedVersionNames.join(', ')}. ` +
+                'They now run after the branch switch rather than before.'
+            );
+        }
+        if (changed || hookResult.changed || missingBranches.length > 0) {
             // Save as-is (no settings strip): if the legacy-settings migration
             // has not run yet, its data must survive this write.
             await SettingsStore.saveWithoutComments(data);
@@ -106,4 +114,43 @@ export async function migrateDebuggerData(): Promise<void> {
     } catch (error) {
         logger.warn('Debugger data migration skipped:', error);
     }
+}
+
+/**
+ * Migrates the two legacy hook arrays onto `postSwitchCommands`. Pre-checkout
+ * commands are prepended rather than dropped, but they now run *after* the
+ * switch - the caller surfaces that, because a `git stash` guard changes
+ * meaning.
+ */
+export function applyHookMigration(data: DebuggerData): { changed: boolean; prependedVersionNames: string[] } {
+    let changed = false;
+    const prependedVersionNames: string[] = [];
+
+    for (const version of Object.values(data.versions ?? {})) {
+        const settings = version?.settings;
+        if (!settings || typeof settings !== 'object') {
+            continue;
+        }
+
+        const hasPre = 'preCheckoutCommands' in settings;
+        const hasPost = 'postCheckoutCommands' in settings;
+        if (!hasPre && !hasPost) {
+            continue;
+        }
+
+        const pre: string[] = Array.isArray(settings.preCheckoutCommands) ? settings.preCheckoutCommands : [];
+        const post: string[] = Array.isArray(settings.postCheckoutCommands) ? settings.postCheckoutCommands : [];
+        const existing: string[] = Array.isArray(settings.postSwitchCommands) ? settings.postSwitchCommands : [];
+
+        settings.postSwitchCommands = [...pre, ...post, ...existing];
+        delete settings.preCheckoutCommands;
+        delete settings.postCheckoutCommands;
+        changed = true;
+
+        if (pre.length > 0) {
+            prependedVersionNames.push(version.name ?? version.id ?? 'unnamed version');
+        }
+    }
+
+    return { changed, prependedVersionNames };
 }
