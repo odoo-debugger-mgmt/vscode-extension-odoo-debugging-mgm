@@ -7,11 +7,12 @@ import type { CommandDeps } from './index';
 import { extractVersionId, extractVersionSettingRef } from './args';
 import { normalizePath, getGitBranches } from '../utils';
 import { showError, showInfo, showWarning, showModalWarning } from '../services/notifications';
-import { errorMessage } from '../services/logger';
+import { errorMessage, logger } from '../services/logger';
 import { getBranchesWithMetadata } from '../services/gitService';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from '../services/runtimeCache';
 import { alignEnvironment } from '../services/environment';
 import { provisionAndCreateVersion } from '../odooInstaller';
+import { removeWorktree } from '../services/worktree';
 
 export function registerVersionCommands(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
@@ -425,6 +426,31 @@ export function registerVersionCommands(deps: CommandDeps): void {
             );
             if (confirm !== 'Delete') {
                 return;
+            }
+
+            const managedPaths = version.settings.managedPaths ?? [];
+            if (managedPaths.length > 0) {
+                const removeChoice = await showModalWarning(
+                    `Also delete the ${managedPaths.length} folder(s) this extension created for "${version.name}"?\n\n${managedPaths.join('\n')}`,
+                    'Delete Folders',
+                    'Keep Folders'
+                );
+                if (removeChoice === 'Delete Folders') {
+                    for (const managedPath of managedPaths) {
+                        // Worktrees must go through git so the parent repo's
+                        // administrative entry goes with them; anything git
+                        // refuses (a venv, a stale directory) is a plain delete.
+                        try {
+                            await removeWorktree(normalizePath(version.settings.odooPath), managedPath);
+                        } catch {
+                            try {
+                                await fs.promises.rm(managedPath, { recursive: true, force: true });
+                            } catch (error) {
+                                logger.warn(`Failed to remove ${managedPath}:`, error);
+                            }
+                        }
+                    }
+                }
             }
 
             const success = await versionsService.deleteVersion(versionId);

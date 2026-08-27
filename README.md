@@ -114,9 +114,13 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 
 ### Versions
 
-- Create (branch + name), clone, delete, activate; edit any setting inline from the tree.
+- **Create a version and its environment in one step.** Pick a branch, confirm the name, and the extension provisions a git **worktree** for that branch, picks a Python interpreter the branch actually supports, builds a **virtualenv** and installs `requirements.txt` — with live progress and cancellation. Choose *Profile only* to create the version without building anything.
+- Because each version owns its worktree, **several versions can be checked out at once** — useful for comparing a database before and after an upgrade — and activating a version no longer checks anything out, so it can't fail on a dirty working tree.
+- The required Python version is read from the branch itself (`setup.py`'s `python_requires` or `odoo/release.py`'s `MIN_PY_VERSION`, plus the distributions named in `requirements.txt`'s header), so 17.0 gets 3.10 and 19.0 gets 3.12 without any hand-maintained table. An interpreter already installed via pyenv or your system is reused when it fits; otherwise [uv](https://docs.astral.sh/uv/) installs the right one.
+- After provisioning, a **dependency check** reports what's missing (`wkhtmltopdf`, PostgreSQL client tools, `rtlcss`, and the build headers `lxml`/`psycopg2`/`ldap` need) with a copy-paste install command for your platform. Nothing is installed for you and nothing runs `sudo`.
+- Each version row shows whether it is provisioned. Deleting a version offers to remove the folders the extension created — and never the ones you made yourself.
+- Clone, delete, activate; edit any setting inline from the tree.
 - Reset settings to the configured defaults, or save a version's settings as the new defaults.
-- Changing a version's branch or activating a version can check out the matching git branches.
 
 ### Project Repos (Explorer)
 
@@ -139,20 +143,23 @@ Right-click inside a file that belongs to an Odoo module (toggle with `odooDebug
 - **Upgrade Current Module** — marks the module for `-u` and offers a server restart.
 - **Reveal Module in Modules View** — highlights the module in the tree, including inside `ps*-internal` groups.
 
-## Branch Checkout Hooks
+## Post-Switch Hooks
 
-- `odooDebugger.defaultVersion.preCheckoutCommands` / `postCheckoutCommands` run **once per repo being switched**, with the repo folder as the working directory, and are logged in the `Odoo Debugger: Branch Hooks` output channel.
+`postSwitchCommands` run **once per core repo** after a version's environment is aligned — whether or not a branch checkout was needed — with the repo folder as the working directory, logged in the `Odoo Debugger: Branch Hooks` output channel.
+
+A version's own `postSwitchCommands` win; `odooDebugger.defaultVersion.postSwitchCommands` is the fallback for versions that define none.
 
 ```jsonc
 {
-  "odooDebugger.defaultVersion.preCheckoutCommands": [
-    "git status --porcelain"
-  ],
-  "odooDebugger.defaultVersion.postCheckoutCommands": [
-    "pip install -r requirements.txt"
+  "odooDebugger.defaultVersion.postSwitchCommands": [
+    "npm install"
   ]
 }
 ```
+
+Installing Python requirements no longer belongs here — provisioning owns that.
+
+> Upgrading from 1.2: `postCheckoutCommands` is renamed automatically. Any `preCheckoutCommands` are merged in ahead of them, and you'll get a one-time notice, because they now run **after** the switch rather than before.
 
 ## Commands & Keybindings
 
@@ -190,7 +197,9 @@ Every view also has search (`$(search)`) and sort (`$(sort-precedence)`) actions
 
 ## Settings Reference
 
-- `odooDebugger.defaultVersion.*` — defaults applied to newly created versions (paths, ports, params, checkout hooks). Existing versions are edited from the Versions view.
+- `odooDebugger.defaultVersion.*` — defaults applied to newly created versions (paths, ports, params, post-switch hooks). Existing versions are edited from the Versions view.
+- `odooDebugger.provisioning.root` — directory holding per-version worktrees and virtualenvs. Empty means the parent of the default `odooPath`.
+- `odooDebugger.provisioning.uvPath` — path to an existing `uv` binary. Empty means look on `PATH`; when uv is absent, provisioning falls back to the standard library `venv` and `pip`.
 - `odooDebugger.databaseSwitchBehavior` — `auto` / `ask` / `never` (see above).
 - `odooDebugger.statusBar.enabled` — show the project/database/version status bar items.
 - `odooDebugger.server.openBrowserOnStart` — open the web client automatically after the server starts (default off).

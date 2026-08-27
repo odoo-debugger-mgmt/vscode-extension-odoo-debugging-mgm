@@ -75,4 +75,25 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+### Added
+
+- **Version provisioning.** Creating a version now builds its environment: a git **worktree** for the branch, a Python interpreter that branch actually supports, a **virtualenv**, and its `requirements.txt` — awaited, with live progress and cancellation. Re-running is safe: provisioning probes what exists and does only what is missing, so a cancelled or failed run resumes, and an environment you built by hand is adopted rather than rebuilt.
+- **Versions can now coexist.** Because each version owns its worktree, several branches are checked out at once — so a database can be compared before and after an upgrade — and activating a version performs no git operation, so it can no longer fail on a dirty working tree.
+- **The required Python version is read from the branch**, not from a hand-maintained table: the floor from `setup.py`'s `python_requires` or `odoo/release.py`'s `MIN_PY_VERSION`, and the preferred interpreter from the distributions named in `requirements.txt`'s header (17.0 → 3.10, 18.0/19.0 → 3.12). An interpreter already present via pyenv or the system is reused when it fits; otherwise [uv](https://docs.astral.sh/uv/) installs the right one. Using an interpreter newer than the branch targets is allowed but warned about.
+- **System dependency check** after provisioning: `wkhtmltopdf`, PostgreSQL client tools, `rtlcss`, and the build headers `lxml`/`psycopg2`/`ldap` need — each reported with what breaks without it and a copy-paste install command for the detected platform. Nothing is installed for you; nothing runs `sudo`.
+- The Versions view shows whether each version is provisioned, and **Delete Version** offers to remove the folders the extension created (`git worktree remove` for worktrees) — never a checkout you made yourself.
+- New settings `odooDebugger.provisioning.root` and `odooDebugger.provisioning.uvPath`.
+
+### Changed
+
+- **`preCheckoutCommands` and `postCheckoutCommands` are replaced by one `postSwitchCommands` list**, which runs after a version's environment is aligned — whether or not a branch checkout was needed — once per core repo. Existing values migrate automatically: `postCheckoutCommands` is renamed, and any `preCheckoutCommands` are merged in ahead of them with a one-time notice, since they now run *after* the switch rather than before. Installing Python requirements no longer belongs in a hook; provisioning owns it.
+- Hooks are read from **the version first** and the global default second. The per-version hook fields shown in the Versions tree were previously never read at all.
+
+### Fixed
+
+- **Setup Odoo no longer fires the environment setup into a terminal and returns.** It wrote `python -m venv` and `pip install` into a terminal without awaiting them, so the virtualenv check that followed ran before anything existed and new version profiles were almost always created with no `pythonPath`. Provisioning awaits its work and reports real failures.
+- Post-switch hooks now run when the **version** changes, not only when a branch differs. A provisioned version's worktree is already on the right branch, so the branch diff is empty and hooks would otherwise never fire.
+
+## [1.1.0 and earlier]
+
 - Initial release

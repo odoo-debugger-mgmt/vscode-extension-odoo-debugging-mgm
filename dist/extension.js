@@ -54,13 +54,13 @@ const settingsStore_1 = __webpack_require__(5);
 const versionsTreeProvider_1 = __webpack_require__(61);
 const versionsService_1 = __webpack_require__(23);
 const context_1 = __webpack_require__(58);
-const server_1 = __webpack_require__(62);
-const sortPreferences_1 = __webpack_require__(64);
-const projectReposExplorer_1 = __webpack_require__(65);
+const server_1 = __webpack_require__(63);
+const sortPreferences_1 = __webpack_require__(65);
+const projectReposExplorer_1 = __webpack_require__(66);
 const logger_1 = __webpack_require__(11);
 const reconcile_1 = __webpack_require__(45);
-const statusBar_1 = __webpack_require__(67);
-const commands_1 = __webpack_require__(68);
+const statusBar_1 = __webpack_require__(68);
+const commands_1 = __webpack_require__(69);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -815,14 +815,14 @@ class SettingsModel {
     subModulesPaths = "";
     installApps = "";
     upgradeApps = "";
-    preCheckoutCommands = [];
-    postCheckoutCommands = [];
+    postSwitchCommands = [];
+    managedPaths = [];
     constructor(data) {
         if (data) {
             Object.assign(this, data);
         }
-        this.preCheckoutCommands = Array.isArray(this.preCheckoutCommands) ? this.preCheckoutCommands : [];
-        this.postCheckoutCommands = Array.isArray(this.postCheckoutCommands) ? this.postCheckoutCommands : [];
+        this.postSwitchCommands = Array.isArray(this.postSwitchCommands) ? this.postSwitchCommands : [];
+        this.managedPaths = Array.isArray(this.managedPaths) ? this.managedPaths : [];
     }
 }
 exports.SettingsModel = SettingsModel;
@@ -1530,8 +1530,7 @@ function getDefaultVersionSettings() {
         subModulesPaths: config.get('subModulesPaths', ''),
         installApps: config.get('installApps', ''),
         upgradeApps: config.get('upgradeApps', ''),
-        preCheckoutCommands: config.get('preCheckoutCommands', []),
-        postCheckoutCommands: config.get('postCheckoutCommands', [])
+        postSwitchCommands: config.get('postSwitchCommands', [])
     };
 }
 
@@ -4554,12 +4553,9 @@ class VersionsService {
                 subModulesPaths: existingSettings.subModulesPaths ?? defaultSettings.subModulesPaths,
                 installApps: existingSettings.installApps ?? defaultSettings.installApps,
                 upgradeApps: existingSettings.upgradeApps ?? defaultSettings.upgradeApps,
-                preCheckoutCommands: Array.isArray(existingSettings.preCheckoutCommands)
-                    ? existingSettings.preCheckoutCommands
-                    : defaultSettings.preCheckoutCommands,
-                postCheckoutCommands: Array.isArray(existingSettings.postCheckoutCommands)
-                    ? existingSettings.postCheckoutCommands
-                    : defaultSettings.postCheckoutCommands
+                postSwitchCommands: Array.isArray(existingSettings.postSwitchCommands)
+                    ? existingSettings.postSwitchCommands
+                    : defaultSettings.postSwitchCommands
             };
             // Create a new version with migrated settings
             const migratedVersion = new version_1.VersionModel('Migrated Settings', '17.0', // Default Odoo version
@@ -4779,12 +4775,12 @@ class VersionModel {
             subModulesPaths: "",
             installApps: "",
             upgradeApps: "",
-            preCheckoutCommands: [],
-            postCheckoutCommands: [],
+            postSwitchCommands: [],
+            managedPaths: [],
             ...settings
         };
-        this.settings.preCheckoutCommands = Array.isArray(this.settings.preCheckoutCommands) ? this.settings.preCheckoutCommands : [];
-        this.settings.postCheckoutCommands = Array.isArray(this.settings.postCheckoutCommands) ? this.settings.postCheckoutCommands : [];
+        this.settings.postSwitchCommands = Array.isArray(this.settings.postSwitchCommands) ? this.settings.postSwitchCommands : [];
+        this.settings.managedPaths = Array.isArray(this.settings.managedPaths) ? this.settings.managedPaths : [];
     }
     updateSettings(newSettings) {
         this.settings = { ...this.settings, ...newSettings };
@@ -5127,25 +5123,25 @@ async function computeEnvironmentDiff(target) {
     const versionToActivate = targetVersion && !targetVersion.isActive ? targetVersion : undefined;
     const settings = new settings_1.SettingsModel(targetVersion?.settings ?? await versionsService.getActiveVersionSettings());
     const coreBranchTarget = target.coreBranch?.trim() || targetVersion?.odooVersion?.trim() || undefined;
-    let coreBranch;
+    let coreRepoPipeline;
     if (coreBranchTarget) {
         const configuredPaths = [settings.odooPath, settings.enterprisePath, settings.designThemesPath]
             .filter(entry => entry && entry.trim() !== '')
             .map(entry => (0, utils_1.normalizePath)(entry));
         const existingPaths = configuredPaths.filter(entry => fs.existsSync(entry));
-        if (existingPaths.length === 0) {
-            // Nothing usable to compare against: request the checkout so the
-            // missing/unconfigured paths are reported instead of silently skipped.
-            coreBranch = coreBranchTarget;
-        }
-        else {
-            for (const repoPath of existingPaths) {
-                const current = await (0, branches_1.getRepoBranch)(repoPath);
-                if (current !== coreBranchTarget) {
-                    coreBranch = coreBranchTarget;
-                    break;
-                }
+        // Nothing usable to compare against: request the checkout so the
+        // missing/unconfigured paths are reported instead of silently skipped.
+        let needsCheckout = existingPaths.length === 0;
+        for (const repoPath of existingPaths) {
+            if (await (0, branches_1.getRepoBranch)(repoPath) !== coreBranchTarget) {
+                needsCheckout = true;
+                break;
             }
+        }
+        // A version change alone is enough: post-switch hooks must run even
+        // when every worktree is already on the right branch.
+        if (needsCheckout || versionToActivate) {
+            coreRepoPipeline = { branch: coreBranchTarget, needsCheckout };
         }
     }
     const repoCheckouts = [];
@@ -5167,13 +5163,13 @@ async function computeEnvironmentDiff(target) {
     if (versionToActivate) {
         descriptions.push(`version "${versionToActivate.name}"`);
     }
-    if (coreBranch) {
-        descriptions.push(`branch "${coreBranch}"`);
+    if (coreRepoPipeline?.needsCheckout) {
+        descriptions.push(`branch "${coreRepoPipeline.branch}"`);
     }
     if (repoCheckouts.length > 0) {
         descriptions.push(`${repoCheckouts.length} project repo branch(es)`);
     }
-    return { versionToActivate, settings, coreBranch, repoCheckouts, descriptions };
+    return { versionToActivate, settings, coreRepoPipeline, repoCheckouts, descriptions };
 }
 async function applyRepoCheckouts(assignments) {
     return vscode.window.withProgress({
@@ -5247,7 +5243,7 @@ async function alignEnvironment(target, options) {
     await applyEnvironmentDiff(diff, options.label);
 }
 function isEmptyDiff(diff) {
-    return !diff.versionToActivate && !diff.coreBranch && diff.repoCheckouts.length === 0;
+    return !diff.versionToActivate && !diff.coreRepoPipeline && diff.repoCheckouts.length === 0;
 }
 async function applyEnvironmentDiff(diff, label) {
     const applied = [];
@@ -5262,15 +5258,18 @@ async function applyEnvironmentDiff(diff, label) {
             failures.push(`could not activate version "${diff.versionToActivate.name}"`);
         }
     }
-    if (diff.coreBranch) {
-        const results = await (0, checkout_1.checkoutCoreRepos)(diff.settings, diff.coreBranch);
+    if (diff.coreRepoPipeline) {
+        const { branch, needsCheckout } = diff.coreRepoPipeline;
+        const results = await (0, checkout_1.alignCoreRepos)(diff.settings, branch, needsCheckout);
         const failed = results.filter(result => !result.success);
         if (failed.length === 0) {
-            applied.push(`branch "${diff.coreBranch}"`);
+            if (needsCheckout) {
+                applied.push(`branch "${branch}"`);
+            }
         }
         else {
-            if (failed.length < results.length) {
-                applied.push(`branch "${diff.coreBranch}" (partially)`);
+            if (failed.length < results.length && needsCheckout) {
+                applied.push(`branch "${branch}" (partially)`);
             }
             failures.push(...failed.map(result => `${result.name}: ${result.message}`));
         }
@@ -5285,7 +5284,10 @@ async function applyEnvironmentDiff(diff, label) {
         failures.push(...failed.map(result => `${result.assignment.repoName || path.basename(result.assignment.repoPath)}: ${result.message}`));
     }
     if (failures.length === 0) {
-        (0, utils_1.showAutoInfo)(`${label}: switched ${applied.join(', ')}`, 3000);
+        // A hooks-only run applies nothing visible; staying silent is correct.
+        if (applied.length > 0) {
+            (0, utils_1.showAutoInfo)(`${label}: switched ${applied.join(', ')}`, 3000);
+        }
     }
     else {
         failures.forEach(failure => logger_1.logger.error(`[environment] ${label}: ${failure}`));
@@ -5427,7 +5429,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.checkoutRepoBranch = checkoutRepoBranch;
-exports.checkoutCoreRepos = checkoutCoreRepos;
+exports.alignCoreRepos = alignCoreRepos;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(8));
 const child_process_1 = __webpack_require__(31);
@@ -5583,11 +5585,13 @@ async function checkoutRepoBranch(repoPath, branch) {
     return result;
 }
 /**
- * Switches the core Odoo repositories (odoo / enterprise / design-themes) to the
- * given branch, running the configured pre/post checkout hooks per repository.
+ * Aligns the core Odoo repositories (odoo / enterprise / design-themes) to the
+ * given branch, running the version's post-switch commands per repository.
+ * When `needsCheckout` is false the repositories are already on the right
+ * branch - each version owns its worktree - and only the hooks run.
  * Returns per-repo results; callers own the summary messaging.
  */
-async function checkoutCoreRepos(settings, branch) {
+async function alignCoreRepos(settings, branch, needsCheckout) {
     const repos = [
         { name: 'Odoo', path: settings.odooPath },
         { name: 'Enterprise', path: settings.enterprisePath },
@@ -5598,12 +5602,15 @@ async function checkoutCoreRepos(settings, branch) {
     if (repos.length === 0) {
         return [{ name: 'Odoo', success: false, message: 'No core repository paths are configured' }];
     }
-    const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
-    const preCheckoutCommands = config.get('preCheckoutCommands', []);
-    const postCheckoutCommands = config.get('postCheckoutCommands', []);
+    // The version's own commands win; the global default is the fallback, so a
+    // version that defines none still behaves as configured.
+    const configured = vscode.workspace
+        .getConfiguration('odooDebugger.defaultVersion')
+        .get('postSwitchCommands', []);
+    const postSwitchCommands = settings.postSwitchCommands.length > 0 ? settings.postSwitchCommands : configured;
     return vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
-        title: `Switching to branch: ${branch}`,
+        title: needsCheckout ? `Switching to branch: ${branch}` : `Aligning ${branch}`,
         cancellable: false
     }, async (progress) => {
         const operationStartedAt = Date.now();
@@ -5620,31 +5627,26 @@ async function checkoutCoreRepos(settings, branch) {
                     message: `Repository path does not exist: ${repo.path}`
                 };
             }
-            const preOk = await runCheckoutHookCommands(preCheckoutCommands, 'pre-checkout', repo.path, repo.name, progress);
-            if (!preOk) {
-                checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline failed in pre-checkout t+${elapsed()}`);
-                return {
-                    name: repo.name,
-                    success: false,
-                    message: 'Pre-checkout hook(s) failed'
-                };
+            let checkoutMessage = 'Already on the target branch';
+            if (needsCheckout) {
+                checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: checkout start t+${elapsed()}`);
+                const checkoutResult = await checkoutRepoBranch(repo.path, branch);
+                if (!checkoutResult.ok) {
+                    checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline failed during checkout t+${elapsed()}`);
+                    return {
+                        name: repo.name,
+                        success: false,
+                        message: checkoutResult.message || 'Failed to checkout branch'
+                    };
+                }
+                checkoutMessage = checkoutResult.message;
             }
-            checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: checkout start t+${elapsed()}`);
-            const checkoutResult = await checkoutRepoBranch(repo.path, branch);
-            if (!checkoutResult.ok) {
-                checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline failed during checkout t+${elapsed()}`);
-                return {
-                    name: repo.name,
-                    success: false,
-                    message: checkoutResult.message || 'Failed to checkout branch'
-                };
-            }
-            const postOk = await runCheckoutHookCommands(postCheckoutCommands, 'post-checkout', repo.path, repo.name, progress);
+            const postOk = await runCheckoutHookCommands(postSwitchCommands, 'post-switch', repo.path, repo.name, progress);
             checkoutHooksOutput.appendLine(`[checkout] ${repo.name}: pipeline ${postOk ? 'complete' : 'complete-with-post-failure'} t+${elapsed()}`);
             return {
                 name: repo.name,
                 success: postOk,
-                message: postOk ? checkoutResult.message : `${checkoutResult.message} (but post-checkout hook(s) failed)`
+                message: postOk ? checkoutMessage : `${checkoutMessage} (but post-switch hook(s) failed)`
             };
         };
         const results = await Promise.all(repos.map(async (repo) => {
@@ -8178,11 +8180,13 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.collectLegacyBranchesNeedingVersions = collectLegacyBranchesNeedingVersions;
 exports.applyDatabaseFieldMigration = applyDatabaseFieldMigration;
 exports.migrateDebuggerData = migrateDebuggerData;
+exports.applyHookMigration = applyHookMigration;
 const settingsStore_1 = __webpack_require__(5);
 const versionsService_1 = __webpack_require__(23);
 const version_1 = __webpack_require__(24);
 const utils_1 = __webpack_require__(7);
 const logger_1 = __webpack_require__(11);
+const notifications_1 = __webpack_require__(13);
 /** Branch names that denote a real Odoo series, e.g. "17.0", "saas-17.4", "master". */
 const ODOO_SERIES_PATTERN = /^((saas-)?\d+(\.\d+)?|master)$/i;
 function findMatchingVersionId(versions, branch) {
@@ -8260,7 +8264,12 @@ async function migrateDebuggerData() {
             }
         }
         const changed = applyDatabaseFieldMigration(data);
-        if (changed || missingBranches.length > 0) {
+        const hookResult = applyHookMigration(data);
+        if (hookResult.prependedVersionNames.length > 0) {
+            void (0, notifications_1.showWarning)(`Pre-checkout commands were merged into postSwitchCommands for: ${hookResult.prependedVersionNames.join(', ')}. ` +
+                'They now run after the branch switch rather than before.');
+        }
+        if (changed || hookResult.changed || missingBranches.length > 0) {
             // Save as-is (no settings strip): if the legacy-settings migration
             // has not run yet, its data must survive this write.
             await settingsStore_1.SettingsStore.saveWithoutComments(data);
@@ -8273,6 +8282,38 @@ async function migrateDebuggerData() {
     catch (error) {
         logger_1.logger.warn('Debugger data migration skipped:', error);
     }
+}
+/**
+ * Migrates the two legacy hook arrays onto `postSwitchCommands`. Pre-checkout
+ * commands are prepended rather than dropped, but they now run *after* the
+ * switch - the caller surfaces that, because a `git stash` guard changes
+ * meaning.
+ */
+function applyHookMigration(data) {
+    let changed = false;
+    const prependedVersionNames = [];
+    for (const version of Object.values(data.versions ?? {})) {
+        const settings = version?.settings;
+        if (!settings || typeof settings !== 'object') {
+            continue;
+        }
+        const hasPre = 'preCheckoutCommands' in settings;
+        const hasPost = 'postCheckoutCommands' in settings;
+        if (!hasPre && !hasPost) {
+            continue;
+        }
+        const pre = Array.isArray(settings.preCheckoutCommands) ? settings.preCheckoutCommands : [];
+        const post = Array.isArray(settings.postCheckoutCommands) ? settings.postCheckoutCommands : [];
+        const existing = Array.isArray(settings.postSwitchCommands) ? settings.postSwitchCommands : [];
+        settings.postSwitchCommands = [...pre, ...post, ...existing];
+        delete settings.preCheckoutCommands;
+        delete settings.postCheckoutCommands;
+        changed = true;
+        if (pre.length > 0) {
+            prependedVersionNames.push(version.name ?? version.id ?? 'unnamed version');
+        }
+    }
+    return { changed, prependedVersionNames };
 }
 
 
@@ -12298,12 +12339,27 @@ exports.VersionsTreeProvider = exports.VersionSettingTreeItem = exports.VersionT
  * Versions view: version profiles with their settings as editable children.
  */
 const vscode = __importStar(__webpack_require__(1));
+const fs = __importStar(__webpack_require__(41));
+const path = __importStar(__webpack_require__(3));
 const versionsService_1 = __webpack_require__(23);
 const utils_1 = __webpack_require__(7);
+const pythonToolchain_1 = __webpack_require__(62);
 const icons_1 = __webpack_require__(27);
 const sortOptions_1 = __webpack_require__(26);
 const logger_1 = __webpack_require__(11);
 const baseTreeProvider_1 = __webpack_require__(4);
+/**
+ * A version is provisioned when the interpreter its pythonPath points at
+ * actually exists - a fact about the filesystem, never stored state.
+ */
+function provisioningLabel(version) {
+    const pythonPath = version.settings.pythonPath?.trim();
+    if (!pythonPath) {
+        return 'not provisioned';
+    }
+    const venvRoot = path.dirname(path.dirname((0, utils_1.normalizePath)(pythonPath)));
+    return fs.existsSync((0, pythonToolchain_1.venvPythonPath)(venvRoot)) ? 'provisioned' : 'not provisioned';
+}
 class VersionTreeItem extends vscode.TreeItem {
     version;
     collapsibleState;
@@ -12313,7 +12369,7 @@ class VersionTreeItem extends vscode.TreeItem {
         this.collapsibleState = collapsibleState;
         this.id = version.id;
         this.tooltip = VersionTreeItem.buildTooltip(version);
-        this.description = version.odooVersion;
+        this.description = `${version.odooVersion} \u2022 ${provisioningLabel(version)}`;
         this.contextValue = version.isActive ? 'activeVersion' : 'version';
         this.iconPath = version.isActive ? icons_1.activeIcon : new vscode.ThemeIcon('versions');
         // Add command to switch to this version when clicked
@@ -12512,6 +12568,235 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parsePythonVersion = parsePythonVersion;
+exports.isAbovePreferred = isAbovePreferred;
+exports.rankInterpreters = rankInterpreters;
+exports.venvPythonPath = venvPythonPath;
+exports.discoverInterpreters = discoverInterpreters;
+exports.resolveUv = resolveUv;
+exports.ensureInterpreter = ensureInterpreter;
+exports.ensureVenv = ensureVenv;
+exports.installRequirements = installRequirements;
+/**
+ * Locating and ranking Python interpreters for a version, and building that
+ * version's virtualenv. Ranking is the part with judgement in it, so it is
+ * pure and tested; discovery and venv creation shell out through runCommand.
+ */
+const fs = __importStar(__webpack_require__(41));
+const os = __importStar(__webpack_require__(33));
+const path = __importStar(__webpack_require__(3));
+const vscode = __importStar(__webpack_require__(1));
+const process_1 = __webpack_require__(14);
+const logger_1 = __webpack_require__(11);
+/** Minor versions probed on PATH as `python3.<minor>`. */
+const PROBED_MINORS = [8, 9, 10, 11, 12, 13, 14];
+function parsePythonVersion(output) {
+    const match = /Python\s+(\d+)\.(\d+)/.exec(output);
+    return match ? [Number(match[1]), Number(match[2])] : undefined;
+}
+function compare(a, b) {
+    return a[0] - b[0] || a[1] - b[1];
+}
+function isAbovePreferred(interpreter, window) {
+    return !!window.preferredPython && compare(interpreter.version, window.preferredPython) > 0;
+}
+/**
+ * Orders interpreters best-first for the given window. Anything below the
+ * floor is unusable and is excluded entirely, so the first entry is always
+ * safe to use - or the list is empty and one must be installed.
+ */
+function rankInterpreters(found, window) {
+    const usable = found.filter(entry => compare(entry.version, window.minPython) >= 0);
+    const tier = (entry) => {
+        if (!window.preferredPython) {
+            return 0;
+        }
+        const delta = compare(entry.version, window.preferredPython);
+        if (delta === 0) {
+            return 0;
+        }
+        return delta < 0 ? 1 : 2;
+    };
+    return [...usable].sort((a, b) => {
+        const tierDelta = tier(a) - tier(b);
+        if (tierDelta !== 0) {
+            return tierDelta;
+        }
+        // Within a tier, newest wins.
+        return compare(b.version, a.version);
+    });
+}
+function venvPythonPath(venvPath) {
+    return process.platform === 'win32'
+        ? path.join(venvPath, 'Scripts', 'python.exe')
+        : path.join(venvPath, 'bin', 'python');
+}
+async function probeInterpreter(candidate) {
+    // tryRunCommand yields trimmed stdout, which is where Python 3 prints its
+    // version; an empty string means it ran but said nothing useful.
+    const output = await (0, process_1.tryRunCommand)(candidate, ['--version']);
+    if (output === undefined) {
+        return undefined;
+    }
+    const version = parsePythonVersion(output);
+    return version ? { path: candidate, version } : undefined;
+}
+/** Candidate interpreters: PATH entries plus any pyenv-managed builds. */
+function candidatePaths() {
+    const candidates = PROBED_MINORS.map(minor => `python3.${minor}`);
+    candidates.push('python3');
+    const pyenvVersions = path.join(os.homedir(), '.pyenv', 'versions');
+    if (fs.existsSync(pyenvVersions)) {
+        for (const entry of fs.readdirSync(pyenvVersions)) {
+            candidates.push(path.join(pyenvVersions, entry, 'bin', 'python'));
+        }
+    }
+    return candidates;
+}
+async function discoverInterpreters() {
+    const probed = await Promise.all(candidatePaths().map(probeInterpreter));
+    const seen = new Set();
+    const found = [];
+    for (const entry of probed) {
+        if (!entry) {
+            continue;
+        }
+        const key = `${entry.version[0]}.${entry.version[1]}`;
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        found.push(entry);
+    }
+    return found;
+}
+/**
+ * Locates uv: the configured path, then PATH. When uv is absent the caller
+ * falls back to the standard library venv and pip, so a missing uv degrades
+ * rather than failing.
+ */
+async function resolveUv() {
+    const configured = vscode.workspace
+        .getConfiguration('odooDebugger.provisioning')
+        .get('uvPath', '')
+        .trim();
+    const candidates = configured ? [configured, 'uv'] : ['uv'];
+    for (const candidate of candidates) {
+        if (await (0, process_1.tryRunCommand)(candidate, ['--version']) !== undefined) {
+            return candidate;
+        }
+    }
+    return undefined;
+}
+/**
+ * Returns an interpreter satisfying the version's window, installing one via
+ * uv when nothing on the machine qualifies. The warning names a mismatch when
+ * the best available interpreter is newer than what the branch targets.
+ */
+async function ensureInterpreter(window, token) {
+    const ranked = rankInterpreters(await discoverInterpreters(), window);
+    if (ranked.length > 0) {
+        const best = ranked[0];
+        const warning = isAbovePreferred(best, window) && window.preferredPython
+            ? `This branch targets Python ${window.preferredPython.join('.')}; using ${best.version.join('.')}.`
+            : undefined;
+        return { path: best.path, version: best.version, warning };
+    }
+    const wanted = window.preferredPython ?? window.minPython;
+    const uv = await resolveUv();
+    if (!uv) {
+        throw new Error(`No installed Python satisfies this branch (needs ${window.minPython.join('.')} or newer). ` +
+            `Install Python ${wanted.join('.')}, or install uv so it can be provisioned automatically.`);
+    }
+    const target = wanted.join('.');
+    logger_1.logger.info(`[provisioning] installing Python ${target} via uv`);
+    await (0, process_1.runCommand)(uv, ['python', 'install', target], { token });
+    const rankedAfter = rankInterpreters(await discoverInterpreters(), window);
+    if (rankedAfter.length > 0) {
+        return { path: rankedAfter[0].path, version: rankedAfter[0].version };
+    }
+    // uv-managed builds are not always on PATH; ask uv where it put it.
+    const found = await (0, process_1.tryRunCommand)(uv, ['python', 'find', target], { token });
+    if (!found) {
+        throw new Error(`uv installed Python ${target} but the interpreter could not be located.`);
+    }
+    return { path: found, version: wanted };
+}
+async function ensureVenv(pythonPath, venvPath, uvPath, token) {
+    const interpreter = venvPythonPath(venvPath);
+    if (fs.existsSync(interpreter)) {
+        return interpreter;
+    }
+    if (uvPath) {
+        await (0, process_1.runCommand)(uvPath, ['venv', '--python', pythonPath, venvPath], { token });
+    }
+    else {
+        await (0, process_1.runCommand)(pythonPath, ['-m', 'venv', venvPath], { token });
+    }
+    return interpreter;
+}
+async function installRequirements(venvPath, requirementsPath, uvPath, onLine, token) {
+    const interpreter = venvPythonPath(venvPath);
+    if (uvPath) {
+        await (0, process_1.runCommand)(uvPath, ['pip', 'install', '--python', interpreter, '-r', requirementsPath], {
+            token,
+            onStdoutLine: onLine,
+            onStderrLine: onLine
+        });
+        return;
+    }
+    await (0, process_1.runCommand)(interpreter, ['-m', 'pip', 'install', '--upgrade', 'pip', 'setuptools', 'wheel'], {
+        token,
+        onStdoutLine: onLine,
+        onStderrLine: onLine
+    });
+    await (0, process_1.runCommand)(interpreter, ['-m', 'pip', 'install', '-r', requirementsPath], {
+        token,
+        onStdoutLine: onLine,
+        onStderrLine: onLine
+    });
+}
+
+
+/***/ }),
+/* 63 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getActiveServerPort = getActiveServerPort;
 exports.buildServerUrl = buildServerUrl;
 exports.waitForPort = waitForPort;
@@ -12523,7 +12808,7 @@ exports.registerServerLifecycle = registerServerLifecycle;
  * waiting for the HTTP port to accept connections first.
  */
 const vscode = __importStar(__webpack_require__(1));
-const net = __importStar(__webpack_require__(63));
+const net = __importStar(__webpack_require__(64));
 const versionsService_1 = __webpack_require__(23);
 const logger_1 = __webpack_require__(11);
 const DEFAULT_ODOO_PORT = 8069;
@@ -12623,13 +12908,13 @@ function registerServerLifecycle(context, hooks) {
 
 
 /***/ }),
-/* 63 */
+/* 64 */
 /***/ ((module) => {
 
 module.exports = require("node:net");
 
 /***/ }),
-/* 64 */
+/* 65 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -12652,7 +12937,7 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 65 */
+/* 66 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12704,7 +12989,7 @@ const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
 const runtimeCache_1 = __webpack_require__(12);
-const filesExclude_1 = __webpack_require__(66);
+const filesExclude_1 = __webpack_require__(67);
 const baseTreeProvider_1 = __webpack_require__(4);
 const sortOptions_1 = __webpack_require__(26);
 const branches_1 = __webpack_require__(29);
@@ -13004,7 +13289,7 @@ async function selectProjectForExplorer() {
 
 
 /***/ }),
-/* 66 */
+/* 67 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13150,7 +13435,7 @@ function createFilesExcludeMatcher(scopeUri) {
 
 
 /***/ }),
-/* 67 */
+/* 68 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13272,23 +13557,23 @@ exports.StatusBarIndicators = StatusBarIndicators;
 
 
 /***/ }),
-/* 68 */
+/* 69 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(69);
-const projectCommands_1 = __webpack_require__(71);
-const repoCommands_1 = __webpack_require__(74);
-const dbCommands_1 = __webpack_require__(75);
-const moduleCommands_1 = __webpack_require__(76);
-const testingCommands_1 = __webpack_require__(77);
-const versionCommands_1 = __webpack_require__(78);
-const debugCommands_1 = __webpack_require__(80);
-const reposExplorerCommands_1 = __webpack_require__(81);
-const editorCommands_1 = __webpack_require__(82);
-const helpCommands_1 = __webpack_require__(83);
+const viewCommands_1 = __webpack_require__(70);
+const projectCommands_1 = __webpack_require__(72);
+const repoCommands_1 = __webpack_require__(79);
+const dbCommands_1 = __webpack_require__(80);
+const moduleCommands_1 = __webpack_require__(81);
+const testingCommands_1 = __webpack_require__(82);
+const versionCommands_1 = __webpack_require__(83);
+const debugCommands_1 = __webpack_require__(85);
+const reposExplorerCommands_1 = __webpack_require__(86);
+const editorCommands_1 = __webpack_require__(87);
+const helpCommands_1 = __webpack_require__(88);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -13306,7 +13591,7 @@ function registerAllCommands(deps) {
 
 
 /***/ }),
-/* 69 */
+/* 70 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13346,7 +13631,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(70);
+const quickSearch_1 = __webpack_require__(71);
 const sortOptions_1 = __webpack_require__(26);
 const notifications_1 = __webpack_require__(13);
 const module_1 = __webpack_require__(55);
@@ -13478,7 +13763,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 70 */
+/* 71 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13590,7 +13875,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 71 */
+/* 72 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13638,8 +13923,8 @@ const notifications_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(11);
 const project_1 = __webpack_require__(47);
 const dbs_1 = __webpack_require__(32);
-const odooInstaller_1 = __webpack_require__(72);
-const projectWorkspace_1 = __webpack_require__(73);
+const odooInstaller_1 = __webpack_require__(73);
+const projectWorkspace_1 = __webpack_require__(78);
 function registerProjectCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('projectSelector.create', async () => {
@@ -13755,7 +14040,7 @@ function registerProjectCommands(deps) {
 
 
 /***/ }),
-/* 72 */
+/* 73 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13793,6 +14078,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.provisionAndCreateVersion = provisionAndCreateVersion;
 exports.setupOdooBranch = setupOdooBranch;
 /**
  * Setup Odoo flow: clones the Odoo repositories for a chosen branch
@@ -13808,6 +14094,9 @@ const process_1 = __webpack_require__(14);
 const logger_1 = __webpack_require__(11);
 const notifications_1 = __webpack_require__(13);
 const versionsService_1 = __webpack_require__(23);
+const provisioning_1 = __webpack_require__(74);
+const systemDeps_1 = __webpack_require__(77);
+const pythonToolchain_1 = __webpack_require__(62);
 const CLONE_TARGETS = {
     odoo: {
         dirName: 'odoo',
@@ -13956,56 +14245,98 @@ async function cloneRepository(target, options, progress, token) {
     }
     throw lastError instanceof Error ? lastError : new Error(`Failed to clone ${target.dirName}`);
 }
-/** Creates the venv and installs Odoo requirements in a visible terminal. */
-async function setupPythonEnvironment(baseDir, branch) {
-    let pythonCmd = 'python3';
-    if (await (0, process_1.tryRunCommand)('python3', ['--version']) === undefined) {
-        if (await (0, process_1.tryRunCommand)('python', ['--version']) !== undefined) {
-            pythonCmd = 'python';
-        }
-        else {
-            throw new Error('Python not found. Please install Python 3.8+ first.');
-        }
+/** Provisioning root: the configured setting, else the parent of the default odooPath. */
+function resolveProvisioningRoot() {
+    const configured = vscode.workspace
+        .getConfiguration('odooDebugger.provisioning')
+        .get('root', '')
+        .trim();
+    if (configured) {
+        return (0, utils_1.normalizePath)(configured);
     }
-    const terminal = vscode.window.createTerminal({
-        name: `Odoo Setup (${branch})`,
-        cwd: baseDir
-    });
-    terminal.show();
-    const isWindows = process.platform === 'win32';
-    const activateCmd = isWindows ? '.\\venv\\Scripts\\activate' : 'source venv/bin/activate';
-    terminal.sendText(`${pythonCmd} -m venv venv`);
-    terminal.sendText(`${activateCmd} && pip install --upgrade pip setuptools wheel`);
-    terminal.sendText(`${activateCmd} && if [ -f odoo/requirements.txt ]; then pip install -r odoo/requirements.txt; else echo "No requirements.txt found in odoo directory"; fi`);
-    terminal.sendText(`echo "✅ Odoo ${branch} environment setup running — wait for pip to finish."`);
+    return path.dirname((0, utils_1.normalizePath)((0, utils_1.getDefaultVersionSettings)().odooPath));
 }
-/** Creates a version profile pointing at the freshly cloned repositories. */
-async function createVersionForClone(baseDir, branch, clonedDirNames) {
-    const versionsService = versionsService_1.VersionsService.getInstance();
-    const existingNames = new Set(versionsService.getVersions().map(version => version.name));
-    let name = branch;
-    for (let counter = 2; existingNames.has(name); counter++) {
-        name = `${branch} (${counter})`;
+/**
+ * Provisions the environment for `branch` - worktree, interpreter, virtualenv,
+ * requirements - and creates the matching version profile pointing at it.
+ * Returns undefined when the user cancels or provisioning fails.
+ */
+async function provisionAndCreateVersion(branch, name) {
+    const defaults = (0, utils_1.getDefaultVersionSettings)();
+    const spec = {
+        branch,
+        sourceRepoPath: (0, utils_1.normalizePath)(defaults.odooPath),
+        enterpriseRepoPath: defaults.enterprisePath ? (0, utils_1.normalizePath)(defaults.enterprisePath) : undefined,
+        designThemesRepoPath: defaults.designThemesPath ? (0, utils_1.normalizePath)(defaults.designThemesPath) : undefined,
+        root: resolveProvisioningRoot()
+    };
+    if (!fs.existsSync(spec.sourceRepoPath)) {
+        void (0, utils_1.showError)(`No Odoo repository at ${spec.sourceRepoPath}. Run "Setup Odoo" first.`);
+        return undefined;
     }
-    const overrides = {};
-    if (clonedDirNames.includes('odoo')) {
-        overrides.odooPath = path.join(baseDir, 'odoo');
+    const plan = (0, provisioning_1.buildPlan)(spec, await (0, provisioning_1.probeProvision)(spec));
+    const detail = plan
+        .map(step => `${step.status === 'satisfied' ? '$(check)' : '$(add)'} ${step.label}`)
+        .join('  ');
+    const choice = await vscode.window.showQuickPick([
+        {
+            label: (0, provisioning_1.isFullySatisfied)(plan) ? 'Create profile (already provisioned)' : 'Provision',
+            detail,
+            provision: true
+        },
+        {
+            label: 'Profile only',
+            detail: 'Create the version without building an environment',
+            provision: false
+        }
+    ], { title: `Provision Odoo ${branch}?`, placeHolder: 'Choose how to create this version', ignoreFocusOut: true });
+    if (!choice) {
+        return undefined;
     }
-    if (clonedDirNames.includes('enterprise')) {
-        overrides.enterprisePath = path.join(baseDir, 'enterprise');
+    if (!choice.provision) {
+        return versionsService_1.VersionsService.getInstance().createVersion(name, branch);
     }
-    if (clonedDirNames.includes('design-themes')) {
-        overrides.designThemesPath = path.join(baseDir, 'design-themes');
+    const result = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Provisioning Odoo ${branch}`,
+        cancellable: true
+    }, async (progress, token) => {
+        try {
+            return await (0, provisioning_1.executeProvision)(spec, progress, token);
+        }
+        catch (error) {
+            if (token.isCancellationRequested) {
+                void (0, utils_1.showInfo)('Provisioning cancelled. Run it again to resume where it stopped.');
+            }
+            else {
+                logger_1.logger.error('Provisioning failed:', error);
+                void (0, utils_1.showError)(`Provisioning failed: ${(0, logger_1.errorMessage)(error)}`);
+            }
+            return undefined;
+        }
+    });
+    if (!result) {
+        return undefined;
     }
-    const venvPython = path.join(baseDir, 'venv', process.platform === 'win32' ? 'Scripts\\python.exe' : 'bin/python');
-    if (fs.existsSync(venvPython)) {
-        overrides.pythonPath = venvPython;
+    const version = await versionsService_1.VersionsService.getInstance().createVersion(name, branch, {
+        odooPath: result.paths.odooPath,
+        enterprisePath: result.paths.enterprisePath ?? '',
+        designThemesPath: result.paths.designThemesPath ?? '',
+        pythonPath: (0, pythonToolchain_1.venvPythonPath)(result.paths.venvPath),
+        managedPaths: result.managedPaths
+    });
+    const notes = [...result.warnings];
+    const missing = (0, systemDeps_1.summarizeMissing)(result.deps);
+    if (missing) {
+        notes.push(`Missing: ${missing}`);
     }
-    const version = await versionsService.createVersion(name, branch, overrides);
-    const activate = await (0, utils_1.showInfo)(`Version profile "${version.name}" created for the cloned repositories.`, 'Set Active');
-    if (activate === 'Set Active') {
-        await versionsService.setActiveVersion(version.id);
+    if (notes.length > 0) {
+        void (0, utils_1.showWarning)(`Provisioned ${branch} on Python ${result.pythonVersion}. ${notes.join(' ')}`);
     }
+    else {
+        void (0, utils_1.showInfo)(`Provisioned ${branch} on Python ${result.pythonVersion}.`);
+    }
+    return version;
 }
 async function setupOdooBranch() {
     const workspaceDir = (0, utils_1.getWorkspacePath)();
@@ -14077,34 +14408,591 @@ async function setupOdooBranch() {
         return;
     }
     if (!scope.cloneOnly) {
-        try {
-            await setupPythonEnvironment(baseDir, branch);
-        }
-        catch (error) {
-            void (0, utils_1.showError)(`Python environment setup failed: ${(0, logger_1.errorMessage)(error)}`);
-        }
-        await createVersionForClone(baseDir, branch, cloned);
+        await provisionAndCreateVersion(branch, `Odoo ${branch}`);
         return;
     }
-    // Clone-only: offer the follow-ups instead of running them.
-    const next = await (0, utils_1.showInfo)(`Cloned ${cloned.join(', ')} (${branch}${shallow ? ', shallow' : ''}).`, 'Create Version Profile', 'Continue Full Setup');
-    if (next === 'Continue Full Setup') {
-        try {
-            await setupPythonEnvironment(baseDir, branch);
-        }
-        catch (error) {
-            void (0, utils_1.showError)(`Python environment setup failed: ${(0, logger_1.errorMessage)(error)}`);
-        }
-        await createVersionForClone(baseDir, branch, cloned);
-    }
-    else if (next === 'Create Version Profile') {
-        await createVersionForClone(baseDir, branch, cloned);
+    // Clone-only: offer the follow-up instead of running it.
+    const next = await (0, utils_1.showInfo)(`Cloned ${cloned.join(', ')} (${branch}${shallow ? ', shallow' : ''}).`, 'Provision Version');
+    if (next === 'Provision Version') {
+        await provisionAndCreateVersion(branch, `Odoo ${branch}`);
     }
 }
 
 
 /***/ }),
-/* 73 */
+/* 74 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.slugifyBranch = slugifyBranch;
+exports.resolveProvisionPaths = resolveProvisionPaths;
+exports.buildPlan = buildPlan;
+exports.isFullySatisfied = isFullySatisfied;
+exports.probeProvision = probeProvision;
+exports.executeProvision = executeProvision;
+/**
+ * Provisioning orchestrator. Probes what already exists on disk, plans only
+ * the missing steps, and executes those - so a failed run resumes where it
+ * stopped and an environment built by hand is adopted rather than rebuilt.
+ */
+const fs = __importStar(__webpack_require__(41));
+const path = __importStar(__webpack_require__(3));
+const odooRequirements_1 = __webpack_require__(75);
+const worktree_1 = __webpack_require__(76);
+const pythonToolchain_1 = __webpack_require__(62);
+const systemDeps_1 = __webpack_require__(77);
+const logger_1 = __webpack_require__(11);
+function slugifyBranch(branch) {
+    return branch.replace(/[^A-Za-z0-9._-]+/g, '-');
+}
+function resolveProvisionPaths(spec) {
+    const slug = slugifyBranch(spec.branch);
+    return {
+        odooPath: path.join(spec.root, `odoo-${slug}`),
+        enterprisePath: spec.enterpriseRepoPath ? path.join(spec.root, `enterprise-${slug}`) : undefined,
+        designThemesPath: spec.designThemesRepoPath ? path.join(spec.root, `design-themes-${slug}`) : undefined,
+        venvPath: path.join(spec.root, `venv-${slug}`)
+    };
+}
+function buildPlan(spec, probe) {
+    const mark = (satisfied) => (satisfied ? 'satisfied' : 'needed');
+    const steps = [
+        { id: 'worktree:odoo', label: `Worktree for odoo (${spec.branch})`, status: mark(probe.odooWorktree) }
+    ];
+    if (spec.enterpriseRepoPath) {
+        steps.push({
+            id: 'worktree:enterprise',
+            label: `Worktree for enterprise (${spec.branch})`,
+            status: mark(probe.enterpriseWorktree)
+        });
+    }
+    if (spec.designThemesRepoPath) {
+        steps.push({
+            id: 'worktree:design-themes',
+            label: `Worktree for design-themes (${spec.branch})`,
+            status: mark(probe.designThemesWorktree)
+        });
+    }
+    steps.push({ id: 'venv', label: 'Virtualenv', status: mark(probe.venv) });
+    steps.push({ id: 'requirements', label: 'Python requirements', status: mark(probe.requirements) });
+    return steps;
+}
+function isFullySatisfied(plan) {
+    return plan.every(step => step.status === 'satisfied');
+}
+async function probeProvision(spec) {
+    const paths = resolveProvisionPaths(spec);
+    const venvExists = fs.existsSync((0, pythonToolchain_1.venvPythonPath)(paths.venvPath));
+    // Requirements count as installed when the venv can import the packages
+    // Odoo cannot start without.
+    let requirements = false;
+    if (venvExists) {
+        const deps = await (0, systemDeps_1.checkSystemDeps)(paths.venvPath);
+        requirements = deps.find(entry => entry.id === 'buildDeps')?.present ?? false;
+    }
+    return {
+        odooWorktree: fs.existsSync(path.join(paths.odooPath, 'odoo-bin')),
+        enterpriseWorktree: !paths.enterprisePath || fs.existsSync(paths.enterprisePath),
+        designThemesWorktree: !paths.designThemesPath || fs.existsSync(paths.designThemesPath),
+        venv: venvExists,
+        requirements
+    };
+}
+async function executeProvision(spec, progress, token) {
+    const paths = resolveProvisionPaths(spec);
+    const managedPaths = [];
+    const warnings = [];
+    fs.mkdirSync(spec.root, { recursive: true });
+    progress.report({ message: `Worktree for odoo (${spec.branch})` });
+    const odooTree = await (0, worktree_1.ensureWorktree)(spec.sourceRepoPath, spec.branch, paths.odooPath, token);
+    paths.odooPath = odooTree.path;
+    if (odooTree.created) {
+        managedPaths.push(odooTree.path);
+    }
+    if (spec.enterpriseRepoPath && paths.enterprisePath) {
+        progress.report({ message: `Worktree for enterprise (${spec.branch})` });
+        try {
+            const tree = await (0, worktree_1.ensureWorktree)(spec.enterpriseRepoPath, spec.branch, paths.enterprisePath, token);
+            paths.enterprisePath = tree.path;
+            if (tree.created) {
+                managedPaths.push(tree.path);
+            }
+        }
+        catch (error) {
+            warnings.push(`enterprise: ${error instanceof Error ? error.message : String(error)}`);
+            paths.enterprisePath = undefined;
+        }
+    }
+    if (spec.designThemesRepoPath && paths.designThemesPath) {
+        progress.report({ message: `Worktree for design-themes (${spec.branch})` });
+        try {
+            const tree = await (0, worktree_1.ensureWorktree)(spec.designThemesRepoPath, spec.branch, paths.designThemesPath, token);
+            paths.designThemesPath = tree.path;
+            if (tree.created) {
+                managedPaths.push(tree.path);
+            }
+        }
+        catch (error) {
+            warnings.push(`design-themes: ${error instanceof Error ? error.message : String(error)}`);
+            paths.designThemesPath = undefined;
+        }
+    }
+    progress.report({ message: 'Resolving Python interpreter' });
+    const window = await (0, odooRequirements_1.readOdooPythonWindow)(paths.odooPath);
+    if (window.source === 'fallback') {
+        warnings.push(`Could not read this branch's Python requirement; assuming ${window.minPython.join('.')}.`);
+    }
+    const interpreter = await (0, pythonToolchain_1.ensureInterpreter)(window, token);
+    if (interpreter.warning) {
+        warnings.push(interpreter.warning);
+    }
+    const uv = await (0, pythonToolchain_1.resolveUv)();
+    if (!uv) {
+        warnings.push('uv is not available; using the standard library venv and pip.');
+    }
+    progress.report({ message: 'Creating virtualenv' });
+    await (0, pythonToolchain_1.ensureVenv)(interpreter.path, paths.venvPath, uv, token);
+    if (!managedPaths.includes(paths.venvPath)) {
+        managedPaths.push(paths.venvPath);
+    }
+    progress.report({ message: 'Installing requirements (this takes a few minutes)' });
+    await (0, pythonToolchain_1.installRequirements)(paths.venvPath, path.join(paths.odooPath, 'requirements.txt'), uv, line => {
+        const trimmed = line.trim();
+        if (trimmed) {
+            progress.report({ message: trimmed.slice(0, 120) });
+        }
+    }, token);
+    progress.report({ message: 'Checking system dependencies' });
+    const deps = await (0, systemDeps_1.checkSystemDeps)(paths.venvPath);
+    logger_1.logger.info(`[provisioning] ${spec.branch} provisioned at ${paths.odooPath}`);
+    return {
+        paths,
+        managedPaths,
+        pythonVersion: interpreter.version.join('.'),
+        warnings,
+        deps
+    };
+}
+
+
+/***/ }),
+/* 75 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.FALLBACK_MIN_PYTHON = void 0;
+exports.parseMinPythonFromSetupPy = parseMinPythonFromSetupPy;
+exports.parseMinPythonFromReleasePy = parseMinPythonFromReleasePy;
+exports.parseSeriesFromReleasePy = parseSeriesFromReleasePy;
+exports.parsePreferredPythonFromRequirements = parsePreferredPythonFromRequirements;
+exports.readOdooPythonWindow = readOdooPythonWindow;
+/**
+ * Reads what Python an Odoo checkout needs, straight from the files the
+ * branch itself ships. The floor comes from setup.py's literal
+ * `python_requires` (present in 17.0/18.0) or release.py's MIN_PY_VERSION
+ * (present in 19.0). The preferred interpreter comes from the distributions
+ * named in requirements.txt's header comment.
+ */
+const fs = __importStar(__webpack_require__(22));
+const path = __importStar(__webpack_require__(3));
+exports.FALLBACK_MIN_PYTHON = [3, 10];
+/**
+ * Default `python3` of each distribution Odoo names in its requirements
+ * header. Describes distributions, not Odoo, so it only changes when a new
+ * release ships.
+ */
+const DISTRIBUTION_PYTHON = [
+    { match: 'ubuntu 20.04', python: [3, 8] },
+    { match: 'ubuntu 22.04', python: [3, 10] },
+    { match: 'ubuntu 24.04', python: [3, 12] },
+    { match: 'debian 11', python: [3, 9] },
+    { match: 'debian 12', python: [3, 11] },
+    { match: 'debian 13', python: [3, 13] }
+];
+function parseMinPythonFromSetupPy(content) {
+    const match = /python_requires\s*=\s*['"]>=\s*(\d+)\.(\d+)/.exec(content);
+    return match ? [Number(match[1]), Number(match[2])] : undefined;
+}
+function parseMinPythonFromReleasePy(content) {
+    const match = /^MIN_PY_VERSION\s*=\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)/m.exec(content);
+    return match ? [Number(match[1]), Number(match[2])] : undefined;
+}
+function parseSeriesFromReleasePy(content) {
+    const match = /^version_info\s*=\s*\(\s*(\d+)\s*,\s*(\d+)/m.exec(content);
+    return match ? `${match[1]}.${match[2]}` : undefined;
+}
+/** Leading comment block only - later comments are not the header. */
+function readHeaderComment(content) {
+    const header = [];
+    for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed === '') {
+            continue;
+        }
+        if (!trimmed.startsWith('#')) {
+            break;
+        }
+        header.push(trimmed);
+    }
+    return header.join(' ').toLowerCase();
+}
+function parsePreferredPythonFromRequirements(content) {
+    const header = readHeaderComment(content);
+    let best;
+    for (const entry of DISTRIBUTION_PYTHON) {
+        if (!header.includes(entry.match)) {
+            continue;
+        }
+        if (!best || entry.python[0] > best[0] || (entry.python[0] === best[0] && entry.python[1] > best[1])) {
+            best = entry.python;
+        }
+    }
+    return best;
+}
+async function readIfPresent(filePath) {
+    return fs.readFile(filePath, 'utf-8').catch(() => undefined);
+}
+async function readOdooPythonWindow(odooPath) {
+    const [setupPy, releasePy, requirements] = await Promise.all([
+        readIfPresent(path.join(odooPath, 'setup.py')),
+        readIfPresent(path.join(odooPath, 'odoo', 'release.py')),
+        readIfPresent(path.join(odooPath, 'requirements.txt'))
+    ]);
+    const fromSetup = setupPy ? parseMinPythonFromSetupPy(setupPy) : undefined;
+    const fromRelease = releasePy ? parseMinPythonFromReleasePy(releasePy) : undefined;
+    let minPython = exports.FALLBACK_MIN_PYTHON;
+    let source = 'fallback';
+    if (fromSetup) {
+        minPython = fromSetup;
+        source = 'setup.py';
+    }
+    else if (fromRelease) {
+        minPython = fromRelease;
+        source = 'release.py';
+    }
+    return {
+        series: releasePy ? parseSeriesFromReleasePy(releasePy) : undefined,
+        minPython,
+        preferredPython: requirements ? parsePreferredPythonFromRequirements(requirements) : undefined,
+        source
+    };
+}
+
+
+/***/ }),
+/* 76 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseWorktreeList = parseWorktreeList;
+exports.findWorktreeForBranch = findWorktreeForBranch;
+exports.ensureWorktree = ensureWorktree;
+exports.removeWorktree = removeWorktree;
+/**
+ * git worktree operations. Each version gets its own worktree of the core
+ * repositories, so versions never compete for one checkout. Worktrees share
+ * the repository object store, so an extra version costs one working tree
+ * rather than a full clone.
+ */
+const fs = __importStar(__webpack_require__(41));
+const process_1 = __webpack_require__(14);
+const logger_1 = __webpack_require__(11);
+function parseWorktreeList(output) {
+    const entries = [];
+    let current;
+    for (const rawLine of output.split('\n')) {
+        const line = rawLine.trim();
+        if (line.startsWith('worktree ')) {
+            current = { path: line.slice('worktree '.length), branch: undefined };
+            entries.push(current);
+            continue;
+        }
+        if (current && line.startsWith('branch ')) {
+            current.branch = line.slice('branch '.length).replace(/^refs\/heads\//, '');
+        }
+    }
+    return entries;
+}
+function findWorktreeForBranch(entries, branch) {
+    return entries.find(entry => entry.branch === branch);
+}
+async function listWorktrees(repoPath) {
+    const { stdout } = await (0, process_1.runCommand)('git', ['worktree', 'list', '--porcelain'], { cwd: repoPath });
+    return parseWorktreeList(stdout);
+}
+async function hasLocalBranch(repoPath, branch) {
+    try {
+        await (0, process_1.runCommand)('git', ['rev-parse', '--verify', `refs/heads/${branch}`], { cwd: repoPath });
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * Ensures `branch` is checked out at `destPath` as a worktree of `repoPath`.
+ *
+ * Three cases are handled explicitly: the branch may be missing from a
+ * shallow clone (fetch it first - valid and cheap on a shallow clone), it may
+ * already be checked out somewhere (git refuses duplicates, so reuse that
+ * path), or the destination may already exist (never delete it).
+ */
+async function ensureWorktree(repoPath, branch, destPath, token) {
+    const existing = await listWorktrees(repoPath);
+    const holding = findWorktreeForBranch(existing, branch);
+    if (holding) {
+        logger_1.logger.info(`[worktree] ${branch} already checked out at ${holding.path}`);
+        return { path: holding.path, created: false, adopted: true };
+    }
+    if (fs.existsSync(destPath)) {
+        throw new Error(`Cannot create a worktree at ${destPath}: the path already exists and is not a worktree for ${branch}.`);
+    }
+    if (!(await hasLocalBranch(repoPath, branch))) {
+        logger_1.logger.info(`[worktree] fetching ${branch} into ${repoPath}`);
+        await (0, process_1.runCommand)('git', ['fetch', '--depth', '1', 'origin', `${branch}:${branch}`], { cwd: repoPath, token });
+    }
+    await (0, process_1.runCommand)('git', ['worktree', 'add', destPath, branch], { cwd: repoPath, token });
+    return { path: destPath, created: true, adopted: false };
+}
+async function removeWorktree(repoPath, worktreePath) {
+    await (0, process_1.runCommand)('git', ['worktree', 'remove', '--force', worktreePath], { cwd: repoPath });
+}
+
+
+/***/ }),
+/* 77 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.detectPlatform = detectPlatform;
+exports.installHintFor = installHintFor;
+exports.summarizeMissing = summarizeMissing;
+exports.checkSystemDeps = checkSystemDeps;
+/**
+ * Detects the non-Python dependencies an Odoo server needs and reports what
+ * breaks without each. Reports and suggests only: nothing here executes an
+ * installer or escalates privileges.
+ */
+const fs = __importStar(__webpack_require__(41));
+const process_1 = __webpack_require__(14);
+const pythonToolchain_1 = __webpack_require__(62);
+const INSTALL_HINTS = {
+    wkhtmltopdf: {
+        apt: 'sudo apt install wkhtmltopdf',
+        dnf: 'sudo dnf install wkhtmltopdf',
+        brew: 'brew install --cask wkhtmltopdf'
+    },
+    psql: {
+        apt: 'sudo apt install postgresql-client',
+        dnf: 'sudo dnf install postgresql',
+        brew: 'brew install libpq'
+    },
+    rtlcss: {
+        apt: 'sudo npm install -g rtlcss',
+        dnf: 'sudo npm install -g rtlcss',
+        brew: 'npm install -g rtlcss'
+    },
+    buildDeps: {
+        apt: 'sudo apt install libxml2-dev libxslt1-dev libldap2-dev libsasl2-dev libssl-dev python3-dev',
+        dnf: 'sudo dnf install libxml2-devel libxslt-devel openldap-devel cyrus-sasl-devel openssl-devel python3-devel',
+        brew: 'brew install libxmlsec1 openldap'
+    }
+};
+function detectPlatform() {
+    if (process.platform === 'win32') {
+        return 'windows';
+    }
+    if (process.platform === 'darwin') {
+        return 'brew';
+    }
+    if (fs.existsSync('/usr/bin/apt') || fs.existsSync('/usr/bin/apt-get')) {
+        return 'apt';
+    }
+    if (fs.existsSync('/usr/bin/dnf')) {
+        return 'dnf';
+    }
+    return 'unknown';
+}
+function installHintFor(id, platform) {
+    return INSTALL_HINTS[id]?.[platform];
+}
+function summarizeMissing(reports) {
+    const missing = reports.filter(entry => !entry.present);
+    if (missing.length === 0) {
+        return undefined;
+    }
+    return missing.map(entry => `${entry.label}: ${entry.impact}`).join('; ');
+}
+async function onPath(command, args = ['--version']) {
+    return (await (0, process_1.tryRunCommand)(command, args)) !== undefined;
+}
+async function canImport(venvPath, moduleName) {
+    const interpreter = (0, pythonToolchain_1.venvPythonPath)(venvPath);
+    if (!fs.existsSync(interpreter)) {
+        return false;
+    }
+    return (await (0, process_1.tryRunCommand)(interpreter, ['-c', `import ${moduleName}`])) !== undefined;
+}
+async function checkSystemDeps(venvPath) {
+    const platform = detectPlatform();
+    const reports = [];
+    const add = (id, label, present, impact) => {
+        reports.push({ id, label, present, impact, installHint: present ? undefined : installHintFor(id, platform) });
+    };
+    add('wkhtmltopdf', 'wkhtmltopdf', await onPath('wkhtmltopdf'), 'PDF reports will fail; everything else works');
+    add('psql', 'PostgreSQL client tools', await onPath('psql'), 'Database features are unavailable');
+    add('rtlcss', 'rtlcss', await onPath('rtlcss'), 'Right-to-left stylesheets are not generated');
+    if (venvPath) {
+        const missingModules = [];
+        for (const moduleName of ['lxml', 'psycopg2', 'ldap']) {
+            if (!(await canImport(venvPath, moduleName))) {
+                missingModules.push(moduleName);
+            }
+        }
+        add('buildDeps', `Python modules (${missingModules.join(', ') || 'all present'})`, missingModules.length === 0, 'The server will not start; build headers are probably missing');
+    }
+    return reports;
+}
+
+
+/***/ }),
+/* 78 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14242,7 +15130,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 74 */
+/* 79 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14286,7 +15174,7 @@ exports.registerRepoCommands = registerRepoCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const repos_1 = __webpack_require__(54);
-const projectWorkspace_1 = __webpack_require__(73);
+const projectWorkspace_1 = __webpack_require__(78);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
@@ -14298,7 +15186,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 75 */
+/* 80 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14346,7 +15234,7 @@ const notifications_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(11);
 const dbs_1 = __webpack_require__(32);
 const notifications_2 = __webpack_require__(13);
-const server_1 = __webpack_require__(62);
+const server_1 = __webpack_require__(63);
 const utils_1 = __webpack_require__(7);
 function registerDbCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
@@ -14523,7 +15411,7 @@ function registerDbCommands(deps) {
 
 
 /***/ }),
-/* 76 */
+/* 81 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14658,7 +15546,7 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 77 */
+/* 82 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14751,7 +15639,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 78 */
+/* 83 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14795,13 +15683,15 @@ exports.registerVersionCommands = registerVersionCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(41));
-const args_1 = __webpack_require__(79);
+const args_1 = __webpack_require__(84);
 const utils_1 = __webpack_require__(7);
 const notifications_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(11);
 const gitService_1 = __webpack_require__(10);
 const runtimeCache_1 = __webpack_require__(12);
 const environment_1 = __webpack_require__(28);
+const odooInstaller_1 = __webpack_require__(73);
+const worktree_1 = __webpack_require__(76);
 function registerVersionCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('odoo.createVersion', async () => {
@@ -14866,7 +15756,13 @@ function registerVersionCommands(deps) {
             if (!name) {
                 return;
             }
-            const version = await versionsService.createVersion(name, odooVersion);
+            // Provisioning gives the version its own worktree, interpreter and
+            // virtualenv; the flow offers a profile-only path for anyone who
+            // already has an environment set up by hand.
+            const version = await (0, odooInstaller_1.provisionAndCreateVersion)(odooVersion, name);
+            if (!version) {
+                return;
+            }
             await refreshAll({ reason: 'ui' });
             const action = await (0, notifications_1.showInfo)(`Version "${name}" created on branch "${odooVersion}".`, 'Activate Now');
             if (action === 'Activate Now') {
@@ -15172,6 +16068,28 @@ function registerVersionCommands(deps) {
             if (confirm !== 'Delete') {
                 return;
             }
+            const managedPaths = version.settings.managedPaths ?? [];
+            if (managedPaths.length > 0) {
+                const removeChoice = await (0, notifications_1.showModalWarning)(`Also delete the ${managedPaths.length} folder(s) this extension created for "${version.name}"?\n\n${managedPaths.join('\n')}`, 'Delete Folders', 'Keep Folders');
+                if (removeChoice === 'Delete Folders') {
+                    for (const managedPath of managedPaths) {
+                        // Worktrees must go through git so the parent repo's
+                        // administrative entry goes with them; anything git
+                        // refuses (a venv, a stale directory) is a plain delete.
+                        try {
+                            await (0, worktree_1.removeWorktree)((0, utils_1.normalizePath)(version.settings.odooPath), managedPath);
+                        }
+                        catch {
+                            try {
+                                await fs.promises.rm(managedPath, { recursive: true, force: true });
+                            }
+                            catch (error) {
+                                logger_1.logger.warn(`Failed to remove ${managedPath}:`, error);
+                            }
+                        }
+                    }
+                }
+            }
             const success = await versionsService.deleteVersion(versionId);
             if (success) {
                 void (0, notifications_1.showInfo)(`Version "${version.name}" deleted successfully`);
@@ -15298,7 +16216,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 79 */
+/* 84 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15391,7 +16309,7 @@ function extractUri(arg) {
 
 
 /***/ }),
-/* 80 */
+/* 85 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15435,7 +16353,7 @@ exports.registerDebugCommands = registerDebugCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const debugger_1 = __webpack_require__(59);
-const server_1 = __webpack_require__(62);
+const server_1 = __webpack_require__(63);
 const notifications_1 = __webpack_require__(13);
 const settingsStore_1 = __webpack_require__(5);
 function registerDebugCommands(deps) {
@@ -15475,7 +16393,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 81 */
+/* 86 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15521,13 +16439,13 @@ exports.registerReposExplorerCommands = registerReposExplorerCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(41));
 const path = __importStar(__webpack_require__(3));
-const args_1 = __webpack_require__(79);
+const args_1 = __webpack_require__(84);
 const notifications_1 = __webpack_require__(13);
 const notifications_2 = __webpack_require__(13);
 const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
 const runtimeCache_1 = __webpack_require__(12);
-const projectReposExplorer_1 = __webpack_require__(65);
+const projectReposExplorer_1 = __webpack_require__(66);
 async function copyPathToClipboard(uri, relative) {
     if (!uri) {
         void (0, notifications_1.showInfo)('Select a file or folder first.');
@@ -15645,7 +16563,7 @@ function registerReposExplorerCommands(deps) {
 
 
 /***/ }),
-/* 82 */
+/* 87 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15752,7 +16670,7 @@ function registerEditorCommands(deps) {
 
 
 /***/ }),
-/* 83 */
+/* 88 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 

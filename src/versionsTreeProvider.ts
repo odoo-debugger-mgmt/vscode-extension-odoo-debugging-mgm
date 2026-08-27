@@ -2,14 +2,30 @@
  * Versions view: version profiles with their settings as editable children.
  */
 import * as vscode from 'vscode';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { VersionModel } from './models/version';
 import { VersionsService } from './versionsService';
-import { getSettingDisplayName, getSettingDisplayValue } from './utils';
+import { getSettingDisplayName, getSettingDisplayValue, normalizePath } from './utils';
+import { venvPythonPath } from './services/pythonToolchain';
 import { activeIcon } from './views/icons';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { logger } from './services/logger';
 import { BaseTreeProvider } from './views/baseTreeProvider';
+
+/**
+ * A version is provisioned when the interpreter its pythonPath points at
+ * actually exists - a fact about the filesystem, never stored state.
+ */
+function provisioningLabel(version: VersionModel): string {
+    const pythonPath = version.settings.pythonPath?.trim();
+    if (!pythonPath) {
+        return 'not provisioned';
+    }
+    const venvRoot = path.dirname(path.dirname(normalizePath(pythonPath)));
+    return fs.existsSync(venvPythonPath(venvRoot)) ? 'provisioned' : 'not provisioned';
+}
 
 export class VersionTreeItem extends vscode.TreeItem {
     constructor(
@@ -20,7 +36,7 @@ export class VersionTreeItem extends vscode.TreeItem {
 
         this.id = version.id;
         this.tooltip = VersionTreeItem.buildTooltip(version);
-        this.description = version.odooVersion;
+        this.description = `${version.odooVersion} \u2022 ${provisioningLabel(version)}`;
         this.contextValue = version.isActive ? 'activeVersion' : 'version';
         this.iconPath = version.isActive ? activeIcon : new vscode.ThemeIcon('versions');
 
