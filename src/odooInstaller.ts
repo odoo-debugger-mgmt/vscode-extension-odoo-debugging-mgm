@@ -7,11 +7,15 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { getWorkspacePath, showInfo, showError } from './utils';
-import { runCommand, tryRunCommand } from './services/process';
+import { getWorkspacePath, showInfo, showError, showWarning, normalizePath, getDefaultVersionSettings } from './utils';
+import { runCommand } from './services/process';
 import { logger, errorMessage } from './services/logger';
 import { showModalWarning } from './services/notifications';
 import { VersionsService } from './versionsService';
+import type { VersionModel } from './models/version';
+import { probeProvision, buildPlan, isFullySatisfied, executeProvision, ProvisionSpec } from './services/provisioning';
+import { summarizeMissing } from './services/systemDeps';
+import { venvPythonPath } from './services/pythonToolchain';
 
 interface CloneTarget {
     /** Directory name inside the workspace. */
@@ -194,69 +198,108 @@ async function cloneRepository(
     throw lastError instanceof Error ? lastError : new Error(`Failed to clone ${target.dirName}`);
 }
 
-/** Creates the venv and installs Odoo requirements in a visible terminal. */
-async function setupPythonEnvironment(baseDir: string, branch: string): Promise<void> {
-    let pythonCmd = 'python3';
-    if (await tryRunCommand('python3', ['--version']) === undefined) {
-        if (await tryRunCommand('python', ['--version']) !== undefined) {
-            pythonCmd = 'python';
-        } else {
-            throw new Error('Python not found. Please install Python 3.8+ first.');
-        }
+/** Provisioning root: the configured setting, else the parent of the default odooPath. */
+function resolveProvisioningRoot(): string {
+    const configured = vscode.workspace
+        .getConfiguration('odooDebugger.provisioning')
+        .get<string>('root', '')
+        .trim();
+    if (configured) {
+        return normalizePath(configured);
     }
-
-    const terminal = vscode.window.createTerminal({
-        name: `Odoo Setup (${branch})`,
-        cwd: baseDir
-    });
-    terminal.show();
-
-    const isWindows = process.platform === 'win32';
-    const activateCmd = isWindows ? '.\\venv\\Scripts\\activate' : 'source venv/bin/activate';
-
-    terminal.sendText(`${pythonCmd} -m venv venv`);
-    terminal.sendText(`${activateCmd} && pip install --upgrade pip setuptools wheel`);
-    terminal.sendText(`${activateCmd} && if [ -f odoo/requirements.txt ]; then pip install -r odoo/requirements.txt; else echo "No requirements.txt found in odoo directory"; fi`);
-    terminal.sendText(`echo "✅ Odoo ${branch} environment setup running — wait for pip to finish."`);
+    return path.dirname(normalizePath(getDefaultVersionSettings().odooPath));
 }
 
-/** Creates a version profile pointing at the freshly cloned repositories. */
-async function createVersionForClone(
-    baseDir: string,
-    branch: string,
-    clonedDirNames: string[]
-): Promise<void> {
-    const versionsService = VersionsService.getInstance();
+/**
+ * Provisions the environment for `branch` - worktree, interpreter, virtualenv,
+ * requirements - and creates the matching version profile pointing at it.
+ * Returns undefined when the user cancels or provisioning fails.
+ */
+export async function provisionAndCreateVersion(branch: string, name: string): Promise<VersionModel | undefined> {
+    const defaults = getDefaultVersionSettings();
+    const spec: ProvisionSpec = {
+        branch,
+        sourceRepoPath: normalizePath(defaults.odooPath),
+        enterpriseRepoPath: defaults.enterprisePath ? normalizePath(defaults.enterprisePath) : undefined,
+        designThemesRepoPath: defaults.designThemesPath ? normalizePath(defaults.designThemesPath) : undefined,
+        root: resolveProvisioningRoot()
+    };
 
-    const existingNames = new Set(versionsService.getVersions().map(version => version.name));
-    let name = branch;
-    for (let counter = 2; existingNames.has(name); counter++) {
-        name = `${branch} (${counter})`;
-    }
-
-    const overrides: Record<string, string> = {};
-    if (clonedDirNames.includes('odoo')) {
-        overrides.odooPath = path.join(baseDir, 'odoo');
-    }
-    if (clonedDirNames.includes('enterprise')) {
-        overrides.enterprisePath = path.join(baseDir, 'enterprise');
-    }
-    if (clonedDirNames.includes('design-themes')) {
-        overrides.designThemesPath = path.join(baseDir, 'design-themes');
-    }
-    const venvPython = path.join(baseDir, 'venv', process.platform === 'win32' ? 'Scripts\\python.exe' : 'bin/python');
-    if (fs.existsSync(venvPython)) {
-        overrides.pythonPath = venvPython;
+    if (!fs.existsSync(spec.sourceRepoPath)) {
+        void showError(`No Odoo repository at ${spec.sourceRepoPath}. Run "Setup Odoo" first.`);
+        return undefined;
     }
 
-    const version = await versionsService.createVersion(name, branch, overrides);
-    const activate = await showInfo(
-        `Version profile "${version.name}" created for the cloned repositories.`,
-        'Set Active'
+    const plan = buildPlan(spec, await probeProvision(spec));
+    const detail = plan
+        .map(step => `${step.status === 'satisfied' ? '$(check)' : '$(add)'} ${step.label}`)
+        .join('  ');
+
+    const choice = await vscode.window.showQuickPick(
+        [
+            {
+                label: isFullySatisfied(plan) ? 'Create profile (already provisioned)' : 'Provision',
+                detail,
+                provision: true
+            },
+            {
+                label: 'Profile only',
+                detail: 'Create the version without building an environment',
+                provision: false
+            }
+        ],
+        { title: `Provision Odoo ${branch}?`, placeHolder: 'Choose how to create this version', ignoreFocusOut: true }
     );
-    if (activate === 'Set Active') {
-        await versionsService.setActiveVersion(version.id);
+    if (!choice) {
+        return undefined;
     }
+
+    if (!choice.provision) {
+        return VersionsService.getInstance().createVersion(name, branch);
+    }
+
+    const result = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Provisioning Odoo ${branch}`,
+        cancellable: true
+    }, async (progress, token) => {
+        try {
+            return await executeProvision(spec, progress, token);
+        } catch (error) {
+            if (token.isCancellationRequested) {
+                void showInfo('Provisioning cancelled. Run it again to resume where it stopped.');
+            } else {
+                logger.error('Provisioning failed:', error);
+                void showError(`Provisioning failed: ${errorMessage(error)}`);
+            }
+            return undefined;
+        }
+    });
+
+    if (!result) {
+        return undefined;
+    }
+
+    const version = await VersionsService.getInstance().createVersion(name, branch, {
+        odooPath: result.paths.odooPath,
+        enterprisePath: result.paths.enterprisePath ?? '',
+        designThemesPath: result.paths.designThemesPath ?? '',
+        pythonPath: venvPythonPath(result.paths.venvPath),
+        managedPaths: result.managedPaths
+    });
+
+    const notes = [...result.warnings];
+    const missing = summarizeMissing(result.deps);
+    if (missing) {
+        notes.push(`Missing: ${missing}`);
+    }
+    if (notes.length > 0) {
+        void showWarning(`Provisioned ${branch} on Python ${result.pythonVersion}. ${notes.join(' ')}`);
+    } else {
+        void showInfo(`Provisioned ${branch} on Python ${result.pythonVersion}.`);
+    }
+
+    return version;
 }
 
 export async function setupOdooBranch() {
@@ -339,29 +382,16 @@ export async function setupOdooBranch() {
     }
 
     if (!scope.cloneOnly) {
-        try {
-            await setupPythonEnvironment(baseDir, branch);
-        } catch (error) {
-            void showError(`Python environment setup failed: ${errorMessage(error)}`);
-        }
-        await createVersionForClone(baseDir, branch, cloned);
+        await provisionAndCreateVersion(branch, `Odoo ${branch}`);
         return;
     }
 
-    // Clone-only: offer the follow-ups instead of running them.
+    // Clone-only: offer the follow-up instead of running it.
     const next = await showInfo(
         `Cloned ${cloned.join(', ')} (${branch}${shallow ? ', shallow' : ''}).`,
-        'Create Version Profile',
-        'Continue Full Setup'
+        'Provision Version'
     );
-    if (next === 'Continue Full Setup') {
-        try {
-            await setupPythonEnvironment(baseDir, branch);
-        } catch (error) {
-            void showError(`Python environment setup failed: ${errorMessage(error)}`);
-        }
-        await createVersionForClone(baseDir, branch, cloned);
-    } else if (next === 'Create Version Profile') {
-        await createVersionForClone(baseDir, branch, cloned);
+    if (next === 'Provision Version') {
+        await provisionAndCreateVersion(branch, `Odoo ${branch}`);
     }
 }

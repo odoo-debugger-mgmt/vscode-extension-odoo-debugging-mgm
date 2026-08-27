@@ -11,6 +11,7 @@ import { errorMessage } from '../services/logger';
 import { getBranchesWithMetadata } from '../services/gitService';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from '../services/runtimeCache';
 import { alignEnvironment } from '../services/environment';
+import { provisionAndCreateVersion } from '../odooInstaller';
 
 export function registerVersionCommands(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
@@ -76,7 +77,11 @@ export function registerVersionCommands(deps: CommandDeps): void {
             }))?.trim();
             if (!name) { return; }
 
-            const version = await versionsService.createVersion(name, odooVersion);
+            // Provisioning gives the version its own worktree, interpreter and
+            // virtualenv; the flow offers a profile-only path for anyone who
+            // already has an environment set up by hand.
+            const version = await provisionAndCreateVersion(odooVersion, name);
+            if (!version) { return; }
             await refreshAll({ reason: 'ui' });
 
             const action = await showInfo(
