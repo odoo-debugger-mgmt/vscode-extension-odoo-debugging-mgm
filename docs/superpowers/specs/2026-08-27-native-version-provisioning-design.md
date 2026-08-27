@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-27
 **Branch:** v-1.3
-**Approved direction:** Worktree-backed parallel versions · per-version interpreter chosen from the branch's own declared requirements · `uv` with reuse of existing interpreters · managed root layout · system dependencies detected and explained, never installed silently · one provisioning flow replacing the split between `Setup Odoo` and `Create Version`.
+**Approved direction:** Worktree-backed parallel versions · per-version interpreter chosen from the branch's own declared requirements · `uv` with reuse of existing interpreters · managed root layout · system dependencies detected and explained, never installed silently · one provisioning flow replacing the split between `Setup Odoo` and `Create Version` · derived, read-only debugger identity so versions can run concurrently · a single post-switch hook list · running-state indicators in the Databases view.
 
 ## Problem
 
@@ -14,6 +14,10 @@ A Version is a settings profile bound to a branch, but nothing ensures the envir
 - **Directory names are hardcoded.** Clones always land in `<baseDir>/odoo`, `<baseDir>/enterprise`, `<baseDir>/venv`, so a second version collides with the first.
 - **Two overlapping setup commands.** `Setup Odoo` clones and builds an environment; `Create Version` makes a profile that assumes one already exists. Neither owns the whole job.
 - **Non-Python dependencies are invisible.** A missing `wkhtmltopdf` surfaces as a failed PDF report at runtime with nothing connecting it to setup.
+- **Versions cannot be told apart by the debugger.** Every version inherits `debuggerName: "odoo:19.0"` from the shared default, and the managed launch entry is matched by name, so two versions overwrite each other's configuration. Renaming that single entry on every switch is also what made the Run and Debug dropdown point at a stale configuration.
+- **Session handling assumes exactly one server.** `isOwnSession` compares against the active version's name and `findOwnDebugSession` reads `activeDebugSession`, so a second running instance cannot be tracked or stopped correctly.
+- **Per-version hooks do not work.** `checkoutCoreRepos` reads `preCheckoutCommands` / `postCheckoutCommands` from global configuration, so the identically-named fields on `VersionSettings` — editable in the Versions tree — are never read. Project repos receive no hooks at all.
+- **Nothing shows what is running.** With one server at a time this was implicit; with several it is not.
 
 Docker solves all of this by making the code tree, interpreter and packages one immutable image. The goal here is the same seamlessness natively.
 
@@ -160,15 +164,19 @@ Branch names are slugified for filesystem safety: path separators and other unsa
 
 ### 7. Version model
 
-Provisioning writes real values into fields `VersionSettings` already has: `odooPath`, `enterprisePath`, `designThemesPath`, `pythonPath`. **No migration is required** — existing versions keep working untouched, and provisioning one is an offered upgrade.
+Provisioning writes real values into fields `VersionSettings` already has: `odooPath`, `enterprisePath`, `designThemesPath`, `pythonPath`. **Provisioning itself requires no migration** — existing versions keep working untouched, and provisioning one is an offered upgrade. The two migrations this design does introduce are unrelated to paths and are described where they belong: hook renaming in §10, identity healing in §11.
 
-One additive optional field:
+Two additive optional fields, both defaulting through the existing partial-merge so stored data loads unchanged:
 
 ```ts
-managedPaths?: string[];   // absolute paths this extension created
+// VersionSettings
+managedPaths?: string[];                        // absolute paths this extension created
+
+// ProjectModel
+selectedDbByVersion?: Record<string, string>;   // versionId → dbId (see §12)
 ```
 
-Defaults to `[]` through the existing partial-merge in `VersionModel`'s constructor, so stored versions without it load unchanged. It exists so **Delete Version** can offer to remove what the extension created and never offers to delete a hand-made checkout.
+`managedPaths` exists so **Delete Version** can offer to remove what the extension created — via `git worktree remove` for worktrees — and never offers to delete a hand-made checkout.
 
 ### 8. Command flow
 
@@ -182,9 +190,121 @@ Defaults to `[]` through the existing partial-merge in `VersionModel`'s construc
 
 `Setup Odoo` becomes the first-run entry point: when no odoo repository is configured or found, it clones one and continues into the same provisioning flow. The clone-only branch and its follow-up offers are retained.
 
+### 9. Switching model
+
+`EnvironmentTarget` carries three jobs. Provisioning removes exactly one of them:
+
+| Field | Meaning | Under provisioning |
+| --- | --- | --- |
+| `versionId` | version to activate | **unchanged** |
+| `coreBranch` | branch for odoo / enterprise / design-themes | **removed** — each version owns its worktree |
+| `repoAssignments` | branches for the project's custom addon repos | **unchanged** |
+
+Core repos get one worktree per version: stable, one per series. Project repos keep checkouts: volatile, per database, and the place active editing happens — a worktree per feature branch would fragment the working copy.
+
+Activating a provisioned version therefore performs no git operation. It cannot fail on a dirty tree, and it completes instantly. `databaseSwitchBehavior` keeps its meaning, now governing version activation and project-repo checkouts.
+
+`computeEnvironmentDiff` gains one field, replacing the bare `coreBranch`:
+
+```ts
+coreRepoPipeline?: {
+    paths: string[];         // the version's core repo (worktree) paths
+    branch: string;
+    needsCheckout: boolean;  // false when the worktree is already correct
+}
+```
+
+It is present when **the version changed** or when a branch actually differs — the first condition is what keeps hooks firing (§10) once checkouts stop happening. `checkoutCoreRepos` is renamed `alignCoreRepos` and runs, per repo: hooks → checkout if `needsCheckout` → done. Non-provisioned versions take the identical path with `needsCheckout: true`, so their behavior is unchanged.
+
+### 10. Hook semantics
+
+Two defects exist today:
+
+1. Hooks are read from global configuration — `config.get<string[]>('preCheckoutCommands')` in `checkout.ts:215` — so the `preCheckoutCommands` / `postCheckoutCommands` fields on `VersionSettings`, editable in the Versions tree, are **never read**. Per-version hooks have never worked.
+2. Hooks fire only inside `checkoutCoreRepos`. `checkoutRepoBranch` does not run them, so project repos never receive hooks either.
+
+Both are fixed by collapsing to a single list with a name that states when it runs:
+
+```ts
+postSwitchCommands: string[]
+```
+
+Resolution order: the version's `settings.postSwitchCommands`, falling back to `odooDebugger.defaultVersion.postSwitchCommands`. It runs after the environment is aligned, per core repo, with that repo as the working directory — whether or not a checkout occurred. Output continues to go to the **Odoo Debugger: Branch Hooks** channel.
+
+`preCheckoutCommands` is removed. Its purpose was guarding a destructive checkout (stash, cleanliness checks); provisioning makes core switching non-destructive, so a pre-phase has nothing left to precede.
+
+**Migration**, applied once to both global settings and every stored version:
+
+- `postCheckoutCommands` → `postSwitchCommands`, values preserved.
+- Non-empty `preCheckoutCommands` → **prepended** to `postSwitchCommands`, and the old key deleted.
+- When anything was prepended, a single notification names the affected scopes and states plainly that those commands now run *after* the switch rather than before, since a `git stash` guard would change meaning.
+
+### 11. Parallel execution and derived identity
+
+Running two versions at once requires that their launch configurations not collide. Today every version inherits `debuggerName: "odoo:19.0"` from `odooDebugger.defaultVersion.debuggerName`, and `updateManagedLaunchConfig` matches by name — so two versions **overwrite each other's entry** and parallel execution silently fails.
+
+Identity becomes derived and read-only:
+
+| Field | Derivation |
+| --- | --- |
+| `debuggerName` | `${prefix}:${branch}` → `odoo:17.0` |
+| `portNumber` | `8000 + major` → `8017` |
+| `shellPortNumber` | `5000 + major` → `5017` |
+
+Non-numeric series (`master`, `saas-17.4`) and collisions fall through to the next free value above the base, checked against both other versions and live sockets.
+
+`odooDebugger.defaultVersion.debuggerName`, `.portNumber` and `.shellPortNumber` are removed; `odooDebugger.debuggerNamePrefix` (default `odoo`) replaces them. The three fields render in the Versions tree as read-only rows described as *derived from branch* — visible, not editable.
+
+Existing versions are **healed, not rewritten**: stored values are left alone unless two versions collide on name or port, in which case the newer is re-derived and the change logged.
+
+**Session tracking.** `isOwnSession` compares against the active version's `debuggerName` (`server.ts:69`) and `findOwnDebugSession` reads `vscode.debug.activeDebugSession` — both assume one session. They become a `Map<debuggerName, DebugSession>` fed by the existing start/terminate listeners, where "own" means *any known version's* name. `server_running` is true when the map is non-empty; Stop Server targets the active version's session, prompting when several are running.
+
+**F5.** Because names are now stable and unique, and `updateManagedLaunchConfig` inserts rather than replaces, launch.json accumulates one durable entry per version and nothing is renamed out from under the Run and Debug dropdown — the cause of the historical "F5 starts the wrong configuration" behavior. There is no public API to set the dropdown's selection, so F5 follows the dropdown while `Ctrl+Alt+O S` follows the active version. This divergence is documented rather than hidden: it is what allows one version to be debugged from the dropdown while another is launched from the chord.
+
+Breakpoints bind per worktree path, so they no longer bleed across versions the way they do when a shared checkout changes branch. The generated project workspace (`projectWorkspace.ts`) includes the active version's worktree folders, so files opened from it belong to the version being run.
+
+### 12. Per-version database resolution
+
+`prepareArgs` resolves the database globally today (`project.dbs.find(isSelected)`), so one `-d` exists per project. Module selections are already per database (`db.modules`), so they follow the database automatically once it is resolved per version.
+
+The project gains one additive optional field:
+
+```ts
+selectedDbByVersion?: Record<string, string>;   // versionId → dbId
+```
+
+`prepareArgs` takes `(project, version)` and resolves in order: the remembered database for that version → the selected database when its `versionId` matches → the selected database. Selecting a database records it against its version.
+
+This lets every sync write **one launch entry per provisioned version**, each carrying its own database, so the dropdown becomes a genuine version switcher and F5 is always correct. It builds on `DatabaseModel.versionId`, which already exists and is already populated by `detectOdooSeries`.
+
+### 13. Running-state indicators
+
+The Databases view shows which databases are live, from a service rather than tree-decoration logic, so later features can consume the same state:
+
+```ts
+// src/services/runningState.ts
+interface RunningInstance {
+    versionId?: string;
+    debuggerName?: string;
+    dbName: string;
+    port?: number;
+    origin: 'managed' | 'external';
+}
+getRunningInstances(): Promise<RunningInstance[]>
+```
+
+Two signals, merged:
+
+- **Managed** — the session map from §11 gives the running versions; each resolves to its database through §12. Authoritative for sessions the extension started.
+- **External** — `SELECT datname, count(*) FROM pg_stat_activity WHERE datname IS NOT NULL GROUP BY datname` reports databases with live backends, catching servers started from a terminal or another window. A version's port answering is a secondary hint.
+
+Rendering follows the v1.2 rule that state is carried by icon **shape**, not color, so it survives row highlighting: `$(debug-alt)` for managed-running, `$(pulse)` for external, nothing for idle, with the port appended to the existing `•`-joined description. The green check for *selected* is unchanged and orthogonal.
+
+Refresh is event-driven — the existing debug start/terminate listeners already fire — with the PostgreSQL probe cached in `runtimeCache` under a short TTL and refreshed when the view is expanded. No background polling.
+
 ### Out of scope
 
-Projects, Repos, Modules, Testing and the debugger are untouched — they operate on host addons folders and are unaffected by which worktree a version points at. `alignEnvironment` is not modified; it naturally becomes a no-op for provisioned versions because their branches are already correct. Docker as an alternative runtime is a separate decision.
+Projects, Repos, Modules and Testing are untouched — they operate on host addons folders and are unaffected by which worktree a version points at. Docker as an alternative runtime is a separate decision. Split-view comparison of two running instances is out of scope; §13 exists so that it has a state source when it is designed.
 
 ## Error handling
 
@@ -195,6 +315,10 @@ Projects, Repos, Modules, Testing and the debugger are untouched — they operat
 - Doctor findings never block and never fail the run.
 - uv download failure falls back to discovered interpreter plus stdlib `venv`/`pip`, with the degradation stated in the summary.
 - Worktree conflicts report the conflicting path and stop; no user directory is deleted.
+- `postSwitchCommands` failures are reported per repo and do not roll back an activation that already succeeded, matching today's post-checkout behavior.
+- Identity collisions are healed silently and logged; they never block activation.
+- Stop Server with several sessions running prompts for which to stop rather than guessing.
+- The `pg_stat_activity` probe is best-effort: on failure, running state degrades to managed sessions only, with no error surfaced.
 - All diagnostics go to the existing **Odoo DevTools** output channel via `logger`.
 
 ## Testing
@@ -205,6 +329,12 @@ Pure logic gets unit tests alongside the existing `src/test` suites:
 - `pythonToolchain.test.ts` — interpreter ranking across exact-preferred, above-preferred, at-floor and below-floor candidates; Windows path construction.
 - `systemDeps.test.ts` — probe result to impact and platform install-hint mapping.
 - `provisioning.test.ts` — plan construction marks satisfied steps correctly and a fully satisfied plan produces no work.
+- `versionIdentity.test.ts` — name and port derivation for numeric series, `master` and `saas-*`; collision fallback; healing leaves non-colliding legacy values untouched.
+- `hookMigration.test.ts` — `postCheckoutCommands` renamed with values preserved; non-empty `preCheckoutCommands` prepended and the old key removed; already-migrated input is a no-op.
+- `dbResolution.test.ts` — resolution order across remembered, version-matched and fallback databases, including a version with no database at all.
+- `runningState.test.ts` — merging managed sessions with external connection rows, including the same database appearing in both.
+
+Existing suites that must be updated rather than added to: `launchConfig.test.ts` gains a case proving two differently-named managed entries coexist without either being removed.
 
 Subprocess-bound code (git, uv, pip) stays thin and is not unit-tested, consistent with `postgres.ts` and `dumpImport.ts`.
 
