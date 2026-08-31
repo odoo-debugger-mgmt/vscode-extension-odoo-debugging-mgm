@@ -1,3 +1,4 @@
+import * as vscode from 'vscode';
 import { SettingsStore } from '../settingsStore';
 import { VersionsService } from '../versionsService';
 import { VersionModel } from '../models/version';
@@ -95,10 +96,15 @@ export async function migrateDebuggerData(): Promise<void> {
 
         const changed = applyDatabaseFieldMigration(data);
         const hookResult = applyHookMigration(data);
-        if (hookResult.prependedVersionNames.length > 0) {
+        const droppedFromSettings = await migrateHookSettings();
+        const dropped = [...new Set([...hookResult.droppedCommands, ...droppedFromSettings])];
+        if (dropped.length > 0) {
+            // Named explicitly: a pre-checkout guard has no post-switch
+            // equivalent, so the user has to decide whether it still applies.
             void showWarning(
-                `Pre-checkout commands were merged into postSwitchCommands for: ${hookResult.prependedVersionNames.join(', ')}. ` +
-                'They now run after the branch switch rather than before.'
+                `Pre-checkout commands are no longer supported and were removed: ${dropped.map(command => `"${command}"`).join(', ')}. ` +
+                'They ran before a branch switch; there is no longer one to run before. ' +
+                'Add them to postSwitchCommands only if they still make sense after the switch.'
             );
         }
         if (changed || hookResult.changed || missingBranches.length > 0) {
@@ -117,14 +123,18 @@ export async function migrateDebuggerData(): Promise<void> {
 }
 
 /**
- * Migrates the two legacy hook arrays onto `postSwitchCommands`. Pre-checkout
- * commands are prepended rather than dropped, but they now run *after* the
- * switch - the caller surfaces that, because a `git stash` guard changes
- * meaning.
+ * Migrates the legacy hook arrays onto `postSwitchCommands`.
+ *
+ * `postCheckoutCommands` is renamed; `preCheckoutCommands` is **dropped**, not
+ * moved. A pre-checkout entry guards a checkout that is about to happen - the
+ * canonical one is `git restore .`, clearing the way so the switch can proceed.
+ * Running that after the switch does not guard anything; it discards work. The
+ * dropped commands are reported so the caller can tell the user what to re-add
+ * if they still want it.
  */
-export function applyHookMigration(data: DebuggerData): { changed: boolean; prependedVersionNames: string[] } {
+export function applyHookMigration(data: DebuggerData): { changed: boolean; droppedCommands: string[] } {
     let changed = false;
-    const prependedVersionNames: string[] = [];
+    const dropped = new Set<string>();
 
     for (const version of Object.values(data.versions ?? {})) {
         const settings = version?.settings;
@@ -138,19 +148,67 @@ export function applyHookMigration(data: DebuggerData): { changed: boolean; prep
             continue;
         }
 
-        const pre: string[] = Array.isArray(settings.preCheckoutCommands) ? settings.preCheckoutCommands : [];
         const post: string[] = Array.isArray(settings.postCheckoutCommands) ? settings.postCheckoutCommands : [];
         const existing: string[] = Array.isArray(settings.postSwitchCommands) ? settings.postSwitchCommands : [];
 
-        settings.postSwitchCommands = [...pre, ...post, ...existing];
+        if (Array.isArray(settings.preCheckoutCommands)) {
+            for (const command of settings.preCheckoutCommands) {
+                if (typeof command === 'string' && command.trim()) {
+                    dropped.add(command);
+                }
+            }
+        }
+
+        settings.postSwitchCommands = [...post, ...existing];
         delete settings.preCheckoutCommands;
         delete settings.postCheckoutCommands;
         changed = true;
-
-        if (pre.length > 0) {
-            prependedVersionNames.push(version.name ?? version.id ?? 'unnamed version');
-        }
     }
 
-    return { changed, prependedVersionNames };
+    return { changed, droppedCommands: [...dropped] };
+}
+
+/**
+ * The settings half of the same migration. `odooDebugger.defaultVersion.`
+ * `postCheckoutCommands` becomes `postSwitchCommands` in whichever scope
+ * defines it, and `preCheckoutCommands` is removed - following the write-back
+ * pattern used by migrateLegacySwitchBehaviorSetting.
+ */
+export async function migrateHookSettings(): Promise<string[]> {
+    const dropped = new Set<string>();
+    try {
+        const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
+
+        const scopes = (inspection: ReturnType<typeof config.inspect<string[]>>) => ([
+            [inspection?.globalValue, vscode.ConfigurationTarget.Global],
+            [inspection?.workspaceValue, vscode.ConfigurationTarget.Workspace],
+            [inspection?.workspaceFolderValue, vscode.ConfigurationTarget.WorkspaceFolder]
+        ] as Array<[string[] | undefined, vscode.ConfigurationTarget]>);
+
+        const post = config.inspect<string[]>('postCheckoutCommands');
+        for (const [value, target] of scopes(post)) {
+            if (!Array.isArray(value)) {
+                continue;
+            }
+            const existing = config.inspect<string[]>('postSwitchCommands');
+            const alreadySet = [existing?.globalValue, existing?.workspaceValue, existing?.workspaceFolderValue]
+                .some(entry => Array.isArray(entry) && entry.length > 0);
+            if (!alreadySet && value.length > 0) {
+                await config.update('postSwitchCommands', value, target);
+            }
+            await config.update('postCheckoutCommands', undefined, target);
+        }
+
+        const pre = config.inspect<string[]>('preCheckoutCommands');
+        for (const [value, target] of scopes(pre)) {
+            if (!Array.isArray(value)) {
+                continue;
+            }
+            value.filter(command => typeof command === 'string' && command.trim()).forEach(command => dropped.add(command));
+            await config.update('preCheckoutCommands', undefined, target);
+        }
+    } catch (error) {
+        logger.warn('Failed to migrate checkout hook settings:', error);
+    }
+    return [...dropped];
 }

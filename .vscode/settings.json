@@ -31,5 +31,8 @@
 	},
 	"peacock.color": "#ec3c02",
 	"xml.symbols.enabled": false,
-	"python.languageServer": "None"
+	"python.languageServer": "None",
+	"cSpell.words": [
+		"worktree"
+	]
 }

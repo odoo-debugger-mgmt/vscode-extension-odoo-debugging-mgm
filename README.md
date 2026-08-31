@@ -160,7 +160,7 @@ A version's own `postSwitchCommands` win; `odooDebugger.defaultVersion.postSwitc
 
 Installing Python requirements no longer belongs here — provisioning owns that.
 
-> Upgrading from 1.2: `postCheckoutCommands` is renamed automatically. Any `preCheckoutCommands` are merged in ahead of them, and you'll get a one-time notice, because they now run **after** the switch rather than before.
+> Upgrading from 1.2: `postCheckoutCommands` is renamed automatically, in both your settings and your stored versions. **`preCheckoutCommands` is removed** — it guarded a checkout that was about to happen, and there is no longer one to guard; running it after the switch would discard uncommitted work rather than clear the way. A one-time notice names what was dropped so you can re-add anything that still makes sense as a post-switch command.
 
 ## Commands & Keybindings
 

@@ -240,13 +240,13 @@ postSwitchCommands: string[]
 
 Resolution order: the version's `settings.postSwitchCommands`, falling back to `odooDebugger.defaultVersion.postSwitchCommands`. It runs after the environment is aligned, per core repo, with that repo as the working directory — whether or not a checkout occurred. Output continues to go to the **Odoo Debugger: Branch Hooks** channel.
 
-`preCheckoutCommands` is removed. Its purpose was guarding a destructive checkout (stash, cleanliness checks); provisioning makes core switching non-destructive, so a pre-phase has nothing left to precede.
+`preCheckoutCommands` is **removed, not relocated**. Its purpose was guarding a checkout about to happen — the canonical entry is `git restore .`, clearing the way so the switch can proceed. Provisioning makes core switching non-destructive, so there is nothing left to guard, and the same command run *after* alignment does not guard anything: it discards uncommitted work in the worktree on every activation. A pre-checkout hook has no post-switch equivalent, so it is dropped and the user is told exactly what was dropped.
 
 **Migration**, applied once to both global settings and every stored version:
 
-- `postCheckoutCommands` → `postSwitchCommands`, values preserved.
-- Non-empty `preCheckoutCommands` → **prepended** to `postSwitchCommands`, and the old key deleted.
-- When anything was prepended, a single notification names the affected scopes and states plainly that those commands now run *after* the switch rather than before, since a `git stash` guard would change meaning.
+- `postCheckoutCommands` → `postSwitchCommands`, values preserved. In settings the rename is written back to whichever scope defined it, following `migrateLegacySwitchBehaviorSetting`; an already-populated `postSwitchCommands` is never overwritten.
+- `preCheckoutCommands` → **deleted**, in both places.
+- When anything was dropped, one notification names the exact commands and says they ran before a branch switch, so the user can re-add any that still make sense afterwards.
 
 ### 11. Parallel execution and derived identity
 

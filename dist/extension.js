@@ -8452,14 +8452,49 @@ async function logStaleReferences() {
 
 /***/ }),
 /* 47 */
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.collectLegacyBranchesNeedingVersions = collectLegacyBranchesNeedingVersions;
 exports.applyDatabaseFieldMigration = applyDatabaseFieldMigration;
 exports.migrateDebuggerData = migrateDebuggerData;
 exports.applyHookMigration = applyHookMigration;
+exports.migrateHookSettings = migrateHookSettings;
+const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(5);
 const versionsService_1 = __webpack_require__(23);
 const version_1 = __webpack_require__(24);
@@ -8544,9 +8579,14 @@ async function migrateDebuggerData() {
         }
         const changed = applyDatabaseFieldMigration(data);
         const hookResult = applyHookMigration(data);
-        if (hookResult.prependedVersionNames.length > 0) {
-            void (0, notifications_1.showWarning)(`Pre-checkout commands were merged into postSwitchCommands for: ${hookResult.prependedVersionNames.join(', ')}. ` +
-                'They now run after the branch switch rather than before.');
+        const droppedFromSettings = await migrateHookSettings();
+        const dropped = [...new Set([...hookResult.droppedCommands, ...droppedFromSettings])];
+        if (dropped.length > 0) {
+            // Named explicitly: a pre-checkout guard has no post-switch
+            // equivalent, so the user has to decide whether it still applies.
+            void (0, notifications_1.showWarning)(`Pre-checkout commands are no longer supported and were removed: ${dropped.map(command => `"${command}"`).join(', ')}. ` +
+                'They ran before a branch switch; there is no longer one to run before. ' +
+                'Add them to postSwitchCommands only if they still make sense after the switch.');
         }
         if (changed || hookResult.changed || missingBranches.length > 0) {
             // Save as-is (no settings strip): if the legacy-settings migration
@@ -8563,14 +8603,18 @@ async function migrateDebuggerData() {
     }
 }
 /**
- * Migrates the two legacy hook arrays onto `postSwitchCommands`. Pre-checkout
- * commands are prepended rather than dropped, but they now run *after* the
- * switch - the caller surfaces that, because a `git stash` guard changes
- * meaning.
+ * Migrates the legacy hook arrays onto `postSwitchCommands`.
+ *
+ * `postCheckoutCommands` is renamed; `preCheckoutCommands` is **dropped**, not
+ * moved. A pre-checkout entry guards a checkout that is about to happen - the
+ * canonical one is `git restore .`, clearing the way so the switch can proceed.
+ * Running that after the switch does not guard anything; it discards work. The
+ * dropped commands are reported so the caller can tell the user what to re-add
+ * if they still want it.
  */
 function applyHookMigration(data) {
     let changed = false;
-    const prependedVersionNames = [];
+    const dropped = new Set();
     for (const version of Object.values(data.versions ?? {})) {
         const settings = version?.settings;
         if (!settings || typeof settings !== 'object') {
@@ -8581,18 +8625,63 @@ function applyHookMigration(data) {
         if (!hasPre && !hasPost) {
             continue;
         }
-        const pre = Array.isArray(settings.preCheckoutCommands) ? settings.preCheckoutCommands : [];
         const post = Array.isArray(settings.postCheckoutCommands) ? settings.postCheckoutCommands : [];
         const existing = Array.isArray(settings.postSwitchCommands) ? settings.postSwitchCommands : [];
-        settings.postSwitchCommands = [...pre, ...post, ...existing];
+        if (Array.isArray(settings.preCheckoutCommands)) {
+            for (const command of settings.preCheckoutCommands) {
+                if (typeof command === 'string' && command.trim()) {
+                    dropped.add(command);
+                }
+            }
+        }
+        settings.postSwitchCommands = [...post, ...existing];
         delete settings.preCheckoutCommands;
         delete settings.postCheckoutCommands;
         changed = true;
-        if (pre.length > 0) {
-            prependedVersionNames.push(version.name ?? version.id ?? 'unnamed version');
+    }
+    return { changed, droppedCommands: [...dropped] };
+}
+/**
+ * The settings half of the same migration. `odooDebugger.defaultVersion.`
+ * `postCheckoutCommands` becomes `postSwitchCommands` in whichever scope
+ * defines it, and `preCheckoutCommands` is removed - following the write-back
+ * pattern used by migrateLegacySwitchBehaviorSetting.
+ */
+async function migrateHookSettings() {
+    const dropped = new Set();
+    try {
+        const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
+        const scopes = (inspection) => [
+            [inspection?.globalValue, vscode.ConfigurationTarget.Global],
+            [inspection?.workspaceValue, vscode.ConfigurationTarget.Workspace],
+            [inspection?.workspaceFolderValue, vscode.ConfigurationTarget.WorkspaceFolder]
+        ];
+        const post = config.inspect('postCheckoutCommands');
+        for (const [value, target] of scopes(post)) {
+            if (!Array.isArray(value)) {
+                continue;
+            }
+            const existing = config.inspect('postSwitchCommands');
+            const alreadySet = [existing?.globalValue, existing?.workspaceValue, existing?.workspaceFolderValue]
+                .some(entry => Array.isArray(entry) && entry.length > 0);
+            if (!alreadySet && value.length > 0) {
+                await config.update('postSwitchCommands', value, target);
+            }
+            await config.update('postCheckoutCommands', undefined, target);
+        }
+        const pre = config.inspect('preCheckoutCommands');
+        for (const [value, target] of scopes(pre)) {
+            if (!Array.isArray(value)) {
+                continue;
+            }
+            value.filter(command => typeof command === 'string' && command.trim()).forEach(command => dropped.add(command));
+            await config.update('preCheckoutCommands', undefined, target);
         }
     }
-    return { changed, prependedVersionNames };
+    catch (error) {
+        logger_1.logger.warn('Failed to migrate checkout hook settings:', error);
+    }
+    return [...dropped];
 }
 
 

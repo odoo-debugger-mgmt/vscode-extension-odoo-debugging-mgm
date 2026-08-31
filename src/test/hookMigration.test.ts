@@ -18,22 +18,25 @@ suite('Hook migration', () => {
         assert.strictEqual('postCheckoutCommands' in settings, false);
     });
 
-    test('prepends pre-checkout commands and reports the version', () => {
+    test('drops pre-checkout commands rather than moving them, and reports them', () => {
         const data = buildData({
             v1: {
                 id: 'v1',
                 name: '17.0',
-                settings: { preCheckoutCommands: ['git stash'], postCheckoutCommands: ['npm install'] }
+                settings: { preCheckoutCommands: ['git restore .'], postCheckoutCommands: ['npm install'] }
             }
         });
 
         const result = applyHookMigration(data);
-        assert.deepStrictEqual(data.versions.v1.settings.postSwitchCommands, ['git stash', 'npm install']);
+        // A pre-checkout guard is not equivalent to a post-switch command:
+        // running `git restore .` after the switch discards work instead of
+        // clearing the way for a checkout.
+        assert.deepStrictEqual(data.versions.v1.settings.postSwitchCommands, ['npm install']);
         assert.strictEqual('preCheckoutCommands' in data.versions.v1.settings, false);
-        assert.deepStrictEqual(result.prependedVersionNames, ['17.0']);
+        assert.deepStrictEqual(result.droppedCommands, ['git restore .']);
     });
 
-    test('drops empty legacy arrays without reporting a prepend', () => {
+    test('drops empty legacy arrays without reporting anything dropped', () => {
         const data = buildData({
             v1: { id: 'v1', name: '17.0', settings: { preCheckoutCommands: [], postCheckoutCommands: [] } }
         });
@@ -41,7 +44,16 @@ suite('Hook migration', () => {
         const result = applyHookMigration(data);
         assert.strictEqual(result.changed, true);
         assert.deepStrictEqual(data.versions.v1.settings.postSwitchCommands, []);
-        assert.deepStrictEqual(result.prependedVersionNames, []);
+        assert.deepStrictEqual(result.droppedCommands, []);
+    });
+
+    test('deduplicates dropped commands reported across versions', () => {
+        const data = buildData({
+            v1: { id: 'v1', name: '17.0', settings: { preCheckoutCommands: ['git restore .'] } },
+            v2: { id: 'v2', name: '18.0', settings: { preCheckoutCommands: ['git restore .', 'echo hi'] } }
+        });
+
+        assert.deepStrictEqual(applyHookMigration(data).droppedCommands, ['git restore .', 'echo hi']);
     });
 
     test('reports no change for already-migrated data', () => {

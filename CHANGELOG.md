@@ -86,7 +86,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Changed
 
-- **`preCheckoutCommands` and `postCheckoutCommands` are replaced by one `postSwitchCommands` list**, which runs after a version's environment is aligned — whether or not a branch checkout was needed — once per core repo. Existing values migrate automatically: `postCheckoutCommands` is renamed, and any `preCheckoutCommands` are merged in ahead of them with a one-time notice, since they now run *after* the switch rather than before. Installing Python requirements no longer belongs in a hook; provisioning owns it.
+- **`preCheckoutCommands` and `postCheckoutCommands` are replaced by one `postSwitchCommands` list**, which runs after a version's environment is aligned — whether or not a branch checkout was needed — once per core repo. `postCheckoutCommands` is renamed automatically, in stored versions and in settings. **`preCheckoutCommands` is removed rather than migrated**: it guarded a checkout that was about to happen (typically `git restore .`), and provisioning removes the checkout — running the same command afterwards would discard uncommitted work instead of clearing the way. A one-time notice names the exact commands dropped so any still worth keeping can be re-added. Installing Python requirements no longer belongs in a hook; provisioning owns it.
 - Hooks are read from **the version first** and the global default second. The per-version hook fields shown in the Versions tree were previously never read at all.
 
 ### Fixed
