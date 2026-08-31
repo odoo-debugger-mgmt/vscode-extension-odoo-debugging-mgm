@@ -5,10 +5,10 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import type { CommandDeps } from './index';
 import { extractVersionId, extractVersionSettingRef } from './args';
-import { normalizePath, getGitBranches } from '../utils';
+import { normalizePath } from '../utils';
 import { showError, showInfo, showWarning, showModalWarning } from '../services/notifications';
 import { errorMessage, logger } from '../services/logger';
-import { getBranchesWithMetadata } from '../services/gitService';
+import { pickOdooBranch } from './branchPick';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from '../services/runtimeCache';
 import { alignEnvironment } from '../services/environment';
 import { provisionAndCreateVersion } from '../odooInstaller';
@@ -25,48 +25,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
             const activeSettings = await versionsService.getActiveVersionSettings();
             const odooPath = activeSettings?.odooPath ? normalizePath(activeSettings.odooPath) : undefined;
 
-            type BranchPickItem = vscode.QuickPickItem & { action: 'branch' | 'manual'; branch?: string };
-            const branchItems: BranchPickItem[] = [];
-            if (odooPath && fs.existsSync(odooPath)) {
-                const metadata = await getBranchesWithMetadata(odooPath);
-                if (metadata.length > 0) {
-                    branchItems.push(...metadata.map(branch => ({
-                        label: branch.name,
-                        description: branch.type === 'remote' ? 'Remote branch' : 'Local branch',
-                        action: 'branch' as const,
-                        branch: branch.name
-                    })));
-                } else {
-                    const branches = await getGitBranches(odooPath);
-                    branchItems.push(...branches.map(branch => ({
-                        label: branch,
-                        action: 'branch' as const,
-                        branch
-                    })));
-                }
-            }
-            branchItems.push({
-                label: '$(pencil) Enter branch manually…',
-                description: 'e.g. "19.0", "saas-18.4", "master"',
-                action: 'manual'
-            });
-
-            const branchPick = await vscode.window.showQuickPick(branchItems, {
-                title: 'Create Version',
-                placeHolder: 'Select the Odoo branch for this version',
-                ignoreFocusOut: true
-            });
-            if (!branchPick) { return; }
-
-            let odooVersion = branchPick.branch;
-            if (branchPick.action === 'manual') {
-                odooVersion = (await vscode.window.showInputBox({
-                    title: 'Create Version',
-                    placeHolder: 'Enter Odoo version/branch (e.g. "19.0", "saas-18.4", "master")',
-                    ignoreFocusOut: true,
-                    validateInput: value => value.trim() ? undefined : 'Branch is required.'
-                }))?.trim();
-            }
+            const odooVersion = await pickOdooBranch(odooPath, 'Create Version');
             if (!odooVersion) { return; }
 
             const name = (await vscode.window.showInputBox({
@@ -122,39 +81,12 @@ export function registerVersionCommands(deps: CommandDeps): void {
             let newBranch: string | undefined;
 
             if (odooPath) {
-                // Try to get Git branches from the Odoo path
-                const branches = await getGitBranches(odooPath);
-
-                if (branches.length > 0) {
-                    // Show branch selection with current branch highlighted
-                    const items = branches.map(branch => ({
-                        label: branch,
-                        description: branch === version.odooVersion ? '(current)' : ''
-                    }));
-
-                    const selected = await vscode.window.showQuickPick(items, {
-                        placeHolder: `Current branch: ${version.odooVersion}. Select new branch:`,
-                        title: `Change branch for "${version.name}"`
-                    });
-
-                    newBranch = selected?.label;
-                } else {
-                    // Fallback to manual input if no branches found
-                    const result = await showWarning(
-                        `No Git branches found in Odoo path: ${odooPath}. Would you like to enter the branch manually?`,
-                        'Enter Manually', 'Cancel'
-                    );
-
-                    if (result === 'Enter Manually') {
-                        newBranch = await vscode.window.showInputBox({
-                            placeHolder: version.odooVersion,
-                            prompt: 'Enter new Odoo version/branch',
-                            value: version.odooVersion
-                        });
-                    }
-                }
+                newBranch = await pickOdooBranch(
+                    odooPath,
+                    `Change branch for "${version.name}" (current: ${version.odooVersion})`
+                );
             } else {
-                // No Odoo path configured, show warning and fallback to manual input
+                // No Odoo path configured: manual entry is the only option.
                 const result = await showWarning(
                     'Odoo path is not configured. Please set the Odoo path in settings first, or enter the branch manually.',
                     'Enter Manually', 'Cancel'

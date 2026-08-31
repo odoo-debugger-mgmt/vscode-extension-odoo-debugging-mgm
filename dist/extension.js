@@ -892,14 +892,14 @@ const fs = __importStar(__webpack_require__(8));
 const path = __importStar(__webpack_require__(9));
 const settings_1 = __webpack_require__(6);
 const gitService_1 = __webpack_require__(10);
-const runtimeCache_1 = __webpack_require__(12);
-const notifications_1 = __webpack_require__(13);
-const process_1 = __webpack_require__(14);
+const runtimeCache_1 = __webpack_require__(14);
+const notifications_1 = __webpack_require__(15);
+const process_1 = __webpack_require__(12);
 const jsonc_parser_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(11);
 // Re-exported so existing `from './utils'` imports keep working; new code
 // should import these from './services/notifications' directly.
-var notifications_2 = __webpack_require__(13);
+var notifications_2 = __webpack_require__(15);
 Object.defineProperty(exports, "MessageType", ({ enumerable: true, get: function () { return notifications_2.MessageType; } }));
 Object.defineProperty(exports, "showMessage", ({ enumerable: true, get: function () { return notifications_2.showMessage; } }));
 Object.defineProperty(exports, "showError", ({ enumerable: true, get: function () { return notifications_2.showError; } }));
@@ -1590,6 +1590,11 @@ exports.checkoutBranchViaSourceControl = checkoutBranchViaSourceControl;
 exports.getCurrentBranchViaSourceControl = getCurrentBranchViaSourceControl;
 exports.getBranchesWithMetadata = getBranchesWithMetadata;
 exports.getBranchesViaSourceControl = getBranchesViaSourceControl;
+exports.isOdooSeriesBranch = isOdooSeriesBranch;
+exports.parseRefList = parseRefList;
+exports.rankBranches = rankBranches;
+exports.listSeriesBranches = listSeriesBranches;
+exports.listAllBranches = listAllBranches;
 /**
  * Bridge to the built-in git extension's API: current branch, branch
  * listings and checkouts via source control (with type-safe fallbacks).
@@ -1597,6 +1602,7 @@ exports.getBranchesViaSourceControl = getBranchesViaSourceControl;
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
 const logger_1 = __webpack_require__(11);
+const process_1 = __webpack_require__(12);
 function resolveRepoPath(repoPath) {
     if (path.isAbsolute(repoPath)) {
         return path.normalize(repoPath);
@@ -1695,6 +1701,82 @@ async function getBranchesViaSourceControl(repoPath) {
         return undefined;
     }
     return metadata.map(branch => branch.name);
+}
+// ---------------------------------------------------------------------------
+// Fast branch listing
+//
+// The git extension's getBranches() returns every ref. On the odoo repository
+// that is ~68,700 remote refs (measured: 1.6s of git time, 7.6 MB of output),
+// almost all of them PR branches on the `dev` remote, and every one of them
+// gets marshalled across the extension-host boundary and turned into a quick
+// pick item before the user sees anything. These helpers read only the refs a
+// version could plausibly be built from, via `git for-each-ref`.
+// ---------------------------------------------------------------------------
+/** Odoo release branches: `17.0`, `saas-17.4`, `master`. */
+const ODOO_SERIES_PATTERN = /^((saas-)?\d+(\.\d+)?|master)$/i;
+function isOdooSeriesBranch(name) {
+    return ODOO_SERIES_PATTERN.test(name.trim());
+}
+/** Parses `for-each-ref`/`branch` output into unique short branch names. */
+function parseRefList(stdout) {
+    const seen = new Set();
+    const names = [];
+    for (const rawLine of stdout.split('\n')) {
+        const name = normalizeBranchName(rawLine.trim());
+        if (!name || name === 'HEAD' || name.endsWith('/HEAD')) {
+            continue;
+        }
+        if (seen.has(name)) {
+            continue;
+        }
+        seen.add(name);
+        names.push(name);
+    }
+    return names;
+}
+function seriesSortKey(name) {
+    if (/^master$/i.test(name)) {
+        return [Number.MAX_SAFE_INTEGER, 0];
+    }
+    const match = /^(?:saas-)?(\d+)(?:\.(\d+))?$/i.exec(name);
+    if (!match) {
+        return [-1, 0];
+    }
+    return [Number(match[1]), Number(match[2] ?? 0)];
+}
+/** Series branches first (newest first), then everything else alphabetically. */
+function rankBranches(names) {
+    const series = names.filter(isOdooSeriesBranch);
+    const rest = names.filter(name => !isOdooSeriesBranch(name));
+    series.sort((a, b) => {
+        const [aMajor, aMinor] = seriesSortKey(a);
+        const [bMajor, bMinor] = seriesSortKey(b);
+        return bMajor - aMajor || bMinor - aMinor || a.localeCompare(b);
+    });
+    rest.sort((a, b) => a.localeCompare(b));
+    return [...series, ...rest];
+}
+async function forEachRef(repoPath, patterns) {
+    try {
+        const { stdout } = await (0, process_1.runCommand)('git', ['for-each-ref', '--format=%(refname:short)', ...patterns], { cwd: resolveRepoPath(repoPath) });
+        return parseRefList(stdout);
+    }
+    catch (error) {
+        logger_1.logger.warn(`Failed to list refs in ${repoPath}:`, error);
+        return [];
+    }
+}
+/**
+ * Local branches plus the release branches on `origin` - the ones a version is
+ * actually built from. Cheap enough to run before showing UI.
+ */
+async function listSeriesBranches(repoPath) {
+    const names = await forEachRef(repoPath, ['refs/heads', 'refs/remotes/origin']);
+    return rankBranches(names.filter(isOdooSeriesBranch));
+}
+/** Every branch, including PR branches on every remote. Can be very slow. */
+async function listAllBranches(repoPath) {
+    return rankBranches(await forEachRef(repoPath, ['refs/heads', 'refs/remotes']));
 }
 
 
@@ -1823,6 +1905,138 @@ exports.logger = {
 
 /***/ }),
 /* 12 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CommandError = void 0;
+exports.runCommand = runCommand;
+exports.tryRunCommand = tryRunCommand;
+const node_child_process_1 = __webpack_require__(13);
+/** Error thrown when a command exits non-zero, fails to spawn, or is killed. */
+class CommandError extends Error {
+    command;
+    args;
+    exitCode;
+    stderr;
+    stdout;
+    constructor(command, args, exitCode, stderr, stdout, cause) {
+        const detail = stderr.trim() || stdout.trim() || (cause instanceof Error ? cause.message : '');
+        super(`${command} ${args.join(' ')} failed${exitCode === null ? '' : ` (exit code ${exitCode})`}${detail ? `: ${detail}` : ''}`);
+        this.command = command;
+        this.args = args;
+        this.exitCode = exitCode;
+        this.stderr = stderr;
+        this.stdout = stdout;
+        this.name = 'CommandError';
+    }
+}
+exports.CommandError = CommandError;
+function makeLineForwarder(forward) {
+    let buffer = '';
+    return (chunk) => {
+        buffer += chunk;
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+            forward(line);
+        }
+    };
+}
+/**
+ * Runs a command (no shell) and resolves with its collected output.
+ * Rejects with {@link CommandError} on spawn failure, non-zero exit,
+ * timeout, or cancellation.
+ */
+function runCommand(command, args, options = {}) {
+    return new Promise((resolve, reject) => {
+        const child = (0, node_child_process_1.spawn)(command, args, {
+            cwd: options.cwd,
+            env: options.env,
+            shell: false
+        });
+        let stdout = '';
+        let stderr = '';
+        let settled = false;
+        let timer;
+        let cancellation;
+        const finish = (fn) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            if (timer) {
+                clearTimeout(timer);
+            }
+            cancellation?.dispose();
+            fn();
+        };
+        const forwardStdout = options.onStdoutLine ? makeLineForwarder(options.onStdoutLine) : undefined;
+        const forwardStderr = options.onStderrLine ? makeLineForwarder(options.onStderrLine) : undefined;
+        child.stdout.setEncoding('utf-8');
+        child.stderr.setEncoding('utf-8');
+        child.stdout.on('data', (chunk) => {
+            stdout += chunk;
+            forwardStdout?.(chunk);
+        });
+        child.stderr.on('data', (chunk) => {
+            stderr += chunk;
+            forwardStderr?.(chunk);
+        });
+        child.on('error', error => {
+            finish(() => reject(new CommandError(command, args, null, stderr, stdout, error)));
+        });
+        child.on('close', code => {
+            finish(() => {
+                if (code === 0) {
+                    resolve({ stdout, stderr });
+                }
+                else {
+                    reject(new CommandError(command, args, code, stderr, stdout));
+                }
+            });
+        });
+        if (options.timeoutMs && options.timeoutMs > 0) {
+            timer = setTimeout(() => {
+                child.kill();
+                finish(() => reject(new CommandError(command, args, null, stderr || 'Command timed out', stdout)));
+            }, options.timeoutMs);
+        }
+        if (options.token) {
+            cancellation = options.token.onCancellationRequested(() => {
+                child.kill();
+                finish(() => reject(new CommandError(command, args, null, stderr || 'Command was cancelled', stdout)));
+            });
+        }
+        if (options.input !== undefined) {
+            child.stdin.write(options.input);
+        }
+        child.stdin.end();
+    });
+}
+/**
+ * Runs a command and returns its trimmed stdout, or undefined on any failure.
+ * For best-effort probes where the caller has a fallback.
+ */
+async function tryRunCommand(command, args, options = {}) {
+    try {
+        const { stdout } = await runCommand(command, args, options);
+        return stdout.trim();
+    }
+    catch {
+        return undefined;
+    }
+}
+
+
+/***/ }),
+/* 13 */
+/***/ ((module) => {
+
+module.exports = require("node:child_process");
+
+/***/ }),
+/* 14 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -1937,7 +2151,7 @@ function invalidateAllRuntimeCaches() {
 
 
 /***/ }),
-/* 13 */
+/* 15 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -2066,138 +2280,6 @@ function showBriefStatus(message, timeoutMs = 2000) {
     vscode.window.setStatusBarMessage(`$(info) ${message}`, timeoutMs);
 }
 
-
-/***/ }),
-/* 14 */
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.CommandError = void 0;
-exports.runCommand = runCommand;
-exports.tryRunCommand = tryRunCommand;
-const node_child_process_1 = __webpack_require__(15);
-/** Error thrown when a command exits non-zero, fails to spawn, or is killed. */
-class CommandError extends Error {
-    command;
-    args;
-    exitCode;
-    stderr;
-    stdout;
-    constructor(command, args, exitCode, stderr, stdout, cause) {
-        const detail = stderr.trim() || stdout.trim() || (cause instanceof Error ? cause.message : '');
-        super(`${command} ${args.join(' ')} failed${exitCode === null ? '' : ` (exit code ${exitCode})`}${detail ? `: ${detail}` : ''}`);
-        this.command = command;
-        this.args = args;
-        this.exitCode = exitCode;
-        this.stderr = stderr;
-        this.stdout = stdout;
-        this.name = 'CommandError';
-    }
-}
-exports.CommandError = CommandError;
-function makeLineForwarder(forward) {
-    let buffer = '';
-    return (chunk) => {
-        buffer += chunk;
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines) {
-            forward(line);
-        }
-    };
-}
-/**
- * Runs a command (no shell) and resolves with its collected output.
- * Rejects with {@link CommandError} on spawn failure, non-zero exit,
- * timeout, or cancellation.
- */
-function runCommand(command, args, options = {}) {
-    return new Promise((resolve, reject) => {
-        const child = (0, node_child_process_1.spawn)(command, args, {
-            cwd: options.cwd,
-            env: options.env,
-            shell: false
-        });
-        let stdout = '';
-        let stderr = '';
-        let settled = false;
-        let timer;
-        let cancellation;
-        const finish = (fn) => {
-            if (settled) {
-                return;
-            }
-            settled = true;
-            if (timer) {
-                clearTimeout(timer);
-            }
-            cancellation?.dispose();
-            fn();
-        };
-        const forwardStdout = options.onStdoutLine ? makeLineForwarder(options.onStdoutLine) : undefined;
-        const forwardStderr = options.onStderrLine ? makeLineForwarder(options.onStderrLine) : undefined;
-        child.stdout.setEncoding('utf-8');
-        child.stderr.setEncoding('utf-8');
-        child.stdout.on('data', (chunk) => {
-            stdout += chunk;
-            forwardStdout?.(chunk);
-        });
-        child.stderr.on('data', (chunk) => {
-            stderr += chunk;
-            forwardStderr?.(chunk);
-        });
-        child.on('error', error => {
-            finish(() => reject(new CommandError(command, args, null, stderr, stdout, error)));
-        });
-        child.on('close', code => {
-            finish(() => {
-                if (code === 0) {
-                    resolve({ stdout, stderr });
-                }
-                else {
-                    reject(new CommandError(command, args, code, stderr, stdout));
-                }
-            });
-        });
-        if (options.timeoutMs && options.timeoutMs > 0) {
-            timer = setTimeout(() => {
-                child.kill();
-                finish(() => reject(new CommandError(command, args, null, stderr || 'Command timed out', stdout)));
-            }, options.timeoutMs);
-        }
-        if (options.token) {
-            cancellation = options.token.onCancellationRequested(() => {
-                child.kill();
-                finish(() => reject(new CommandError(command, args, null, stderr || 'Command was cancelled', stdout)));
-            });
-        }
-        if (options.input !== undefined) {
-            child.stdin.write(options.input);
-        }
-        child.stdin.end();
-    });
-}
-/**
- * Runs a command and returns its trimmed stdout, or undefined on any failure.
- * For best-effort probes where the caller has a fallback.
- */
-async function tryRunCommand(command, args, options = {}) {
-    try {
-        const { stdout } = await runCommand(command, args, options);
-        return stdout.trim();
-    }
-    catch {
-        return undefined;
-    }
-}
-
-
-/***/ }),
-/* 15 */
-/***/ ((module) => {
-
-module.exports = require("node:child_process");
 
 /***/ }),
 /* 16 */
@@ -4111,7 +4193,7 @@ const version_1 = __webpack_require__(24);
 const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
 const logger_1 = __webpack_require__(11);
-const notifications_1 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
 class VersionsService {
     static instance;
     versions = new Map();
@@ -5000,7 +5082,7 @@ const branches_1 = __webpack_require__(29);
 const checkout_1 = __webpack_require__(30);
 const worktree_1 = __webpack_require__(32);
 const logger_1 = __webpack_require__(11);
-const notifications_1 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
 const LEGACY_BEHAVIOR_MAP = {
     'auto-both': 'auto',
     'auto-version-only': 'auto',
@@ -5344,7 +5426,7 @@ const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
 const fs = __importStar(__webpack_require__(22));
 const gitService_1 = __webpack_require__(10);
-const runtimeCache_1 = __webpack_require__(12);
+const runtimeCache_1 = __webpack_require__(14);
 const logger_1 = __webpack_require__(11);
 /**
  * The single branch reader for the extension. Prefers the built-in git
@@ -5439,7 +5521,7 @@ const fs = __importStar(__webpack_require__(8));
 const child_process_1 = __webpack_require__(31);
 const utils_1 = __webpack_require__(7);
 const gitService_1 = __webpack_require__(10);
-const runtimeCache_1 = __webpack_require__(12);
+const runtimeCache_1 = __webpack_require__(14);
 const checkoutHooksOutput = vscode.window.createOutputChannel('Odoo Debugger: Branch Hooks');
 function quoteForSingleQuotedShell(value) {
     return `'${value.replace(/'/g, `'\"'\"'`)}'`;
@@ -5739,7 +5821,7 @@ exports.removeManagedBranch = removeManagedBranch;
  */
 const fs = __importStar(__webpack_require__(33));
 const path = __importStar(__webpack_require__(3));
-const process_1 = __webpack_require__(14);
+const process_1 = __webpack_require__(12);
 const logger_1 = __webpack_require__(11);
 /** The extension-managed local branch a worktree for `branch` checks out. */
 function managedBranchName(branch) {
@@ -5933,7 +6015,7 @@ const os = __importStar(__webpack_require__(35));
 const node_crypto_1 = __webpack_require__(36);
 const db_1 = __webpack_require__(37);
 const utils_1 = __webpack_require__(7);
-const notifications_1 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
 const logger_1 = __webpack_require__(11);
 const branches_1 = __webpack_require__(29);
 const settingsStore_1 = __webpack_require__(5);
@@ -7559,9 +7641,9 @@ exports.detectOdooSeries = detectOdooSeries;
  * Read-only PostgreSQL probes for Odoo databases: installed modules and
  * Odoo series detection via the base module version.
  */
-const node_child_process_1 = __webpack_require__(15);
+const node_child_process_1 = __webpack_require__(13);
 const util = __importStar(__webpack_require__(40));
-const runtimeCache_1 = __webpack_require__(12);
+const runtimeCache_1 = __webpack_require__(14);
 const logger_1 = __webpack_require__(11);
 const execFileAsync = util.promisify(node_child_process_1.execFile);
 const INSTALLED_MODULES_QUERY = `
@@ -7757,7 +7839,7 @@ exports.dropDatabase = dropDatabase;
 exports.dropDatabaseIfExists = dropDatabaseIfExists;
 exports.renameDatabase = renameDatabase;
 exports.neutralizeDatabase = neutralizeDatabase;
-const process_1 = __webpack_require__(14);
+const process_1 = __webpack_require__(12);
 const database_1 = __webpack_require__(39);
 const logger_1 = __webpack_require__(11);
 /**
@@ -7901,10 +7983,10 @@ const fs = __importStar(__webpack_require__(33));
 const fsp = __importStar(__webpack_require__(22));
 const path = __importStar(__webpack_require__(3));
 const os = __importStar(__webpack_require__(35));
-const node_child_process_1 = __webpack_require__(15);
+const node_child_process_1 = __webpack_require__(13);
 const node_stream_1 = __webpack_require__(43);
 const promises_1 = __webpack_require__(44);
-const process_1 = __webpack_require__(14);
+const process_1 = __webpack_require__(12);
 const logger_1 = __webpack_require__(11);
 /** Recursively finds restorable dump sources under `root` (bounded depth). */
 async function collectDumpSources(root, maxDepth = 2) {
@@ -8383,7 +8465,7 @@ const versionsService_1 = __webpack_require__(23);
 const version_1 = __webpack_require__(24);
 const utils_1 = __webpack_require__(7);
 const logger_1 = __webpack_require__(11);
-const notifications_1 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
 /** Branch names that denote a real Odoo series, e.g. "17.0", "saas-17.4", "master". */
 const ODOO_SERIES_PATTERN = /^((saas-)?\d+(\.\d+)?|master)$/i;
 function findMatchingVersionId(versions, branch) {
@@ -8583,8 +8665,8 @@ const crypto_1 = __webpack_require__(25);
 const environment_1 = __webpack_require__(28);
 const sortOptions_1 = __webpack_require__(26);
 const logger_1 = __webpack_require__(11);
-const notifications_1 = __webpack_require__(13);
-const notifications_2 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
+const notifications_2 = __webpack_require__(15);
 const baseTreeProvider_1 = __webpack_require__(4);
 const branches_1 = __webpack_require__(29);
 const manifest_1 = __webpack_require__(53);
@@ -10050,7 +10132,7 @@ const path = __importStar(__webpack_require__(9));
 const fs = __importStar(__webpack_require__(8));
 const sortOptions_1 = __webpack_require__(26);
 const branches_1 = __webpack_require__(29);
-const runtimeCache_1 = __webpack_require__(12);
+const runtimeCache_1 = __webpack_require__(14);
 const baseTreeProvider_1 = __webpack_require__(4);
 const icons_1 = __webpack_require__(27);
 async function mapWithConcurrency(items, limit, worker) {
@@ -10279,9 +10361,9 @@ const settingsStore_1 = __webpack_require__(5);
 const database_1 = __webpack_require__(39);
 const sortOptions_1 = __webpack_require__(26);
 const versionsService_1 = __webpack_require__(23);
-const notifications_1 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
 const baseTreeProvider_1 = __webpack_require__(4);
-const process_1 = __webpack_require__(14);
+const process_1 = __webpack_require__(12);
 const logger_1 = __webpack_require__(11);
 const manifest_1 = __webpack_require__(53);
 const CORE_HINT = 'Core/other module (not in this project\'s repos)';
@@ -11251,7 +11333,7 @@ const context_1 = __webpack_require__(59);
 const debugger_1 = __webpack_require__(60);
 const database_1 = __webpack_require__(39);
 const logger_1 = __webpack_require__(11);
-const notifications_1 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
 const baseTreeProvider_1 = __webpack_require__(4);
 const icons_1 = __webpack_require__(27);
 class TestingTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
@@ -12783,7 +12865,7 @@ const fs = __importStar(__webpack_require__(33));
 const os = __importStar(__webpack_require__(35));
 const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
-const process_1 = __webpack_require__(14);
+const process_1 = __webpack_require__(12);
 const logger_1 = __webpack_require__(11);
 /** Minor versions probed on PATH as `python3.<minor>`. */
 const PROBED_MINORS = [8, 9, 10, 11, 12, 13, 14];
@@ -13185,7 +13267,7 @@ const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
-const runtimeCache_1 = __webpack_require__(12);
+const runtimeCache_1 = __webpack_require__(14);
 const filesExclude_1 = __webpack_require__(68);
 const baseTreeProvider_1 = __webpack_require__(4);
 const sortOptions_1 = __webpack_require__(26);
@@ -13767,10 +13849,10 @@ const dbCommands_1 = __webpack_require__(80);
 const moduleCommands_1 = __webpack_require__(81);
 const testingCommands_1 = __webpack_require__(82);
 const versionCommands_1 = __webpack_require__(83);
-const debugCommands_1 = __webpack_require__(85);
-const reposExplorerCommands_1 = __webpack_require__(86);
-const editorCommands_1 = __webpack_require__(87);
-const helpCommands_1 = __webpack_require__(88);
+const debugCommands_1 = __webpack_require__(86);
+const reposExplorerCommands_1 = __webpack_require__(87);
+const editorCommands_1 = __webpack_require__(88);
+const helpCommands_1 = __webpack_require__(89);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -13830,7 +13912,7 @@ exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
 const quickSearch_1 = __webpack_require__(72);
 const sortOptions_1 = __webpack_require__(26);
-const notifications_1 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
 const module_1 = __webpack_require__(56);
 /**
  * Generic per-view plumbing: refresh, sort, and quick-search commands.
@@ -14001,7 +14083,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getTreeItemLabel = getTreeItemLabel;
 exports.quickSearchTreeItems = quickSearchTreeItems;
 const vscode = __importStar(__webpack_require__(1));
-const notifications_1 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
 /**
  * Shared quick-pick search over tree items, used by every view's
  * "search" title-bar action.
@@ -14116,7 +14198,7 @@ exports.registerProjectCommands = registerProjectCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(7);
-const notifications_1 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
 const logger_1 = __webpack_require__(11);
 const project_1 = __webpack_require__(48);
 const dbs_1 = __webpack_require__(34);
@@ -14287,9 +14369,9 @@ const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
 const fs = __importStar(__webpack_require__(33));
 const utils_1 = __webpack_require__(7);
-const process_1 = __webpack_require__(14);
+const process_1 = __webpack_require__(12);
 const logger_1 = __webpack_require__(11);
-const notifications_1 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
 const versionsService_1 = __webpack_require__(23);
 const provisioning_1 = __webpack_require__(75);
 const systemDeps_1 = __webpack_require__(77);
@@ -14993,7 +15075,7 @@ exports.checkSystemDeps = checkSystemDeps;
  * installer or escalates privileges.
  */
 const fs = __importStar(__webpack_require__(33));
-const process_1 = __webpack_require__(14);
+const process_1 = __webpack_require__(12);
 const pythonToolchain_1 = __webpack_require__(63);
 const INSTALL_HINTS = {
     wkhtmltopdf: {
@@ -15313,10 +15395,10 @@ exports.registerDbCommands = registerDbCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(5);
-const notifications_1 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
 const logger_1 = __webpack_require__(11);
 const dbs_1 = __webpack_require__(34);
-const notifications_2 = __webpack_require__(13);
+const notifications_2 = __webpack_require__(15);
 const server_1 = __webpack_require__(64);
 const utils_1 = __webpack_require__(7);
 function registerDbCommands(deps) {
@@ -15537,7 +15619,7 @@ exports.registerModuleCommands = registerModuleCommands;
  * Command handlers for the Modules view.
  */
 const vscode = __importStar(__webpack_require__(1));
-const notifications_1 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
 const module_1 = __webpack_require__(56);
 /**
  * Tree context menus pass (clickedItem, selectedItems); with canSelectMany
@@ -15768,10 +15850,10 @@ const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(33));
 const args_1 = __webpack_require__(84);
 const utils_1 = __webpack_require__(7);
-const notifications_1 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
 const logger_1 = __webpack_require__(11);
-const gitService_1 = __webpack_require__(10);
-const runtimeCache_1 = __webpack_require__(12);
+const branchPick_1 = __webpack_require__(85);
+const runtimeCache_1 = __webpack_require__(14);
 const environment_1 = __webpack_require__(28);
 const odooInstaller_1 = __webpack_require__(74);
 const worktree_1 = __webpack_require__(32);
@@ -15784,48 +15866,7 @@ function registerVersionCommands(deps) {
             // Versions tree after creation.
             const activeSettings = await versionsService.getActiveVersionSettings();
             const odooPath = activeSettings?.odooPath ? (0, utils_1.normalizePath)(activeSettings.odooPath) : undefined;
-            const branchItems = [];
-            if (odooPath && fs.existsSync(odooPath)) {
-                const metadata = await (0, gitService_1.getBranchesWithMetadata)(odooPath);
-                if (metadata.length > 0) {
-                    branchItems.push(...metadata.map(branch => ({
-                        label: branch.name,
-                        description: branch.type === 'remote' ? 'Remote branch' : 'Local branch',
-                        action: 'branch',
-                        branch: branch.name
-                    })));
-                }
-                else {
-                    const branches = await (0, utils_1.getGitBranches)(odooPath);
-                    branchItems.push(...branches.map(branch => ({
-                        label: branch,
-                        action: 'branch',
-                        branch
-                    })));
-                }
-            }
-            branchItems.push({
-                label: '$(pencil) Enter branch manually…',
-                description: 'e.g. "19.0", "saas-18.4", "master"',
-                action: 'manual'
-            });
-            const branchPick = await vscode.window.showQuickPick(branchItems, {
-                title: 'Create Version',
-                placeHolder: 'Select the Odoo branch for this version',
-                ignoreFocusOut: true
-            });
-            if (!branchPick) {
-                return;
-            }
-            let odooVersion = branchPick.branch;
-            if (branchPick.action === 'manual') {
-                odooVersion = (await vscode.window.showInputBox({
-                    title: 'Create Version',
-                    placeHolder: 'Enter Odoo version/branch (e.g. "19.0", "saas-18.4", "master")',
-                    ignoreFocusOut: true,
-                    validateInput: value => value.trim() ? undefined : 'Branch is required.'
-                }))?.trim();
-            }
+            const odooVersion = await (0, branchPick_1.pickOdooBranch)(odooPath, 'Create Version');
             if (!odooVersion) {
                 return;
             }
@@ -15875,34 +15916,10 @@ function registerVersionCommands(deps) {
             const odooPath = version.settings.odooPath;
             let newBranch;
             if (odooPath) {
-                // Try to get Git branches from the Odoo path
-                const branches = await (0, utils_1.getGitBranches)(odooPath);
-                if (branches.length > 0) {
-                    // Show branch selection with current branch highlighted
-                    const items = branches.map(branch => ({
-                        label: branch,
-                        description: branch === version.odooVersion ? '(current)' : ''
-                    }));
-                    const selected = await vscode.window.showQuickPick(items, {
-                        placeHolder: `Current branch: ${version.odooVersion}. Select new branch:`,
-                        title: `Change branch for "${version.name}"`
-                    });
-                    newBranch = selected?.label;
-                }
-                else {
-                    // Fallback to manual input if no branches found
-                    const result = await (0, notifications_1.showWarning)(`No Git branches found in Odoo path: ${odooPath}. Would you like to enter the branch manually?`, 'Enter Manually', 'Cancel');
-                    if (result === 'Enter Manually') {
-                        newBranch = await vscode.window.showInputBox({
-                            placeHolder: version.odooVersion,
-                            prompt: 'Enter new Odoo version/branch',
-                            value: version.odooVersion
-                        });
-                    }
-                }
+                newBranch = await (0, branchPick_1.pickOdooBranch)(odooPath, `Change branch for "${version.name}" (current: ${version.odooVersion})`);
             }
             else {
-                // No Odoo path configured, show warning and fallback to manual input
+                // No Odoo path configured: manual entry is the only option.
                 const result = await (0, notifications_1.showWarning)('Odoo path is not configured. Please set the Odoo path in settings first, or enter the branch manually.', 'Enter Manually', 'Cancel');
                 if (result === 'Enter Manually') {
                     newBranch = await vscode.window.showInputBox({
@@ -16444,6 +16461,147 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.pickOdooBranch = pickOdooBranch;
+/**
+ * Shared Odoo branch picker.
+ *
+ * The picker is shown before the branch list is known, then filled in - the
+ * previous flow awaited the full remote branch list first, which on the odoo
+ * repository is ~68,700 refs and left the button looking dead for seconds.
+ * Only release branches are listed up front; everything else stays reachable
+ * behind an explicit "search all" row that pays the cost on demand.
+ */
+const vscode = __importStar(__webpack_require__(1));
+const fs = __importStar(__webpack_require__(33));
+const gitService_1 = __webpack_require__(10);
+const MANUAL_ITEM = {
+    label: '$(pencil) Enter branch manually…',
+    description: 'e.g. "19.0", "saas-18.4", "master"',
+    action: 'manual'
+};
+const SEARCH_ALL_ITEM = {
+    label: '$(search) Search all branches…',
+    description: 'Includes PR and development branches — slower on large repositories',
+    action: 'all'
+};
+function toItems(branches, includeSearchAll) {
+    const items = branches.map(branch => ({
+        label: branch,
+        action: 'branch',
+        branch
+    }));
+    if (includeSearchAll) {
+        items.push(SEARCH_ALL_ITEM);
+    }
+    items.push(MANUAL_ITEM);
+    return items;
+}
+async function promptManualBranch(title) {
+    const entered = await vscode.window.showInputBox({
+        title,
+        placeHolder: 'Enter Odoo version/branch (e.g. "19.0", "saas-18.4", "master")',
+        ignoreFocusOut: true,
+        validateInput: value => value.trim() ? undefined : 'Branch is required.'
+    });
+    return entered?.trim() || undefined;
+}
+/**
+ * Asks for an Odoo branch. Resolves to undefined when the user cancels.
+ */
+async function pickOdooBranch(odooPath, title) {
+    const repoPath = odooPath && fs.existsSync(odooPath) ? odooPath : undefined;
+    if (!repoPath) {
+        return promptManualBranch(title);
+    }
+    const picker = vscode.window.createQuickPick();
+    picker.title = title;
+    picker.placeholder = 'Select the Odoo branch for this version';
+    picker.busy = true;
+    picker.items = [MANUAL_ITEM];
+    try {
+        const selection = await new Promise(resolve => {
+            let settled = false;
+            const settle = (value) => {
+                if (!settled) {
+                    settled = true;
+                    resolve(value);
+                }
+            };
+            picker.onDidAccept(() => {
+                const picked = picker.selectedItems[0];
+                if (picked?.action === 'all') {
+                    // Explicitly requested: pay the full enumeration now, with
+                    // the picker still on screen showing progress.
+                    picker.busy = true;
+                    void (0, gitService_1.listAllBranches)(repoPath).then(all => {
+                        picker.items = toItems(all, false);
+                        picker.busy = false;
+                    });
+                    return;
+                }
+                settle(picked);
+                picker.hide();
+            });
+            picker.onDidHide(() => settle(undefined));
+            picker.show();
+            void (0, gitService_1.listSeriesBranches)(repoPath).then(branches => {
+                picker.items = toItems(branches, true);
+                picker.busy = false;
+            });
+        });
+        if (!selection) {
+            return undefined;
+        }
+        if (selection.action === 'manual') {
+            return promptManualBranch(title);
+        }
+        return selection.branch;
+    }
+    finally {
+        picker.dispose();
+    }
+}
+
+
+/***/ }),
+/* 86 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerDebugCommands = registerDebugCommands;
 /**
  * Start/stop/restart server (with and without debugging) and shell commands.
@@ -16451,7 +16609,7 @@ exports.registerDebugCommands = registerDebugCommands;
 const vscode = __importStar(__webpack_require__(1));
 const debugger_1 = __webpack_require__(60);
 const server_1 = __webpack_require__(64);
-const notifications_1 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
 const settingsStore_1 = __webpack_require__(5);
 function registerDebugCommands(deps) {
     const { context } = deps;
@@ -16490,7 +16648,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 86 */
+/* 87 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16537,11 +16695,11 @@ const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(33));
 const path = __importStar(__webpack_require__(3));
 const args_1 = __webpack_require__(84);
-const notifications_1 = __webpack_require__(13);
-const notifications_2 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
+const notifications_2 = __webpack_require__(15);
 const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
-const runtimeCache_1 = __webpack_require__(12);
+const runtimeCache_1 = __webpack_require__(14);
 const projectReposExplorer_1 = __webpack_require__(67);
 async function copyPathToClipboard(uri, relative) {
     if (!uri) {
@@ -16660,7 +16818,7 @@ function registerReposExplorerCommands(deps) {
 
 
 /***/ }),
-/* 87 */
+/* 88 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16709,7 +16867,7 @@ const manifest_1 = __webpack_require__(53);
 const module_1 = __webpack_require__(56);
 const testing_1 = __webpack_require__(58);
 const debugger_1 = __webpack_require__(60);
-const notifications_1 = __webpack_require__(13);
+const notifications_1 = __webpack_require__(15);
 async function moduleForActiveEditor() {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.uri.scheme !== 'file') {
@@ -16767,7 +16925,7 @@ function registerEditorCommands(deps) {
 
 
 /***/ }),
-/* 88 */
+/* 89 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 

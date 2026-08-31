@@ -91,6 +91,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Fixed
 
+- **The Versions view `+` button no longer appears to do nothing.** It awaited the full remote branch list before showing any UI — on the odoo repository that is ~68,700 refs (measured at 1.7s of git time and 7.6 MB of output), nearly all of them PR branches on the `dev` remote, every one marshalled across the extension host and turned into a quick pick item. The picker now opens immediately and fills in, and lists release branches (75 entries, ~0ms) rather than everything. PR and development branches stay reachable through a **Search all branches…** row that pays the cost only when asked. *Change Branch* used the same blocking path and is fixed with it.
 - **Setup Odoo no longer fires the environment setup into a terminal and returns.** It wrote `python -m venv` and `pip install` into a terminal without awaiting them, so the virtualenv check that followed ran before anything existed and new version profiles were almost always created with no `pythonPath`. Provisioning awaits its work and reports real failures.
 - Post-switch hooks now run when the **version** changes, not only when a branch differs. A provisioned version's worktree is already on the right branch, so the branch diff is empty and hooks would otherwise never fire.
 

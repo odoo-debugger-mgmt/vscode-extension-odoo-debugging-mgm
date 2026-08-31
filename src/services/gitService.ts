@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import type { GitExtension, Repository, Branch, BranchType } from '../types/git';
 import { logger } from './logger';
+import { runCommand } from './process';
 
 function resolveRepoPath(repoPath: string): string {
     if (path.isAbsolute(repoPath)) {
@@ -117,4 +118,96 @@ export async function getBranchesViaSourceControl(repoPath: string): Promise<str
         return undefined;
     }
     return metadata.map(branch => branch.name);
+}
+
+// ---------------------------------------------------------------------------
+// Fast branch listing
+//
+// The git extension's getBranches() returns every ref. On the odoo repository
+// that is ~68,700 remote refs (measured: 1.6s of git time, 7.6 MB of output),
+// almost all of them PR branches on the `dev` remote, and every one of them
+// gets marshalled across the extension-host boundary and turned into a quick
+// pick item before the user sees anything. These helpers read only the refs a
+// version could plausibly be built from, via `git for-each-ref`.
+// ---------------------------------------------------------------------------
+
+/** Odoo release branches: `17.0`, `saas-17.4`, `master`. */
+const ODOO_SERIES_PATTERN = /^((saas-)?\d+(\.\d+)?|master)$/i;
+
+export function isOdooSeriesBranch(name: string): boolean {
+    return ODOO_SERIES_PATTERN.test(name.trim());
+}
+
+/** Parses `for-each-ref`/`branch` output into unique short branch names. */
+export function parseRefList(stdout: string): string[] {
+    const seen = new Set<string>();
+    const names: string[] = [];
+
+    for (const rawLine of stdout.split('\n')) {
+        const name = normalizeBranchName(rawLine.trim());
+        if (!name || name === 'HEAD' || name.endsWith('/HEAD')) {
+            continue;
+        }
+        if (seen.has(name)) {
+            continue;
+        }
+        seen.add(name);
+        names.push(name);
+    }
+
+    return names;
+}
+
+function seriesSortKey(name: string): [number, number] {
+    if (/^master$/i.test(name)) {
+        return [Number.MAX_SAFE_INTEGER, 0];
+    }
+    const match = /^(?:saas-)?(\d+)(?:\.(\d+))?$/i.exec(name);
+    if (!match) {
+        return [-1, 0];
+    }
+    return [Number(match[1]), Number(match[2] ?? 0)];
+}
+
+/** Series branches first (newest first), then everything else alphabetically. */
+export function rankBranches(names: string[]): string[] {
+    const series = names.filter(isOdooSeriesBranch);
+    const rest = names.filter(name => !isOdooSeriesBranch(name));
+
+    series.sort((a, b) => {
+        const [aMajor, aMinor] = seriesSortKey(a);
+        const [bMajor, bMinor] = seriesSortKey(b);
+        return bMajor - aMajor || bMinor - aMinor || a.localeCompare(b);
+    });
+    rest.sort((a, b) => a.localeCompare(b));
+
+    return [...series, ...rest];
+}
+
+async function forEachRef(repoPath: string, patterns: string[]): Promise<string[]> {
+    try {
+        const { stdout } = await runCommand(
+            'git',
+            ['for-each-ref', '--format=%(refname:short)', ...patterns],
+            { cwd: resolveRepoPath(repoPath) }
+        );
+        return parseRefList(stdout);
+    } catch (error) {
+        logger.warn(`Failed to list refs in ${repoPath}:`, error);
+        return [];
+    }
+}
+
+/**
+ * Local branches plus the release branches on `origin` - the ones a version is
+ * actually built from. Cheap enough to run before showing UI.
+ */
+export async function listSeriesBranches(repoPath: string): Promise<string[]> {
+    const names = await forEachRef(repoPath, ['refs/heads', 'refs/remotes/origin']);
+    return rankBranches(names.filter(isOdooSeriesBranch));
+}
+
+/** Every branch, including PR branches on every remote. Can be very slow. */
+export async function listAllBranches(repoPath: string): Promise<string[]> {
+    return rankBranches(await forEachRef(repoPath, ['refs/heads', 'refs/remotes']));
 }
