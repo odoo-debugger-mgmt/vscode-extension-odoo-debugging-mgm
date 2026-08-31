@@ -12939,6 +12939,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.parsePythonVersion = parsePythonVersion;
 exports.isAbovePreferred = isAbovePreferred;
 exports.rankInterpreters = rankInterpreters;
+exports.nextInterpreterAbove = nextInterpreterAbove;
 exports.venvPythonPath = venvPythonPath;
 exports.discoverInterpreters = discoverInterpreters;
 exports.resolveUv = resolveUv;
@@ -12972,6 +12973,11 @@ function isAbovePreferred(interpreter, window) {
  * Orders interpreters best-first for the given window. Anything below the
  * floor is unusable and is excluded entirely, so the first entry is always
  * safe to use - or the list is empty and one must be installed.
+ *
+ * Above the branch's target, *closest* wins rather than newest: running a
+ * branch on a much newer Python than it was written for causes failures at
+ * server initialization, and the further above the target you go the more
+ * likely that is. Odoo 17.0 with 3.12 and 3.14 present should pick 3.12.
  */
 function rankInterpreters(found, window) {
     const usable = found.filter(entry => compare(entry.version, window.minPython) >= 0);
@@ -12986,13 +12992,26 @@ function rankInterpreters(found, window) {
         return delta < 0 ? 1 : 2;
     };
     return [...usable].sort((a, b) => {
-        const tierDelta = tier(a) - tier(b);
-        if (tierDelta !== 0) {
-            return tierDelta;
+        const tierA = tier(a);
+        const tierB = tier(b);
+        if (tierA !== tierB) {
+            return tierA - tierB;
         }
-        // Within a tier, newest wins.
-        return compare(b.version, a.version);
+        // Above the target, the closest one wins; otherwise newest.
+        return tierA === 2 ? compare(a.version, b.version) : compare(b.version, a.version);
     });
+}
+/**
+ * The next usable interpreter above `current`, for stepping up after a
+ * requirements install fails. Some pins only exist to mirror a distribution
+ * package and have no Linux wheel - Odoo 17.0's `gevent==21.8.0` on Python
+ * 3.10 is the canonical case, and it cannot be built from source either, since
+ * the Cython alpha its build requires is gone from PyPI.
+ */
+function nextInterpreterAbove(found, window, current) {
+    return rankInterpreters(found, window)
+        .filter(entry => compare(entry.version, current) > 0)
+        .sort((a, b) => compare(a.version, b.version))[0];
 }
 function venvPythonPath(venvPath) {
     return process.platform === 'win32'
@@ -14957,20 +14976,45 @@ async function executeProvision(spec, progress, token) {
     if (!managedPaths.includes(paths.venvPath)) {
         managedPaths.push(paths.venvPath);
     }
-    progress.report({ message: 'Installing requirements (this takes a few minutes)' });
-    await (0, pythonToolchain_1.installRequirements)(paths.venvPath, path.join(paths.odooPath, 'requirements.txt'), uv, line => {
+    const requirementsPath = path.join(paths.odooPath, 'requirements.txt');
+    const reportLine = (line) => {
         const trimmed = line.trim();
         if (trimmed) {
             progress.report({ message: trimmed.slice(0, 120) });
         }
-    }, token);
+    };
+    progress.report({ message: 'Installing requirements (this takes a few minutes)' });
+    let pythonVersion = interpreter.version;
+    try {
+        await (0, pythonToolchain_1.installRequirements)(paths.venvPath, requirementsPath, uv, reportLine, token);
+    }
+    catch (error) {
+        // Some pins exist only to mirror a distribution package and have no
+        // Linux wheel - Odoo 17.0's `gevent==21.8.0` on Python 3.10 is the
+        // canonical case, and it cannot be built from source either, because
+        // the Cython alpha its build requires is no longer on PyPI. Stepping
+        // up one interpreter moves onto pins that do ship wheels.
+        const stepUp = (0, pythonToolchain_1.nextInterpreterAbove)(await (0, pythonToolchain_1.discoverInterpreters)(), window, interpreter.version);
+        if (!stepUp || token?.isCancellationRequested) {
+            throw error;
+        }
+        logger_1.logger.warn(`[provisioning] requirements failed on Python ${interpreter.version.join('.')}, retrying on ${stepUp.version.join('.')}:`, error);
+        warnings.push(`Python ${interpreter.version.join('.')} could not install this branch's requirements ` +
+            `(some pins for it ship only as distribution packages, with no Linux wheel). ` +
+            `Used Python ${stepUp.version.join('.')} instead.`);
+        progress.report({ message: `Retrying on Python ${stepUp.version.join('.')}` });
+        fs.rmSync(paths.venvPath, { recursive: true, force: true });
+        await (0, pythonToolchain_1.ensureVenv)(stepUp.path, paths.venvPath, uv, token);
+        await (0, pythonToolchain_1.installRequirements)(paths.venvPath, requirementsPath, uv, reportLine, token);
+        pythonVersion = stepUp.version;
+    }
     progress.report({ message: 'Checking system dependencies' });
     const deps = await (0, systemDeps_1.checkSystemDeps)(paths.venvPath);
     logger_1.logger.info(`[provisioning] ${spec.branch} provisioned at ${paths.odooPath}`);
     return {
         paths,
         managedPaths,
-        pythonVersion: interpreter.version.join('.'),
+        pythonVersion: pythonVersion.join('.'),
         warnings,
         deps
     };

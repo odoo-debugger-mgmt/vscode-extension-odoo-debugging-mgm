@@ -109,7 +109,7 @@ installRequirements(venvPath: string, requirementsPath: string, progress, token)
 
 **Discovery** scans `python3.<minor>` on `PATH`, `~/.pyenv/versions/*/bin/python`, and platform-standard locations, reading each one's version via `--version`.
 
-**Ranking** is pure logic and unit-tested. With `preferredPython` known: exact match, then newest at or above the floor and at or below preferred, then newest above preferred (usable, warned), then anything below the floor (unusable). With `preferredPython` undefined, the floor alone governs — newest at or above it wins, and no mismatch warning is issued. The warning names the mismatch — *"17.0 targets Python 3.10; using 3.14"* — which is precisely the condition currently silent on the reference machine.
+**Ranking** is pure logic and unit-tested. With `preferredPython` known: exact match, then newest at or above the floor and at or below preferred, then — above preferred — the **closest** rather than the newest, since running a branch far above the Python it was written for fails at server initialization. Anything below the floor is unusable. With `preferredPython` undefined, the floor alone governs — newest at or above it wins, and no mismatch warning is issued. The warning names the mismatch — *"17.0 targets Python 3.10; using 3.14"* — which is precisely the condition currently silent on the reference machine.
 
 **`ensureUv`** returns `uv` from `odooDebugger.provisioning.uvPath` if set, else from `PATH`, else downloads the pinned release for the current platform into `context.globalStorageUri`, verifying the SHA-256 published with the release asset. `odooDebugger.provisioning.autoDownloadUv` (default `true`) disables the download for offline or restricted environments.
 
@@ -118,6 +118,8 @@ installRequirements(venvPath: string, requirementsPath: string, progress, token)
 **Venv and requirements** use `uv venv --python <path>` and `uv pip install -r requirements.txt` when uv is present, otherwise `<python> -m venv` and `<venv>/bin/pip install -r`. Both are awaited through `runCommand` with `token` and `onStderrLine` wired to the progress reporter. uv's global cache hardlinks wheels, so shared dependencies are not re-downloaded per version.
 
 Windows uses `Scripts\python.exe` and `Scripts\pip.exe`, consistent with `createVersionForClone`'s existing handling.
+
+**Step-up retry.** Some pins exist only to mirror a distribution package and have no Linux wheel. Odoo 17.0's `gevent==21.8.0` (tagged `# (Jammy)`) is the canonical case: PyPI carries cp310 wheels for macOS and Windows only, and it cannot be built from source either, because its `build-system.requires` demands `cython>=3.0a9` and the Cython 3.0 alphas have been removed from PyPI. Since the exact distro target is precisely where this bites, a failed requirements install retries **once** on the next interpreter above, rebuilding the virtualenv and recording which Python was actually used. 17.0's pins for 3.11 and 3.12 both resolve cleanly.
 
 ### 4. System dependency doctor — `src/services/systemDeps.ts`
 

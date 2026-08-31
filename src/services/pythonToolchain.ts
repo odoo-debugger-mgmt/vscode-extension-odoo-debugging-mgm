@@ -36,6 +36,11 @@ export function isAbovePreferred(interpreter: InterpreterInfo, window: OdooPytho
  * Orders interpreters best-first for the given window. Anything below the
  * floor is unusable and is excluded entirely, so the first entry is always
  * safe to use - or the list is empty and one must be installed.
+ *
+ * Above the branch's target, *closest* wins rather than newest: running a
+ * branch on a much newer Python than it was written for causes failures at
+ * server initialization, and the further above the target you go the more
+ * likely that is. Odoo 17.0 with 3.12 and 3.14 present should pick 3.12.
  */
 export function rankInterpreters(found: InterpreterInfo[], window: OdooPythonWindow): InterpreterInfo[] {
     const usable = found.filter(entry => compare(entry.version, window.minPython) >= 0);
@@ -52,13 +57,31 @@ export function rankInterpreters(found: InterpreterInfo[], window: OdooPythonWin
     };
 
     return [...usable].sort((a, b) => {
-        const tierDelta = tier(a) - tier(b);
-        if (tierDelta !== 0) {
-            return tierDelta;
+        const tierA = tier(a);
+        const tierB = tier(b);
+        if (tierA !== tierB) {
+            return tierA - tierB;
         }
-        // Within a tier, newest wins.
-        return compare(b.version, a.version);
+        // Above the target, the closest one wins; otherwise newest.
+        return tierA === 2 ? compare(a.version, b.version) : compare(b.version, a.version);
     });
+}
+
+/**
+ * The next usable interpreter above `current`, for stepping up after a
+ * requirements install fails. Some pins only exist to mirror a distribution
+ * package and have no Linux wheel - Odoo 17.0's `gevent==21.8.0` on Python
+ * 3.10 is the canonical case, and it cannot be built from source either, since
+ * the Cython alpha its build requires is gone from PyPI.
+ */
+export function nextInterpreterAbove(
+    found: InterpreterInfo[],
+    window: OdooPythonWindow,
+    current: [number, number]
+): InterpreterInfo | undefined {
+    return rankInterpreters(found, window)
+        .filter(entry => compare(entry.version, current) > 0)
+        .sort((a, b) => compare(a.version, b.version))[0];
 }
 
 export function venvPythonPath(venvPath: string): string {

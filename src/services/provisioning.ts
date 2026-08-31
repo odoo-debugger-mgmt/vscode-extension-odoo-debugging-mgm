@@ -8,7 +8,15 @@ import * as path from 'node:path';
 import type * as vscode from 'vscode';
 import { readOdooPythonWindow } from './odooRequirements';
 import { ensureWorktree } from './worktree';
-import { ensureInterpreter, ensureVenv, installRequirements, resolveUv, venvPythonPath } from './pythonToolchain';
+import {
+    discoverInterpreters,
+    ensureInterpreter,
+    ensureVenv,
+    installRequirements,
+    nextInterpreterAbove,
+    resolveUv,
+    venvPythonPath
+} from './pythonToolchain';
 import { checkSystemDeps, SystemDepReport } from './systemDeps';
 import { logger } from './logger';
 
@@ -181,19 +189,42 @@ export async function executeProvision(
         managedPaths.push(paths.venvPath);
     }
 
+    const requirementsPath = path.join(paths.odooPath, 'requirements.txt');
+    const reportLine = (line: string) => {
+        const trimmed = line.trim();
+        if (trimmed) {
+            progress.report({ message: trimmed.slice(0, 120) });
+        }
+    };
+
     progress.report({ message: 'Installing requirements (this takes a few minutes)' });
-    await installRequirements(
-        paths.venvPath,
-        path.join(paths.odooPath, 'requirements.txt'),
-        uv,
-        line => {
-            const trimmed = line.trim();
-            if (trimmed) {
-                progress.report({ message: trimmed.slice(0, 120) });
-            }
-        },
-        token
-    );
+    let pythonVersion = interpreter.version;
+    try {
+        await installRequirements(paths.venvPath, requirementsPath, uv, reportLine, token);
+    } catch (error) {
+        // Some pins exist only to mirror a distribution package and have no
+        // Linux wheel - Odoo 17.0's `gevent==21.8.0` on Python 3.10 is the
+        // canonical case, and it cannot be built from source either, because
+        // the Cython alpha its build requires is no longer on PyPI. Stepping
+        // up one interpreter moves onto pins that do ship wheels.
+        const stepUp = nextInterpreterAbove(await discoverInterpreters(), window, interpreter.version);
+        if (!stepUp || token?.isCancellationRequested) {
+            throw error;
+        }
+
+        logger.warn(`[provisioning] requirements failed on Python ${interpreter.version.join('.')}, retrying on ${stepUp.version.join('.')}:`, error);
+        warnings.push(
+            `Python ${interpreter.version.join('.')} could not install this branch's requirements ` +
+            `(some pins for it ship only as distribution packages, with no Linux wheel). ` +
+            `Used Python ${stepUp.version.join('.')} instead.`
+        );
+
+        progress.report({ message: `Retrying on Python ${stepUp.version.join('.')}` });
+        fs.rmSync(paths.venvPath, { recursive: true, force: true });
+        await ensureVenv(stepUp.path, paths.venvPath, uv, token);
+        await installRequirements(paths.venvPath, requirementsPath, uv, reportLine, token);
+        pythonVersion = stepUp.version;
+    }
 
     progress.report({ message: 'Checking system dependencies' });
     const deps = await checkSystemDeps(paths.venvPath);
@@ -202,7 +233,7 @@ export async function executeProvision(
     return {
         paths,
         managedPaths,
-        pythonVersion: interpreter.version.join('.'),
+        pythonVersion: pythonVersion.join('.'),
         warnings,
         deps
     };

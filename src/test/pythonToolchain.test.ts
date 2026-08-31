@@ -5,6 +5,7 @@ import {
     rankInterpreters,
     isAbovePreferred,
     venvPythonPath,
+    nextInterpreterAbove,
     InterpreterInfo
 } from '../services/pythonToolchain';
 import { OdooPythonWindow } from '../services/odooRequirements';
@@ -72,5 +73,22 @@ suite('Python toolchain', () => {
             ? path.join('/venv', 'Scripts', 'python.exe')
             : path.join('/venv', 'bin', 'python');
         assert.strictEqual(venvPythonPath('/venv'), expected);
+    });
+
+    test('above the target, prefers the closest rather than the newest', () => {
+        // Running 17.0 on 3.14 breaks at server initialization; 3.12 is the
+        // smaller leap and the one that should win.
+        const ranked = rankInterpreters(
+            [interpreter([3, 14]), interpreter([3, 12]), interpreter([3, 11])],
+            WINDOW_17
+        );
+        assert.deepStrictEqual(ranked.map(entry => entry.version), [[3, 11], [3, 12], [3, 14]]);
+    });
+
+    test('steps up to the next interpreter above a failed one', () => {
+        const found = [interpreter([3, 10]), interpreter([3, 12]), interpreter([3, 14])];
+        assert.deepStrictEqual(nextInterpreterAbove(found, WINDOW_17, [3, 10])?.version, [3, 12]);
+        assert.deepStrictEqual(nextInterpreterAbove(found, WINDOW_17, [3, 12])?.version, [3, 14]);
+        assert.strictEqual(nextInterpreterAbove(found, WINDOW_17, [3, 14]), undefined);
     });
 });
