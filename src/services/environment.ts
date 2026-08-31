@@ -9,6 +9,7 @@ import { VersionsService } from '../versionsService';
 import { normalizePath, showAutoInfo, showWarning } from '../utils';
 import { getRepoBranch } from './branches';
 import { alignCoreRepos, checkoutRepoBranch } from './checkout';
+import { branchSatisfiesTarget } from './worktree';
 import { logger } from './logger';
 import { showInfo } from './notifications';
 
@@ -186,7 +187,10 @@ async function computeEnvironmentDiff(target: EnvironmentTarget): Promise<Enviro
         // missing/unconfigured paths are reported instead of silently skipped.
         let needsCheckout = existingPaths.length === 0;
         for (const repoPath of existingPaths) {
-            if (await getRepoBranch(repoPath) !== coreBranchTarget) {
+            // A provisioned worktree reports its managed branch (odt/19.0) while
+            // the version targets the series (19.0); asking git to check out
+            // 19.0 there would fail, since the source repo still holds it.
+            if (!branchSatisfiesTarget(await getRepoBranch(repoPath), coreBranchTarget)) {
                 needsCheckout = true;
                 break;
             }

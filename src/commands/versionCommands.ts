@@ -12,7 +12,7 @@ import { getBranchesWithMetadata } from '../services/gitService';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from '../services/runtimeCache';
 import { alignEnvironment } from '../services/environment';
 import { provisionAndCreateVersion } from '../odooInstaller';
-import { removeWorktree } from '../services/worktree';
+import { removeWorktree, removeManagedBranch, resolveSourceRepo } from '../services/worktree';
 
 export function registerVersionCommands(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
@@ -436,19 +436,34 @@ export function registerVersionCommands(deps: CommandDeps): void {
                     'Keep Folders'
                 );
                 if (removeChoice === 'Delete Folders') {
+                    const sourceRepos = new Set<string>();
                     for (const managedPath of managedPaths) {
                         // Worktrees must go through git so the parent repo's
                         // administrative entry goes with them; anything git
                         // refuses (a venv, a stale directory) is a plain delete.
-                        try {
-                            await removeWorktree(normalizePath(version.settings.odooPath), managedPath);
-                        } catch {
+                        // The source repo has to be resolved before removal,
+                        // because afterwards there is nothing left to ask.
+                        const sourceRepo = await resolveSourceRepo(managedPath);
+                        let removed = false;
+                        if (sourceRepo) {
+                            removed = await removeWorktree(sourceRepo, managedPath)
+                                .then(() => true)
+                                .catch(() => false);
+                            if (removed) {
+                                sourceRepos.add(sourceRepo);
+                            }
+                        }
+                        if (!removed) {
                             try {
                                 await fs.promises.rm(managedPath, { recursive: true, force: true });
                             } catch (error) {
                                 logger.warn(`Failed to remove ${managedPath}:`, error);
                             }
                         }
+                    }
+                    // git worktree remove leaves the managed branch behind.
+                    for (const sourceRepo of sourceRepos) {
+                        await removeManagedBranch(sourceRepo, version.odooVersion);
                     }
                 }
             }

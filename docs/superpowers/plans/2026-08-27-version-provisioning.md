@@ -306,6 +306,8 @@ git commit -m "[ADD] Derive the Python window from an Odoo checkout"
 
 ### Task 2: Git worktree service
 
+> **Amended after execution.** As written, this task adopted any worktree already holding the branch — including the source repo itself, which left one version per repo pointing at a user-controlled directory that could later be switched to another branch. The shipped implementation always creates its own worktree on an `odt/<branch>` local branch and adopts only the destination path. See spec §2 for the corrected design.
+
 `git worktree` operations, with the parsing separated out so it can be tested without a repository.
 
 **Files:**

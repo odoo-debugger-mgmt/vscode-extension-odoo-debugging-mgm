@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { parseWorktreeList, findWorktreeForBranch } from '../services/worktree';
+import { parseWorktreeList, findWorktreeForBranch, managedBranchName, branchSatisfiesTarget } from '../services/worktree';
 
 const PORCELAIN = `worktree /home/dev/odoo
 HEAD bbe85efc259f1f2c9c3f0f5f9c1d2e3f4a5b6c7d
@@ -36,5 +36,22 @@ suite('Worktree listing', () => {
 
     test('returns undefined when no worktree holds the branch', () => {
         assert.strictEqual(findWorktreeForBranch(parseWorktreeList(PORCELAIN), '18.0'), undefined);
+    });
+
+    test('namespaces the managed branch for a worktree', () => {
+        assert.strictEqual(managedBranchName('19.0'), 'odt/19.0');
+        assert.strictEqual(managedBranchName('saas-19.2'), 'odt/saas-19.2');
+    });
+
+    test('accepts the managed branch as satisfying its target series', () => {
+        assert.strictEqual(branchSatisfiesTarget('odt/19.0', '19.0'), true);
+        assert.strictEqual(branchSatisfiesTarget('19.0', '19.0'), true);
+    });
+
+    test('rejects a different branch, and a detached or missing head', () => {
+        assert.strictEqual(branchSatisfiesTarget('17.0', '19.0'), false);
+        assert.strictEqual(branchSatisfiesTarget('odt/17.0', '19.0'), false);
+        assert.strictEqual(branchSatisfiesTarget(undefined, '19.0'), false);
+        assert.strictEqual(branchSatisfiesTarget(null, '19.0'), false);
     });
 });

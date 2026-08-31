@@ -27,7 +27,7 @@ Docker solves all of this by making the code tree, interpreter and packages one 
 
 **A Version owns its environment.** Provisioning gives a version its own git worktree, its own interpreter chosen from what that branch declares it needs, and its own venv. Versions stop competing for one checkout, so `alignEnvironment` has nothing left to check out for a provisioned version.
 
-**Provisioned-ness is a fact about the filesystem, not stored state.** Provisioning probes what exists, plans only the missing steps, and executes those — the same compute-diff-then-apply shape as `alignEnvironment` and `reconcile`. Re-running after a failure resumes; an environment the user built by hand is adopted rather than rebuilt.
+**Provisioned-ness is a fact about the filesystem, not stored state.** Provisioning probes what exists, plans only the missing steps, and executes those — the same compute-diff-then-apply shape as `alignEnvironment` and `reconcile`. Re-running after a failure resumes rather than restarting, and anything already present at a version's own paths is reused rather than rebuilt. Paths *outside* those — the user's own checkouts, the source repository — are never claimed; *Profile only* (§8) exists for anyone who has set an environment up by hand and just wants the profile.
 
 ### 1. Requirements derivation — `src/services/odooRequirements.ts`
 
@@ -79,11 +79,20 @@ This table describes distributions, not Odoo, so it changes only when a new LTS 
 ensureWorktree(repoPath: string, branch: string, destPath: string): Promise<WorktreeResult>
 ```
 
-`git worktree add <destPath> <branch>`, with three cases that must be handled explicitly:
+**The source repository is only ever a source.** A version never runs out of it, even when it happens to sit on the right branch: that directory is user-controlled and can be switched away underneath the version, which would leave a "19.0" version silently running 17.0 code.
 
-- **Branch absent from a shallow clone.** `Setup Odoo` recommends `--depth 1 --single-branch`, so this is the common case. `git fetch --depth 1 origin <branch>:<branch>` first — valid on a shallow clone and cheap — then add the worktree.
-- **Branch already checked out in the main clone.** Git refuses the same branch in two worktrees. Detect via `git worktree list --porcelain`, and use the existing path as this version's path instead of failing.
-- **Destination exists.** If it is already a worktree of this repo on this branch, adopt it. Otherwise report a conflict and stop; never delete user directories.
+Git refuses to check the same branch out in two worktrees, so every managed worktree gets its own local branch `odt/<branch>`, created from `refs/remotes/origin/<branch>` — branching from a remote-tracking ref sets upstream, so `git pull` works inside the worktree. The name is unconditional on purpose: choosing it only on collision would make provisioning depend on whatever the source repo happened to be checked out on at the time.
+
+Cases handled explicitly:
+
+- **Branch absent from a shallow clone.** `Setup Odoo` recommends `--depth 1 --single-branch`, so this is the common case. `git fetch --depth 1 origin +refs/heads/<branch>:refs/remotes/origin/<branch>` first — valid and cheap on a shallow clone, and the explicit refspec also works on a single-branch clone, where the default one would not fetch it. Falls back to a local `<branch>` when there is no remote.
+- **Managed branch left over** from a previously removed worktree: reused rather than recreated, since `git worktree add -b` refuses an existing name.
+- **Destination already a worktree:** adopted — this is the "already provisioned" case. Only the destination is ever adopted; a worktree elsewhere holding the branch is deliberately not reused.
+- **Destination exists but is not a worktree:** report a conflict and stop; never delete user directories.
+
+Because a managed worktree reports `odt/19.0` while its version targets `19.0`, `branchSatisfiesTarget(current, target)` treats both as correct. Without it the environment diff (§9) would ask git to check out `19.0` inside the worktree, which fails while the source repo holds that branch — reintroducing the very problem this removes.
+
+Removing a version's worktree also deletes its managed branch: `git worktree remove` leaves it behind.
 
 Worktrees share the repository object store, so each additional version costs one working tree rather than a full clone.
 
@@ -176,7 +185,7 @@ managedPaths?: string[];                        // absolute paths this extension
 selectedDbByVersion?: Record<string, string>;   // versionId → dbId (see §12)
 ```
 
-`managedPaths` exists so **Delete Version** can offer to remove what the extension created — via `git worktree remove` for worktrees — and never offers to delete a hand-made checkout.
+`managedPaths` exists so **Delete Version** can offer to remove what the extension created — via `git worktree remove` plus deletion of the managed branch — and never offers to delete a hand-made checkout. Since every core worktree is now created rather than adopted, this list covers all of them.
 
 ### 8. Command flow
 
