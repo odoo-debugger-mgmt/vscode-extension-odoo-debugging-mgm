@@ -223,24 +223,26 @@ Migration folds any `branchName` on a database with no `versionId` into the
 legacy `odooVersion` field that already handles unmigrated data, then drops
 the field. Views stop rendering it.
 
-### 7. Database creation stops capturing silently
+### 7. Database creation asks which branches, and asks first
 
-`createDb` currently snapshots every repo's current branch with no prompt. It
-still offers to — capturing the working state is genuinely useful — but as a
-visible step with a real default, folded into the existing creation summary
-rather than added as a sixth prompt:
+`createDb` snapshots every repo's current branch with no prompt, and does it
+**after** the database has been created or a dump restored. Two problems in
+one: the choice is never made by the user, and the work is already done before
+the environment is settled, so cancelling costs a restore.
 
-```
-Create database "acme-19"
-  Version          Odoo 19.0
-  Repo branches    captured from current checkouts (3 repos)   [Change…]
+The decision moves ahead of any creation work, and becomes an actual question.
+The prompt already exists — `promptProjectRepoBranchAssignments` in `create`
+mode offers *use current branches* / *choose branch per repository* / *skip* —
+it was simply never called from creation.
 
-  [Create]  [Cancel]
-```
+*Use current branches* remains one of the offered answers, so the old
+behaviour is still one keystroke away for anyone who wants it. What changes is
+that it is now an answer rather than an assumption.
 
-*Change…* opens the existing `promptProjectRepoBranchAssignments` flow. The
-default is unchanged behaviour, so nobody who liked it loses it — they just
-now know it happened.
+Cloning a database inherits its source's mapping rather than capturing the
+current checkouts, which is the same wrong assumption in a second place: a
+clone runs the environment its source ran, and what the repos happen to be on
+at clone time has nothing to do with it.
 
 ### 8. The mapping is visible on the row
 

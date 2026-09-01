@@ -1656,14 +1656,25 @@ git commit -m "[REF] Delete db.branchName; the version is the only core branch"
 
 ---
 
-### Task 10: Database creation stops capturing silently
+### Task 10: Database creation asks which branches, and asks first
+
+`createDb` captures whatever branch each repo happens to be on, silently, and
+does it **after** the database has been created or a dump restored — so the
+work is already done before the environment is decided, and cancelling costs
+the user a restore. This task promotes the choice to a real step and moves it
+before anything is created.
+
+The prompt itself already exists: `promptProjectRepoBranchAssignments` in
+`create` mode offers *use current branches* / *choose branch per repository* /
+*skip*. Nothing new needs designing — it simply was never called from creation.
 
 **Files:**
-- Modify: `src/dbs.ts` (`createDb`)
+- Modify: `src/dbs.ts` (`createDb`, `cloneDb`)
 - Test: `src/test/dbCreationSummary.test.ts`
 
 **Interfaces:**
-- Produces: `function describeCreationSummary(input: { versionName?: string; repoCount: number; captured: boolean }): string`.
+- Consumes: `promptProjectRepoBranchAssignments(repos, existing, mode)` — already exported from `src/dbs.ts`, returns `ProjectRepoBranchAssignment[] | undefined` where `undefined` means the user cancelled.
+- Produces: `function describeRepoBranchChoice(assignments: ProjectRepoBranchAssignment[]): string`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1671,25 +1682,35 @@ Create `src/test/dbCreationSummary.test.ts`:
 
 ```ts
 import * as assert from 'assert';
-import { describeCreationSummary } from '../dbs';
+import { describeRepoBranchChoice } from '../dbs';
 
-suite('Database creation summary', () => {
-    test('says that repo branches were captured, and from how many repos', () => {
-        const summary = describeCreationSummary({ versionName: 'Odoo 19.0', repoCount: 3, captured: true });
-        assert.ok(summary.includes('Odoo 19.0'));
-        assert.ok(summary.includes('3'));
-        // The capture used to be invisible; the point of this line is that it is not.
-        assert.ok(summary.toLowerCase().includes('captured'));
+suite('Database creation repo branches', () => {
+    test('summarizes the branches chosen', () => {
+        const summary = describeRepoBranchChoice([
+            { repoName: 'psae-internal', repoPath: '/custom/psae-internal', branch: '19.0' },
+            { repoName: 'shared', repoPath: '/custom/shared', branch: 'main' }
+        ]);
+        assert.ok(summary.includes('psae-internal'));
+        assert.ok(summary.includes('19.0'));
+        assert.ok(summary.includes('shared'));
     });
 
-    test('says so when nothing is captured', () => {
-        const summary = describeCreationSummary({ versionName: 'Odoo 19.0', repoCount: 0, captured: false });
-        assert.ok(summary.toLowerCase().includes('no repo'));
+    test('says plainly when none were chosen', () => {
+        // "Skip" is a legitimate answer and must not read like a failure.
+        assert.strictEqual(describeRepoBranchChoice([]), 'no project repo branches');
     });
 
-    test('handles a database with no version', () => {
-        const summary = describeCreationSummary({ repoCount: 1, captured: true });
-        assert.ok(summary.toLowerCase().includes('no version'));
+    test('collapses a long list rather than printing every repo', () => {
+        const many = Array.from({ length: 8 }, (_, index) => ({
+            repoName: `repo-${index}`,
+            repoPath: `/custom/repo-${index}`,
+            branch: '19.0'
+        }));
+        const summary = describeRepoBranchChoice(many);
+        assert.ok(summary.includes('repo-0'));
+        assert.ok(summary.includes('8'));
+        // Not every name: this goes in a notification, not a report.
+        assert.ok(!summary.includes('repo-7'));
     });
 });
 ```
@@ -1697,59 +1718,120 @@ suite('Database creation summary', () => {
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `npm run compile-tests`
-Expected: FAIL with `has no exported member 'describeCreationSummary'`.
+Expected: FAIL with `has no exported member 'describeRepoBranchChoice'`.
 
-- [ ] **Step 3: Write the helper and use it**
+- [ ] **Step 3: Write the summary helper**
 
-In `src/dbs.ts`, add:
+In `src/dbs.ts`, add near `promptProjectRepoBranchAssignments`:
 
 ```ts
-/** The one line that makes the branch capture visible at creation time. */
-export function describeCreationSummary(input: { versionName?: string; repoCount: number; captured: boolean }): string {
-    const version = input.versionName ? `Version: ${input.versionName}` : 'Version: no version';
-    const repos = input.captured && input.repoCount > 0
-        ? `Repo branches: captured from ${input.repoCount} current checkout(s)`
-        : 'Repo branches: no repo branches recorded';
-    return `${version}  •  ${repos}`;
+/** One-line summary of a repo-branch choice, for the creation notification. */
+export function describeRepoBranchChoice(assignments: ProjectRepoBranchAssignment[]): string {
+    if (assignments.length === 0) {
+        return 'no project repo branches';
+    }
+    const shown = assignments.slice(0, 3).map(entry => `${entry.repoName}@${entry.branch}`).join(', ');
+    return assignments.length > 3
+        ? `${shown} and ${assignments.length - 3} more (${assignments.length} repos)`
+        : shown;
 }
 ```
 
-In `createDb`, after `captureCurrentRepoBranches` produces `projectRepoBranches`, show a confirmation before returning the database:
+- [ ] **Step 4: Ask before creating anything**
+
+In `src/dbs.ts`, in `createDb`, move the branch decision above the creation work. Replace this block:
 
 ```ts
-    const summaryChoice = await vscode.window.showQuickPick(
-        [
-            { label: '$(check) Create', detail: describeCreationSummary({
-                versionName, repoCount: projectRepoBranches.length, captured: projectRepoBranches.length > 0
-            }), change: false },
-            { label: '$(edit) Change repo branches…', detail: 'Pick a branch per repository instead', change: true }
-        ],
-        { title: 'Create database', placeHolder: 'Confirm what will be recorded', ignoreFocusOut: true }
-    );
-    if (!summaryChoice) {
-        return undefined;
-    }
-    if (summaryChoice.change) {
-        const edited = await promptProjectRepoBranchAssignments(repos, projectRepoBranches, 'edit');
-        if (!edited) {
-            return undefined;
-        }
-        projectRepoBranches = edited;
-    }
+    // Step 4: create/restore the PostgreSQL database.
+    if (creationMethod === 'dump' && sqlDumpPath) {
 ```
 
-Declare `projectRepoBranches` with `let` rather than `const`, and resolve `versionName` from the version chosen by `resolveVersionForNewDatabase`.
+with:
 
-- [ ] **Step 4: Verify the whole gate**
+```ts
+    // Step 4: decide the environment before doing any work. Asking after the
+    // dump has been restored means a cancellation costs the user the restore,
+    // and capturing the current branch silently was never a decision they made.
+    const projectRepoBranches = await promptProjectRepoBranchAssignments(repos, [], 'create');
+    if (projectRepoBranches === undefined) {
+        return undefined;
+    }
+
+    // Step 5: create/restore the PostgreSQL database.
+    if (creationMethod === 'dump' && sqlDumpPath) {
+```
+
+Then replace the old capture block:
+
+```ts
+    // Step 5: infer the environment instead of prompting for it. The version is
+    // auto-detected from the database itself; the current branch of every
+    // project repo is captured as the database's working state.
+    const { versionId, branchLabel } = await resolveVersionForNewDatabase(dbName, creationMethod);
+    const projectRepoBranches = await captureCurrentRepoBranches(repos);
+```
+
+with:
+
+```ts
+    // Step 6: the version is still inferred - it is a fact about the database
+    // contents, not a preference - but the repo branches were chosen above.
+    const { versionId } = await resolveVersionForNewDatabase(dbName, creationMethod);
+```
+
+`branchLabel` and the `branchName` property were removed in Task 9, so the
+`DatabaseModel` construction should no longer mention either. If
+`resolveVersionForNewDatabase` still returns `branchLabel` and nothing else
+reads it, drop it from its return type.
+
+- [ ] **Step 5: Report what was recorded**
+
+At the end of `createDb`, immediately before the `return new DatabaseModel(...)`, add:
+
+```ts
+    showAutoInfo(`Recording ${describeRepoBranchChoice(projectRepoBranches)} for "${dbName}".`, 3000);
+```
+
+Confirm `showAutoInfo` is imported in `src/dbs.ts`; it is already used elsewhere in the file.
+
+- [ ] **Step 6: A clone inherits its source's branches**
+
+`cloneDb` calls `captureCurrentRepoBranches(project.repos ?? [])`, so a clone
+picks up whatever the repos happen to be on now rather than what the database
+it was cloned from expects — the same wrong assumption in a second place.
+Replace:
+
+```ts
+    const projectRepoBranches = await captureCurrentRepoBranches(project.repos ?? []);
+```
+
+with:
+
+```ts
+    // A clone runs the same environment as its source; the current checkouts
+    // are irrelevant to it.
+    const projectRepoBranches = sanitizeProjectRepoBranchAssignments(db.projectRepoBranches);
+```
+
+- [ ] **Step 7: Remove the now-unused capture, if nothing else uses it**
+
+Run: `grep -rn "captureCurrentRepoBranches" src/ --include=*.ts`
+
+If the only remaining hits are its definition in `src/services/environment.ts`
+and its import in `src/dbs.ts`, delete both — the function existed to make the
+assumption this task removes. If another caller remains, leave it and note
+which one in the commit message.
+
+- [ ] **Step 8: Verify the whole gate**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 181 passing (178 + 3), no `error TS`, no lint errors.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add -A
-git commit -m "[IMP] Show what a new database records instead of capturing silently"
+git commit -m "[IMP] Ask which repo branches a database uses, before creating it"
 ```
 
 ---
@@ -2265,7 +2347,7 @@ git commit -m "[ADD] Diagnose and re-provision versions onto the current layout"
 
 - [ ] **Step 1: Document in the README**
 
-Add to the Repos section:
+In the Databases section, replace any wording that says the current branch of each project repo is captured automatically — it is now asked for. Then add to the Repos section:
 
 ```markdown
 ### One copy per branch (upgrades)
@@ -2303,7 +2385,7 @@ Add under the unreleased heading:
 - Freeing a branch from the source checkout is explicit: a clean checkout can be detached on confirmation, a dirty one is refused with its changed files named. Nothing is detached or stashed silently.
 - The repo views, Modules view and generated workspace follow the active version's copies, and opening a file from another version's copy offers to reopen the active one.
 - `db.branchName` is removed. It duplicated the database's version branch and drifted out of sync — changing a version left the row reading `17.0 • Odoo 19.0`. Databases with no version keep the value as their legacy `odooVersion`.
-- Database creation shows what it will record, including the repo branches it captures, instead of capturing them silently.
+- **Database creation asks which branch each project repo should use**, instead of silently recording whatever they happened to be on — and asks *before* creating or restoring anything, so cancelling no longer costs you a dump restore. *Use current branches* is still one of the offered answers; it is now a choice rather than an assumption. Cloning a database inherits its source's mapping rather than capturing the current checkouts.
 - The Databases view shows the repo-branch count on the row, and `Configure Project Repo Branches` is an inline action.
 - A newer environment switch supersedes an unanswered older prompt, so two rapid database selections cannot leave contradictory notifications standing.
 - **Check Version Environments** diagnoses every version against the current provisioning root — missing, unprovisioned, relocated or healthy — and re-provisions the ones that need it in place. Versions pointing at directories that no longer exist are flagged once on activation, rather than failing confusingly the next time you provision.
