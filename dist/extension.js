@@ -10579,21 +10579,27 @@ function ensureTestingConfigModel(testingConfig) {
 /***/ ((__unused_webpack_module, exports) => {
 
 
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.RepoModel = void 0;
 /**
  * Repository model: a git repo belonging to a project.
  */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.RepoModel = void 0;
+exports.normalizeBranchMode = normalizeBranchMode;
+function normalizeBranchMode(value) {
+    return value === 'worktree' ? 'worktree' : 'checkout';
+}
 class RepoModel {
     name;
     path;
     isSelected = false;
     addedAt;
-    constructor(name, path, isSelected = false, addedAt) {
+    branchMode;
+    constructor(name, path, isSelected = false, addedAt, branchMode = 'checkout') {
         this.name = name;
         this.path = path;
         this.isSelected = isSelected;
         this.addedAt = addedAt ?? new Date().toISOString();
+        this.branchMode = normalizeBranchMode(branchMode);
     }
 }
 exports.RepoModel = RepoModel;
