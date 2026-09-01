@@ -18,6 +18,77 @@ import {
     renameEntry as explorerRenameEntry,
     selectProjectForExplorer
 } from '../projectReposExplorer';
+import { normalizePath } from '../utils';
+import { showWarning, showModalWarning } from '../services/notifications';
+import { errorMessage, logger } from '../services/logger';
+import { tryRunCommand } from '../services/process';
+import { removeWorktree } from '../services/worktree';
+import { readSetupState } from '../services/setupState';
+import { describeModeChange, resolveRepoPath } from '../services/repoPaths';
+import { parsePorcelainStatus } from '../services/sourceConflict';
+import { normalizeBranchMode, RepoBranchMode, RepoModel } from '../models/repo';
+import { sanitizeProjectRepoBranchAssignments } from '../services/environment';
+
+/** Registers the checkout/worktree mode toggle for a project repository. */
+export function registerRepoBranchModeCommand(deps: CommandDeps): void {
+    const { context, refreshAll } = deps;
+
+    context.subscriptions.push(vscode.commands.registerCommand('odt.repo.toggleBranchMode', async (event?: unknown) => {
+        try {
+            const result = await SettingsStore.getSelectedProject();
+            if (!result) {
+                return;
+            }
+            const { data, project } = result;
+            const repoPath = extractUri(event)?.fsPath;
+            const repo = (project.repos ?? []).find(entry => normalizePath(entry.path) === normalizePath(repoPath ?? ''));
+            if (!repo) {
+                void showError('Could not identify the repository.');
+                return;
+            }
+
+            const root = readSetupState().provisioningRoot;
+            const nextMode: RepoBranchMode = normalizeBranchMode(repo.branchMode) === 'worktree' ? 'checkout' : 'worktree';
+            const branches = Array.from(new Set(
+                (project.dbs ?? []).flatMap(db =>
+                    sanitizeProjectRepoBranchAssignments(db.projectRepoBranches)
+                        .filter(entry => entry.repoName === repo.name || normalizePath(entry.repoPath) === normalizePath(repo.path))
+                        .map(entry => entry.branch))
+            ));
+
+            const confirm = await showModalWarning(
+                describeModeChange(repo.name, nextMode, root, branches),
+                nextMode === 'worktree' ? 'Create Worktrees' : 'Remove Worktrees'
+            );
+            if (!confirm) {
+                return;
+            }
+
+            if (nextMode === 'checkout') {
+                for (const branch of branches) {
+                    const dest = resolveRepoPath({ ...repo, branchMode: 'worktree' } as RepoModel, branch, root).path;
+                    if (!fs.existsSync(dest)) {
+                        continue;
+                    }
+                    const status = await tryRunCommand('git', ['status', '--porcelain'], { cwd: dest });
+                    if (status !== undefined && parsePorcelainStatus(status).length > 0) {
+                        void showWarning(`Kept ${dest}: it has uncommitted changes.`);
+                        continue;
+                    }
+                    await removeWorktree(repo.path, dest).catch(error =>
+                        logger.warn(`[worktree] could not remove ${dest}:`, error));
+                }
+            }
+
+            repo.branchMode = nextMode;
+            await SettingsStore.saveWithoutComments(stripSettings(data));
+            void showInfo(`"${repo.name}" now uses ${nextMode === 'worktree' ? 'one copy per branch' : 'a single checkout'}.`);
+            await refreshAll();
+        } catch (error) {
+            void showError(`Could not change the repository mode: ${errorMessage(error)}`);
+        }
+    }));
+}
 
 async function copyPathToClipboard(uri: vscode.Uri | undefined, relative: boolean): Promise<void> {
     if (!uri) {
@@ -60,6 +131,7 @@ async function openUriInIntegratedTerminal(uri: vscode.Uri | undefined): Promise
 }
 
 export function registerReposExplorerCommands(deps: CommandDeps): void {
+    registerRepoBranchModeCommand(deps);
     const { context, providers } = deps;
 
     // Tree context menus pass the tree node (which carries `.uri`), while

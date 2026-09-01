@@ -18838,6 +18838,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerRepoBranchModeCommand = registerRepoBranchModeCommand;
 exports.registerReposExplorerCommands = registerReposExplorerCommands;
 /**
  * Command handlers for the Project Repos (Explorer) view: file operations,
@@ -18853,6 +18854,65 @@ const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const runtimeCache_1 = __webpack_require__(15);
 const projectReposExplorer_1 = __webpack_require__(78);
+const utils_2 = __webpack_require__(8);
+const notifications_3 = __webpack_require__(16);
+const logger_1 = __webpack_require__(12);
+const process_1 = __webpack_require__(13);
+const worktree_1 = __webpack_require__(35);
+const setupState_1 = __webpack_require__(64);
+const repoPaths_1 = __webpack_require__(60);
+const sourceConflict_1 = __webpack_require__(74);
+const repo_1 = __webpack_require__(57);
+const environment_1 = __webpack_require__(31);
+/** Registers the checkout/worktree mode toggle for a project repository. */
+function registerRepoBranchModeCommand(deps) {
+    const { context, refreshAll } = deps;
+    context.subscriptions.push(vscode.commands.registerCommand('odt.repo.toggleBranchMode', async (event) => {
+        try {
+            const result = await settingsStore_1.SettingsStore.getSelectedProject();
+            if (!result) {
+                return;
+            }
+            const { data, project } = result;
+            const repoPath = (0, args_1.extractUri)(event)?.fsPath;
+            const repo = (project.repos ?? []).find(entry => (0, utils_2.normalizePath)(entry.path) === (0, utils_2.normalizePath)(repoPath ?? ''));
+            if (!repo) {
+                void (0, notifications_1.showError)('Could not identify the repository.');
+                return;
+            }
+            const root = (0, setupState_1.readSetupState)().provisioningRoot;
+            const nextMode = (0, repo_1.normalizeBranchMode)(repo.branchMode) === 'worktree' ? 'checkout' : 'worktree';
+            const branches = Array.from(new Set((project.dbs ?? []).flatMap(db => (0, environment_1.sanitizeProjectRepoBranchAssignments)(db.projectRepoBranches)
+                .filter(entry => entry.repoName === repo.name || (0, utils_2.normalizePath)(entry.repoPath) === (0, utils_2.normalizePath)(repo.path))
+                .map(entry => entry.branch))));
+            const confirm = await (0, notifications_3.showModalWarning)((0, repoPaths_1.describeModeChange)(repo.name, nextMode, root, branches), nextMode === 'worktree' ? 'Create Worktrees' : 'Remove Worktrees');
+            if (!confirm) {
+                return;
+            }
+            if (nextMode === 'checkout') {
+                for (const branch of branches) {
+                    const dest = (0, repoPaths_1.resolveRepoPath)({ ...repo, branchMode: 'worktree' }, branch, root).path;
+                    if (!fs.existsSync(dest)) {
+                        continue;
+                    }
+                    const status = await (0, process_1.tryRunCommand)('git', ['status', '--porcelain'], { cwd: dest });
+                    if (status !== undefined && (0, sourceConflict_1.parsePorcelainStatus)(status).length > 0) {
+                        void (0, notifications_3.showWarning)(`Kept ${dest}: it has uncommitted changes.`);
+                        continue;
+                    }
+                    await (0, worktree_1.removeWorktree)(repo.path, dest).catch(error => logger_1.logger.warn(`[worktree] could not remove ${dest}:`, error));
+                }
+            }
+            repo.branchMode = nextMode;
+            await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+            void (0, notifications_1.showInfo)(`"${repo.name}" now uses ${nextMode === 'worktree' ? 'one copy per branch' : 'a single checkout'}.`);
+            await refreshAll();
+        }
+        catch (error) {
+            void (0, notifications_1.showError)(`Could not change the repository mode: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
+}
 async function copyPathToClipboard(uri, relative) {
     if (!uri) {
         void (0, notifications_1.showInfo)('Select a file or folder first.');
@@ -18887,6 +18947,7 @@ async function openUriInIntegratedTerminal(uri) {
     terminal.show();
 }
 function registerReposExplorerCommands(deps) {
+    registerRepoBranchModeCommand(deps);
     const { context, providers } = deps;
     // Tree context menus pass the tree node (which carries `.uri`), while
     // programmatic calls may pass a Uri directly — extractUri handles both.

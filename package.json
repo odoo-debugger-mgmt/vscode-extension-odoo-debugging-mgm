@@ -605,6 +605,12 @@
         "title": "Detect Tickets from Branches & Manifests",
         "category": "Odoo DevTools",
         "icon": "$(search-fuzzy)"
+      },
+      {
+        "command": "odt.repo.toggleBranchMode",
+        "title": "Use One Copy Per Branch",
+        "category": "Odoo DevTools",
+        "icon": "$(repo-forked)"
       }
     ],
     "menus": {
@@ -1077,6 +1083,11 @@
           "command": "projectSelector.detectTickets",
           "when": "view == projectSelector",
           "group": "1_project@4"
+        },
+        {
+          "command": "odt.repo.toggleBranchMode",
+          "when": "view == odt.projectReposExplorer && viewItem == projectRepoRoot",
+          "group": "1_repo@1"
         }
       ],
       "commandPalette": [
