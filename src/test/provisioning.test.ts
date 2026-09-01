@@ -5,6 +5,7 @@ import {
     resolveProvisionPaths,
     buildPlan,
     isFullySatisfied,
+    isVersionProvisioned,
     ProvisionSpec,
     ProvisionProbe
 } from '../services/provisioning';
@@ -74,5 +75,16 @@ suite('Provisioning plan', () => {
         const plan = buildPlan(SPEC, { ...ALL_PRESENT, requirements: false });
         const needed = plan.filter(step => step.status === 'needed').map(step => step.id);
         assert.deepStrictEqual(needed, ['requirements']);
+    });
+
+    test('recognises a provisioned version by its interpreter', () => {
+        assert.strictEqual(isVersionProvisioned(undefined), false);
+        // Empty must stay false: callers normalize paths, and normalizing ''
+        // yields the workspace root, which exists.
+        assert.strictEqual(isVersionProvisioned(''), false);
+        assert.strictEqual(isVersionProvisioned('   '), false);
+        assert.strictEqual(isVersionProvisioned('/nonexistent/venv/bin/python'), false);
+        // The interpreter running this suite is by definition on disk.
+        assert.strictEqual(isVersionProvisioned(process.execPath), true);
     });
 });

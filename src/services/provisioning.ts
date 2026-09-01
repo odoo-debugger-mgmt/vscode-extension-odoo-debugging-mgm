@@ -101,6 +101,22 @@ export function isFullySatisfied(plan: ProvisionStep[]): boolean {
     return plan.every(step => step.status === 'satisfied');
 }
 
+/**
+ * A version is provisioned when the interpreter its pythonPath points at
+ * actually exists - a fact about the filesystem, never stored state.
+ *
+ * Callers must pass an unset path through as undefined rather than running it
+ * through normalizePath first: `normalizePath('')` yields the workspace root,
+ * which exists, and would report an unconfigured version as provisioned.
+ */
+export function isVersionProvisioned(pythonPath: string | undefined): boolean {
+    const trimmed = pythonPath?.trim();
+    if (!trimmed) {
+        return false;
+    }
+    return fs.existsSync(trimmed);
+}
+
 export async function probeProvision(spec: ProvisionSpec): Promise<ProvisionProbe> {
     const paths = resolveProvisionPaths(spec);
     const venvExists = fs.existsSync(venvPythonPath(paths.venvPath));

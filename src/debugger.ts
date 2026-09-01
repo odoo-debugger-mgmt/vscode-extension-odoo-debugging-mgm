@@ -17,6 +17,7 @@ import { logger, errorMessage } from './services/logger';
 import { updateManagedLaunchConfig } from './services/launchConfig';
 import { getSessionByName, runningDebuggerNames, resolveStopTarget } from './services/debugSessions';
 import { resolveDbForVersion } from './services/dbResolution';
+import { isVersionProvisioned } from './services/provisioning';
 
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
@@ -63,51 +64,76 @@ export async function setupDebugger(): Promise<any> {
         return undefined;
     }
     const { project } = result;
-    // Get settings from active version instead of legacy settings
+
     const versionsService = VersionsService.getInstance();
-    const settings = await versionsService.getActiveVersionSettings();
-    // Normalize paths to handle absolute vs relative
-    const normalizedOdooPath = normalizePath(settings.odooPath);
-    const normalizedPythonPath = normalizePath(settings.pythonPath);
-    let args: string[];
-    try {
-        args = await prepareArgs(project, settings, { versionId: versionsService.getActiveVersion()?.id });
-    } catch (error) {
-        logger.warn('Could not prepare debugger launch arguments:', error);
-        if (error instanceof Error) {
-            if (error.message === 'Select a database before running this action.') {
-                void showInfo('Select a database before configuring the debugger.');
+    await versionsService.initialize();
+    const activeVersion = versionsService.getActiveVersion();
+    const activeSettings = await versionsService.getActiveVersionSettings();
+
+    // One entry per provisioned version, each with its own name, ports and
+    // database: launch.json accumulates durable entries instead of one being
+    // renamed out from under the Run and Debug dropdown, and two versions can
+    // run at once. Unprovisioned versions have no interpreter to launch.
+    const targets = versionsService.getVersions().filter(version => {
+        const stored = version.settings.pythonPath?.trim();
+        return isVersionProvisioned(stored ? normalizePath(stored) : undefined);
+    });
+    if (activeVersion && !targets.some(version => version.id === activeVersion.id)) {
+        targets.push(activeVersion);
+    }
+
+    let activeConfig: unknown;
+
+    for (const version of targets) {
+        const settings = version.settings;
+        const normalizedOdooPath = normalizePath(settings.odooPath);
+        const normalizedPythonPath = normalizePath(settings.pythonPath);
+
+        let args: string[];
+        try {
+            args = await prepareArgs(project, settings as SettingsModel, { versionId: version.id });
+        } catch (error) {
+            // A version with no resolvable database is skipped rather than
+            // failing the sync for every other version. Only the active one is
+            // worth telling the user about.
+            if (version.id === activeVersion?.id) {
+                logger.warn('Could not prepare debugger launch arguments:', error);
+                if (error instanceof Error && error.message === 'Select a database before running this action.') {
+                    void showInfo('Select a database before configuring the debugger.');
+                } else {
+                    void showError(error instanceof Error ? error.message : 'Could not prepare debugger launch arguments.');
+                }
             } else {
-                void showError(error.message);
+                logger.debug(`Skipping launch entry for "${version.name}": ${errorMessage(error)}`);
             }
-        } else {
-            void showError('Could not prepare debugger launch arguments.');
+            continue;
         }
-        return undefined;
+
+        try {
+            // Only the extension's own entries in launch.json are rewritten;
+            // user comments and other configurations are preserved.
+            const config = await updateManagedLaunchConfig(workspacePath, {
+                name: settings.debuggerName,
+                type: 'debugpy',
+                request: 'launch',
+                cwd: workspacePath,
+                program: `${normalizedOdooPath}/odoo-bin`,
+                python: normalizedPythonPath,
+                console: 'integratedTerminal',
+                args
+            });
+            if (version.id === activeVersion?.id) {
+                activeConfig = config;
+            }
+        } catch (error) {
+            void showError(`Unable to update launch.json: ${errorMessage(error)}`);
+            return undefined;
+        }
     }
 
-    let newOdooConfig;
-    try {
-        // Only the extension's own entry in launch.json is rewritten; user
-        // comments and other configurations are preserved.
-        newOdooConfig = await updateManagedLaunchConfig(workspacePath, {
-            name: settings.debuggerName,
-            type: 'debugpy',
-            request: 'launch',
-            cwd: workspacePath,
-            program: `${normalizedOdooPath}/odoo-bin`,
-            python: normalizedPythonPath,
-            console: 'integratedTerminal',
-            args
-        });
-    } catch (error) {
-        void showError(`Unable to update launch.json: ${errorMessage(error)}`);
-        return undefined;
-    }
+    await selectPythonInterpreter(activeSettings.pythonPath);
 
-    await selectPythonInterpreter(settings.pythonPath);
-
-    return newOdooConfig;
+    return activeConfig;
 }
 
 async function prepareArgs(

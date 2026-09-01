@@ -2,12 +2,10 @@
  * Versions view: version profiles with their settings as editable children.
  */
 import * as vscode from 'vscode';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { VersionModel } from './models/version';
 import { VersionsService } from './versionsService';
 import { getSettingDisplayName, getSettingDisplayValue, normalizePath } from './utils';
-import { venvPythonPath } from './services/pythonToolchain';
+import { isVersionProvisioned } from './services/provisioning';
 import { activeIcon } from './views/icons';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
@@ -15,17 +13,19 @@ import { logger } from './services/logger';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 import { isDerivedSetting } from './services/versionIdentity';
 
-/**
- * A version is provisioned when the interpreter its pythonPath points at
- * actually exists - a fact about the filesystem, never stored state.
- */
+/** Provisioned state for the tree description, from the shared predicate. */
 function provisioningLabel(version: VersionModel): string {
-    const pythonPath = version.settings.pythonPath?.trim();
-    if (!pythonPath) {
-        return 'not provisioned';
-    }
-    const venvRoot = path.dirname(path.dirname(normalizePath(pythonPath)));
-    return fs.existsSync(venvPythonPath(venvRoot)) ? 'provisioned' : 'not provisioned';
+    return isVersionProvisioned(versionInterpreterPath(version)) ? 'provisioned' : 'not provisioned';
+}
+
+/**
+ * A version's interpreter as an absolute path, or undefined when it has none.
+ * Normalizing an empty string would yield the workspace root - which exists -
+ * so the emptiness check has to come first.
+ */
+export function versionInterpreterPath(version: VersionModel): string | undefined {
+    const stored = version.settings.pythonPath?.trim();
+    return stored ? normalizePath(stored) : undefined;
 }
 
 export class VersionTreeItem extends vscode.TreeItem {
