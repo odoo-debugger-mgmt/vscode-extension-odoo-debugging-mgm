@@ -111,23 +111,6 @@ export function resolveProjectRepoBranchAssignments(database: DatabaseModel | an
     return resolved;
 }
 
-/**
- * Captures the current branch of each project repository, used to attach the
- * developer's present working state to a newly created database.
- */
-export async function captureCurrentRepoBranches(projectRepos: RepoModel[]): Promise<ProjectRepoBranchAssignment[]> {
-    const captured = await Promise.all(projectRepos.map(async repo => {
-        const repoPath = normalizePath(repo.path);
-        const branch = await getRepoBranch(repoPath);
-        if (!branch) {
-            return undefined;
-        }
-        return { repoName: repo.name, repoPath, branch } as ProjectRepoBranchAssignment;
-    }));
-
-    return captured.filter((entry): entry is ProjectRepoBranchAssignment => !!entry);
-}
-
 export interface EnvironmentTarget {
     /** Version profile to activate. */
     versionId?: string;

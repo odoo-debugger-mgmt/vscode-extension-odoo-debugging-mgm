@@ -45,7 +45,6 @@ import { findStaleReferences } from './services/reconcile';
 import {
     alignEnvironment,
     buildDatabaseEnvironmentTarget,
-    captureCurrentRepoBranches,
     resolveProjectRepoBranchAssignments,
     sanitizeProjectRepoBranchAssignments
 } from './services/environment';
@@ -93,6 +92,17 @@ async function collectExistingDatabaseIdentifiers(): Promise<Set<string>> {
     }
 
     return identifiers;
+}
+
+/** One-line summary of a repo-branch choice, for the creation notification. */
+export function describeRepoBranchChoice(assignments: ProjectRepoBranchAssignment[]): string {
+    if (assignments.length === 0) {
+        return 'no project repo branches';
+    }
+    const shown = assignments.slice(0, 3).map(entry => `${entry.repoName}@${entry.branch}`).join(', ');
+    return assignments.length > 3
+        ? `${shown} and ${assignments.length - 3} more (${assignments.length} repos)`
+        : shown;
 }
 
 export async function promptProjectRepoBranchAssignments(
@@ -588,7 +598,15 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
         dbName = nameInput.trim();
     }
 
-    // Step 4: create/restore the PostgreSQL database.
+    // Step 4: decide the environment before doing any work. Asking after the
+    // dump has been restored means a cancellation costs the user the restore,
+    // and capturing the current branch silently was never a decision they made.
+    const projectRepoBranches = await promptProjectRepoBranchAssignments(repos, [], 'create');
+    if (projectRepoBranches === undefined) {
+        return undefined;
+    }
+
+    // Step 5: create/restore the PostgreSQL database.
     if (creationMethod === 'dump' && sqlDumpPath) {
         await setupDatabase(dbName, sqlDumpPath);
     } else if (creationMethod === 'template' && selectedTemplate) {
@@ -597,11 +615,11 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
         await setupDatabase(dbName, undefined);
     }
 
-    // Step 5: infer the environment instead of prompting for it. The version is
-    // auto-detected from the database itself; the current branch of every
-    // project repo is captured as the database's working state.
+    // Step 6: the version is still inferred - it is a fact about the database
+    // contents, not a preference - but the repo branches were chosen above.
     const { versionId, odooVersion } = await resolveVersionForNewDatabase(dbName, creationMethod);
-    const projectRepoBranches = await captureCurrentRepoBranches(repos);
+
+    showAutoInfo(`Recording ${describeRepoBranchChoice(projectRepoBranches)} for "${dbName}".`, 3000);
 
     return new DatabaseModel(dbName, creationTimestamp, {
         isSelected: true,
@@ -924,7 +942,9 @@ export async function cloneDatabaseFlow(event: unknown): Promise<void> {
 
     await cloneDatabaseFromTemplate(targetName, db.id);
 
-    const projectRepoBranches = await captureCurrentRepoBranches(project.repos ?? []);
+    // A clone runs the same environment as its source; the current checkouts
+    // are irrelevant to it.
+    const projectRepoBranches = sanitizeProjectRepoBranchAssignments(db.projectRepoBranches);
     const clone = new DatabaseModel(targetName, new Date(), {
         isSelected: false,
         isItABackup: false,

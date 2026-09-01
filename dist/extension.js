@@ -5442,7 +5442,6 @@ exports.getDatabaseSwitchBehavior = getDatabaseSwitchBehavior;
 exports.migrateLegacySwitchBehaviorSetting = migrateLegacySwitchBehaviorSetting;
 exports.sanitizeProjectRepoBranchAssignments = sanitizeProjectRepoBranchAssignments;
 exports.resolveProjectRepoBranchAssignments = resolveProjectRepoBranchAssignments;
-exports.captureCurrentRepoBranches = captureCurrentRepoBranches;
 exports.buildDatabaseEnvironmentTarget = buildDatabaseEnvironmentTarget;
 exports.describeSwitch = describeSwitch;
 exports.alignEnvironment = alignEnvironment;
@@ -5542,21 +5541,6 @@ function resolveProjectRepoBranchAssignments(database, projectRepos) {
         });
     }
     return resolved;
-}
-/**
- * Captures the current branch of each project repository, used to attach the
- * developer's present working state to a newly created database.
- */
-async function captureCurrentRepoBranches(projectRepos) {
-    const captured = await Promise.all(projectRepos.map(async (repo) => {
-        const repoPath = (0, utils_1.normalizePath)(repo.path);
-        const branch = await (0, branches_1.getRepoBranch)(repoPath);
-        if (!branch) {
-            return undefined;
-        }
-        return { repoName: repo.name, repoPath, branch };
-    }));
-    return captured.filter((entry) => !!entry);
 }
 /**
  * Builds the environment a database expects: its version, the version's core
@@ -6455,6 +6439,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getEffectiveOdooVersion = getEffectiveOdooVersion;
+exports.describeRepoBranchChoice = describeRepoBranchChoice;
 exports.promptProjectRepoBranchAssignments = promptProjectRepoBranchAssignments;
 exports.extractDatabaseFromEvent = extractDatabaseFromEvent;
 exports.createDb = createDb;
@@ -6525,6 +6510,16 @@ async function collectExistingDatabaseIdentifiers() {
         }
     }
     return identifiers;
+}
+/** One-line summary of a repo-branch choice, for the creation notification. */
+function describeRepoBranchChoice(assignments) {
+    if (assignments.length === 0) {
+        return 'no project repo branches';
+    }
+    const shown = assignments.slice(0, 3).map(entry => `${entry.repoName}@${entry.branch}`).join(', ');
+    return assignments.length > 3
+        ? `${shown} and ${assignments.length - 3} more (${assignments.length} repos)`
+        : shown;
 }
 async function promptProjectRepoBranchAssignments(repos, existingAssignments = [], mode = 'create') {
     if (repos.length === 0) {
@@ -6957,7 +6952,14 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
         }
         dbName = nameInput.trim();
     }
-    // Step 4: create/restore the PostgreSQL database.
+    // Step 4: decide the environment before doing any work. Asking after the
+    // dump has been restored means a cancellation costs the user the restore,
+    // and capturing the current branch silently was never a decision they made.
+    const projectRepoBranches = await promptProjectRepoBranchAssignments(repos, [], 'create');
+    if (projectRepoBranches === undefined) {
+        return undefined;
+    }
+    // Step 5: create/restore the PostgreSQL database.
     if (creationMethod === 'dump' && sqlDumpPath) {
         await setupDatabase(dbName, sqlDumpPath);
     }
@@ -6967,11 +6969,10 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
     else if (creationMethod === 'fresh') {
         await setupDatabase(dbName, undefined);
     }
-    // Step 5: infer the environment instead of prompting for it. The version is
-    // auto-detected from the database itself; the current branch of every
-    // project repo is captured as the database's working state.
+    // Step 6: the version is still inferred - it is a fact about the database
+    // contents, not a preference - but the repo branches were chosen above.
     const { versionId, odooVersion } = await resolveVersionForNewDatabase(dbName, creationMethod);
-    const projectRepoBranches = await (0, environment_1.captureCurrentRepoBranches)(repos);
+    (0, notifications_1.showAutoInfo)(`Recording ${describeRepoBranchChoice(projectRepoBranches)} for "${dbName}".`, 3000);
     return new db_1.DatabaseModel(dbName, creationTimestamp, {
         isSelected: true,
         isItABackup: creationMethod === 'dump',
@@ -7247,7 +7248,9 @@ async function cloneDatabaseFlow(event) {
     }
     const targetName = nameInput.trim();
     await cloneDatabaseFromTemplate(targetName, db.id);
-    const projectRepoBranches = await (0, environment_1.captureCurrentRepoBranches)(project.repos ?? []);
+    // A clone runs the same environment as its source; the current checkouts
+    // are irrelevant to it.
+    const projectRepoBranches = (0, environment_1.sanitizeProjectRepoBranchAssignments)(db.projectRepoBranches);
     const clone = new db_1.DatabaseModel(targetName, new Date(), {
         isSelected: false,
         isItABackup: false,
