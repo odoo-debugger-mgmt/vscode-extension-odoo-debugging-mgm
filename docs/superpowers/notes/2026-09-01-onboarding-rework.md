@@ -127,6 +127,32 @@ default* — see observation 3.
 Harmless, but it is a settings write path that bypasses the identity guards, so
 it should be deleted rather than left as a trap for a future setup flow.
 
+### 10. **"Setup Odoo" never writes a single configuration value** (shipping bug)
+
+`setupOdooBranch` (`src/odooInstaller.ts:305`) asks five questions — scope,
+destination, which repos, branch, shallow — clones into the chosen
+`baseDir`, and then calls `provisionAndCreateVersion`. There is not one
+`config.update` in the whole file.
+
+`provisionAndCreateVersion` reads its source repo from
+`getDefaultVersionSettings().odooPath`, i.e. `./odoo` relative to the
+workspace. So if the user answers *"Choose a different folder…"* at the
+destination prompt — an offered, reasonable answer — setup clones the
+repositories successfully and then provisioning fails with
+*"No Odoo repository at &lt;workspace&gt;/odoo. Run 'Setup Odoo' first."*
+The user just ran Setup Odoo.
+
+This is the sharpest argument for the rework: setup currently **performs an
+action without recording its outcome**, so the two halves of the flow disagree
+about where Odoo lives. Making the source repo a concrete, written setting is
+what fixes it.
+
+### 11. Setup asks five questions before doing anything
+
+Scope, destination, targets, branch, depth — all before the first byte is
+cloned, and four of the five have an obvious default. This is the opposite of
+"install once and forget". Detection should answer most of them.
+
 ---
 
 ## Open questions for the rework
