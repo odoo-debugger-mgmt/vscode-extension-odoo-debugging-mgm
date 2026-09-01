@@ -7,6 +7,8 @@ import { SettingsStore } from './settingsStore';
 import { ProjectModel } from './models/project';
 import { RepoModel } from './models/repo';
 import { showInfo, normalizePath } from './utils';
+import { VersionsService } from './versionsService';
+import { versionFolderEntries } from './services/workspaceFolders';
 
 interface ProjectSelectionResult {
     project: ProjectModel;
@@ -64,6 +66,15 @@ async function buildWorkspaceFile(context: vscode.ExtensionContext, project: Pro
         }
         folders.push(folderEntry);
     }
+
+    // The active version's own checkouts, so files opened from this workspace
+    // belong to the version being run.
+    const versionsService = VersionsService.getInstance();
+    await versionsService.initialize();
+    folders.push(...versionFolderEntries(
+        versionsService.getActiveVersion(),
+        folders.map(folder => folder.path)
+    ));
 
     const workspaceData = {
         folders,

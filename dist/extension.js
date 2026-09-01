@@ -14896,15 +14896,15 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
 const viewCommands_1 = __webpack_require__(77);
 const projectCommands_1 = __webpack_require__(79);
-const repoCommands_1 = __webpack_require__(82);
-const dbCommands_1 = __webpack_require__(83);
-const moduleCommands_1 = __webpack_require__(84);
-const testingCommands_1 = __webpack_require__(85);
-const versionCommands_1 = __webpack_require__(86);
-const debugCommands_1 = __webpack_require__(89);
-const reposExplorerCommands_1 = __webpack_require__(90);
-const editorCommands_1 = __webpack_require__(91);
-const helpCommands_1 = __webpack_require__(92);
+const repoCommands_1 = __webpack_require__(83);
+const dbCommands_1 = __webpack_require__(84);
+const moduleCommands_1 = __webpack_require__(85);
+const testingCommands_1 = __webpack_require__(86);
+const versionCommands_1 = __webpack_require__(87);
+const debugCommands_1 = __webpack_require__(90);
+const reposExplorerCommands_1 = __webpack_require__(91);
+const editorCommands_1 = __webpack_require__(92);
+const helpCommands_1 = __webpack_require__(93);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -15799,6 +15799,8 @@ exports.quickSwitchProjectWorkspace = quickSwitchProjectWorkspace;
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
+const versionsService_1 = __webpack_require__(23);
+const workspaceFolders_1 = __webpack_require__(82);
 async function getActiveProjectOrPrompt() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
@@ -15841,6 +15843,11 @@ async function buildWorkspaceFile(context, project) {
         }
         folders.push(folderEntry);
     }
+    // The active version's own checkouts, so files opened from this workspace
+    // belong to the version being run.
+    const versionsService = versionsService_1.VersionsService.getInstance();
+    await versionsService.initialize();
+    folders.push(...(0, workspaceFolders_1.versionFolderEntries)(versionsService.getActiveVersion(), folders.map(folder => folder.path)));
     const workspaceData = {
         folders,
         settings: {}
@@ -15890,6 +15897,45 @@ async function quickSwitchProjectWorkspace(context) {
 
 /***/ }),
 /* 82 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.versionFolderEntries = versionFolderEntries;
+/**
+ * The active version's core checkouts, as multi-root workspace folders. Each
+ * version owns its own worktree, so a project workspace that lists only the
+ * project repos opens the custom addons without the Odoo source being run -
+ * and breakpoints set in a stale checkout bind to the wrong files.
+ */
+const utils_1 = __webpack_require__(7);
+function versionFolderEntries(version, existingPaths) {
+    if (!version) {
+        return [];
+    }
+    const seen = new Set(existingPaths.map(entry => (0, utils_1.normalizePath)(entry)));
+    const entries = [];
+    const add = (rawPath, label) => {
+        const trimmed = rawPath?.trim();
+        if (!trimmed) {
+            return;
+        }
+        const resolved = (0, utils_1.normalizePath)(trimmed);
+        if (seen.has(resolved)) {
+            return;
+        }
+        seen.add(resolved);
+        entries.push({ path: resolved, name: `${label} (${version.name})` });
+    };
+    add(version.settings.odooPath, 'odoo');
+    add(version.settings.enterprisePath, 'enterprise');
+    add(version.settings.designThemesPath, 'design-themes');
+    return entries;
+}
+
+
+/***/ }),
+/* 83 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15945,7 +15991,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 83 */
+/* 84 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16170,7 +16216,7 @@ function registerDbCommands(deps) {
 
 
 /***/ }),
-/* 84 */
+/* 85 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16305,7 +16351,7 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 85 */
+/* 86 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16398,7 +16444,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 86 */
+/* 87 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16442,12 +16488,12 @@ exports.registerVersionCommands = registerVersionCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(35));
-const args_1 = __webpack_require__(87);
+const args_1 = __webpack_require__(88);
 const utils_1 = __webpack_require__(7);
 const versionIdentity_1 = __webpack_require__(26);
 const notifications_1 = __webpack_require__(15);
 const logger_1 = __webpack_require__(11);
-const branchPick_1 = __webpack_require__(88);
+const branchPick_1 = __webpack_require__(89);
 const runtimeCache_1 = __webpack_require__(14);
 const environment_1 = __webpack_require__(30);
 const odooInstaller_1 = __webpack_require__(80);
@@ -16930,7 +16976,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 87 */
+/* 88 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17023,7 +17069,7 @@ function extractUri(arg) {
 
 
 /***/ }),
-/* 88 */
+/* 89 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17164,7 +17210,7 @@ async function pickOdooBranch(odooPath, title) {
 
 
 /***/ }),
-/* 89 */
+/* 90 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17248,7 +17294,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 90 */
+/* 91 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17294,7 +17340,7 @@ exports.registerReposExplorerCommands = registerReposExplorerCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(35));
 const path = __importStar(__webpack_require__(3));
-const args_1 = __webpack_require__(87);
+const args_1 = __webpack_require__(88);
 const notifications_1 = __webpack_require__(15);
 const notifications_2 = __webpack_require__(15);
 const settingsStore_1 = __webpack_require__(5);
@@ -17418,7 +17464,7 @@ function registerReposExplorerCommands(deps) {
 
 
 /***/ }),
-/* 91 */
+/* 92 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17525,7 +17571,7 @@ function registerEditorCommands(deps) {
 
 
 /***/ }),
-/* 92 */
+/* 93 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
