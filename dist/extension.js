@@ -6215,6 +6215,7 @@ exports.parseWorktreeList = parseWorktreeList;
 exports.findWorktreeForBranch = findWorktreeForBranch;
 exports.classifyBranchConflict = classifyBranchConflict;
 exports.ensureWorktree = ensureWorktree;
+exports.ensureRealBranchWorktree = ensureRealBranchWorktree;
 exports.resolveSourceRepo = resolveSourceRepo;
 exports.removeWorktree = removeWorktree;
 exports.removeManagedBranch = removeManagedBranch;
@@ -6353,6 +6354,46 @@ async function ensureWorktree(repoPath, branch, destPath, token) {
     // inside the worktree without further setup.
     await (0, process_1.runCommand)('git', ['worktree', 'add', '-b', managedBranch, destPath, startPoint], { cwd: repoPath, token });
     return { path: destPath, created: true, adopted: false, branch: managedBranch };
+}
+/**
+ * A worktree checked out on `branch` itself, not on a managed `odt/` alias.
+ *
+ * Custom repositories are committed to and pushed from, so their worktrees
+ * must hold the real branch. The caller is responsible for having freed the
+ * branch from the source checkout first (see sourceConflict.ts); this function
+ * surfaces git's refusal rather than working around it.
+ */
+async function ensureRealBranchWorktree(repoPath, branch, destPath, token) {
+    const existing = await listWorktrees(repoPath);
+    const atDestination = existing.find(entry => samePath(entry.path, destPath));
+    if (atDestination) {
+        logger_1.logger.info(`[worktree] reusing existing worktree at ${destPath}`);
+        return { path: destPath, created: false, adopted: true, branch: atDestination.branch ?? branch };
+    }
+    const conflict = classifyBranchConflict(existing, branch, destPath, fs.existsSync);
+    if (conflict.kind === 'stale') {
+        logger_1.logger.info(`[worktree] pruning the stale record for ${conflict.path}`);
+        await (0, process_1.runCommand)('git', ['worktree', 'prune'], { cwd: repoPath, token });
+    }
+    else if (conflict.kind === 'live') {
+        logger_1.logger.warn(`[worktree] ${branch} is already checked out at ${conflict.path}; reusing it`);
+        return { path: conflict.path, created: false, adopted: true, branch };
+    }
+    if (fs.existsSync(destPath)) {
+        throw new Error(`Cannot create a worktree at ${destPath}: the path already exists and is not a worktree of ${repoPath}.`);
+    }
+    if (await hasRef(repoPath, `refs/heads/${branch}`)) {
+        await (0, process_1.runCommand)('git', ['worktree', 'add', destPath, branch], { cwd: repoPath, token });
+        return { path: destPath, created: true, adopted: false, branch };
+    }
+    const remote = `refs/remotes/origin/${branch}`;
+    if (!(await hasRef(repoPath, remote))) {
+        throw new Error(`Branch "${branch}" was not found locally or on origin in ${repoPath}.`);
+    }
+    // Branching from the remote-tracking ref sets upstream, so push and pull
+    // work inside the worktree without further setup.
+    await (0, process_1.runCommand)('git', ['worktree', 'add', '-b', branch, destPath, remote], { cwd: repoPath, token });
+    return { path: destPath, created: true, adopted: false, branch };
 }
 /** The main repository a worktree belongs to, or undefined when it is not one. */
 async function resolveSourceRepo(worktreePath) {

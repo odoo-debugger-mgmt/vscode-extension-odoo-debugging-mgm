@@ -92,4 +92,13 @@ suite('Worktree listing', () => {
         );
         assert.deepStrictEqual(classifyBranchConflict([], 'odt/19.0', '/root/x', () => true), { kind: 'none' });
     });
+
+    test('managed branch names are not used for real-branch worktrees', () => {
+        // Odoo core parks on odt/19.0 because nobody commits there. Custom code
+        // is committed and pushed, so its worktree must hold the real branch or
+        // the developer's work lands on a branch nobody else sees.
+        assert.strictEqual(managedBranchName('19.0'), 'odt/19.0');
+        assert.strictEqual(branchSatisfiesTarget('19.0', '19.0'), true);
+        assert.strictEqual(branchSatisfiesTarget('odt/19.0', '19.0'), true);
+    });
 });
