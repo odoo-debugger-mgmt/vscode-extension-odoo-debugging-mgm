@@ -309,7 +309,7 @@ Two signals, merged:
 - **Managed** — the session map from §11 gives the running versions; each resolves to its database through §12. Authoritative for sessions the extension started.
 - **External** — `SELECT datname, count(*) FROM pg_stat_activity WHERE datname IS NOT NULL GROUP BY datname` reports databases with live backends, catching servers started from a terminal or another window. A version's port answering is a secondary hint.
 
-Rendering follows the v1.2 rule that state is carried by icon **shape**, not color, so it survives row highlighting: `$(debug-alt)` for managed-running, `$(pulse)` for external, nothing for idle, with the port appended to the existing `•`-joined description. The green check for *selected* is unchanged and orthogonal.
+Rendering keeps running state and selection on separate channels. `TreeItem.description` does not render codicons (unlike a `QuickPickItem`), so the marker is words rather than an icon: `running :8017` for managed-running, `running (external)` for a server started elsewhere, nothing for idle, prepended to the existing `•`-joined description. The row's icon is left entirely to selection — the green check is unchanged and orthogonal — so a selected database that is also running reads as both.
 
 Refresh is event-driven — the existing debug start/terminate listeners already fire — with the PostgreSQL probe cached in `runtimeCache` under a short TTL and refreshed when the view is expanded. No background polling.
 

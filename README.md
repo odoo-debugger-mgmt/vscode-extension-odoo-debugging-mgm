@@ -93,6 +93,7 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 - The Odoo version is **auto-detected** from the database contents and linked to the matching version profile.
 - Context actions: **rename display name**, copy name, clone, restore, **open in browser**, **open psql shell**, change linked version, configure per-repo branches, delete. Renaming only changes the label — the PostgreSQL database keeps its name.
 - **Templates** (`Manage Database Templates`): register or create template databases and clone from them in seconds; import/export template lists as JSON.
+- **Running databases are marked** in the list: `running :8017` for a server this extension started, `running (external)` for one started from a terminal or another window. Each version also remembers the database it last launched, so switching versions restores the right `-d`.
 - **Reconcile Databases** finds stored references whose PostgreSQL database no longer exists and removes them in one pass.
 
 ### Modules
@@ -119,6 +120,7 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 - Your configured `odooPath` is used **only as a source** to cut worktrees from; a version never runs out of it, even when it happens to be on the matching branch. That directory stays yours to switch freely. Each worktree gets its own `odt/<branch>` branch tracking `origin/<branch>`, so `git pull` works inside it.
 - The required Python version is read from the branch itself (`setup.py`'s `python_requires` or `odoo/release.py`'s `MIN_PY_VERSION`, plus the distributions named in `requirements.txt`'s header), so 17.0 gets 3.10 and 19.0 gets 3.12 without any hand-maintained table. An interpreter already installed via pyenv or your system is reused when it fits; otherwise [uv](https://docs.astral.sh/uv/) installs the right one.
 - After provisioning, a **dependency check** reports what's missing (`wkhtmltopdf`, PostgreSQL client tools, `rtlcss`, and the build headers `lxml`/`psycopg2`/`ldap` need) with a copy-paste install command for your platform. Nothing is installed for you and nothing runs `sudo`.
+- Each version's **debugger name, HTTP port and shell port are derived from its branch** — `odoo:17.0` on ports 8017/5017, `odoo:18.0` on 8018/5018 — and shown in the tree as read-only rows. That is what lets two versions run at the same time, which is the point when you are comparing a database before and after an upgrade. `odooDebugger.debuggerNamePrefix` changes the `odoo` part; the ports follow the series and step upward if another version, or any other process, has already claimed one.
 - Each version row shows whether it is provisioned. Deleting a version offers to remove the folders the extension created — and never the ones you made yourself.
 - Clone, delete, activate; edit any setting inline from the tree.
 - Reset settings to the configured defaults, or save a version's settings as the new defaults.
@@ -132,7 +134,11 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 
 ## Debugging & launch.json
 
-The extension maintains a single launch configuration (named after the version's `debuggerName`) in `.vscode/launch.json`, and rewrites **only that entry** — your own configurations and comments are preserved. It assembles `--addons-path`, `-d`, `-i`/`-u` from your module selections, ports, time limits, dev mode and testing flags automatically.
+The extension maintains **one launch configuration per provisioned version** in `.vscode/launch.json`, each named after that version's derived `debuggerName` and carrying its own port and database. Only those entries are rewritten — your own configurations and comments are preserved. It assembles `--addons-path`, `-d`, `-i`/`-u` from your module selections, ports, time limits, dev mode and testing flags automatically.
+
+Because the entries are stable and unique, the Run and Debug dropdown works as a version switcher. **F5 follows whatever the dropdown has selected, while `Ctrl+Alt+O S` always follows the *active* version.** That divergence is deliberate: it is what lets you debug one version from the dropdown while launching another from the chord. **Stop Server** targets the active version's session, and asks only when several versions are running and none of them is the active one.
+
+Generated project workspaces also include the active version's own `odoo`, `enterprise` and `design-themes` checkouts, so files you open belong to the version you are running and breakpoints bind to the right worktree.
 
 Server commands: **Start Server**, **Run Server Without Debugging**, **Restart Server**, **Stop Server**, **Open Odoo in Browser** (uses the active version's port and the selected database), and **Copy Odoo Command** — copies the exact `python odoo-bin …` command line the debugger runs (assembled from the selected project, active version and database) to the clipboard, ready to paste into a terminal. With `odooDebugger.server.openBrowserOnStart` enabled, the browser opens automatically once the server port accepts connections.
 
@@ -198,7 +204,8 @@ Every view also has search (`$(search)`) and sort (`$(sort-precedence)`) actions
 
 ## Settings Reference
 
-- `odooDebugger.defaultVersion.*` — defaults applied to newly created versions (paths, ports, params, post-switch hooks). Existing versions are edited from the Versions view.
+- `odooDebugger.defaultVersion.*` — defaults applied to newly created versions (paths, params, post-switch hooks). Existing versions are edited from the Versions view. Note that `debuggerName`, `portNumber` and `shellPortNumber` are **no longer** among these: they are derived from each version's branch.
+- `odooDebugger.debuggerNamePrefix` — prefix for generated launch configuration names (`<prefix>:<branch>`, default `odoo`).
 - `odooDebugger.provisioning.root` — directory holding per-version worktrees and virtualenvs. Empty means the parent of the default `odooPath`.
 - `odooDebugger.provisioning.uvPath` — path to an existing `uv` binary. Empty means look on `PATH`; when uv is absent, provisioning falls back to the standard library `venv` and `pip`.
 - `odooDebugger.databaseSwitchBehavior` — `auto` / `ask` / `never` (see above).
