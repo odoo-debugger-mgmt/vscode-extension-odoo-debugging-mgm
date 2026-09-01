@@ -2,9 +2,10 @@
  * Command handlers for the Projects view and project workspaces.
  */
 import * as vscode from 'vscode';
+import * as path from 'node:path';
 import type { CommandDeps } from './index';
 import { normalizePath } from '../utils';
-import { showError } from '../services/notifications';
+import { showError, showInfo } from '../services/notifications';
 import { errorMessage } from '../services/logger';
 import {
     createProject,
@@ -22,9 +23,12 @@ import {
     detectProjectTickets
 } from '../project';
 import { createDb, selectDatabase } from '../dbs';
-import { setupOdooBranch } from '../odooInstaller';
+import { cloneOdooRepositories } from '../odooInstaller';
 import { openProjectWorkspace, rebuildProjectWorkspace, quickSwitchProjectWorkspace } from '../projectWorkspace';
 import type { DatabaseModel } from '../models/db';
+import { runSetup } from '../services/setupFlow';
+import { readSetupState } from '../services/setupState';
+import { updateConfiguredContext } from '../context';
 
 export function registerProjectCommands(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
@@ -126,9 +130,21 @@ export function registerProjectCommands(deps: CommandDeps): void {
         await refreshAll({ reason: 'ui' });
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.setup', async () => {
-        await setupOdooBranch();
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.setup', async () => {
+        // Detection first: the clone wizard is the fallback, not the entry point.
+        const configured = await runSetup({
+            cloneFallback: () => cloneOdooRepositories(path.dirname(readSetupState().provisioningRoot))
+        });
+        updateConfiguredContext(readSetupState().isConfigured);
         await refreshAll({ reason: 'ui' });
+
+        if (!configured) {
+            return;
+        }
+        const next = await showInfo('Odoo DevTools is set up.', 'Create a Version');
+        if (next === 'Create a Version') {
+            await vscode.commands.executeCommand('odoo.createVersion');
+        }
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand('odoo-debugger.quickProjectSearch', async () => {

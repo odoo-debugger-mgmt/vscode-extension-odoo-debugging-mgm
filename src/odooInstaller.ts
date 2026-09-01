@@ -7,7 +7,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { getWorkspacePath, showInfo, showError, showWarning, normalizePath, getDefaultVersionSettings } from './utils';
+import { showInfo, showError, showWarning } from './utils';
 import { runCommand } from './services/process';
 import { logger, errorMessage } from './services/logger';
 import { showModalWarning } from './services/notifications';
@@ -16,6 +16,7 @@ import type { VersionModel } from './models/version';
 import { probeProvision, buildPlan, isFullySatisfied, executeProvision, ProvisionSpec } from './services/provisioning';
 import { summarizeMissing } from './services/systemDeps';
 import { venvPythonPath } from './services/pythonToolchain';
+import { readSetupState } from './services/setupState';
 
 interface CloneTarget {
     /** Directory name inside the workspace. */
@@ -198,37 +199,29 @@ async function cloneRepository(
     throw lastError instanceof Error ? lastError : new Error(`Failed to clone ${target.dirName}`);
 }
 
-/** Provisioning root: the configured setting, else the parent of the default odooPath. */
-function resolveProvisioningRoot(): string {
-    const configured = vscode.workspace
-        .getConfiguration('odooDebugger.provisioning')
-        .get<string>('root', '')
-        .trim();
-    if (configured) {
-        return normalizePath(configured);
-    }
-    return path.dirname(normalizePath(getDefaultVersionSettings().odooPath));
-}
-
 /**
  * Provisions the environment for `branch` - worktree, interpreter, virtualenv,
  * requirements - and creates the matching version profile pointing at it.
  * Returns undefined when the user cancels or provisioning fails.
  */
 export async function provisionAndCreateVersion(branch: string, name: string): Promise<VersionModel | undefined> {
-    const defaults = getDefaultVersionSettings();
-    const spec: ProvisionSpec = {
-        branch,
-        sourceRepoPath: normalizePath(defaults.odooPath),
-        enterpriseRepoPath: defaults.enterprisePath ? normalizePath(defaults.enterprisePath) : undefined,
-        designThemesRepoPath: defaults.designThemesPath ? normalizePath(defaults.designThemesPath) : undefined,
-        root: resolveProvisioningRoot()
-    };
-
-    if (!fs.existsSync(spec.sourceRepoPath)) {
-        void showError(`No Odoo repository at ${spec.sourceRepoPath}. Run "Setup Odoo" first.`);
+    const setup = readSetupState();
+    if (!setup.isConfigured || !setup.sourceRepo) {
+        // Offer the fix rather than instructing the user to find it.
+        const choice = await showWarning('Odoo DevTools is not set up yet.', 'Set Up');
+        if (choice === 'Set Up') {
+            await vscode.commands.executeCommand('odoo.setup');
+        }
         return undefined;
     }
+
+    const spec: ProvisionSpec = {
+        branch,
+        sourceRepoPath: setup.sourceRepo,
+        enterpriseRepoPath: setup.enterpriseRepo,
+        designThemesRepoPath: setup.designThemesRepo,
+        root: setup.provisioningRoot
+    };
 
     const plan = buildPlan(spec, await probeProvision(spec));
     const detail = plan
@@ -302,66 +295,46 @@ export async function provisionAndCreateVersion(branch: string, name: string): P
     return version;
 }
 
-export async function setupOdooBranch() {
-    const workspaceDir = getWorkspacePath();
-    if (!workspaceDir) {
-        void showError('Open a workspace folder before running this command.');
-        return;
-    }
-
-    const scope = await vscode.window.showQuickPick(
-        [
-            {
-                label: 'Full setup',
-                description: 'Clone repositories, create a Python venv and install requirements',
-                cloneOnly: false
-            },
-            {
-                label: 'Clone repositories only',
-                description: 'Just clone the Odoo repositories — no venv, no requirements',
-                cloneOnly: true
-            }
-        ],
-        { placeHolder: 'What should the setup do?', ignoreFocusOut: true }
-    );
-    if (!scope) {
-        return;
-    }
-
-    const baseDir = await pickDestination(workspaceDir);
+/**
+ * Clones the Odoo repositories and returns the path of the odoo checkout, so
+ * the caller can record it. The previous version of this function cloned and
+ * returned nothing, leaving configuration pointing at `./odoo` regardless of
+ * where the user actually put the repositories.
+ */
+export async function cloneOdooRepositories(defaultBaseDir: string): Promise<string | undefined> {
+    const baseDir = await pickDestination(defaultBaseDir);
     if (!baseDir) {
-        return;
+        return undefined;
     }
 
     const targets = await pickCloneTargets();
     if (!targets) {
-        return;
+        return undefined;
     }
 
     const branch = await pickBranch();
     if (!branch) {
-        return;
+        return undefined;
     }
 
     const shallow = await pickCloneDepth();
     if (shallow === undefined) {
-        return;
+        return undefined;
     }
 
-    const dirNames = targets.map(target => target.dirName);
-    if (!(await confirmExistingDirectories(baseDir, scope.cloneOnly ? dirNames : [...dirNames, 'venv']))) {
-        return;
+    if (!(await confirmExistingDirectories(baseDir, targets.map(target => target.dirName)))) {
+        return undefined;
     }
 
     const cloned: string[] = [];
     const succeeded = await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
-        title: `Cloning Odoo ${branch}${shallow ? ' (shallow)' : ''}…`,
+        title: `Cloning Odoo ${branch}${shallow ? ' (shallow)' : ''}\u2026`,
         cancellable: true
     }, async (progress, token) => {
         try {
             for (const target of targets) {
-                progress.report({ message: `Cloning ${target.dirName}…` });
+                progress.report({ message: `Cloning ${target.dirName}\u2026` });
                 await cloneRepository(target, { baseDir, branch, shallow }, progress, token);
                 cloned.push(target.dirName);
             }
@@ -378,20 +351,11 @@ export async function setupOdooBranch() {
     });
 
     if (!succeeded) {
-        return;
+        return undefined;
     }
 
-    if (!scope.cloneOnly) {
-        await provisionAndCreateVersion(branch, `Odoo ${branch}`);
-        return;
-    }
-
-    // Clone-only: offer the follow-up instead of running it.
-    const next = await showInfo(
-        `Cloned ${cloned.join(', ')} (${branch}${shallow ? ', shallow' : ''}).`,
-        'Provision Version'
-    );
-    if (next === 'Provision Version') {
-        await provisionAndCreateVersion(branch, `Odoo ${branch}`);
-    }
+    // The odoo repo is the one that matters; enterprise and design-themes are
+    // found beside it by detection.
+    const odooTarget = targets.find(target => fs.existsSync(path.join(baseDir, target.dirName, 'odoo-bin')));
+    return odooTarget ? path.join(baseDir, odooTarget.dirName) : undefined;
 }

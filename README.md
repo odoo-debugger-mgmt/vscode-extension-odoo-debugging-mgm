@@ -13,6 +13,10 @@ A **Get Started with Odoo DevTools** walkthrough is available from VS Code's Wel
 
 ## Quick Start
 
+**First run: `Odoo DevTools: Set Up`.** It asks for two things — the Odoo git repository to cut per-version worktrees from, and where to build environments (`~/odoo-dev` by default) — and it finds them for you where it can, so it is usually one confirmation. Both are stored at user level, so every workspace you open afterwards is already set up; a workspace that needs a different fork can override them. If you have no Odoo checkout yet, setup offers to clone one and records where it put it.
+
+The source repository is never run directly: every version gets its own worktree cut from it, so that checkout stays yours to switch branches freely.
+
 1. Open a folder in VS Code.
    The extension stores its state in `.vscode/odoo-debugger-data.json`, so projects/versions/databases are **workspace-specific**.
 
@@ -206,7 +210,8 @@ Every view also has search (`$(search)`) and sort (`$(sort-precedence)`) actions
 
 - `odooDebugger.defaultVersion.*` — defaults applied to newly created versions (paths, params, post-switch hooks). Existing versions are edited from the Versions view. Note that `debuggerName`, `portNumber` and `shellPortNumber` are **no longer** among these: they are derived from each version's branch.
 - `odooDebugger.debuggerNamePrefix` — prefix for generated launch configuration names (`<prefix>:<branch>`, default `odoo`).
-- `odooDebugger.provisioning.root` — directory holding per-version worktrees and virtualenvs. Empty means the parent of the default `odooPath`.
+- `odooDebugger.sourceRepo.odoo` / `.enterprise` / `.designThemes` — the repositories per-version worktrees are cut from. Set once by **Set Up**, at user level.
+- `odooDebugger.provisioning.root` — directory holding per-version worktrees and virtualenvs. Empty means `~/odoo-dev`.
 - `odooDebugger.provisioning.uvPath` — path to an existing `uv` binary. Empty means look on `PATH`; when uv is absent, provisioning falls back to the standard library `venv` and `pip`.
 - `odooDebugger.databaseSwitchBehavior` — `auto` / `ask` / `never` (see above).
 - `odooDebugger.statusBar.enabled` — show the project/database/version status bar items.

@@ -98,8 +98,9 @@
         "icon": "$(add)"
       },
       {
-        "command": "projectSelector.setup",
-        "title": "Setup Odoo",
+        "command": "odoo.setup",
+        "title": "Set Up",
+        "category": "Odoo DevTools",
         "icon": "resources/icons/setup.svg"
       },
       {
@@ -405,12 +406,12 @@
         "title": "Clone Version",
         "icon": "$(copy)"
       },
-        {
-          "command": "odoo.openVersionInBrowser",
-          "title": "Open Server in Browser",
-          "category": "Odoo DevTools",
-          "icon": "$(globe)"
-        },
+      {
+        "command": "odoo.openVersionInBrowser",
+        "title": "Open Server in Browser",
+        "category": "Odoo DevTools",
+        "icon": "$(globe)"
+      },
       {
         "command": "odoo.deleteVersion",
         "title": "Delete Version",
@@ -641,7 +642,7 @@
           "group": "navigation@3"
         },
         {
-          "command": "projectSelector.setup",
+          "command": "odoo.setup",
           "when": "view == projectSelector",
           "group": "1_project@1"
         },
@@ -1301,7 +1302,12 @@
       },
       {
         "view": "projectSelector",
-        "when": "odoo-debugger.is_active",
+        "when": "odoo-debugger.is_active && !odoo-debugger.is_configured",
+        "contents": "Start here: tell Odoo DevTools where your Odoo repository lives.\n[Set Up Odoo DevTools](command:odoo.setup)"
+      },
+      {
+        "view": "projectSelector",
+        "when": "odoo-debugger.is_active && odoo-debugger.is_configured",
         "contents": "No projects yet. A project groups your repositories, databases and settings.\n[Create Project](command:projectSelector.create)"
       },
       {
@@ -1326,7 +1332,12 @@
       },
       {
         "view": "versionsManager",
-        "when": "odoo-debugger.is_active",
+        "when": "odoo-debugger.is_active && !odoo-debugger.is_configured",
+        "contents": "Odoo DevTools isn't set up yet. Point it at your Odoo repository and choose where environments are built — once per machine.\n[Set Up Odoo DevTools](command:odoo.setup)"
+      },
+      {
+        "view": "versionsManager",
+        "when": "odoo-debugger.is_active && odoo-debugger.is_configured",
         "contents": "No versions yet. A version stores the paths, port and defaults for one Odoo setup.\n[Create Version](command:odoo.createVersion)"
       },
       {
@@ -1567,10 +1578,29 @@
           "default": "odoo",
           "markdownDescription": "Prefix for each version's generated launch configuration name: `<prefix>:<branch>`, for example `odoo:17.0`. The name, HTTP port and shell port are derived from the version's branch and cannot be edited per version."
         },
+        "odooDebugger.sourceRepo.odoo": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Absolute path to the Odoo git repository that per-version worktrees are cut from. This repository is never run directly, so it stays yours to switch branches freely. Set by **Odoo DevTools: Set Up**."
+        },
+        "odooDebugger.sourceRepo.enterprise": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Optional. Absolute path to the `enterprise` repository worktrees are cut from."
+        },
+        "odooDebugger.sourceRepo.designThemes": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Optional. Absolute path to the `design-themes` repository worktrees are cut from."
+        },
         "odooDebugger.provisioning.root": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Directory holding per-version worktrees and virtualenvs. Empty means the parent directory of the configured default `odooPath`."
+          "scope": "machine-overridable",
+          "markdownDescription": "Directory holding per-version worktrees and virtualenvs. Empty means `~/odoo-dev`."
         },
         "odooDebugger.provisioning.uvPath": {
           "type": "string",
@@ -1662,14 +1692,14 @@
         "description": "Set up your Odoo development workbench: defaults, a version profile, a project with its database, and the debugger.",
         "steps": [
           {
-            "id": "configureDefaults",
-            "title": "Configure default paths",
-            "description": "Point the extension at your Odoo repositories, Python environment and dumps folder.\n[Open Settings](command:odoo.openVersionDefaults)",
+            "id": "setUp",
+            "title": "Set up Odoo DevTools",
+            "description": "Tell the extension where your Odoo repository lives and where to build environments.\n[Set Up](command:odoo.setup)",
             "media": {
-              "markdown": "media/walkthrough/configure-defaults.md"
+              "markdown": "media/walkthrough/set-up.md"
             },
             "completionEvents": [
-              "onCommand:odoo.openVersionDefaults"
+              "onCommand:odoo.setup"
             ]
           },
           {

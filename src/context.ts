@@ -18,3 +18,7 @@ export function updateActiveContext(isActive: boolean): void {
 export function updateServerRunningContext(isRunning: boolean): void {
     void vscode.commands.executeCommand('setContext', 'odoo-debugger.server_running', isRunning);
 }
+
+export function updateConfiguredContext(isConfigured: boolean): void {
+    void vscode.commands.executeCommand('setContext', 'odoo-debugger.is_configured', isConfigured);
+}

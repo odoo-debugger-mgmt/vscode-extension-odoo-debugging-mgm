@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as fs from 'node:fs';
 
 import { DbsTreeProvider } from './views/dbsView';
 import { migrateLegacySwitchBehaviorSetting } from './services/environment';
@@ -11,7 +12,7 @@ import { setupDebugger } from './debugger';
 import { SettingsStore } from './settingsStore';
 import { VersionsTreeProvider } from './versionsTreeProvider';
 import { VersionsService } from './versionsService';
-import { updateTestingContext, updateActiveContext, updateServerRunningContext } from './context';
+import { updateTestingContext, updateActiveContext, updateServerRunningContext, updateConfiguredContext } from './context';
 import { registerServerLifecycle } from './services/server';
 import type { DatabaseModel } from './models/db';
 import { SortPreferences } from './sortPreferences';
@@ -19,6 +20,9 @@ import { ProjectReposExplorerProvider } from './projectReposExplorer';
 import { logger, registerLogger } from './services/logger';
 import { logStaleReferences } from './services/reconcile';
 import { invalidateRunningState } from './services/runningState';
+import { readSetupState, shouldAdoptLegacySourceRepo, readRawSetupSettings, writeSetupSettings } from './services/setupState';
+import { showInfo } from './services/notifications';
+import { getDefaultVersionSettings, normalizePath } from './utils';
 import { StatusBarIndicators } from './views/statusBar';
 import { registerAllCommands, RefreshReason } from './commands';
 
@@ -51,6 +55,17 @@ export async function activate(context: vscode.ExtensionContext) {
 
     const isWorkspaceOpen = !!vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0;
     updateActiveContext(isWorkspaceOpen);
+
+    // Setup state gates the welcome buttons and the first-run prompt. Adopting
+    // a pre-existing defaultVersion.odooPath first means nobody already working
+    // is asked to set up something they have effectively already set up.
+    await adoptLegacySourceRepo();
+    updateConfiguredContext(readSetupState().isConfigured);
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+        if (event.affectsConfiguration('odooDebugger.sourceRepo') || event.affectsConfiguration('odooDebugger.provisioning.root')) {
+            updateConfiguredContext(readSetupState().isConfigured);
+        }
+    }));
 
     await initializeTestingContext();
 
@@ -194,6 +209,49 @@ export async function activate(context: vscode.ExtensionContext) {
     registerAllCommands({ context, providers, versionsService, sortPreferences, moduleTreeView, refreshAll });
 
     void statusBar.update();
+    void promptFirstRunSetup(context);
+}
+
+/**
+ * Before this design, `defaultVersion.odooPath` doubled as the repository
+ * worktrees were cut from, so an existing user already has it pointed at a
+ * real checkout. Adopting it silently keeps the upgrade invisible to them.
+ */
+async function adoptLegacySourceRepo(): Promise<void> {
+    try {
+        const legacy = getDefaultVersionSettings().odooPath;
+        const adopted = shouldAdoptLegacySourceRepo(
+            readRawSetupSettings(),
+            legacy ? normalizePath(legacy) : undefined,
+            candidate => fs.existsSync(candidate)
+        );
+        if (adopted) {
+            await writeSetupSettings({ sourceRepo: adopted });
+            logger.info(`[setup] adopted the existing odooPath as the source repository: ${adopted}`);
+        }
+    } catch (error) {
+        logger.debug('Could not adopt a legacy source repository:', error);
+    }
+}
+
+/** One dismissible nudge; "Later" is remembered so it never nags. */
+const FIRST_RUN_DISMISSED_KEY = 'odooDevtools.setupPromptDismissed';
+
+async function promptFirstRunSetup(context: vscode.ExtensionContext): Promise<void> {
+    if (!vscode.workspace.workspaceFolders?.length) {
+        return;
+    }
+    if (readSetupState().isConfigured || context.globalState.get<boolean>(FIRST_RUN_DISMISSED_KEY)) {
+        return;
+    }
+
+    const choice = await showInfo("Odoo DevTools isn't set up yet.", 'Set Up', 'Later');
+    if (choice === 'Set Up') {
+        await vscode.commands.executeCommand('odoo.setup');
+    } else if (choice === 'Later') {
+        // Remembered globally: a per-window nag is worse than no nag at all.
+        await context.globalState.update(FIRST_RUN_DISMISSED_KEY, true);
+    }
 }
 
 export function deactivate() {
