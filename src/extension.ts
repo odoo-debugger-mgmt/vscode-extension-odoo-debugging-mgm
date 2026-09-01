@@ -18,6 +18,7 @@ import { SortPreferences } from './sortPreferences';
 import { ProjectReposExplorerProvider } from './projectReposExplorer';
 import { logger, registerLogger } from './services/logger';
 import { logStaleReferences } from './services/reconcile';
+import { invalidateRunningState } from './services/runningState';
 import { StatusBarIndicators } from './views/statusBar';
 import { registerAllCommands, RefreshReason } from './commands';
 
@@ -76,17 +77,10 @@ export async function activate(context: vscode.ExtensionContext) {
     const statusBar = new StatusBarIndicators();
     context.subscriptions.push(statusBar);
 
-    // Track the extension's own debug session for when-clauses and the
-    // optional open-browser-on-start automation.
+    // Track the extension's own debug sessions for when-clauses and the
+    // optional open-browser-on-start automation. Registered further down,
+    // once refreshViews exists for it to call.
     updateServerRunningContext(false);
-    registerServerLifecycle(context, {
-        onRunningChanged: updateServerRunningContext,
-        getSelectedDbName: async () => {
-            const result = await SettingsStore.getSelectedProject();
-            const db = (result?.project.dbs as DatabaseModel[] | undefined)?.find(entry => entry.isSelected);
-            return db?.id;
-        }
-    });
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('odooDebugger.statusBar.enabled')) {
             void statusBar.update();
@@ -127,6 +121,21 @@ export async function activate(context: vscode.ExtensionContext) {
         Object.values(providers).forEach(provider => provider.refresh());
         await statusBar.update();
     };
+
+    registerServerLifecycle(context, {
+        onRunningChanged: running => {
+            updateServerRunningContext(running);
+            // A session just started or stopped: the cached probe is stale and
+            // the Databases view is showing the previous state.
+            invalidateRunningState();
+            void refreshViews();
+        },
+        getSelectedDbName: async () => {
+            const result = await SettingsStore.getSelectedProject();
+            const db = (result?.project.dbs as DatabaseModel[] | undefined)?.find(entry => entry.isSelected);
+            return db?.id;
+        }
+    });
 
     let debuggerSyncTimer: NodeJS.Timeout | undefined;
     let debuggerSyncInFlight: Promise<void> | null = null;

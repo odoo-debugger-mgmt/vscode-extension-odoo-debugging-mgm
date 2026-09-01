@@ -10,6 +10,7 @@ import { getDatabaseLabel } from '../utils';
 import { activeIcon } from './icons';
 import { sanitizeProjectRepoBranchAssignments } from '../services/environment';
 import { getEffectiveOdooVersion } from '../dbs';
+import { getRunningInstances, runningDescriptionPart, RunningInstance } from '../services/runningState';
 
 /** Tree provider for the Databases view of the selected project. */
 export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
@@ -38,10 +39,15 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         const sortId = this.sortPreferences.get('dbSelector', getDefaultSortOption('dbSelector'));
         const sortedDbs = [...dbs].sort((a, b) => this.compareDatabases(a, b, sortId));
 
-        return sortedDbs.map(db => this.buildDatabaseItem(db));
+        // Probed once per refresh, not once per row.
+        const running = new Map<string, RunningInstance>(
+            (await getRunningInstances()).map(instance => [instance.dbName, instance])
+        );
+
+        return sortedDbs.map(db => this.buildDatabaseItem(db, running.get(db.id)));
     }
 
-    private buildDatabaseItem(db: DatabaseModel): vscode.TreeItem {
+    private buildDatabaseItem(db: DatabaseModel, running?: RunningInstance): vscode.TreeItem {
         // Handle date parsing defensively
         let editedDate = new Date(db.createdAt);
         if (isNaN(editedDate.getTime())) {
@@ -55,8 +61,8 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         const treeItem = new vscode.TreeItem(dbLabel, vscode.TreeItemCollapsibleState.None);
         treeItem.id = db.id;
         treeItem.iconPath = db.isSelected ? activeIcon : new vscode.ThemeIcon('database');
-        treeItem.description = this.buildDescription(db);
-        treeItem.tooltip = new vscode.MarkdownString(this.buildTooltip(db, dbLabel, formattedDate));
+        treeItem.description = this.buildDescription(db, running);
+        treeItem.tooltip = new vscode.MarkdownString(this.buildTooltip(db, dbLabel, formattedDate, running));
         treeItem.contextValue = 'database';
 
         // Store the database object for commands that need it
@@ -70,9 +76,16 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         return treeItem;
     }
 
-    /** Description shows branch, version and origin info as subtext. */
-    private buildDescription(db: DatabaseModel): string {
+    /** Description shows running state, branch, version and origin as subtext. */
+    private buildDescription(db: DatabaseModel, running?: RunningInstance): string {
         const parts: string[] = [];
+
+        // Running state leads: when switching databases, what is already up is
+        // the thing worth seeing first.
+        const runningPart = runningDescriptionPart(running);
+        if (runningPart) {
+            parts.push(runningPart);
+        }
 
         if (db.versionId) {
             const version = this.lookupVersion(db.versionId);
@@ -104,11 +117,19 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         return parts.join(' • ');
     }
 
-    private buildTooltip(db: DatabaseModel, dbLabel: string, formattedDate: string): string {
+    private buildTooltip(db: DatabaseModel, dbLabel: string, formattedDate: string, running?: RunningInstance): string {
         const tooltipDetails: string[] = [];
 
         tooltipDetails.push(`**${dbLabel}**`);
         tooltipDetails.push(`**Internal name:** ${db.id}`);
+
+        if (running) {
+            tooltipDetails.push(
+                running.origin === 'managed'
+                    ? `**Status:** running${running.port ? ` on port ${running.port}` : ''}`
+                    : `**Status:** running outside this window`
+            );
+        }
 
         if (db.versionId) {
             const version = this.lookupVersion(db.versionId);

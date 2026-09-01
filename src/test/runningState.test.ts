@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { mergeRunningInstances, RunningInstance } from '../services/runningState';
+import { mergeRunningInstances, runningDescriptionPart, RunningInstance } from '../services/runningState';
 
 const managed: RunningInstance = {
     versionId: 'v17',
@@ -37,5 +37,21 @@ suite('Running state', () => {
 
     test('returns an empty list when nothing is running', () => {
         assert.deepStrictEqual(mergeRunningInstances([], []), []);
+    });
+
+    test('describes running state as text, with the port when known', () => {
+        assert.strictEqual(runningDescriptionPart(undefined), undefined);
+        assert.strictEqual(
+            runningDescriptionPart({ dbName: 'shop-17', port: 8017, origin: 'managed' }),
+            'running :8017'
+        );
+        assert.strictEqual(
+            runningDescriptionPart({ dbName: 'shop-17', origin: 'managed' }),
+            'running'
+        );
+        assert.strictEqual(
+            runningDescriptionPart({ dbName: 'shop-18', origin: 'external' }),
+            'running (external)'
+        );
     });
 });
