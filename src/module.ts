@@ -18,6 +18,9 @@ import { getInstalledModuleNames, getInstalledModules } from './services/databas
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { VersionsService } from './versionsService';
+import { resolveProjectRepos } from './services/repoPaths';
+import { resolveProjectRepoBranchAssignments } from './services/environment';
+import { readSetupState } from './services/setupState';
 import { showModalWarning } from './services/notifications';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 import { runCommand, tryRunCommand } from './services/process';
@@ -548,6 +551,17 @@ export async function createModuleFromScaffold(): Promise<void> {
         return;
     }
 
+    // Resolved once: in worktree mode the source checkout is not what any
+    // version runs, so scaffolding into it would put the module nowhere useful.
+    const selectedDb = targetProject.dbs?.find(entry => entry.isSelected);
+    const resolvedRepos = resolveProjectRepos(
+        projectRepos,
+        selectedDb ? resolveProjectRepoBranchAssignments(selectedDb, projectRepos) : [],
+        readSetupState().provisioningRoot
+    );
+    const resolvedPathFor = (repo: RepoModel): string =>
+        resolvedRepos.find(entry => entry.repo === repo)?.path ?? normalizePath(repo.path);
+
     let targetRepo: RepoModel | undefined;
     if (projectRepos.length === 1) {
         targetRepo = projectRepos[0];
@@ -555,7 +569,7 @@ export async function createModuleFromScaffold(): Promise<void> {
         const selectedRepo = await vscode.window.showQuickPick(
             projectRepos.map(repo => ({
                 label: repo.name,
-                description: repo.path,
+                description: resolvedPathFor(repo),
                 detail: 'Scaffold destination repository',
                 repo
             })),
@@ -580,7 +594,7 @@ export async function createModuleFromScaffold(): Promise<void> {
 
     const normalizedPythonPath = normalizePath(settings.pythonPath);
     const normalizedOdooPath = normalizePath(settings.odooPath);
-    const destinationPath = normalizePath(targetRepo.path);
+    const destinationPath = resolvedPathFor(targetRepo);
     const repositoryRootPath = await resolveRepositoryRoot(destinationPath);
     const odooBinPath = path.join(normalizedOdooPath, 'odoo-bin');
 

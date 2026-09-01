@@ -7,7 +7,7 @@ import * as vscode from "vscode";
 import * as path from 'node:path';
 import { ProjectModel } from "./models/project";
 import { SettingsModel } from "./models/settings";
-import { getWorkspacePath, normalizePath, resolveOptionalPath, showError, showInfo, showAutoInfo } from './utils';
+import { getWorkspacePath, normalizePath, resolveOptionalPath, showError, showInfo, showWarning, showAutoInfo } from './utils';
 import { collectModuleDiscovery, resolvePsaeDirectories } from './services/psaeInternal';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
@@ -18,6 +18,10 @@ import { updateManagedLaunchConfig } from './services/launchConfig';
 import { getSessionByName, runningDebuggerNames, resolveStopTarget } from './services/debugSessions';
 import { resolveDbForVersion } from './services/dbResolution';
 import { isVersionProvisioned } from './services/provisioning';
+import { resolveProjectRepos } from './services/repoPaths';
+import { ensureCustomWorktrees } from './services/customWorktree';
+import { readSetupState } from './services/setupState';
+import { resolveProjectRepoBranchAssignments } from './services/environment';
 
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
@@ -80,12 +84,27 @@ export async function setupDebugger(): Promise<any> {
         targets.push(activeVersion);
     }
 
+    // Worktrees are created once per sync rather than per launch entry: the
+    // same branch is often shared by several versions.
+    const setupRoot = readSetupState().provisioningRoot;
+    const worktreeProblems = new Set<string>();
+
     let activeConfig: unknown;
 
     for (const version of targets) {
         const settings = version.settings;
         const normalizedOdooPath = normalizePath(settings.odooPath);
         const normalizedPythonPath = normalizePath(settings.pythonPath);
+
+        const versionDb = resolveDbForVersion(project.dbs, project.selectedDbByVersion, version.id);
+        if (versionDb) {
+            const { problems } = await ensureCustomWorktrees(resolveProjectRepos(
+                project.repos ?? [],
+                resolveProjectRepoBranchAssignments(versionDb, project.repos ?? []),
+                setupRoot
+            ));
+            problems.forEach(problem => worktreeProblems.add(problem));
+        }
 
         let args: string[];
         try {
@@ -127,6 +146,10 @@ export async function setupDebugger(): Promise<any> {
             void showError(`Unable to update launch.json: ${errorMessage(error)}`);
             return undefined;
         }
+    }
+
+    if (worktreeProblems.size > 0) {
+        void showWarning(`Some repositories fell back to their source checkout — ${Array.from(worktreeProblems).join('; ')}`);
     }
 
     await selectPythonInterpreter(activeSettings.pythonPath);
@@ -182,7 +205,14 @@ async function prepareArgs(
 
     // psae-internal directories: resolved through the shared service so the
     // Modules tree and the launch args always agree on what is included.
-    const discovery = collectModuleDiscovery(project);
+    // Resolve every project repo to the directory this version runs from, so
+    // two versions on different branches never share one copy of the code.
+    const resolvedRepos = resolveProjectRepos(
+        project.repos ?? [],
+        resolveProjectRepoBranchAssignments(db, project.repos ?? []),
+        readSetupState().provisioningRoot
+    );
+    const discovery = collectModuleDiscovery(project, resolvedRepos);
 
     const containerPathMap = new Map<string, string>();
 

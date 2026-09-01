@@ -1,4 +1,5 @@
 import { normalizePath, discoverModulesInRepos, ModuleDiscoveryResult, PsaeInternalDirectoryInfo } from '../utils';
+import { toDiscoveryRepos, ResolvedRepo } from './repoPaths';
 import { ProjectModel } from '../models/project';
 
 /**
@@ -22,9 +23,13 @@ export interface PsaeDirectoryState extends PsaeInternalDirectoryInfo {
 }
 
 /** Runs module discovery for the project, honoring its manual includes. */
-export function collectModuleDiscovery(project: ProjectModel): ModuleDiscoveryResult {
+export function collectModuleDiscovery(project: ProjectModel, resolved?: ResolvedRepo[]): ModuleDiscoveryResult {
     const manualIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
-    return discoverModulesInRepos(project.repos, { manualIncludePaths: manualIncludes });
+    // Resolved repos point at the active version's worktrees; without them
+    // discovery falls back to the source checkouts, which is correct for
+    // checkout-mode projects and for callers that have no version in hand.
+    const repos = resolved ? toDiscoveryRepos(resolved) : project.repos;
+    return discoverModulesInRepos(repos, { manualIncludePaths: manualIncludes });
 }
 
 /** Splits the raw override list into normalized include/exclude path sets. */
