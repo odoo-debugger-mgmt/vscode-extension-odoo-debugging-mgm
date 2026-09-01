@@ -20,6 +20,7 @@ import { ProjectReposExplorerProvider } from './projectReposExplorer';
 import { logger, registerLogger } from './services/logger';
 import { logStaleReferences } from './services/reconcile';
 import { invalidateRunningState } from './services/runningState';
+import { registerWrongCopyGuard } from './services/wrongCopyGuard';
 import { readSetupState, shouldAdoptLegacySourceRepo, readRawSetupSettings, writeSetupSettings } from './services/setupState';
 import { showInfo } from './services/notifications';
 import { getDefaultVersionSettings, normalizePath } from './utils';
@@ -209,6 +210,7 @@ export async function activate(context: vscode.ExtensionContext) {
     };
 
     registerAllCommands({ context, providers, versionsService, sortPreferences, moduleTreeView, refreshAll });
+    registerWrongCopyGuard(context);
 
     void statusBar.update();
     promptFirstRunSetup(context).catch(error => logger.warn('First-run setup prompt failed:', error));
