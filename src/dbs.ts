@@ -1098,6 +1098,10 @@ export async function changeDatabaseVersion(event: unknown) {
                 project.dbs[dbIndex].versionId = selectedChoice.versionId;
                 // Don't set odooVersion when version is assigned - it should come from the version
                 project.dbs[dbIndex].odooVersion = undefined;
+                // branchName records the core branch this database runs. Leaving
+                // the old one behind makes the row read "17.0 • Odoo 19.0", since
+                // the view shows branchName whenever it differs from the version.
+                project.dbs[dbIndex].branchName = selectedVersion.odooVersion ?? '';
             }
         } else {
             // Remove version association but preserve original branch name

@@ -154,6 +154,40 @@ export function buildDatabaseEnvironmentTarget(database: DatabaseModel | any, pr
     };
 }
 
+export interface SwitchSummaryInput {
+    versionName?: string;
+    core?: { branch: string; needsCheckout: boolean; missingEnvironment: boolean };
+    repoBranchCount: number;
+}
+
+/**
+ * How a pending switch is described to the user. A provisioned version's
+ * worktree is already on the right branch, so nothing is checked out - saying
+ * nothing there reads as though a branch switch were about to happen, which is
+ * what this wording exists to avoid.
+ */
+export function describeSwitch(input: SwitchSummaryInput): string[] {
+    const parts: string[] = [];
+
+    if (input.versionName) {
+        parts.push(`version "${input.versionName}"`);
+    }
+
+    if (input.core?.missingEnvironment) {
+        parts.push(`core repositories for "${input.core.branch}" are missing`);
+    } else if (input.core?.needsCheckout) {
+        parts.push(`core branch "${input.core.branch}"`);
+    } else if (input.core) {
+        parts.push(`its existing "${input.core.branch}" worktree`);
+    }
+
+    if (input.repoBranchCount > 0) {
+        parts.push(`${input.repoBranchCount} project repo branch(es)`);
+    }
+
+    return parts;
+}
+
 interface EnvironmentDiff {
     versionToActivate?: VersionModel;
     settings: SettingsModel;
@@ -162,7 +196,7 @@ interface EnvironmentDiff {
      * false for a provisioned version, whose worktree is already correct - the
      * pipeline then runs post-switch hooks only.
      */
-    coreRepoPipeline?: { branch: string; needsCheckout: boolean };
+    coreRepoPipeline?: { branch: string; needsCheckout: boolean; missingEnvironment: boolean };
     repoCheckouts: ProjectRepoBranchAssignment[];
     descriptions: string[];
 }
@@ -176,16 +210,18 @@ async function computeEnvironmentDiff(target: EnvironmentTarget): Promise<Enviro
     const settings = new SettingsModel(targetVersion?.settings ?? await versionsService.getActiveVersionSettings());
 
     const coreBranchTarget = target.coreBranch?.trim() || targetVersion?.odooVersion?.trim() || undefined;
-    let coreRepoPipeline: { branch: string; needsCheckout: boolean } | undefined;
+    let coreRepoPipeline: { branch: string; needsCheckout: boolean; missingEnvironment: boolean } | undefined;
     if (coreBranchTarget) {
         const configuredPaths = [settings.odooPath, settings.enterprisePath, settings.designThemesPath]
             .filter(entry => entry && entry.trim() !== '')
             .map(entry => normalizePath(entry));
         const existingPaths = configuredPaths.filter(entry => fs.existsSync(entry));
 
-        // Nothing usable to compare against: request the checkout so the
-        // missing/unconfigured paths are reported instead of silently skipped.
-        let needsCheckout = existingPaths.length === 0;
+        // Configured but absent is "not provisioned", not "needs a checkout":
+        // promising a branch switch into directories that do not exist is the
+        // misleading message this distinction removes.
+        const missingEnvironment = configuredPaths.length > 0 && existingPaths.length === 0;
+        let needsCheckout = false;
         for (const repoPath of existingPaths) {
             // A provisioned worktree reports its managed branch (odt/19.0) while
             // the version targets the series (19.0); asking git to check out
@@ -198,8 +234,8 @@ async function computeEnvironmentDiff(target: EnvironmentTarget): Promise<Enviro
 
         // A version change alone is enough: post-switch hooks must run even
         // when every worktree is already on the right branch.
-        if (needsCheckout || versionToActivate) {
-            coreRepoPipeline = { branch: coreBranchTarget, needsCheckout };
+        if (needsCheckout || missingEnvironment || versionToActivate) {
+            coreRepoPipeline = { branch: coreBranchTarget, needsCheckout, missingEnvironment };
         }
     }
 
@@ -219,16 +255,11 @@ async function computeEnvironmentDiff(target: EnvironmentTarget): Promise<Enviro
         }
     }
 
-    const descriptions: string[] = [];
-    if (versionToActivate) {
-        descriptions.push(`version "${versionToActivate.name}"`);
-    }
-    if (coreRepoPipeline?.needsCheckout) {
-        descriptions.push(`branch "${coreRepoPipeline.branch}"`);
-    }
-    if (repoCheckouts.length > 0) {
-        descriptions.push(`${repoCheckouts.length} project repo branch(es)`);
-    }
+    const descriptions = describeSwitch({
+        versionName: versionToActivate?.name,
+        core: coreRepoPipeline,
+        repoBranchCount: repoCheckouts.length
+    });
 
     return { versionToActivate, settings, coreRepoPipeline, repoCheckouts, descriptions };
 }
@@ -342,7 +373,10 @@ async function applyEnvironmentDiff(diff: EnvironmentDiff, label: string): Promi
     }
 
     if (diff.coreRepoPipeline) {
-        const { branch, needsCheckout } = diff.coreRepoPipeline;
+        const { branch, needsCheckout, missingEnvironment } = diff.coreRepoPipeline;
+        if (missingEnvironment) {
+            failures.push(`the core repositories for "${branch}" are missing - provision this version again`);
+        }
         const results = await alignCoreRepos(diff.settings, branch, needsCheckout);
         const failed = results.filter(result => !result.success);
         if (failed.length === 0) {

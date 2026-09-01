@@ -5457,6 +5457,7 @@ exports.sanitizeProjectRepoBranchAssignments = sanitizeProjectRepoBranchAssignme
 exports.resolveProjectRepoBranchAssignments = resolveProjectRepoBranchAssignments;
 exports.captureCurrentRepoBranches = captureCurrentRepoBranches;
 exports.buildDatabaseEnvironmentTarget = buildDatabaseEnvironmentTarget;
+exports.describeSwitch = describeSwitch;
 exports.alignEnvironment = alignEnvironment;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(9));
@@ -5585,6 +5586,31 @@ function buildDatabaseEnvironmentTarget(database, projectRepos) {
         repoAssignments: resolveProjectRepoBranchAssignments(database, projectRepos)
     };
 }
+/**
+ * How a pending switch is described to the user. A provisioned version's
+ * worktree is already on the right branch, so nothing is checked out - saying
+ * nothing there reads as though a branch switch were about to happen, which is
+ * what this wording exists to avoid.
+ */
+function describeSwitch(input) {
+    const parts = [];
+    if (input.versionName) {
+        parts.push(`version "${input.versionName}"`);
+    }
+    if (input.core?.missingEnvironment) {
+        parts.push(`core repositories for "${input.core.branch}" are missing`);
+    }
+    else if (input.core?.needsCheckout) {
+        parts.push(`core branch "${input.core.branch}"`);
+    }
+    else if (input.core) {
+        parts.push(`its existing "${input.core.branch}" worktree`);
+    }
+    if (input.repoBranchCount > 0) {
+        parts.push(`${input.repoBranchCount} project repo branch(es)`);
+    }
+    return parts;
+}
 async function computeEnvironmentDiff(target) {
     const versionsService = versionsService_1.VersionsService.getInstance();
     await versionsService.initialize();
@@ -5598,9 +5624,11 @@ async function computeEnvironmentDiff(target) {
             .filter(entry => entry && entry.trim() !== '')
             .map(entry => (0, utils_1.normalizePath)(entry));
         const existingPaths = configuredPaths.filter(entry => fs.existsSync(entry));
-        // Nothing usable to compare against: request the checkout so the
-        // missing/unconfigured paths are reported instead of silently skipped.
-        let needsCheckout = existingPaths.length === 0;
+        // Configured but absent is "not provisioned", not "needs a checkout":
+        // promising a branch switch into directories that do not exist is the
+        // misleading message this distinction removes.
+        const missingEnvironment = configuredPaths.length > 0 && existingPaths.length === 0;
+        let needsCheckout = false;
         for (const repoPath of existingPaths) {
             // A provisioned worktree reports its managed branch (odt/19.0) while
             // the version targets the series (19.0); asking git to check out
@@ -5612,8 +5640,8 @@ async function computeEnvironmentDiff(target) {
         }
         // A version change alone is enough: post-switch hooks must run even
         // when every worktree is already on the right branch.
-        if (needsCheckout || versionToActivate) {
-            coreRepoPipeline = { branch: coreBranchTarget, needsCheckout };
+        if (needsCheckout || missingEnvironment || versionToActivate) {
+            coreRepoPipeline = { branch: coreBranchTarget, needsCheckout, missingEnvironment };
         }
     }
     const repoCheckouts = [];
@@ -5631,16 +5659,11 @@ async function computeEnvironmentDiff(target) {
             repoCheckouts.push(assignment);
         }
     }
-    const descriptions = [];
-    if (versionToActivate) {
-        descriptions.push(`version "${versionToActivate.name}"`);
-    }
-    if (coreRepoPipeline?.needsCheckout) {
-        descriptions.push(`branch "${coreRepoPipeline.branch}"`);
-    }
-    if (repoCheckouts.length > 0) {
-        descriptions.push(`${repoCheckouts.length} project repo branch(es)`);
-    }
+    const descriptions = describeSwitch({
+        versionName: versionToActivate?.name,
+        core: coreRepoPipeline,
+        repoBranchCount: repoCheckouts.length
+    });
     return { versionToActivate, settings, coreRepoPipeline, repoCheckouts, descriptions };
 }
 async function applyRepoCheckouts(assignments) {
@@ -5731,7 +5754,10 @@ async function applyEnvironmentDiff(diff, label) {
         }
     }
     if (diff.coreRepoPipeline) {
-        const { branch, needsCheckout } = diff.coreRepoPipeline;
+        const { branch, needsCheckout, missingEnvironment } = diff.coreRepoPipeline;
+        if (missingEnvironment) {
+            failures.push(`the core repositories for "${branch}" are missing - provision this version again`);
+        }
         const results = await (0, checkout_1.alignCoreRepos)(diff.settings, branch, needsCheckout);
         const failed = results.filter(result => !result.success);
         if (failed.length === 0) {
@@ -7350,6 +7376,10 @@ async function changeDatabaseVersion(event) {
                 project.dbs[dbIndex].versionId = selectedChoice.versionId;
                 // Don't set odooVersion when version is assigned - it should come from the version
                 project.dbs[dbIndex].odooVersion = undefined;
+                // branchName records the core branch this database runs. Leaving
+                // the old one behind makes the row read "17.0 • Odoo 19.0", since
+                // the view shows branchName whenever it differs from the version.
+                project.dbs[dbIndex].branchName = selectedVersion.odooVersion ?? '';
             }
         }
         else {
