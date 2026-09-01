@@ -1454,25 +1454,10 @@
     "configuration": {
       "title": "Odoo DevTools",
       "properties": {
-        "odooDebugger.defaultVersion.debuggerName": {
-          "type": "string",
-          "default": "odoo:19.0",
-          "description": "Default debugger name for new versions"
-        },
         "odooDebugger.defaultVersion.debuggerVersion": {
           "type": "string",
           "default": "1.0.0",
           "description": "Default debugger version for new versions"
-        },
-        "odooDebugger.defaultVersion.portNumber": {
-          "type": "number",
-          "default": 8019,
-          "description": "Default port number for new versions"
-        },
-        "odooDebugger.defaultVersion.shellPortNumber": {
-          "type": "number",
-          "default": 5019,
-          "description": "Default shell port number for new versions"
         },
         "odooDebugger.defaultVersion.limitTimeReal": {
           "type": "number",
@@ -1565,6 +1550,11 @@
             "type": "string"
           },
           "markdownDescription": "Commands to run after this version's environment is aligned, once per core repository with that repository as the working directory. Runs whether or not a branch checkout was needed. Used when the version itself defines none."
+        },
+        "odooDebugger.debuggerNamePrefix": {
+          "type": "string",
+          "default": "odoo",
+          "markdownDescription": "Prefix for each version's generated launch configuration name: `<prefix>:<branch>`, for example `odoo:17.0`. The name, HTTP port and shell port are derived from the version's branch and cannot be edited per version."
         },
         "odooDebugger.provisioning.root": {
           "type": "string",

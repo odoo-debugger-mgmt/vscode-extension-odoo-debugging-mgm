@@ -59,10 +59,13 @@ export class VersionModel {
 
         // Baseline settings for partial payloads (full defaults are managed by VersionsService/config).
         this.settings = {
-            debuggerName: 'odoo:19.0',
+            // Identity is derived from the branch by VersionsService; these
+            // blanks mark "not derived yet" so healIdentities fills them in
+            // rather than a plausible-looking default surviving unnoticed.
+            debuggerName: '',
             debuggerVersion: "1.0.0",
-            portNumber: 8019,
-            shellPortNumber: 5019,
+            portNumber: 0,
+            shellPortNumber: 0,
             limitTimeReal: 0,
             limitTimeCpu: 0,
             maxCronThreads: 0,

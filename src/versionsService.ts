@@ -9,6 +9,15 @@ import { SettingsStore } from './settingsStore';
 import { getDefaultVersionSettings, stripSettings, getDatabaseLabel } from './utils';
 import { logger } from './services/logger';
 import { showError, showInfo, showWarning } from './services/notifications';
+import {
+    collectTaken,
+    deriveIdentity,
+    healIdentities,
+    isDerivedSetting,
+    candidatePortsFor,
+    probeBusyPorts,
+    VersionIdentity
+} from './services/versionIdentity';
 
 export class VersionsService {
     private static instance: VersionsService;
@@ -195,6 +204,7 @@ export class VersionsService {
             defaultVersion.isActive = true;
             this.versions.set(defaultVersion.id, defaultVersion);
             this.activeVersionId = defaultVersion.id;
+            await this.ensureIdentity(defaultVersion);
             await this.saveVersions();
             return defaultVersion.settings;
         }
@@ -241,6 +251,43 @@ export class VersionsService {
         }
     }
 
+    /** Prefix for generated launch configuration names (`<prefix>:<branch>`). */
+    public getDebuggerNamePrefix(): string {
+        const configured = vscode.workspace
+            .getConfiguration('odooDebugger')
+            .get<string>('debuggerNamePrefix', 'odoo')
+            .trim();
+        return configured || 'odoo';
+    }
+
+    /**
+     * A fresh identity for `odooVersion`, avoiding both the other versions'
+     * values and any port something else is already listening on.
+     */
+    private async deriveFreshIdentity(odooVersion: string, exceptId?: string): Promise<VersionIdentity> {
+        const taken = collectTaken(Array.from(this.versions.values()), exceptId);
+        for (const port of await probeBusyPorts(candidatePortsFor(odooVersion))) {
+            taken.ports.add(port);
+        }
+        return deriveIdentity(odooVersion, this.getDebuggerNamePrefix(), taken);
+    }
+
+    /**
+     * Gives `version` a derived identity when it has none. Every creation path
+     * runs through this, so no version can reach launch.json carrying the
+     * blank baseline or another version's name.
+     */
+    private async ensureIdentity(version: VersionModel): Promise<void> {
+        const { debuggerName, portNumber, shellPortNumber } = version.settings;
+        if (debuggerName && portNumber > 0 && shellPortNumber > 0) {
+            return;
+        }
+        version.settings = {
+            ...version.settings,
+            ...(await this.deriveFreshIdentity(version.odooVersion, version.id))
+        };
+    }
+
     /**
      * Create a new version
      */
@@ -249,7 +296,11 @@ export class VersionsService {
 
         // Get default settings from VS Code configuration
         const defaultSettings = getDefaultVersionSettings();
-        const mergedSettings = { ...defaultSettings, ...settingsOverrides };
+        // Identity is derived from the branch, so it wins over both the
+        // configured defaults and any caller-supplied override: two versions
+        // sharing a debuggerName would overwrite each other in launch.json.
+        const identity = await this.deriveFreshIdentity(odooVersion);
+        const mergedSettings = { ...defaultSettings, ...settingsOverrides, ...identity };
 
         const version = new VersionModel(name, odooVersion, mergedSettings);
         this.versions.set(version.id, version);
@@ -375,6 +426,12 @@ export class VersionsService {
         try {
             const clonedVersion = sourceVersion.clone(newName);
             this.versions.set(clonedVersion.id, clonedVersion);
+            // A clone must not inherit the source's identity - that is exactly
+            // the collision this derivation exists to prevent.
+            clonedVersion.settings = {
+                ...clonedVersion.settings,
+                ...(await this.deriveFreshIdentity(clonedVersion.odooVersion, clonedVersion.id))
+            };
 
             await this.saveVersions();
             vscode.commands.executeCommand('odoo.versionsChanged');
@@ -432,6 +489,7 @@ export class VersionsService {
             defaultVersion.isActive = true;
             this.versions.set(defaultVersion.id, defaultVersion);
             this.activeVersionId = defaultVersion.id;
+            await this.ensureIdentity(defaultVersion);
             needsRepair = true;
         }
 
@@ -463,6 +521,24 @@ export class VersionsService {
                 activeVersion.isActive = true;
                 needsRepair = true;
             }
+        }
+
+        // Identity is derived, but existing versions are healed rather than
+        // rewritten: a stored name/port survives unless it is missing or
+        // collides with an older version's - the case where every version
+        // inherited one global default and they overwrote each other.
+        const patches = healIdentities(Array.from(this.versions.values()), this.getDebuggerNamePrefix());
+        for (const patch of patches) {
+            const version = this.versions.get(patch.id);
+            if (!version) {
+                continue;
+            }
+            logger.info(
+                `[identity] ${version.name}: ${version.settings.debuggerName ?? 'none'} -> ` +
+                `${patch.identity.debuggerName} (ports ${patch.identity.portNumber}/${patch.identity.shellPortNumber})`
+            );
+            version.settings = { ...version.settings, ...patch.identity };
+            needsRepair = true;
         }
 
         // Save if repairs were needed
@@ -511,10 +587,12 @@ export class VersionsService {
 
             // Convert SettingsModel to VersionSettings format
             const versionSettings = {
-                debuggerName: existingSettings.debuggerName ?? defaultSettings.debuggerName,
+                // Identity has no configured default any more: keep whatever the
+                // legacy settings carried, and let ensureIdentity derive the rest.
+                debuggerName: existingSettings.debuggerName ?? '',
                 debuggerVersion: existingSettings.debuggerVersion ?? defaultSettings.debuggerVersion,
-                portNumber: existingSettings.portNumber ?? defaultSettings.portNumber,
-                shellPortNumber: existingSettings.shellPortNumber ?? defaultSettings.shellPortNumber,
+                portNumber: existingSettings.portNumber ?? 0,
+                shellPortNumber: existingSettings.shellPortNumber ?? 0,
                 limitTimeReal: existingSettings.limitTimeReal ?? defaultSettings.limitTimeReal,
                 limitTimeCpu: existingSettings.limitTimeCpu ?? defaultSettings.limitTimeCpu,
                 maxCronThreads: existingSettings.maxCronThreads ?? defaultSettings.maxCronThreads,
@@ -554,6 +632,9 @@ export class VersionsService {
             migratedVersion.isActive = true;
             this.versions.set(migratedVersion.id, migratedVersion);
             this.activeVersionId = migratedVersion.id;
+            // Must happen before the save: this runs after initialize(), so
+            // healIdentities would not otherwise see it until the next session.
+            await this.ensureIdentity(migratedVersion);
 
             logger.debug('Saving migrated version to versions system...');
             await this.saveVersionsDuringMigration();
@@ -612,6 +693,11 @@ export class VersionsService {
         const version = this.versions.get(versionId);
         if (!version) {
             void showError('The selected version could not be found.');
+            return false;
+        }
+
+        if (isDerivedSetting(settingKey)) {
+            void showInfo(`"${settingKey}" is derived from the version's branch and has no default to restore.`);
             return false;
         }
 
@@ -685,7 +771,14 @@ export class VersionsService {
             // Get all default settings from VS Code configuration
             const defaultSettings = getDefaultVersionSettings();
 
-            version.updateSettings(defaultSettings);
+            // Identity is derived from the branch; resetting to defaults must
+            // not clear it, or two versions collide again.
+            version.updateSettings({
+                ...defaultSettings,
+                debuggerName: version.settings.debuggerName,
+                portNumber: version.settings.portNumber,
+                shellPortNumber: version.settings.shellPortNumber
+            });
 
             await this.saveVersions();
             vscode.commands.executeCommand('odoo.versionsChanged');
@@ -715,6 +808,10 @@ export class VersionsService {
 
             // Update all settings in configuration
             for (const [key, value] of Object.entries(settings)) {
+                // No configuration keys exist for derived identity.
+                if (isDerivedSetting(key)) {
+                    continue;
+                }
                 await config.update(key, value, vscode.ConfigurationTarget.Workspace);
             }
 

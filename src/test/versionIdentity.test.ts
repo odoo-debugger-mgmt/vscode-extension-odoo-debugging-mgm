@@ -104,6 +104,18 @@ suite('Version identity', () => {
         ]);
     });
 
+    test('treats the blank model baseline as needing derivation', () => {
+        // VersionModel/SettingsModel now default to ''/0/0 rather than a
+        // plausible odoo:19.0, so a 17.0 version cannot silently keep it.
+        const patches = healIdentities(
+            [candidate('fresh', '17.0', '2026-01-01', { debuggerName: '', portNumber: 0, shellPortNumber: 0 })],
+            'odoo'
+        );
+        assert.deepStrictEqual(patches, [
+            { id: 'fresh', identity: { debuggerName: 'odoo:17.0', portNumber: 8017, shellPortNumber: 5017 } }
+        ]);
+    });
+
     test('lists the candidate ports a new version might claim', () => {
         // The window a live-socket probe has to check before deriving.
         assert.deepStrictEqual(candidatePortsFor('17.0', 3), [8017, 8018, 8019, 5017, 5018, 5019]);

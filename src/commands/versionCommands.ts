@@ -5,7 +5,8 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import type { CommandDeps } from './index';
 import { extractVersionId, extractVersionSettingRef } from './args';
-import { normalizePath } from '../utils';
+import { getSettingDisplayName, normalizePath } from '../utils';
+import { isDerivedSetting } from '../services/versionIdentity';
 import { showError, showInfo, showWarning, showModalWarning } from '../services/notifications';
 import { errorMessage, logger } from '../services/logger';
 import { pickOdooBranch } from './branchPick';
@@ -237,6 +238,14 @@ export function registerVersionCommands(deps: CommandDeps): void {
                 return;
             }
             const { versionId, key, value } = ref;
+
+            if (isDerivedSetting(key)) {
+                void showInfo(
+                    `"${getSettingDisplayName(key)}" is derived from this version's branch so two versions can run at once. ` +
+                    `Change the version's branch to change it.`
+                );
+                return;
+            }
 
             let newValue: unknown = undefined;
 

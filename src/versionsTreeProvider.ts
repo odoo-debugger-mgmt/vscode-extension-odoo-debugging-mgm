@@ -13,6 +13,7 @@ import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { logger } from './services/logger';
 import { BaseTreeProvider } from './views/baseTreeProvider';
+import { isDerivedSetting } from './services/versionIdentity';
 
 /**
  * A version is provisioned when the interpreter its pythonPath points at
@@ -107,7 +108,15 @@ export class VersionSettingTreeItem extends vscode.TreeItem {
             this.iconPath = new vscode.ThemeIcon('gear');
         }
 
-        // Add command to edit this setting
+        // Derived identity is shown but never editable: it is a function of
+        // the version's branch, and editing it would let two versions collide.
+        if (isDerivedSetting(key)) {
+            this.contextValue = 'versionSettingDerived';
+            this.description = 'derived from branch';
+            this.tooltip = `${displayName}: ${displayValue}\n\nDerived from the version's branch (${key}). Not editable.`;
+            return;
+        }
+
         this.command = {
             command: 'odoo.editVersionSetting',
             title: 'Edit Setting',
