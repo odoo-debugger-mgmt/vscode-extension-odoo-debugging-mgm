@@ -74,6 +74,35 @@ export function findWorktreeForBranch(entries: WorktreeEntry[], branch: string):
     return entries.find(entry => entry.branch === branch);
 }
 
+/**
+ * Whether something else already holds the managed branch. git refuses to
+ * check one branch out in two worktrees, and it keeps the reservation even
+ * after the worktree's directory is deleted - the record is only marked
+ * prunable - so a version whose folder was removed by hand blocks its own
+ * re-provisioning until the record is pruned.
+ */
+export type BranchConflict =
+    | { kind: 'none' }
+    /** The record survives but its directory does not: prune and carry on. */
+    | { kind: 'stale'; path: string }
+    /** A real worktree elsewhere, typically from an older provisioning root. */
+    | { kind: 'live'; path: string };
+
+export function classifyBranchConflict(
+    entries: WorktreeEntry[],
+    managedBranch: string,
+    destPath: string,
+    exists: (candidate: string) => boolean
+): BranchConflict {
+    const holder = findWorktreeForBranch(entries, managedBranch);
+    if (!holder || samePath(holder.path, destPath)) {
+        return { kind: 'none' };
+    }
+    return exists(holder.path)
+        ? { kind: 'live', path: holder.path }
+        : { kind: 'stale', path: holder.path };
+}
+
 async function listWorktrees(repoPath: string): Promise<WorktreeEntry[]> {
     const { stdout } = await runCommand('git', ['worktree', 'list', '--porcelain'], { cwd: repoPath });
     return parseWorktreeList(stdout);
@@ -113,6 +142,20 @@ export async function ensureWorktree(
     if (atDestination) {
         logger.info(`[worktree] reusing existing worktree at ${destPath}`);
         return { path: destPath, created: false, adopted: true, branch: atDestination.branch ?? managedBranch };
+    }
+
+    // git keeps the branch reserved for a worktree whose directory has been
+    // deleted, so re-provisioning a version whose folder was removed by hand -
+    // or that was built under an older provisioning root - fails without this.
+    const conflict = classifyBranchConflict(existing, managedBranch, destPath, fs.existsSync);
+    if (conflict.kind === 'stale') {
+        logger.info(`[worktree] pruning the stale record for ${conflict.path}`);
+        await runCommand('git', ['worktree', 'prune'], { cwd: repoPath, token });
+    } else if (conflict.kind === 'live') {
+        // Rebuilding would need a second branch and a duplicate checkout;
+        // adopting matches provisioning's "adopt rather than rebuild" rule.
+        logger.warn(`[worktree] ${managedBranch} is already checked out at ${conflict.path}; reusing it`);
+        return { path: conflict.path, created: false, adopted: true, branch: managedBranch };
     }
 
     if (fs.existsSync(destPath)) {

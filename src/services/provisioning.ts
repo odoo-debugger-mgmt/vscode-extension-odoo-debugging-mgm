@@ -57,6 +57,10 @@ export interface ProvisionResult {
     deps: SystemDepReport[];
 }
 
+function samePath(a: string, b: string): boolean {
+    return path.resolve(a) === path.resolve(b);
+}
+
 export function slugifyBranch(branch: string): string {
     return branch.replace(/[^A-Za-z0-9._-]+/g, '-');
 }
@@ -151,6 +155,12 @@ export async function executeProvision(
 
     progress.report({ message: `Worktree for odoo (${spec.branch})` });
     const odooTree = await ensureWorktree(spec.sourceRepoPath, spec.branch, paths.odooPath, token);
+    if (!samePath(odooTree.path, paths.odooPath)) {
+        // An existing worktree for this branch was adopted from elsewhere -
+        // usually one built under a previous provisioning root. Say so rather
+        // than silently pointing the version at an unexpected directory.
+        warnings.push(`This branch already had a worktree at ${odooTree.path}; reused it instead of creating one under ${spec.root}.`);
+    }
     paths.odooPath = odooTree.path;
     if (odooTree.created) {
         managedPaths.push(odooTree.path);

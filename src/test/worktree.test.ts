@@ -1,5 +1,8 @@
 import * as assert from 'assert';
-import { parseWorktreeList, findWorktreeForBranch, managedBranchName, branchSatisfiesTarget } from '../services/worktree';
+import { parseWorktreeList, findWorktreeForBranch, managedBranchName, branchSatisfiesTarget ,
+    classifyBranchConflict,
+    WorktreeEntry
+} from '../services/worktree';
 
 const PORCELAIN = `worktree /home/dev/odoo
 HEAD bbe85efc259f1f2c9c3f0f5f9c1d2e3f4a5b6c7d
@@ -53,5 +56,40 @@ suite('Worktree listing', () => {
         assert.strictEqual(branchSatisfiesTarget('odt/17.0', '19.0'), false);
         assert.strictEqual(branchSatisfiesTarget(undefined, '19.0'), false);
         assert.strictEqual(branchSatisfiesTarget(null, '19.0'), false);
+    });
+
+    test('detects when the managed branch is held by another worktree', () => {
+        const entries: WorktreeEntry[] = [
+            { path: '/src/odoo', branch: '17.0' },
+            { path: '/old/root/odoo-19.0', branch: 'odt/19.0' }
+        ];
+        const present = (candidate: string) => candidate === '/old/root/odoo-19.0';
+
+        // The other worktree is real: adopt it rather than duplicating.
+        assert.deepStrictEqual(
+            classifyBranchConflict(entries, 'odt/19.0', '/new/root/odoo-19.0', present),
+            { kind: 'live', path: '/old/root/odoo-19.0' }
+        );
+
+        // Directory deleted by hand: git still reserves the branch, so the
+        // record has to be pruned before the branch can be checked out again.
+        assert.deepStrictEqual(
+            classifyBranchConflict(entries, 'odt/19.0', '/new/root/odoo-19.0', () => false),
+            { kind: 'stale', path: '/old/root/odoo-19.0' }
+        );
+    });
+
+    test('reports no conflict for the destination itself or an unheld branch', () => {
+        const entries: WorktreeEntry[] = [{ path: '/root/odoo-19.0', branch: 'odt/19.0' }];
+        // Same path: that is the ordinary "already provisioned" reuse.
+        assert.deepStrictEqual(
+            classifyBranchConflict(entries, 'odt/19.0', '/root/odoo-19.0', () => true),
+            { kind: 'none' }
+        );
+        assert.deepStrictEqual(
+            classifyBranchConflict(entries, 'odt/18.0', '/root/odoo-18.0', () => true),
+            { kind: 'none' }
+        );
+        assert.deepStrictEqual(classifyBranchConflict([], 'odt/19.0', '/root/x', () => true), { kind: 'none' });
     });
 });

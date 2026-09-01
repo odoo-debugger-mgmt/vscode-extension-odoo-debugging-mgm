@@ -6187,6 +6187,7 @@ exports.managedBranchName = managedBranchName;
 exports.branchSatisfiesTarget = branchSatisfiesTarget;
 exports.parseWorktreeList = parseWorktreeList;
 exports.findWorktreeForBranch = findWorktreeForBranch;
+exports.classifyBranchConflict = classifyBranchConflict;
 exports.ensureWorktree = ensureWorktree;
 exports.resolveSourceRepo = resolveSourceRepo;
 exports.removeWorktree = removeWorktree;
@@ -6244,6 +6245,15 @@ function parseWorktreeList(output) {
 function findWorktreeForBranch(entries, branch) {
     return entries.find(entry => entry.branch === branch);
 }
+function classifyBranchConflict(entries, managedBranch, destPath, exists) {
+    const holder = findWorktreeForBranch(entries, managedBranch);
+    if (!holder || samePath(holder.path, destPath)) {
+        return { kind: 'none' };
+    }
+    return exists(holder.path)
+        ? { kind: 'live', path: holder.path }
+        : { kind: 'stale', path: holder.path };
+}
 async function listWorktrees(repoPath) {
     const { stdout } = await (0, process_1.runCommand)('git', ['worktree', 'list', '--porcelain'], { cwd: repoPath });
     return parseWorktreeList(stdout);
@@ -6275,6 +6285,20 @@ async function ensureWorktree(repoPath, branch, destPath, token) {
     if (atDestination) {
         logger_1.logger.info(`[worktree] reusing existing worktree at ${destPath}`);
         return { path: destPath, created: false, adopted: true, branch: atDestination.branch ?? managedBranch };
+    }
+    // git keeps the branch reserved for a worktree whose directory has been
+    // deleted, so re-provisioning a version whose folder was removed by hand -
+    // or that was built under an older provisioning root - fails without this.
+    const conflict = classifyBranchConflict(existing, managedBranch, destPath, fs.existsSync);
+    if (conflict.kind === 'stale') {
+        logger_1.logger.info(`[worktree] pruning the stale record for ${conflict.path}`);
+        await (0, process_1.runCommand)('git', ['worktree', 'prune'], { cwd: repoPath, token });
+    }
+    else if (conflict.kind === 'live') {
+        // Rebuilding would need a second branch and a duplicate checkout;
+        // adopting matches provisioning's "adopt rather than rebuild" rule.
+        logger_1.logger.warn(`[worktree] ${managedBranch} is already checked out at ${conflict.path}; reusing it`);
+        return { path: conflict.path, created: false, adopted: true, branch: managedBranch };
     }
     if (fs.existsSync(destPath)) {
         throw new Error(`Cannot create a worktree at ${destPath}: the path already exists and is not a worktree of ${repoPath}.`);
@@ -13387,6 +13411,9 @@ const worktree_1 = __webpack_require__(35);
 const pythonToolchain_1 = __webpack_require__(69);
 const systemDeps_1 = __webpack_require__(70);
 const logger_1 = __webpack_require__(12);
+function samePath(a, b) {
+    return path.resolve(a) === path.resolve(b);
+}
 function slugifyBranch(branch) {
     return branch.replace(/[^A-Za-z0-9._-]+/g, '-');
 }
@@ -13465,6 +13492,12 @@ async function executeProvision(spec, progress, token) {
     fs.mkdirSync(spec.root, { recursive: true });
     progress.report({ message: `Worktree for odoo (${spec.branch})` });
     const odooTree = await (0, worktree_1.ensureWorktree)(spec.sourceRepoPath, spec.branch, paths.odooPath, token);
+    if (!samePath(odooTree.path, paths.odooPath)) {
+        // An existing worktree for this branch was adopted from elsewhere -
+        // usually one built under a previous provisioning root. Say so rather
+        // than silently pointing the version at an unexpected directory.
+        warnings.push(`This branch already had a worktree at ${odooTree.path}; reused it instead of creating one under ${spec.root}.`);
+    }
     paths.odooPath = odooTree.path;
     if (odooTree.created) {
         managedPaths.push(odooTree.path);
