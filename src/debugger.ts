@@ -16,6 +16,7 @@ import { getInstalledModuleNames, databaseHasModuleTable } from './services/data
 import { logger, errorMessage } from './services/logger';
 import { updateManagedLaunchConfig } from './services/launchConfig';
 import { getSessionByName, runningDebuggerNames, resolveStopTarget } from './services/debugSessions';
+import { resolveDbForVersion } from './services/dbResolution';
 
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
@@ -70,7 +71,7 @@ export async function setupDebugger(): Promise<any> {
     const normalizedPythonPath = normalizePath(settings.pythonPath);
     let args: string[];
     try {
-        args = await prepareArgs(project, settings);
+        args = await prepareArgs(project, settings, { versionId: versionsService.getActiveVersion()?.id });
     } catch (error) {
         logger.warn('Could not prepare debugger launch arguments:', error);
         if (error instanceof Error) {
@@ -109,7 +110,13 @@ export async function setupDebugger(): Promise<any> {
     return newOdooConfig;
 }
 
-async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShell = false): Promise<string[]> {
+async function prepareArgs(
+    project: ProjectModel,
+    settings: SettingsModel,
+    options: { isShell?: boolean; versionId?: string } = {}
+): Promise<string[]> {
+    const isShell = options.isShell === true;
+
     // Build addons path using settings paths
     const addonsPaths: string[] = [];
     const addonPathSet = new Set<string>();
@@ -143,7 +150,7 @@ async function prepareArgs(project: ProjectModel, settings: SettingsModel, isShe
         addAddonPath(`${settings.odooPath}/addons`);
     }
 
-    const db = project.dbs.find(database => database.isSelected);
+    const db = resolveDbForVersion(project.dbs, project.selectedDbByVersion, options.versionId);
     if (!db) {
         throw new Error('Select a database before running this action.');
     }
@@ -329,7 +336,10 @@ export async function buildOdooCommandLine(isShell = false): Promise<string | un
 
     let args: string[];
     try {
-        args = await prepareArgs(project, workspaceSettings, isShell);
+        args = await prepareArgs(project, workspaceSettings, {
+            isShell,
+            versionId: versionsService.getActiveVersion()?.id
+        });
     } catch (error) {
         if (error instanceof Error) {
             if (error.message === 'Select a database before running this action.') {

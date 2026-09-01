@@ -13,6 +13,7 @@ import { logger, errorMessage } from './services/logger';
 import { getRepoBranch } from './services/branches';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
+import { rememberDbForVersion } from './services/dbResolution';
 import { generateDatabaseIdentifiers, DatabaseKind } from './services/dbNaming';
 import { detectOdooSeries } from './services/database';
 import {
@@ -787,6 +788,15 @@ export async function selectDatabase(event: unknown) {
         project.dbs[newSelectedDbIndex].isSelected = true;
     }
     const selectedDatabase = newSelectedDbIndex !== -1 ? project.dbs[newSelectedDbIndex] : database;
+
+    // Remember the choice against the active version so each version keeps its
+    // own -d when several run side by side. `project` is the object inside
+    // `data.projects`, so mutating it here is what the save below persists.
+    project.selectedDbByVersion = rememberDbForVersion(
+        project.selectedDbByVersion,
+        VersionsService.getInstance().getActiveVersion()?.id,
+        selectedDatabase.id
+    );
 
     await SettingsStore.saveWithoutComments(stripSettings(data));
 

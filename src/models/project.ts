@@ -22,6 +22,8 @@ export class ProjectModel {
     includedPsaeInternalPaths: string[] = []; // Manually included psae-internal paths
     testingConfig: TestingConfigModel; // Testing configuration
     tickets: ProjectTicketModel[] = [];
+    /** versionId -> dbId: which database each version last launched against. */
+    selectedDbByVersion: Record<string, string> = {};
     constructor(
         name: string,
         createdAt: string | Date,
