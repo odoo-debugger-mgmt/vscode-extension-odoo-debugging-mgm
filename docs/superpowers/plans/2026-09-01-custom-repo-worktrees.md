@@ -443,7 +443,7 @@ Custom worktrees check out the real branch, so the source checkout must not be h
 
 **Interfaces:**
 - Produces:
-  - `type SourceConflict = { kind: 'none' } | { kind: 'detachable'; branch: string } | { kind: 'dirty'; branch: string; files: string[] }`
+  - `type SourceConflict = { kind: 'none' } | { kind: 'movable'; branch: string } | { kind: 'dirty'; branch: string; files: string[] }`
   - `function classifySourceConflict(sourceBranch: string | null | undefined, targetBranch: string, dirtyFiles: string[]): SourceConflict`
   - `function describeSourceConflict(conflict: SourceConflict, repoName: string): string`
   - `function parsePorcelainStatus(stdout: string): string[]`
@@ -468,9 +468,9 @@ suite('Source checkout conflict', () => {
         assert.deepStrictEqual(classifySourceConflict(undefined, '19.0', []), { kind: 'none' });
     });
 
-    test('a clean source holding the branch can be detached', () => {
+    test('a clean source holding the branch can be moved off it', () => {
         assert.deepStrictEqual(classifySourceConflict('19.0', '19.0', []), {
-            kind: 'detachable',
+            kind: 'movable',
             branch: '19.0'
         });
     });
@@ -482,12 +482,17 @@ suite('Source checkout conflict', () => {
         );
     });
 
-    test('explains why, not just what', () => {
-        const detachable = describeSourceConflict({ kind: 'detachable', branch: '19.0' }, 'psae-internal');
-        assert.ok(detachable.includes('19.0'));
-        assert.ok(detachable.includes('psae-internal'));
+    test('explains why, and what detaching actually costs', () => {
+        const movable = describeSourceConflict({ kind: 'movable', branch: '19.0' }, 'psae-internal');
+        assert.ok(movable.includes('19.0'));
+        assert.ok(movable.includes('psae-internal'));
         // The reason must be stated: users do not know git's one-worktree rule.
-        assert.ok(detachable.toLowerCase().includes('one place'));
+        assert.ok(movable.toLowerCase().includes('one place'));
+        // Both consequences of detaching, verified by experiment, must appear:
+        // the source cannot return to the branch while the worktree exists,
+        // and commits made detached belong to no branch.
+        assert.ok(movable.toLowerCase().includes('until the worktree is removed'));
+        assert.ok(movable.toLowerCase().includes('no branch'));
 
         const dirty = describeSourceConflict(
             { kind: 'dirty', branch: '19.0', files: ['a.py', 'b.py'] },
@@ -534,7 +539,7 @@ Create `src/services/sourceConflict.ts`:
 
 export type SourceConflict =
     | { kind: 'none' }
-    | { kind: 'detachable'; branch: string }
+    | { kind: 'movable'; branch: string }
     | { kind: 'dirty'; branch: string; files: string[] };
 
 export function classifySourceConflict(
@@ -547,7 +552,7 @@ export function classifySourceConflict(
     }
     return dirtyFiles.length > 0
         ? { kind: 'dirty', branch: targetBranch, files: dirtyFiles }
-        : { kind: 'detachable', branch: targetBranch };
+        : { kind: 'movable', branch: targetBranch };
 }
 
 export function describeSourceConflict(conflict: SourceConflict, repoName: string): string {
@@ -557,9 +562,15 @@ export function describeSourceConflict(conflict: SourceConflict, repoName: strin
 
     const why = `git can only check a branch out in one place, and this version needs "${conflict.branch}" in its own worktree.`;
 
-    if (conflict.kind === 'detachable') {
-        return `Your checkout of "${repoName}" is on "${conflict.branch}". ${why} `
-            + `Detaching it leaves the same commit and the same files, and one "git switch ${conflict.branch}" puts it back.`;
+    if (conflict.kind === 'movable') {
+        // Both consequences below were verified by experiment. The first
+        // contradicts an earlier draft of the design, which claimed detaching
+        // was reversible with one `git switch`; it is not.
+        return `Your checkout of "${repoName}" is on "${conflict.branch}". ${why}\n\n`
+            + `Moving it to another branch is recommended: it keeps working normally.\n\n`
+            + `Detaching it instead keeps the same commit and files, but the checkout cannot return `
+            + `to "${conflict.branch}" until the worktree is removed, and any commit you make there `
+            + `would belong to no branch — only the reflog would find it.`;
     }
 
     const shown = conflict.files.slice(0, 5).join(', ');
@@ -706,6 +717,7 @@ import { logger, errorMessage } from './logger';
 import { showModalWarning, showWarning } from './notifications';
 import { getRepoBranch } from './branches';
 import { ensureRealBranchWorktree } from './worktree';
+import { listAllBranches } from './gitService';
 import { classifySourceConflict, describeSourceConflict, parsePorcelainStatus } from './sourceConflict';
 import type { ResolvedRepo } from './repoPaths';
 
@@ -735,14 +747,40 @@ async function freeBranch(sourcePath: string, repoName: string, branch: string):
         return false;
     }
 
-    const choice = await showModalWarning(message, 'Detach the source checkout');
-    if (choice !== 'Detach the source checkout') {
+    // Moving is offered first: it leaves the checkout on a branch, so pull
+    // works and tooling that rejects a detached HEAD keeps working.
+    const choice = await showModalWarning(message, 'Move to Another Branch', 'Detach It');
+    if (choice === 'Move to Another Branch') {
+        const target = await pickOtherBranch(sourcePath, branch);
+        if (!target) {
+            return false;
+        }
+        await runCommand('git', ['switch', target], { cwd: sourcePath });
+        logger.info(`[worktree] moved ${sourcePath} to ${target} to free ${branch}`);
+        return true;
+    }
+
+    if (choice !== 'Detach It') {
         return false;
     }
 
     await runCommand('git', ['checkout', '--detach'], { cwd: sourcePath });
     logger.info(`[worktree] detached ${sourcePath} to free ${branch}`);
     return true;
+}
+
+/** Branches the source could move to, excluding the one being freed. */
+async function pickOtherBranch(sourcePath: string, exclude: string): Promise<string | undefined> {
+    const names = (await listAllBranches(sourcePath)).filter(name => name !== exclude);
+    if (names.length === 0) {
+        void showWarning(`"${sourcePath}" has no other branch to move to. Detach it instead, or create a branch first.`);
+        return undefined;
+    }
+    return vscode.window.showQuickPick(names, {
+        title: `Move this checkout off "${exclude}"`,
+        placeHolder: 'Pick the branch the source checkout should sit on',
+        ignoreFocusOut: true
+    });
 }
 
 /**
@@ -1827,7 +1865,398 @@ git commit -m "[IMP] Surface the repo mapping and supersede stale switch prompts
 
 ---
 
-### Task 12: Documentation
+### Task 12: Migrate existing versions onto the provisioned layout
+
+Versions created before provisioning, or under an earlier provisioning root,
+point at directories that no longer describe reality. This is not hypothetical:
+a version pointing at a deleted worktree under an old root produced the
+*"'odt/19.0' is already used by worktree at …"* failure that shipped. Rather
+than leaving each user to work that out, classify every version and offer the
+fix.
+
+**Files:**
+- Create: `src/services/versionMigration.ts`
+- Modify: `src/commands/versionCommands.ts`
+- Modify: `package.json`
+- Test: `src/test/versionMigration.test.ts`
+
+**Interfaces:**
+- Consumes: `isVersionProvisioned` from `src/services/provisioning.ts`; `readSetupState` from `src/services/setupState.ts`; `resolveProvisionPaths` from `src/services/provisioning.ts`.
+- Produces:
+  - `type VersionHealth = 'healthy' | 'relocated' | 'missing' | 'unprovisioned'`
+  - `interface VersionDiagnosis { versionId: string; name: string; health: VersionHealth; odooPath?: string; expectedOdooPath: string; detail: string }`
+  - `function diagnoseVersion(input: { id: string; name: string; odooVersion: string; odooPath?: string; pythonPath?: string }, root: string, exists: (p: string) => boolean): VersionDiagnosis`
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `src/test/versionMigration.test.ts`:
+
+```ts
+import * as assert from 'assert';
+import * as path from 'node:path';
+import { diagnoseVersion } from '../services/versionMigration';
+
+const ROOT = '/home/dev/odoo-dev';
+
+function probe(...present: string[]) {
+    const set = new Set(present);
+    return (candidate: string) => set.has(candidate);
+}
+
+suite('Version migration diagnosis', () => {
+    test('a version under the current root with a working interpreter is healthy', () => {
+        const odooPath = path.join(ROOT, 'odoo-19.0');
+        const pythonPath = path.join(ROOT, 'venv-19.0', 'bin', 'python');
+        const diagnosis = diagnoseVersion(
+            { id: 'v19', name: 'Odoo 19.0', odooVersion: '19.0', odooPath, pythonPath },
+            ROOT,
+            probe(odooPath, pythonPath)
+        );
+        assert.strictEqual(diagnosis.health, 'healthy');
+    });
+
+    test('a version whose directories are gone is missing', () => {
+        // The case that produced the shipped worktree failure.
+        const diagnosis = diagnoseVersion(
+            {
+                id: 'v19',
+                name: 'Odoo 19.0',
+                odooVersion: '19.0',
+                odooPath: '/old/root/odoo-19.0',
+                pythonPath: '/old/root/venv-19.0/bin/python'
+            },
+            ROOT,
+            probe()
+        );
+        assert.strictEqual(diagnosis.health, 'missing');
+        assert.strictEqual(diagnosis.expectedOdooPath, path.join(ROOT, 'odoo-19.0'));
+    });
+
+    test('a version that still exists but sits outside the current root is relocated', () => {
+        const odooPath = '/old/root/odoo-19.0';
+        const pythonPath = '/old/root/venv-19.0/bin/python';
+        const diagnosis = diagnoseVersion(
+            { id: 'v19', name: 'Odoo 19.0', odooVersion: '19.0', odooPath, pythonPath },
+            ROOT,
+            probe(odooPath, pythonPath)
+        );
+        // Still usable, so it is not "missing" - but the provisioning root moved
+        // and re-provisioning would collide with it.
+        assert.strictEqual(diagnosis.health, 'relocated');
+    });
+
+    test('a version with no interpreter is unprovisioned', () => {
+        const odooPath = path.join(ROOT, 'odoo-19.0');
+        const diagnosis = diagnoseVersion(
+            { id: 'v19', name: 'Odoo 19.0', odooVersion: '19.0', odooPath, pythonPath: '' },
+            ROOT,
+            probe(odooPath)
+        );
+        assert.strictEqual(diagnosis.health, 'unprovisioned');
+    });
+
+    test('a version with no paths at all is unprovisioned', () => {
+        const diagnosis = diagnoseVersion(
+            { id: 'v', name: 'Bare', odooVersion: '17.0' },
+            ROOT,
+            probe()
+        );
+        assert.strictEqual(diagnosis.health, 'unprovisioned');
+        assert.ok(diagnosis.detail.length > 0);
+    });
+});
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `npm run compile-tests`
+Expected: FAIL with `error TS2307: Cannot find module '../services/versionMigration'`.
+
+- [ ] **Step 3: Write the diagnosis**
+
+Create `src/services/versionMigration.ts`:
+
+```ts
+/**
+ * Classifies how far an existing version is from the provisioned layout.
+ *
+ * Versions predate provisioning, or were built under an earlier provisioning
+ * root. A version still pointing at a deleted worktree under an old root is
+ * what produced the shipped "'odt/19.0' is already used by worktree at ..."
+ * failure, so this is offered as a check rather than left to be discovered.
+ *
+ * Pure: takes an `exists` probe so every branch is testable.
+ */
+import * as path from 'node:path';
+
+export type VersionHealth = 'healthy' | 'relocated' | 'missing' | 'unprovisioned';
+
+export interface VersionDiagnosis {
+    versionId: string;
+    name: string;
+    health: VersionHealth;
+    odooPath?: string;
+    /** Where provisioning would put this version today. */
+    expectedOdooPath: string;
+    detail: string;
+}
+
+export interface VersionLike {
+    id: string;
+    name: string;
+    odooVersion: string;
+    odooPath?: string;
+    pythonPath?: string;
+}
+
+function slugifyBranch(branch: string): string {
+    return branch.replace(/[^A-Za-z0-9._-]+/g, '-');
+}
+
+export function diagnoseVersion(
+    version: VersionLike,
+    root: string,
+    exists: (candidate: string) => boolean
+): VersionDiagnosis {
+    const expectedOdooPath = path.join(root, `odoo-${slugifyBranch(version.odooVersion)}`);
+    const odooPath = version.odooPath?.trim() || undefined;
+    const pythonPath = version.pythonPath?.trim() || undefined;
+
+    const base = { versionId: version.id, name: version.name, odooPath, expectedOdooPath };
+
+    if (!odooPath || !pythonPath) {
+        return { ...base, health: 'unprovisioned', detail: 'No environment has been built for this version.' };
+    }
+    if (!exists(odooPath)) {
+        return {
+            ...base,
+            health: 'missing',
+            detail: `Its checkout at ${odooPath} is gone. Re-provisioning rebuilds it at ${expectedOdooPath}.`
+        };
+    }
+    if (!exists(pythonPath)) {
+        return { ...base, health: 'unprovisioned', detail: `Its interpreter at ${pythonPath} is gone.` };
+    }
+    if (path.resolve(odooPath) !== path.resolve(expectedOdooPath)) {
+        return {
+            ...base,
+            health: 'relocated',
+            detail: `It works, but lives at ${odooPath} rather than ${expectedOdooPath}. Leaving it is fine; re-provisioning moves it.`
+        };
+    }
+
+    return { ...base, health: 'healthy', detail: 'Provisioned and in the expected location.' };
+}
+
+/** Versions worth offering to fix, worst first. */
+export function needsAttention(diagnoses: VersionDiagnosis[]): VersionDiagnosis[] {
+    const rank: Record<VersionHealth, number> = { missing: 0, unprovisioned: 1, relocated: 2, healthy: 3 };
+    return diagnoses
+        .filter(entry => entry.health !== 'healthy')
+        .sort((a, b) => rank[a.health] - rank[b.health]);
+}
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `npm run compile-tests && npm test`
+Expected: 187 passing (182 + 5).
+
+- [ ] **Step 5: Add the command**
+
+In `package.json`, add to `contributes.commands`:
+
+```json
+{
+  "command": "odoo.checkVersions",
+  "title": "Check Version Environments",
+  "category": "Odoo DevTools",
+  "icon": "$(checklist)"
+}
+```
+
+and to `contributes.menus.view/title`:
+
+```json
+{
+  "command": "odoo.checkVersions",
+  "when": "view == versionsManager",
+  "group": "navigation@9"
+}
+```
+
+In `src/commands/versionCommands.ts`, register it:
+
+```ts
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.checkVersions', async () => {
+        try {
+            const root = readSetupState().provisioningRoot;
+            const diagnoses = versionsService.getVersions().map(version => diagnoseVersion(
+                {
+                    id: version.id,
+                    name: version.name,
+                    odooVersion: version.odooVersion,
+                    odooPath: resolveOptionalPath(version.settings.odooPath),
+                    pythonPath: resolveOptionalPath(version.settings.pythonPath)
+                },
+                root,
+                candidate => fs.existsSync(candidate)
+            ));
+
+            const problems = needsAttention(diagnoses);
+            if (problems.length === 0) {
+                void showInfo(`All ${diagnoses.length} version(s) are provisioned and in the expected location.`);
+                return;
+            }
+
+            const picked = await vscode.window.showQuickPick(
+                problems.map(entry => ({
+                    label: `$(warning) ${entry.name}`,
+                    description: entry.health,
+                    detail: entry.detail,
+                    diagnosis: entry
+                })),
+                { title: 'Version environments', placeHolder: 'Pick a version to re-provision', ignoreFocusOut: true }
+            );
+            if (!picked) {
+                return;
+            }
+
+            // Re-provisioning is the existing, resumable flow: it probes what
+            // exists and builds only what is missing.
+            await provisionExistingVersion(picked.diagnosis.versionId);
+            await refreshAll();
+        } catch (error) {
+            void showError(`Could not check the version environments: ${errorMessage(error)}`);
+        }
+    }));
+```
+
+- [ ] **Step 6: Re-provision an existing version in place**
+
+In `src/odooInstaller.ts`, add:
+
+```ts
+/**
+ * Rebuilds an existing version's environment under the current provisioning
+ * root and repoints the version at it. Reuses the provisioning orchestrator,
+ * which adopts whatever already exists rather than rebuilding it.
+ */
+export async function provisionExistingVersion(versionId: string): Promise<void> {
+    const service = VersionsService.getInstance();
+    const version = service.getVersion(versionId);
+    if (!version) {
+        void showError('The selected version could not be found.');
+        return;
+    }
+
+    const setup = readSetupState();
+    if (!setup.isConfigured || !setup.sourceRepo) {
+        const choice = await showWarning('Odoo DevTools is not set up yet.', 'Set Up');
+        if (choice === 'Set Up') {
+            await vscode.commands.executeCommand('odoo.setup');
+        }
+        return;
+    }
+
+    const spec: ProvisionSpec = {
+        branch: version.odooVersion,
+        sourceRepoPath: setup.sourceRepo,
+        enterpriseRepoPath: setup.enterpriseRepo,
+        designThemesRepoPath: setup.designThemesRepo,
+        root: setup.provisioningRoot
+    };
+
+    const result = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Re-provisioning ${version.name}`,
+        cancellable: true
+    }, async (progress, token) => {
+        try {
+            return await executeProvision(spec, progress, token);
+        } catch (error) {
+            if (!token.isCancellationRequested) {
+                logger.error('Re-provisioning failed:', error);
+                void showError(`Re-provisioning failed: ${errorMessage(error)}`);
+            }
+            return undefined;
+        }
+    });
+
+    if (!result) {
+        return;
+    }
+
+    await service.updateVersion(version.id, {
+        settings: {
+            odooPath: result.paths.odooPath,
+            enterprisePath: result.paths.enterprisePath ?? '',
+            designThemesPath: result.paths.designThemesPath ?? '',
+            pythonPath: venvPythonPath(result.paths.venvPath),
+            managedPaths: result.managedPaths
+        }
+    } as never);
+
+    void showInfo(`${version.name} now uses ${result.paths.odooPath} on Python ${result.pythonVersion}.`);
+}
+```
+
+Add the imports `versionCommands.ts` needs: `fs`, `resolveOptionalPath`, `readSetupState`, `diagnoseVersion`, `needsAttention`, `provisionExistingVersion`.
+
+- [ ] **Step 7: Prompt once when versions need attention**
+
+In `src/extension.ts`, after `void statusBar.update();`, add:
+
+```ts
+    // One passive nudge: a version pointing at a deleted directory fails
+    // confusingly at provisioning time, which is far too late to find out.
+    void (async () => {
+        try {
+            const root = readSetupState().provisioningRoot;
+            const stale = VersionsService.getInstance().getVersions().filter(version =>
+                diagnoseVersion(
+                    {
+                        id: version.id,
+                        name: version.name,
+                        odooVersion: version.odooVersion,
+                        odooPath: resolveOptionalPath(version.settings.odooPath),
+                        pythonPath: resolveOptionalPath(version.settings.pythonPath)
+                    },
+                    root,
+                    candidate => fs.existsSync(candidate)
+                ).health === 'missing');
+
+            if (stale.length === 0) {
+                return;
+            }
+            const choice = await showInfo(
+                `${stale.length} version(s) point at directories that no longer exist.`,
+                'Check Versions'
+            );
+            if (choice === 'Check Versions') {
+                await vscode.commands.executeCommand('odoo.checkVersions');
+            }
+        } catch (error) {
+            logger.debug('Version health check failed:', error);
+        }
+    })();
+```
+
+- [ ] **Step 8: Verify the whole gate**
+
+Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
+Expected: 187 passing, no `error TS`, no lint errors.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add -A
+git commit -m "[ADD] Diagnose and re-provision versions onto the current layout"
+```
+
+---
+
+### Task 13: Documentation
 
 **Files:**
 - Modify: `README.md`
@@ -1877,6 +2306,7 @@ Add under the unreleased heading:
 - Database creation shows what it will record, including the repo branches it captures, instead of capturing them silently.
 - The Databases view shows the repo-branch count on the row, and `Configure Project Repo Branches` is an inline action.
 - A newer environment switch supersedes an unanswered older prompt, so two rapid database selections cannot leave contradictory notifications standing.
+- **Check Version Environments** diagnoses every version against the current provisioning root — missing, unprovisioned, relocated or healthy — and re-provisions the ones that need it in place. Versions pointing at directories that no longer exist are flagged once on activation, rather than failing confusingly the next time you provision.
 ```
 
 - [ ] **Step 3: Name what the provisioning root holds**
@@ -1900,7 +2330,7 @@ In `docs/superpowers/notes/2026-09-01-onboarding-rework.md`, update the status l
 - [ ] **Step 5: Verify the whole gate one final time**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
-Expected: 182 passing, no `error TS`, no lint errors.
+Expected: 187 passing, no `error TS`, no lint errors.
 
 - [ ] **Step 6: Commit**
 
@@ -1926,3 +2356,5 @@ one repository mapped to two branches across two databases.
 8. **Opt out.** Turn the mode off with one worktree dirty. The clean one is removed, the dirty one is kept and reported.
 9. **branchName migration.** A database created before this change no longer shows a stale branch beside its version.
 10. **Supersede.** With `databaseSwitchBehavior: ask`, select two databases quickly. Only the newer prompt applies anything.
+11. **Source conflict, move.** Put the source on `19.0` and opt in. Choose *Move to Another Branch*; the source lands on the picked branch, still on a branch, and the worktree gets `19.0`.
+12. **Version diagnosis.** Run *Check Version Environments* against a version whose directory was deleted. It reports `missing`, names where re-provisioning would put it, and rebuilding repoints the version.

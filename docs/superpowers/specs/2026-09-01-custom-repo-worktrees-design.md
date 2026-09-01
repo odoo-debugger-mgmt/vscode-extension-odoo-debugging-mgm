@@ -149,15 +149,34 @@ Custom worktrees therefore check out **the real branch**.
 
 So when a worktree is needed for branch `X` and the source checkout is on `X`:
 
-- If the source checkout is **clean**, offer to detach it:
-  `git checkout --detach` leaves the same commit, the same files, and frees
-  the branch. Nothing is lost, and it is reversible with one `git switch`.
 - If the source checkout is **dirty**, refuse and say so, naming the branch and
   the uncommitted files. Committing or stashing is the user's call, not ours.
-- Either way the message explains *why*: "git can only check a branch out in
-  one place, and this version needs `19.0-client` in its own worktree."
+- If it is **clean**, offer two ways to let go of the branch, in this order:
+  1. **Move the source to another branch** (default: the repository's default
+     branch). This is the recommendation. The checkout stays on a branch, so
+     `git pull` works, and tooling that dislikes a detached HEAD — the GitHub
+     Pull Requests extension errors outright on one — keeps working.
+  2. **Detach it** (`git checkout --detach`). Same commit, same files, nothing
+     lost.
 
-Never detach silently. Never stash on the user's behalf.
+**Two consequences of detaching must be stated in the prompt, because both are
+easy to discover the hard way:**
+
+- **The source cannot return to that branch while the worktree exists.**
+  `git switch 19.0` fails with *"already used by worktree at …"*. It only
+  works again after the worktree is removed. (An earlier draft of this design
+  claimed detaching was "reversible with one `git switch`". It is not, and the
+  claim was removed after testing it.)
+- **Commits made in a detached source belong to no branch.** `git branch
+  --contains HEAD` returns nothing; only the reflog finds them. A developer
+  who forgets the source is detached and commits there out of habit has to
+  recover by hand.
+
+Neither consequence affects the worktree, which is where work now happens:
+commits there go to the real branch, and `git log <branch>` from anywhere in
+the repository shows them.
+
+Never detach or move the source silently. Never stash on the user's behalf.
 
 ### 5. Not editing the wrong copy
 
@@ -256,7 +275,7 @@ This mirrors Delete Version, which already works this way.
 
 | Situation | Behaviour |
 | --- | --- |
-| Source checkout holds the branch, clean | Offer to detach it, explaining why |
+| Source checkout holds the branch, clean | Offer to move it to another branch, or detach, with the consequences of each |
 | Source checkout holds the branch, dirty | Refuse; name the branch and the dirty files |
 | Worktree directory deleted by hand | Prune the stale record and recreate (already implemented) |
 | Branch does not exist locally or on origin | Report it; do not invent a branch |
