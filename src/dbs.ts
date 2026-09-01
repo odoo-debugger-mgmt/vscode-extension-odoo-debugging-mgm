@@ -789,12 +789,15 @@ export async function selectDatabase(event: unknown) {
     }
     const selectedDatabase = newSelectedDbIndex !== -1 ? project.dbs[newSelectedDbIndex] : database;
 
-    // Remember the choice against the active version so each version keeps its
-    // own -d when several run side by side. `project` is the object inside
-    // `data.projects`, so mutating it here is what the save below persists.
+    // Remember the choice against the version this database runs under - the
+    // one alignEnvironment is about to activate, not the one being left. Keying
+    // it off the outgoing active version would file the database under the
+    // wrong version whenever the selection also switches versions.
+    // `project` is the object inside `data.projects`, so mutating it here is
+    // what the save below persists.
     project.selectedDbByVersion = rememberDbForVersion(
         project.selectedDbByVersion,
-        VersionsService.getInstance().getActiveVersion()?.id,
+        selectedDatabase.versionId || VersionsService.getInstance().getActiveVersion()?.id,
         selectedDatabase.id
     );
 

@@ -7010,10 +7010,13 @@ async function selectDatabase(event) {
         project.dbs[newSelectedDbIndex].isSelected = true;
     }
     const selectedDatabase = newSelectedDbIndex !== -1 ? project.dbs[newSelectedDbIndex] : database;
-    // Remember the choice against the active version so each version keeps its
-    // own -d when several run side by side. `project` is the object inside
-    // `data.projects`, so mutating it here is what the save below persists.
-    project.selectedDbByVersion = (0, dbResolution_1.rememberDbForVersion)(project.selectedDbByVersion, versionsService_1.VersionsService.getInstance().getActiveVersion()?.id, selectedDatabase.id);
+    // Remember the choice against the version this database runs under - the
+    // one alignEnvironment is about to activate, not the one being left. Keying
+    // it off the outgoing active version would file the database under the
+    // wrong version whenever the selection also switches versions.
+    // `project` is the object inside `data.projects`, so mutating it here is
+    // what the save below persists.
+    project.selectedDbByVersion = (0, dbResolution_1.rememberDbForVersion)(project.selectedDbByVersion, selectedDatabase.versionId || versionsService_1.VersionsService.getInstance().getActiveVersion()?.id, selectedDatabase.id);
     await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
     // Align the workbench (active version, core branches, project repo
     // branches) to the database through the single switch pipeline.
