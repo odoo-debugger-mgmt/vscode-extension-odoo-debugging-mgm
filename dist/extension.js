@@ -395,20 +395,11 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         if (runningPart) {
             parts.push(runningPart);
         }
+        // The version is the only source of the core branch; a database with
+        // none falls back to its legacy odooVersion.
         if (db.versionId) {
             const version = this.lookupVersion(db.versionId);
-            const versionLabel = version ? version.name : `${db.versionId.substring(0, 8)}...`;
-            if (db.branchName && db.branchName !== version?.odooVersion) {
-                parts.push(db.branchName);
-            }
-            parts.push(versionLabel);
-        }
-        else if (db.branchName && db.branchName.trim() !== '') {
-            parts.push(db.branchName);
-            const effectiveOdooVersion = (0, dbs_1.getEffectiveOdooVersion)(db);
-            if (effectiveOdooVersion && effectiveOdooVersion !== db.branchName) {
-                parts.push(effectiveOdooVersion);
-            }
+            parts.push(version ? version.name : `${db.versionId.substring(0, 8)}...`);
         }
         else {
             const effectiveOdooVersion = (0, dbs_1.getEffectiveOdooVersion)(db);
@@ -449,9 +440,6 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
             if (effectiveOdooVersion) {
                 tooltipDetails.push(`**Odoo Version:** ${effectiveOdooVersion}`);
             }
-        }
-        if (db.branchName) {
-            tooltipDetails.push(`**Branch:** ${db.branchName}`);
         }
         const projectRepoBranches = (0, environment_1.sanitizeProjectRepoBranchAssignments)(db.projectRepoBranches);
         if (projectRepoBranches.length > 0) {
@@ -522,9 +510,6 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         return isNaN(date.getTime()) ? 0 : date.getTime();
     }
     getBranchValue(db) {
-        if (db.branchName && db.branchName.trim() !== '') {
-            return db.branchName.toLowerCase();
-        }
         const effective = (0, dbs_1.getEffectiveOdooVersion)(db);
         return effective ? effective.toLowerCase() : '';
     }
@@ -6838,15 +6823,15 @@ async function resolveVersionForNewDatabase(dbName, method) {
     await versionsService.initialize();
     const activeVersion = versionsService.getActiveVersion();
     if (method === 'fresh') {
-        return { versionId: activeVersion?.id, branchLabel: activeVersion?.odooVersion };
+        return { versionId: activeVersion?.id };
     }
     const series = await (0, database_1.detectOdooSeries)(dbName);
     if (!series) {
-        return { versionId: activeVersion?.id, branchLabel: activeVersion?.odooVersion };
+        return { versionId: activeVersion?.id };
     }
     const match = versionsService.getVersions().find(version => (version.odooVersion ?? '').trim() === series);
     if (match) {
-        return { versionId: match.id, branchLabel: series };
+        return { versionId: match.id };
     }
     // Non-blocking offer to create the missing version profile.
     void (0, notifications_1.showInfo)(`Database "${dbName}" runs Odoo ${series}, but no matching version profile exists.`, 'Create Version', 'Ignore').then(async (choice) => {
@@ -6863,7 +6848,9 @@ async function resolveVersionForNewDatabase(dbName, method) {
             void (0, notifications_1.showError)(`Failed to create version for Odoo ${series}: ${(0, logger_1.errorMessage)(error)}`);
         }
     });
-    return { versionId: undefined, branchLabel: series };
+    // No profile matched: keep the detected series as the legacy odooVersion,
+    // which is the only thing that can report this database's version.
+    return { versionId: undefined, odooVersion: series };
 }
 async function createDb(projectName, repos, dumpFolderPath, _settings, options = {}) {
     // Step 1: creation method — the only decision that cannot be inferred.
@@ -6983,15 +6970,15 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
     // Step 5: infer the environment instead of prompting for it. The version is
     // auto-detected from the database itself; the current branch of every
     // project repo is captured as the database's working state.
-    const { versionId, branchLabel } = await resolveVersionForNewDatabase(dbName, creationMethod);
+    const { versionId, odooVersion } = await resolveVersionForNewDatabase(dbName, creationMethod);
     const projectRepoBranches = await (0, environment_1.captureCurrentRepoBranches)(repos);
     return new db_1.DatabaseModel(dbName, creationTimestamp, {
         isSelected: true,
         isItABackup: creationMethod === 'dump',
         sqlFilePath: sqlDumpPath,
         isExisting: creationMethod === 'existing',
-        branchName: branchLabel ?? '',
         versionId,
+        odooVersion,
         displayName: dbName,
         internalName: dbName,
         kind: dbKind,
@@ -7265,7 +7252,6 @@ async function cloneDatabaseFlow(event) {
         isSelected: false,
         isItABackup: false,
         isExisting: false,
-        branchName: db.branchName ?? '',
         versionId: db.versionId,
         displayName: targetName,
         internalName: targetName,
@@ -7419,18 +7405,13 @@ async function changeDatabaseVersion(event) {
                 project.dbs[dbIndex].versionId = selectedChoice.versionId;
                 // Don't set odooVersion when version is assigned - it should come from the version
                 project.dbs[dbIndex].odooVersion = undefined;
-                // branchName records the core branch this database runs. Leaving
-                // the old one behind makes the row read "17.0 • Odoo 19.0", since
-                // the view shows branchName whenever it differs from the version.
-                project.dbs[dbIndex].branchName = selectedVersion.odooVersion ?? '';
             }
         }
         else {
             // Remove version association but preserve original branch name
             project.dbs[dbIndex].versionId = undefined;
-            // When no version, we can fall back to empty odooVersion (will use branchName if available)
+            // With no version the legacy odooVersion is the only series source.
             project.dbs[dbIndex].odooVersion = undefined;
-            // Keep branchName - it's independent of version management
         }
         // Save only the databases array to avoid touching settings
         const updatedData = (0, utils_1.stripSettings)(data);
@@ -7877,7 +7858,6 @@ class DatabaseModel {
     sqlFilePath = '';
     id = '';
     isExisting = false;
-    branchName = '';
     odooVersion; // Optional - only used when no version is assigned
     versionId; // Reference to the VersionModel
     displayName;
@@ -7893,7 +7873,6 @@ class DatabaseModel {
         this.isSelected = options.isSelected || false;
         this.sqlFilePath = options.sqlFilePath || '';
         this.isExisting = options.isExisting || false;
-        this.branchName = options.branchName || '';
         this.odooVersion = options.odooVersion; // Optional - undefined when version is assigned
         this.versionId = options.versionId;
         this.kind = options.kind;
@@ -9213,6 +9192,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.collectLegacyBranchesNeedingVersions = collectLegacyBranchesNeedingVersions;
 exports.applyDatabaseFieldMigration = applyDatabaseFieldMigration;
+exports.applyBranchNameMigration = applyBranchNameMigration;
 exports.migrateDebuggerData = migrateDebuggerData;
 exports.applyHookMigration = applyHookMigration;
 exports.migrateHookSettings = migrateHookSettings;
@@ -9282,6 +9262,35 @@ function applyDatabaseFieldMigration(data) {
     return changed;
 }
 /**
+ * Removes `branchName`, which duplicated the database's version branch and
+ * drifted out of sync - changing a database's version left the row reading
+ * "17.0 • Odoo 19.0". A database with no version keeps the value as its legacy
+ * `odooVersion`, which unmigrated data already uses.
+ *
+ * Runs after applyDatabaseFieldMigration, which still writes `branchName` for
+ * a legacy branch with no matching version profile; that value round-trips
+ * back into `odooVersion` here.
+ */
+function applyBranchNameMigration(data) {
+    let changed = false;
+    let preserved = 0;
+    for (const project of data.projects ?? []) {
+        for (const db of project.dbs ?? []) {
+            if (!db || typeof db !== 'object' || !('branchName' in db)) {
+                continue;
+            }
+            const branchName = typeof db.branchName === 'string' ? db.branchName.trim() : '';
+            if (!db.versionId && branchName && !db.odooVersion) {
+                db.odooVersion = branchName;
+                preserved += 1;
+            }
+            delete db.branchName;
+            changed = true;
+        }
+    }
+    return { changed, preserved };
+}
+/**
  * One-time, non-fatal migration of odoo-debugger-data.json to the v1.2 shape.
  * Runs at activation after the legacy-settings migration and after the tree
  * providers are constructed (so the versions-changed refresh command exists).
@@ -9300,6 +9309,10 @@ async function migrateDebuggerData() {
             }
         }
         const changed = applyDatabaseFieldMigration(data);
+        const branchNameResult = applyBranchNameMigration(data);
+        if (branchNameResult.preserved > 0) {
+            logger_1.logger.info(`[migration] kept ${branchNameResult.preserved} legacy branch label(s) as odooVersion`);
+        }
         const hookResult = applyHookMigration(data);
         const droppedFromSettings = await migrateHookSettings();
         const dropped = [...new Set([...hookResult.droppedCommands, ...droppedFromSettings])];
@@ -9310,7 +9323,7 @@ async function migrateDebuggerData() {
                 'They ran before a branch switch; there is no longer one to run before. ' +
                 'Add them to postSwitchCommands only if they still make sense after the switch.');
         }
-        if (changed || hookResult.changed || missingBranches.length > 0) {
+        if (changed || branchNameResult.changed || hookResult.changed || missingBranches.length > 0) {
             // Save as-is (no settings strip): if the legacy-settings migration
             // has not run yet, its data must survive this write.
             await settingsStore_1.SettingsStore.saveWithoutComments(data);

@@ -75,6 +75,38 @@ export function applyDatabaseFieldMigration(data: Partial<DebuggerData>): boolea
 }
 
 /**
+ * Removes `branchName`, which duplicated the database's version branch and
+ * drifted out of sync - changing a database's version left the row reading
+ * "17.0 • Odoo 19.0". A database with no version keeps the value as its legacy
+ * `odooVersion`, which unmigrated data already uses.
+ *
+ * Runs after applyDatabaseFieldMigration, which still writes `branchName` for
+ * a legacy branch with no matching version profile; that value round-trips
+ * back into `odooVersion` here.
+ */
+export function applyBranchNameMigration(data: DebuggerData): { changed: boolean; preserved: number } {
+    let changed = false;
+    let preserved = 0;
+
+    for (const project of data.projects ?? []) {
+        for (const db of (project as any).dbs ?? []) {
+            if (!db || typeof db !== 'object' || !('branchName' in db)) {
+                continue;
+            }
+            const branchName = typeof db.branchName === 'string' ? db.branchName.trim() : '';
+            if (!db.versionId && branchName && !db.odooVersion) {
+                db.odooVersion = branchName;
+                preserved += 1;
+            }
+            delete db.branchName;
+            changed = true;
+        }
+    }
+
+    return { changed, preserved };
+}
+
+/**
  * One-time, non-fatal migration of odoo-debugger-data.json to the v1.2 shape.
  * Runs at activation after the legacy-settings migration and after the tree
  * providers are constructed (so the versions-changed refresh command exists).
@@ -95,6 +127,10 @@ export async function migrateDebuggerData(): Promise<void> {
         }
 
         const changed = applyDatabaseFieldMigration(data);
+        const branchNameResult = applyBranchNameMigration(data);
+        if (branchNameResult.preserved > 0) {
+            logger.info(`[migration] kept ${branchNameResult.preserved} legacy branch label(s) as odooVersion`);
+        }
         const hookResult = applyHookMigration(data);
         const droppedFromSettings = await migrateHookSettings();
         const dropped = [...new Set([...hookResult.droppedCommands, ...droppedFromSettings])];
@@ -107,7 +143,7 @@ export async function migrateDebuggerData(): Promise<void> {
                 'Add them to postSwitchCommands only if they still make sense after the switch.'
             );
         }
-        if (changed || hookResult.changed || missingBranches.length > 0) {
+        if (changed || branchNameResult.changed || hookResult.changed || missingBranches.length > 0) {
             // Save as-is (no settings strip): if the legacy-settings migration
             // has not run yet, its data must survive this write.
             await SettingsStore.saveWithoutComments(data);

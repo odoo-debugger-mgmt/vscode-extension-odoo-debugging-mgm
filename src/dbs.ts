@@ -436,23 +436,23 @@ async function linkDatabaseToVersion(dbId: string, versionId: string): Promise<v
  * fresh databases inherit the active version; restored/connected databases are
  * probed for their Odoo series (base module version) and matched to a version.
  */
-async function resolveVersionForNewDatabase(dbName: string, method: CreationMethod): Promise<{ versionId?: string; branchLabel?: string }> {
+async function resolveVersionForNewDatabase(dbName: string, method: CreationMethod): Promise<{ versionId?: string; odooVersion?: string }> {
     const versionsService = VersionsService.getInstance();
     await versionsService.initialize();
     const activeVersion = versionsService.getActiveVersion();
 
     if (method === 'fresh') {
-        return { versionId: activeVersion?.id, branchLabel: activeVersion?.odooVersion };
+        return { versionId: activeVersion?.id };
     }
 
     const series = await detectOdooSeries(dbName);
     if (!series) {
-        return { versionId: activeVersion?.id, branchLabel: activeVersion?.odooVersion };
+        return { versionId: activeVersion?.id };
     }
 
     const match = versionsService.getVersions().find(version => (version.odooVersion ?? '').trim() === series);
     if (match) {
-        return { versionId: match.id, branchLabel: series };
+        return { versionId: match.id };
     }
 
     // Non-blocking offer to create the missing version profile.
@@ -474,7 +474,9 @@ async function resolveVersionForNewDatabase(dbName: string, method: CreationMeth
         }
     });
 
-    return { versionId: undefined, branchLabel: series };
+    // No profile matched: keep the detected series as the legacy odooVersion,
+    // which is the only thing that can report this database's version.
+    return { versionId: undefined, odooVersion: series };
 }
 
 export async function createDb(projectName: string, repos: RepoModel[], dumpFolderPath: string, _settings: SettingsModel, options: CreateDbOptions = {}): Promise<DatabaseModel | undefined> {
@@ -598,7 +600,7 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
     // Step 5: infer the environment instead of prompting for it. The version is
     // auto-detected from the database itself; the current branch of every
     // project repo is captured as the database's working state.
-    const { versionId, branchLabel } = await resolveVersionForNewDatabase(dbName, creationMethod);
+    const { versionId, odooVersion } = await resolveVersionForNewDatabase(dbName, creationMethod);
     const projectRepoBranches = await captureCurrentRepoBranches(repos);
 
     return new DatabaseModel(dbName, creationTimestamp, {
@@ -606,8 +608,8 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
         isItABackup: creationMethod === 'dump',
         sqlFilePath: sqlDumpPath,
         isExisting: creationMethod === 'existing',
-        branchName: branchLabel ?? '',
         versionId,
+        odooVersion,
         displayName: dbName,
         internalName: dbName,
         kind: dbKind,
@@ -927,7 +929,6 @@ export async function cloneDatabaseFlow(event: unknown): Promise<void> {
         isSelected: false,
         isItABackup: false,
         isExisting: false,
-        branchName: db.branchName ?? '',
         versionId: db.versionId,
         displayName: targetName,
         internalName: targetName,
@@ -1098,17 +1099,12 @@ export async function changeDatabaseVersion(event: unknown) {
                 project.dbs[dbIndex].versionId = selectedChoice.versionId;
                 // Don't set odooVersion when version is assigned - it should come from the version
                 project.dbs[dbIndex].odooVersion = undefined;
-                // branchName records the core branch this database runs. Leaving
-                // the old one behind makes the row read "17.0 • Odoo 19.0", since
-                // the view shows branchName whenever it differs from the version.
-                project.dbs[dbIndex].branchName = selectedVersion.odooVersion ?? '';
             }
         } else {
             // Remove version association but preserve original branch name
             project.dbs[dbIndex].versionId = undefined;
-            // When no version, we can fall back to empty odooVersion (will use branchName if available)
+            // With no version the legacy odooVersion is the only series source.
             project.dbs[dbIndex].odooVersion = undefined;
-            // Keep branchName - it's independent of version management
         }
 
         // Save only the databases array to avoid touching settings

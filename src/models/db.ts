@@ -12,7 +12,6 @@ export interface DatabaseOptions {
     isSelected?: boolean;
     sqlFilePath?: string;
     isExisting?: boolean;
-    branchName?: string;
     odooVersion?: string;
     versionId?: string;
     displayName?: string;
@@ -36,7 +35,6 @@ export class DatabaseModel {
     sqlFilePath: string = '';
     id: string = '';
     isExisting: boolean = false;
-    branchName: string = '';
     odooVersion?: string; // Optional - only used when no version is assigned
     versionId?: string; // Reference to the VersionModel
     displayName?: string;
@@ -53,7 +51,6 @@ export class DatabaseModel {
         this.isSelected = options.isSelected || false;
         this.sqlFilePath = options.sqlFilePath || '';
         this.isExisting = options.isExisting || false;
-        this.branchName = options.branchName || '';
         this.odooVersion = options.odooVersion; // Optional - undefined when version is assigned
         this.versionId = options.versionId;
         this.kind = options.kind;

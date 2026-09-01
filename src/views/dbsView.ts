@@ -87,19 +87,11 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             parts.push(runningPart);
         }
 
+        // The version is the only source of the core branch; a database with
+        // none falls back to its legacy odooVersion.
         if (db.versionId) {
             const version = this.lookupVersion(db.versionId);
-            const versionLabel = version ? version.name : `${db.versionId.substring(0, 8)}...`;
-            if (db.branchName && db.branchName !== version?.odooVersion) {
-                parts.push(db.branchName);
-            }
-            parts.push(versionLabel);
-        } else if (db.branchName && db.branchName.trim() !== '') {
-            parts.push(db.branchName);
-            const effectiveOdooVersion = getEffectiveOdooVersion(db);
-            if (effectiveOdooVersion && effectiveOdooVersion !== db.branchName) {
-                parts.push(effectiveOdooVersion);
-            }
+            parts.push(version ? version.name : `${db.versionId.substring(0, 8)}...`);
         } else {
             const effectiveOdooVersion = getEffectiveOdooVersion(db);
             if (effectiveOdooVersion && effectiveOdooVersion.trim() !== '') {
@@ -147,9 +139,6 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             }
         }
 
-        if (db.branchName) {
-            tooltipDetails.push(`**Branch:** ${db.branchName}`);
-        }
         const projectRepoBranches = sanitizeProjectRepoBranchAssignments(db.projectRepoBranches);
         if (projectRepoBranches.length > 0) {
             const formattedRepoBranches = projectRepoBranches
@@ -225,9 +214,6 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
     }
 
     private getBranchValue(db: DatabaseModel): string {
-        if (db.branchName && db.branchName.trim() !== '') {
-            return db.branchName.toLowerCase();
-        }
         const effective = getEffectiveOdooVersion(db);
         return effective ? effective.toLowerCase() : '';
     }
