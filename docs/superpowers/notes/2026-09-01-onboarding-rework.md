@@ -157,6 +157,12 @@ cloned, and four of the five have an obvious default. This is the opposite of
 
 ---
 
+## Feeds the custom-repo worktree design
+
+Observations 4 (walkthrough) and 9 (`updateActiveSettings` dead code) remain
+open. The branch-model friction noted across this file is now addressed by
+`docs/superpowers/specs/2026-09-01-custom-repo-worktrees-design.md` §6-§9.
+
 ## Open questions for the rework
 
 - Should setup **require** a source repo up front, or offer to clone one into
