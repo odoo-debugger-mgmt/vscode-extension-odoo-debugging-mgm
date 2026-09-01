@@ -143,7 +143,9 @@ export async function activate(context: vscode.ExtensionContext) {
             // A session just started or stopped: the cached probe is stale and
             // the Databases view is showing the previous state.
             invalidateRunningState();
-            void refreshViews();
+            // Fire-and-forget from an event handler: an unhandled rejection
+            // here would surface as a bare error in the Debug Console.
+            refreshViews().catch(error => logger.warn('Refresh after a debug session change failed:', error));
         },
         getSelectedDbName: async () => {
             const result = await SettingsStore.getSelectedProject();
@@ -209,7 +211,7 @@ export async function activate(context: vscode.ExtensionContext) {
     registerAllCommands({ context, providers, versionsService, sortPreferences, moduleTreeView, refreshAll });
 
     void statusBar.update();
-    void promptFirstRunSetup(context);
+    promptFirstRunSetup(context).catch(error => logger.warn('First-run setup prompt failed:', error));
 }
 
 /**

@@ -168,7 +168,9 @@ async function activate(context) {
             // A session just started or stopped: the cached probe is stale and
             // the Databases view is showing the previous state.
             (0, runningState_1.invalidateRunningState)();
-            void refreshViews();
+            // Fire-and-forget from an event handler: an unhandled rejection
+            // here would surface as a bare error in the Debug Console.
+            refreshViews().catch(error => logger_1.logger.warn('Refresh after a debug session change failed:', error));
         },
         getSelectedDbName: async () => {
             const result = await settingsStore_1.SettingsStore.getSelectedProject();
@@ -226,7 +228,7 @@ async function activate(context) {
     };
     (0, commands_1.registerAllCommands)({ context, providers, versionsService, sortPreferences, moduleTreeView, refreshAll });
     void statusBar.update();
-    void promptFirstRunSetup(context);
+    promptFirstRunSetup(context).catch(error => logger_1.logger.warn('First-run setup prompt failed:', error));
 }
 /**
  * Before this design, `defaultVersion.odooPath` doubled as the repository
