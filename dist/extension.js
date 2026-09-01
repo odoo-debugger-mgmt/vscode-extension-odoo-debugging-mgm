@@ -2055,13 +2055,15 @@ exports.invalidateModuleDiscoveryCache = invalidateModuleDiscoveryCache;
 exports.invalidateRepositoryDiscoveryCache = invalidateRepositoryDiscoveryCache;
 exports.invalidateInstalledModulesCache = invalidateInstalledModulesCache;
 exports.invalidateGitBranchCache = invalidateGitBranchCache;
+exports.invalidateActiveDatabasesCache = invalidateActiveDatabasesCache;
 exports.invalidateAllRuntimeCaches = invalidateAllRuntimeCaches;
 const DEFAULT_TTLS = {
     moduleDiscoveryMs: 5000,
     repositoryDiscoveryMs: 5000,
     installedModulesMs: 5000,
     installedModuleNamesMs: 5000,
-    gitBranchMs: 3000
+    gitBranchMs: 3000,
+    activeDatabasesMs: 3000
 };
 class RuntimeCacheService {
     moduleDiscovery = new Map();
@@ -2069,6 +2071,7 @@ class RuntimeCacheService {
     installedModules = new Map();
     installedModuleNames = new Map();
     gitBranches = new Map();
+    activeDatabases = new Map();
     getOrCompute(store, key, ttlMs, loader) {
         const now = Date.now();
         const cached = store.get(key);
@@ -2103,6 +2106,13 @@ class RuntimeCacheService {
     }
     async getGitBranch(repoPath, loader, ttlMs = DEFAULT_TTLS.gitBranchMs) {
         return this.getOrComputeAsync(this.gitBranches, repoPath, ttlMs, loader);
+    }
+    async getActiveDatabases(loader, ttlMs = DEFAULT_TTLS.activeDatabasesMs) {
+        // Cluster-wide, so a single key.
+        return this.getOrComputeAsync(this.activeDatabases, 'cluster', ttlMs, loader);
+    }
+    invalidateActiveDatabasesCache() {
+        this.activeDatabases.clear();
     }
     invalidateModuleDiscoveryCache(key) {
         if (key) {
@@ -2139,6 +2149,7 @@ class RuntimeCacheService {
         this.invalidateRepositoryDiscoveryCache();
         this.invalidateInstalledModulesCache();
         this.invalidateGitBranchCache();
+        this.invalidateActiveDatabasesCache();
     }
 }
 exports.runtimeCache = new RuntimeCacheService();
@@ -2153,6 +2164,9 @@ function invalidateInstalledModulesCache(dbName) {
 }
 function invalidateGitBranchCache(repoPath) {
     exports.runtimeCache.invalidateGitBranchCache(repoPath);
+}
+function invalidateActiveDatabasesCache() {
+    exports.runtimeCache.invalidateActiveDatabasesCache();
 }
 function invalidateAllRuntimeCaches() {
     exports.runtimeCache.invalidateAll();
@@ -7976,6 +7990,8 @@ exports.getInstalledModuleNames = getInstalledModuleNames;
 exports.clearInstalledModuleCache = clearInstalledModuleCache;
 exports.parseOdooSeries = parseOdooSeries;
 exports.detectOdooSeries = detectOdooSeries;
+exports.parseActiveDatabaseNames = parseActiveDatabaseNames;
+exports.getActiveDatabaseNames = getActiveDatabaseNames;
 /**
  * Read-only PostgreSQL probes for Odoo databases: installed modules and
  * Odoo series detection via the base module version.
@@ -8002,6 +8018,12 @@ const TABLE_EXISTS_QUERY = `
         SELECT FROM information_schema.tables
         WHERE table_name = 'ir_module_module'
     );
+`.trim();
+const ACTIVE_DATABASES_QUERY = `
+    SELECT datname
+    FROM pg_stat_activity
+    WHERE datname IS NOT NULL
+    GROUP BY datname;
 `.trim();
 const BASE_MODULE_VERSION_QUERY = `
     SELECT latest_version
@@ -8153,6 +8175,29 @@ async function detectOdooSeries(dbName) {
         logger_1.logger.warn(`Failed to detect Odoo series for database "${dbName}":`, error);
         return undefined;
     }
+}
+function parseActiveDatabaseNames(output) {
+    return output
+        .split('\n')
+        .map(entry => entry.trim())
+        .filter(Boolean);
+}
+/**
+ * Databases with at least one live backend, which catches servers started
+ * from a terminal or another window - not just the ones this extension
+ * launched. Queried through the `postgres` maintenance database because the
+ * view is cluster-wide. Best-effort: an unreachable cluster reports nothing.
+ */
+async function getActiveDatabaseNames() {
+    return runtimeCache_1.runtimeCache.getActiveDatabases(async () => {
+        try {
+            return parseActiveDatabaseNames(await runPsqlQuery('postgres', ACTIVE_DATABASES_QUERY));
+        }
+        catch (error) {
+            logger_1.logger.debug('Could not read active databases from pg_stat_activity:', error);
+            return [];
+        }
+    });
 }
 
 

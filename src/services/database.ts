@@ -31,6 +31,13 @@ const TABLE_EXISTS_QUERY = `
     );
 `.trim();
 
+const ACTIVE_DATABASES_QUERY = `
+    SELECT datname
+    FROM pg_stat_activity
+    WHERE datname IS NOT NULL
+    GROUP BY datname;
+`.trim();
+
 const BASE_MODULE_VERSION_QUERY = `
     SELECT latest_version
     FROM ir_module_module
@@ -195,4 +202,28 @@ export async function detectOdooSeries(dbName: string): Promise<string | undefin
         logger.warn(`Failed to detect Odoo series for database "${dbName}":`, error);
         return undefined;
     }
+}
+
+export function parseActiveDatabaseNames(output: string): string[] {
+    return output
+        .split('\n')
+        .map(entry => entry.trim())
+        .filter(Boolean);
+}
+
+/**
+ * Databases with at least one live backend, which catches servers started
+ * from a terminal or another window - not just the ones this extension
+ * launched. Queried through the `postgres` maintenance database because the
+ * view is cluster-wide. Best-effort: an unreachable cluster reports nothing.
+ */
+export async function getActiveDatabaseNames(): Promise<string[]> {
+    return runtimeCache.getActiveDatabases(async () => {
+        try {
+            return parseActiveDatabaseNames(await runPsqlQuery('postgres', ACTIVE_DATABASES_QUERY));
+        } catch (error) {
+            logger.debug('Could not read active databases from pg_stat_activity:', error);
+            return [];
+        }
+    });
 }

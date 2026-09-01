@@ -12,7 +12,8 @@ const DEFAULT_TTLS = {
     repositoryDiscoveryMs: 5000,
     installedModulesMs: 5000,
     installedModuleNamesMs: 5000,
-    gitBranchMs: 3000
+    gitBranchMs: 3000,
+    activeDatabasesMs: 3000
 } as const;
 
 class RuntimeCacheService {
@@ -21,6 +22,7 @@ class RuntimeCacheService {
     private readonly installedModules = new Map<string, TimedEntry<unknown>>();
     private readonly installedModuleNames = new Map<string, TimedEntry<string[]>>();
     private readonly gitBranches = new Map<string, TimedEntry<string | null>>();
+    private readonly activeDatabases = new Map<string, TimedEntry<string[]>>();
 
     private getOrCompute<T>(store: Map<string, TimedEntry<T>>, key: string, ttlMs: number, loader: () => T): T {
         const now = Date.now();
@@ -66,6 +68,15 @@ class RuntimeCacheService {
         return this.getOrComputeAsync(this.gitBranches, repoPath, ttlMs, loader);
     }
 
+    async getActiveDatabases(loader: () => Promise<string[]>, ttlMs = DEFAULT_TTLS.activeDatabasesMs): Promise<string[]> {
+        // Cluster-wide, so a single key.
+        return this.getOrComputeAsync(this.activeDatabases, 'cluster', ttlMs, loader);
+    }
+
+    invalidateActiveDatabasesCache(): void {
+        this.activeDatabases.clear();
+    }
+
     invalidateModuleDiscoveryCache(key?: string): void {
         if (key) {
             this.moduleDiscovery.delete(key);
@@ -105,6 +116,7 @@ class RuntimeCacheService {
         this.invalidateRepositoryDiscoveryCache();
         this.invalidateInstalledModulesCache();
         this.invalidateGitBranchCache();
+        this.invalidateActiveDatabasesCache();
     }
 }
 
@@ -124,6 +136,10 @@ export function invalidateInstalledModulesCache(dbName?: string): void {
 
 export function invalidateGitBranchCache(repoPath?: string): void {
     runtimeCache.invalidateGitBranchCache(repoPath);
+}
+
+export function invalidateActiveDatabasesCache(): void {
+    runtimeCache.invalidateActiveDatabasesCache();
 }
 
 export function invalidateAllRuntimeCaches(): void {
