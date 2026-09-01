@@ -50,7 +50,7 @@ Pure module computing a version's debugger name and ports from its branch. No `v
   - `function candidatePortsFor(branch: string, window?: number): number[]`
   - `async function probeBusyPorts(ports: number[]): Promise<Set<number>>`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src/test/versionIdentity.test.ts`:
 
@@ -178,12 +178,12 @@ suite('Version identity', () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `npm run compile-tests`
 Expected: FAIL with `error TS2307: Cannot find module '../services/versionIdentity'`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `src/services/versionIdentity.ts`:
 
@@ -384,12 +384,12 @@ export async function probeBusyPorts(ports: number[]): Promise<Set<number>> {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 100 passing (91 existing + 9 new), no `error TS`, no lint errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/services/versionIdentity.ts src/test/versionIdentity.test.ts
@@ -413,7 +413,7 @@ Wires Task 1 into version creation, cloning, repair, the settings tree and the s
 - Consumes: `deriveIdentity`, `collectTaken`, `healIdentities`, `isDerivedSetting`, `DERIVED_SETTING_KEYS`, `VersionIdentity` from `src/services/versionIdentity.ts` (Task 1).
 - Produces: `VersionsService.getDebuggerNamePrefix(): string` — reads `odooDebugger.debuggerNamePrefix`, used by Tasks 3 and 5. Every stored version is guaranteed to carry a unique `settings.debuggerName`, `settings.portNumber` and `settings.shellPortNumber` after `initialize()`.
 
-- [ ] **Step 1: Remove the three default-identity configuration keys**
+- [x] **Step 1: Remove the three default-identity configuration keys**
 
 In `package.json`, delete these three properties from `contributes.configuration.properties`:
 
@@ -433,7 +433,7 @@ Add, alongside `odooDebugger.provisioning.root`:
 }
 ```
 
-- [ ] **Step 2: Drop the three keys from `getDefaultVersionSettings`**
+- [x] **Step 2: Drop the three keys from `getDefaultVersionSettings`**
 
 In `src/utils.ts`, in `getDefaultVersionSettings()`, delete these three lines:
 
@@ -445,12 +445,12 @@ In `src/utils.ts`, in `getDefaultVersionSettings()`, delete these three lines:
 
 Leave `debuggerVersion` and every other key untouched.
 
-- [ ] **Step 3: Run the compiler to see what breaks**
+- [x] **Step 3: Run the compiler to see what breaks**
 
 Run: `npm run compile-tests`
 Expected: PASS. `getDefaultVersionSettings` returns `any`, so nothing type-errors — this step is to confirm the removal did not break an unrelated typed consumer. The behavioural gap (versions created with no identity) is closed in the next step.
 
-- [ ] **Step 4: Derive identity on create and clone**
+- [x] **Step 4: Derive identity on create and clone**
 
 In `src/versionsService.ts`, add to the imports at the top:
 
@@ -536,7 +536,7 @@ with:
             };
 ```
 
-- [ ] **Step 5: Heal stored identities on load**
+- [x] **Step 5: Heal stored identities on load**
 
 In `src/versionsService.ts`, in `validateAndRepairVersions()`, insert this block immediately before the final `if (needsRepair) {`:
 
@@ -560,7 +560,7 @@ In `src/versionsService.ts`, in `validateAndRepairVersions()`, insert this block
         }
 ```
 
-- [ ] **Step 6: Stop the default-value operations from touching identity**
+- [x] **Step 6: Stop the default-value operations from touching identity**
 
 Three methods in `src/versionsService.ts` treat every settings key uniformly and must now skip the derived ones.
 
@@ -598,7 +598,7 @@ In `setAllSettingsAsDefault`, replace the `for (const [key, value] of Object.ent
             }
 ```
 
-- [ ] **Step 7: Refuse to edit derived settings from the tree**
+- [x] **Step 7: Refuse to edit derived settings from the tree**
 
 In `src/commands/versionCommands.ts`, in the `odoo.editVersionSetting` handler, immediately after `const { versionId, key, value } = ref;` add:
 
@@ -630,7 +630,7 @@ to:
 import { getSettingDisplayName, normalizePath } from '../utils';
 ```
 
-- [ ] **Step 8: Render derived settings as read-only rows**
+- [x] **Step 8: Render derived settings as read-only rows**
 
 In `src/versionsTreeProvider.ts`, add to the imports:
 
@@ -668,19 +668,19 @@ with:
         };
 ```
 
-- [ ] **Step 9: Hide the reset/set-default menu items on derived rows**
+- [x] **Step 9: Hide the reset/set-default menu items on derived rows**
 
 In `package.json`, find every entry under `contributes.menus.view/item/context` whose `when` clause references `viewItem == versionSetting`. Those are the "Reset to Default" / "Set as Default" actions. They already only match `versionSetting`, and derived rows now carry `versionSettingDerived`, so no change is needed — confirm this by grepping and record the result:
 
 Run: `grep -n "versionSetting" package.json`
 Expected: every `when` clause uses `viewItem == versionSetting` exactly (not `=~`), so derived rows show no edit actions. If any clause uses a regex match that would also match `versionSettingDerived`, tighten it to `==`.
 
-- [ ] **Step 10: Verify the whole gate**
+- [x] **Step 10: Verify the whole gate**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 100 passing, no `error TS`, no lint errors.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add -A
@@ -710,7 +710,7 @@ Replaces the two "there is one session" assumptions (`isOwnSession` in `src/serv
   - `function clearSessions(): void`
   - `function resolveStopTarget(running: string[], activeName: string | undefined): { kind: 'none' } | { kind: 'single'; name: string } | { kind: 'prompt'; names: string[] }`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src/test/debugSessions.test.ts`:
 
@@ -785,12 +785,12 @@ suite('Debug session registry', () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `npm run compile-tests`
 Expected: FAIL with `error TS2307: Cannot find module '../services/debugSessions'`.
 
-- [ ] **Step 3: Write the registry**
+- [x] **Step 3: Write the registry**
 
 Create `src/services/debugSessions.ts`:
 
@@ -864,12 +864,12 @@ export function resolveStopTarget(
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npm run compile-tests && npm test`
 Expected: 104 passing (100 + 4 new).
 
-- [ ] **Step 5: Feed the registry from the lifecycle listeners**
+- [x] **Step 5: Feed the registry from the lifecycle listeners**
 
 In `src/services/server.ts`, add to the imports:
 
@@ -942,7 +942,7 @@ export function registerServerLifecycle(
 }
 ```
 
-- [ ] **Step 6: Address the running session, not the active one, in debugger.ts**
+- [x] **Step 6: Address the running session, not the active one, in debugger.ts**
 
 In `src/debugger.ts`, add to the imports:
 
@@ -1008,12 +1008,12 @@ with:
     }
 ```
 
-- [ ] **Step 7: Verify the whole gate**
+- [x] **Step 7: Verify the whole gate**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 104 passing, no `error TS`, no lint errors.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A
@@ -1042,7 +1042,7 @@ git commit -m "[IMP] Track a debug session per version instead of one active ses
   - `ProjectModel.selectedDbByVersion: Record<string, string>`
   - `prepareArgs(project, settings, options?: { isShell?: boolean; versionId?: string })`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src/test/dbResolution.test.ts`:
 
@@ -1100,12 +1100,12 @@ suite('Per-version database resolution', () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `npm run compile-tests`
 Expected: FAIL with `error TS2307: Cannot find module '../services/dbResolution'`.
 
-- [ ] **Step 3: Write the resolver**
+- [x] **Step 3: Write the resolver**
 
 Create `src/services/dbResolution.ts`:
 
@@ -1163,12 +1163,12 @@ export function rememberDbForVersion(
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npm run compile-tests && npm test`
 Expected: 111 passing (104 + 7 new).
 
-- [ ] **Step 5: Add the per-version memory to the project model**
+- [x] **Step 5: Add the per-version memory to the project model**
 
 In `src/models/project.ts`, add the field to the class body, immediately after `tickets: ProjectTicketModel[] = [];`:
 
@@ -1179,7 +1179,7 @@ In `src/models/project.ts`, add the field to the class body, immediately after `
 
 Do not add it to the constructor signature — projects are read back from `odoo-debugger-data.json` as plain objects, so an additive optional field round-trips without a migration.
 
-- [ ] **Step 6: Resolve per version in `prepareArgs`**
+- [x] **Step 6: Resolve per version in `prepareArgs`**
 
 In `src/debugger.ts`, add to the imports:
 
@@ -1222,7 +1222,7 @@ with:
     }
 ```
 
-- [ ] **Step 7: Pass the version id from both callers**
+- [x] **Step 7: Pass the version id from both callers**
 
 In `setupDebugger` (line 72), replace:
 
@@ -1251,7 +1251,7 @@ with:
         });
 ```
 
-- [ ] **Step 8: Record the selection against the active version**
+- [x] **Step 8: Record the selection against the active version**
 
 In `src/dbs.ts`, add to the imports:
 
@@ -1283,12 +1283,12 @@ with:
 
 `VersionsService` is already imported in `src/dbs.ts` (line 15) — do not add a second import.
 
-- [ ] **Step 9: Verify the whole gate**
+- [x] **Step 9: Verify the whole gate**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 111 passing, no `error TS`, no lint errors.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add -A
@@ -1311,7 +1311,7 @@ git commit -m "[ADD] Resolve the launch database per version"
 - Consumes: `resolveDbForVersion` (Task 4), `venvPythonPath` from `src/services/pythonToolchain.ts`, `updateManagedLaunchConfig` from `src/services/launchConfig.ts`.
 - Produces: `function isVersionProvisioned(pythonPath: string | undefined): boolean` in `src/services/provisioning.ts`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `src/test/provisioning.test.ts`, inside the existing `suite`:
 
@@ -1327,12 +1327,12 @@ Append to `src/test/provisioning.test.ts`, inside the existing `suite`:
 
 Add `isVersionProvisioned` to the existing import from `../services/provisioning`.
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm run compile-tests`
 Expected: FAIL with `error TS2305: Module '"../services/provisioning"' has no exported member 'isVersionProvisioned'`.
 
-- [ ] **Step 3: Add the shared predicate**
+- [x] **Step 3: Add the shared predicate**
 
 In `src/services/provisioning.ts`, add after `isFullySatisfied`:
 
@@ -1350,12 +1350,12 @@ export function isVersionProvisioned(pythonPath: string | undefined): boolean {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npm run compile-tests && npm test`
 Expected: 112 passing.
 
-- [ ] **Step 5: Have the versions tree use the shared predicate**
+- [x] **Step 5: Have the versions tree use the shared predicate**
 
 In `src/versionsTreeProvider.ts`, replace the local `provisioningLabel` helper (lines 17-28) with:
 
@@ -1376,7 +1376,7 @@ import { isVersionProvisioned } from './services/provisioning';
 
 Keep `normalizePath` in the existing `./utils` import.
 
-- [ ] **Step 6: Write one launch entry per provisioned version**
+- [x] **Step 6: Write one launch entry per provisioned version**
 
 In `src/debugger.ts`, replace the whole body of `setupDebugger` (lines 54-109) with:
 
@@ -1468,12 +1468,12 @@ Add to `src/debugger.ts` imports:
 import { isVersionProvisioned } from './services/provisioning';
 ```
 
-- [ ] **Step 7: Verify the whole gate**
+- [x] **Step 7: Verify the whole gate**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 112 passing, no `error TS`, no lint errors.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A
@@ -1495,7 +1495,7 @@ git commit -m "[IMP] Sync one launch entry per provisioned version"
 - Consumes: `VersionModel.settings` (`odooPath`, `enterprisePath`, `designThemesPath`).
 - Produces: `interface WorkspaceFolderEntry { path: string; name?: string }` and `function versionFolderEntries(version: { name: string; settings: { odooPath?: string; enterprisePath?: string; designThemesPath?: string } } | undefined, existingPaths: string[]): WorkspaceFolderEntry[]`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/test/workspaceFolders.test.ts`:
 
@@ -1540,12 +1540,12 @@ suite('Workspace folders', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm run compile-tests`
 Expected: FAIL with `error TS2307: Cannot find module '../services/workspaceFolders'`.
 
-- [ ] **Step 3: Write the helper**
+- [x] **Step 3: Write the helper**
 
 Create `src/services/workspaceFolders.ts`:
 
@@ -1604,12 +1604,12 @@ export function versionFolderEntries(
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npm run compile-tests && npm test`
 Expected: 113 passing.
 
-- [ ] **Step 5: Add the folders to the generated workspace**
+- [x] **Step 5: Add the folders to the generated workspace**
 
 In `src/projectWorkspace.ts`, add to the imports:
 
@@ -1631,12 +1631,12 @@ In `buildWorkspaceFile`, after the `for (const repo of project.repos as RepoMode
     ));
 ```
 
-- [ ] **Step 6: Verify the whole gate**
+- [x] **Step 6: Verify the whole gate**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 113 passing, no `error TS`, no lint errors.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A
@@ -1666,7 +1666,7 @@ Merges the session map (Task 3) with a PostgreSQL probe so any feature can ask w
   - `function parseActiveDatabaseNames(output: string): string[]` in `src/services/database.ts`
   - `async function getActiveDatabaseNames(): Promise<string[]>` in `src/services/database.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src/test/runningState.test.ts`:
 
@@ -1729,12 +1729,12 @@ Append to `src/test/postgres.test.ts`, inside the existing `suite`:
 
 Add `parseActiveDatabaseNames` to that file's existing import from `../services/database`.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `npm run compile-tests`
 Expected: FAIL with `error TS2307: Cannot find module '../services/runningState'` and `error TS2305` for `parseActiveDatabaseNames`.
 
-- [ ] **Step 3: Add the PostgreSQL probe**
+- [x] **Step 3: Add the PostgreSQL probe**
 
 In `src/services/database.ts`, add alongside the other query constants:
 
@@ -1775,7 +1775,7 @@ export async function getActiveDatabaseNames(): Promise<string[]> {
 }
 ```
 
-- [ ] **Step 4: Add the cache slot**
+- [x] **Step 4: Add the cache slot**
 
 In `src/services/runtimeCache.ts`, add to `DEFAULT_TTLS`:
 
@@ -1810,7 +1810,7 @@ export function invalidateActiveDatabasesCache(): void {
 }
 ```
 
-- [ ] **Step 5: Write the running-state service**
+- [x] **Step 5: Write the running-state service**
 
 Create `src/services/runningState.ts`:
 
@@ -1908,12 +1908,12 @@ export function invalidateRunningState(): void {
 }
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 118 passing (113 + 4 + 1), no `error TS`, no lint errors.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A
@@ -1935,7 +1935,7 @@ Surfaces Task 6 in the tree, and refreshes it from the debug lifecycle events th
 - Consumes: `getRunningInstances`, `invalidateRunningState`, `RunningInstance` (Task 7).
 - Produces: `function runningDescriptionPart(instance: RunningInstance | undefined): string | undefined` in `src/services/runningState.ts`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `src/test/runningState.test.ts`, inside the existing `suite`:
 
@@ -1959,12 +1959,12 @@ Append to `src/test/runningState.test.ts`, inside the existing `suite`:
 
 Add `runningDescriptionPart` to that file's import from `../services/runningState`.
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm run compile-tests`
 Expected: FAIL with `error TS2305: Module '"../services/runningState"' has no exported member 'runningDescriptionPart'`.
 
-- [ ] **Step 3: Add the description helper**
+- [x] **Step 3: Add the description helper**
 
 In `src/services/runningState.ts`, add:
 
@@ -1985,12 +1985,12 @@ export function runningDescriptionPart(instance: RunningInstance | undefined): s
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npm run compile-tests && npm test`
 Expected: 119 passing.
 
-- [ ] **Step 5: Render the marker in the Databases view**
+- [x] **Step 5: Render the marker in the Databases view**
 
 In `src/views/dbsView.ts`, add to the imports:
 
@@ -2058,7 +2058,7 @@ In `buildTooltip`, add the running detail. Change the signature to accept it and
 
 Update the `buildTooltip` call site in `buildDatabaseItem` to pass `running`.
 
-- [ ] **Step 6: Refresh the view when a session starts or stops**
+- [x] **Step 6: Refresh the view when a session starts or stops**
 
 In `src/extension.ts`, add to the imports:
 
@@ -2087,12 +2087,12 @@ Change the `registerServerLifecycle` call (lines 82-89) so the running-state cac
 
 `refreshViews` is declared below this call as a `const` arrow function, so it is not initialised yet at registration time. Move the `registerServerLifecycle` block to just after `refreshViews` is defined (after line 129), keeping `updateServerRunningContext(false);` where it is.
 
-- [ ] **Step 7: Verify the whole gate**
+- [x] **Step 7: Verify the whole gate**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 119 passing, no `error TS`, no lint errors.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A
@@ -2110,7 +2110,7 @@ Brings the shipped docs in line with the behaviour, and records the one place th
 - Modify: `README.md`
 - Modify: `CHANGELOG.md`
 
-- [ ] **Step 1: Correct the §13 rendering paragraph in the spec**
+- [x] **Step 1: Correct the §13 rendering paragraph in the spec**
 
 The spec says running state renders as `$(debug-alt)` / `$(pulse)` icons in the description. `TreeItem.description` does not render codicons, so the implementation uses words and leaves the icon showing selection. Replace that paragraph:
 
@@ -2124,7 +2124,7 @@ with:
 Rendering keeps running state and selection on separate channels. `TreeItem.description` does not render codicons (unlike a `QuickPickItem`), so the marker is words rather than an icon: `running :8017` for managed-running, `running (external)` for a server started elsewhere, nothing for idle, prepended to the existing `•`-joined description. The row's icon is left entirely to selection — the green check is unchanged and orthogonal — so a selected database that is also running reads as both.
 ```
 
-- [ ] **Step 2: Document the behaviour in the README**
+- [x] **Step 2: Document the behaviour in the README**
 
 In `README.md`, in the Versions section, add:
 
@@ -2138,7 +2138,7 @@ Because launch entries are stable and unique, F5 follows whatever the Run and De
 Generated project workspaces now also include the active version's own `odoo`, `enterprise` and `design-themes` checkouts, so files you open belong to the version you are running and breakpoints bind to the right worktree.
 ```
 
-- [ ] **Step 3: Add the CHANGELOG entries**
+- [x] **Step 3: Add the CHANGELOG entries**
 
 In `CHANGELOG.md`, under the unreleased/current heading:
 
@@ -2151,12 +2151,12 @@ In `CHANGELOG.md`, under the unreleased/current heading:
 - Generated project workspaces include the active version's core checkouts, so opened files and breakpoints belong to the version being run.
 ```
 
-- [ ] **Step 4: Verify the whole gate one final time**
+- [x] **Step 4: Verify the whole gate one final time**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 119 passing, no `error TS`, no lint errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A

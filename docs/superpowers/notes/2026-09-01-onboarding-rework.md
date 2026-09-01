@@ -88,6 +88,45 @@ values, and their three `odooDebugger.defaultVersion.*` configuration keys are
 removed outright. `configure-defaults.md` walks the user through the defaults
 UI, so it needs updating regardless of the wider rework.
 
+### 6. `normalizePath('')` silently resolves to the workspace root
+
+Found while wiring the provisioned-version check. `normalizePath` joins a
+relative path onto the workspace, so an **unset** path becomes the workspace
+root — which exists. Any "is this configured thing present?" test written the
+obvious way therefore reports *yes* for a version that has nothing configured.
+
+Fixed for this plan by adding `resolveOptionalPath` in `src/utils.ts`, which
+returns `undefined` for a blank path, and routing both call sites through it.
+Worth auditing the other `fs.existsSync(normalizePath(...))` sites during the
+rework — the same trap applies to every path a setup flow might leave empty.
+
+### 7. `getDefaultVersionSettings()` returns `any`
+
+Removing three keys from it type-checked cleanly, because the return type is
+`any`. Nothing told the compiler that `defaultSettings.debuggerName` had become
+`undefined` at four call sites — I had to find them by grep. If setup is going
+to rework what defaults mean, giving this function a real return type first
+would make that rework far safer.
+
+### 8. Model baselines asserted a plausible-but-wrong default
+
+`VersionModel` and `SettingsModel` hardcoded `odoo:19.0` / `8019` / `5019`. Any
+creation path that bypassed `createVersion` produced a 17.0 version wearing a
+19.0 identity, and nothing detected it because the values *looked* valid. Now
+blanked (`''` / `0` / `0`) so "not derived yet" is distinguishable from
+"derived".
+
+The same pattern is everywhere in the defaults: `./odoo`, `./enterprise`,
+`./venv/bin/python` are all plausible-looking values that may correspond to
+nothing on disk. A setup flow should distinguish *unset* from *set to the
+default* — see observation 3.
+
+### 9. `updateActiveSettings` has no callers
+
+`VersionsService.updateActiveSettings` (`src/versionsService.ts`) is dead code.
+Harmless, but it is a settings write path that bypasses the identity guards, so
+it should be deleted rather than left as a trap for a future setup flow.
+
 ---
 
 ## Open questions for the rework
