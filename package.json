@@ -611,6 +611,12 @@
         "title": "Use One Copy Per Branch",
         "category": "Odoo DevTools",
         "icon": "$(repo-forked)"
+      },
+      {
+        "command": "odoo.checkVersions",
+        "title": "Check Version Environments",
+        "category": "Odoo DevTools",
+        "icon": "$(checklist)"
       }
     ],
     "menus": {
@@ -846,6 +852,11 @@
           "command": "projectRepos.sort",
           "when": "view == odt.projectReposExplorer",
           "group": "1_view@1"
+        },
+        {
+          "command": "odoo.checkVersions",
+          "when": "view == versionsManager",
+          "group": "navigation@9"
         }
       ],
       "view/item/context": [

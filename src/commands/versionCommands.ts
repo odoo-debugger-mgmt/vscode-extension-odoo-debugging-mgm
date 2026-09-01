@@ -5,21 +5,66 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import type { CommandDeps } from './index';
 import { extractVersionId, extractVersionSettingRef } from './args';
-import { getSettingDisplayName, normalizePath } from '../utils';
+import { getSettingDisplayName, normalizePath, resolveOptionalPath } from '../utils';
 import { isDerivedSetting } from '../services/versionIdentity';
 import { showError, showInfo, showWarning, showModalWarning } from '../services/notifications';
 import { errorMessage, logger } from '../services/logger';
 import { pickOdooBranch } from './branchPick';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from '../services/runtimeCache';
 import { alignEnvironment } from '../services/environment';
-import { provisionAndCreateVersion } from '../odooInstaller';
+import { provisionAndCreateVersion, provisionExistingVersion } from '../odooInstaller';
 import { removeWorktree, removeManagedBranch, resolveSourceRepo } from '../services/worktree';
 import { buildServerUrl, waitForPort } from '../services/server';
 import { resolveDbForVersion } from '../services/dbResolution';
 import { SettingsStore } from '../settingsStore';
+import { readSetupState } from '../services/setupState';
+import { diagnoseVersion, needsAttention } from '../services/versionMigration';
 
 export function registerVersionCommands(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
+
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.checkVersions', async () => {
+        try {
+            const root = readSetupState().provisioningRoot;
+            const diagnoses = versionsService.getVersions().map(version => diagnoseVersion(
+                {
+                    id: version.id,
+                    name: version.name,
+                    odooVersion: version.odooVersion,
+                    odooPath: resolveOptionalPath(version.settings.odooPath),
+                    pythonPath: resolveOptionalPath(version.settings.pythonPath)
+                },
+                root,
+                candidate => fs.existsSync(candidate)
+            ));
+
+            const problems = needsAttention(diagnoses);
+            if (problems.length === 0) {
+                void showInfo(`All ${diagnoses.length} version(s) are provisioned and in the expected location.`);
+                return;
+            }
+
+            const picked = await vscode.window.showQuickPick(
+                problems.map(entry => ({
+                    label: `$(warning) ${entry.name}`,
+                    description: entry.health,
+                    detail: entry.detail,
+                    diagnosis: entry
+                })),
+                { title: 'Version environments', placeHolder: 'Pick a version to re-provision', ignoreFocusOut: true }
+            );
+            if (!picked) {
+                return;
+            }
+
+            // Re-provisioning is the existing, resumable flow: it probes what
+            // exists and builds only what is missing.
+            await provisionExistingVersion(picked.diagnosis.versionId);
+            await refreshAll();
+        } catch (error) {
+            void showError(`Could not check the version environments: ${errorMessage(error)}`);
+        }
+    }));
 
     context.subscriptions.push(vscode.commands.registerCommand('odoo.openVersionInBrowser', async (versionIdOrTreeItem?: unknown) => {
         try {

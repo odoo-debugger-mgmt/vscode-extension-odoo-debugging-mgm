@@ -21,9 +21,10 @@ import { logger, registerLogger } from './services/logger';
 import { logStaleReferences } from './services/reconcile';
 import { invalidateRunningState } from './services/runningState';
 import { registerWrongCopyGuard } from './services/wrongCopyGuard';
+import { diagnoseVersion } from './services/versionMigration';
 import { readSetupState, shouldAdoptLegacySourceRepo, readRawSetupSettings, writeSetupSettings } from './services/setupState';
 import { showInfo } from './services/notifications';
-import { getDefaultVersionSettings, normalizePath } from './utils';
+import { getDefaultVersionSettings, normalizePath, resolveOptionalPath } from './utils';
 import { StatusBarIndicators } from './views/statusBar';
 import { registerAllCommands, RefreshReason } from './commands';
 
@@ -214,6 +215,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     void statusBar.update();
     promptFirstRunSetup(context).catch(error => logger.warn('First-run setup prompt failed:', error));
+    promptStaleVersions().catch(error => logger.debug('Version health check failed:', error));
 }
 
 /**
@@ -255,6 +257,37 @@ async function promptFirstRunSetup(context: vscode.ExtensionContext): Promise<vo
     } else if (choice === 'Later') {
         // Remembered globally: a per-window nag is worse than no nag at all.
         await context.globalState.update(FIRST_RUN_DISMISSED_KEY, true);
+    }
+}
+
+/**
+ * One passive nudge: a version pointing at a deleted directory fails
+ * confusingly at provisioning time, which is far too late to find out.
+ */
+async function promptStaleVersions(): Promise<void> {
+    const root = readSetupState().provisioningRoot;
+    const stale = VersionsService.getInstance().getVersions().filter(version =>
+        diagnoseVersion(
+            {
+                id: version.id,
+                name: version.name,
+                odooVersion: version.odooVersion,
+                odooPath: resolveOptionalPath(version.settings.odooPath),
+                pythonPath: resolveOptionalPath(version.settings.pythonPath)
+            },
+            root,
+            candidate => fs.existsSync(candidate)
+        ).health === 'missing');
+
+    if (stale.length === 0) {
+        return;
+    }
+    const choice = await showInfo(
+        `${stale.length} version(s) point at directories that no longer exist.`,
+        'Check Versions'
+    );
+    if (choice === 'Check Versions') {
+        await vscode.commands.executeCommand('odoo.checkVersions');
     }
 }
 

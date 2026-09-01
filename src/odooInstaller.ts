@@ -301,6 +301,69 @@ export async function provisionAndCreateVersion(branch: string, name: string): P
  * returned nothing, leaving configuration pointing at `./odoo` regardless of
  * where the user actually put the repositories.
  */
+/**
+ * Rebuilds an existing version's environment under the current provisioning
+ * root and repoints the version at it. Reuses the provisioning orchestrator,
+ * which adopts whatever already exists rather than rebuilding it.
+ */
+export async function provisionExistingVersion(versionId: string): Promise<void> {
+    const service = VersionsService.getInstance();
+    const version = service.getVersion(versionId);
+    if (!version) {
+        void showError('The selected version could not be found.');
+        return;
+    }
+
+    const setup = readSetupState();
+    if (!setup.isConfigured || !setup.sourceRepo) {
+        const choice = await showWarning('Odoo DevTools is not set up yet.', 'Set Up');
+        if (choice === 'Set Up') {
+            await vscode.commands.executeCommand('odoo.setup');
+        }
+        return;
+    }
+
+    const spec: ProvisionSpec = {
+        branch: version.odooVersion,
+        sourceRepoPath: setup.sourceRepo,
+        enterpriseRepoPath: setup.enterpriseRepo,
+        designThemesRepoPath: setup.designThemesRepo,
+        root: setup.provisioningRoot
+    };
+
+    const result = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Re-provisioning ${version.name}`,
+        cancellable: true
+    }, async (progress, token) => {
+        try {
+            return await executeProvision(spec, progress, token);
+        } catch (error) {
+            if (!token.isCancellationRequested) {
+                logger.error('Re-provisioning failed:', error);
+                void showError(`Re-provisioning failed: ${errorMessage(error)}`);
+            }
+            return undefined;
+        }
+    });
+
+    if (!result) {
+        return;
+    }
+
+    await service.updateVersion(version.id, {
+        settings: {
+            odooPath: result.paths.odooPath,
+            enterprisePath: result.paths.enterprisePath ?? '',
+            designThemesPath: result.paths.designThemesPath ?? '',
+            pythonPath: venvPythonPath(result.paths.venvPath),
+            managedPaths: result.managedPaths
+        }
+    } as never);
+
+    void showInfo(`${version.name} now uses ${result.paths.odooPath} on Python ${result.pythonVersion}.`);
+}
+
 export async function cloneOdooRepositories(defaultBaseDir: string): Promise<string | undefined> {
     const baseDir = await pickDestination(defaultBaseDir);
     if (!baseDir) {
