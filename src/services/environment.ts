@@ -297,6 +297,28 @@ export interface AlignmentOptions {
  * No-ops silently when everything already matches. Failures never throw; they
  * are summarized in a single warning.
  */
+/**
+ * Token for the pending `ask` notification. A newer switch invalidates the
+ * older one, so an answer that arrives after the workspace has moved on is
+ * discarded rather than applied to a workspace it was never about.
+ */
+let pendingSwitchToken = 0;
+
+/** Claims the pending slot for a new prompt, invalidating any older one. */
+export function claimSwitchToken(): number {
+    pendingSwitchToken += 1;
+    return pendingSwitchToken;
+}
+
+export function isCurrentSwitch(token: number): boolean {
+    return token === pendingSwitchToken;
+}
+
+/** Invalidates the pending prompt without claiming the slot for a new one. */
+export function supersedePendingSwitch(): void {
+    pendingSwitchToken += 1;
+}
+
 export async function alignEnvironment(target: EnvironmentTarget, options: AlignmentOptions): Promise<void> {
     const behavior = options.behavior ?? getDatabaseSwitchBehavior();
     if (behavior === 'never') {
@@ -311,12 +333,13 @@ export async function alignEnvironment(target: EnvironmentTarget, options: Align
     if (behavior === 'ask') {
         // Fire-and-forget so the selection itself (and the tree refresh) is not
         // held hostage by an unanswered notification.
+        const token = claimSwitchToken();
         void showInfo(
             `${options.label} targets ${diff.descriptions.join(', ')}. Align your workspace?`,
             'Switch',
             'Keep Current'
         ).then(async choice => {
-            if (choice !== 'Switch') {
+            if (choice !== 'Switch' || !isCurrentSwitch(token)) {
                 return;
             }
             try {

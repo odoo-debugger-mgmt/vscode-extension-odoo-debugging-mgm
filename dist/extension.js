@@ -395,6 +395,11 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         if (runningPart) {
             parts.push(runningPart);
         }
+        // The repo mapping used to be discoverable only by hovering the row.
+        const repoBranches = (0, environment_1.sanitizeProjectRepoBranchAssignments)(db.projectRepoBranches);
+        if (repoBranches.length > 0) {
+            parts.push(`${repoBranches.length} repo${repoBranches.length === 1 ? '' : 's'}`);
+        }
         // The version is the only source of the core branch; a database with
         // none falls back to its legacy odooVersion.
         if (db.versionId) {
@@ -5444,6 +5449,9 @@ exports.sanitizeProjectRepoBranchAssignments = sanitizeProjectRepoBranchAssignme
 exports.resolveProjectRepoBranchAssignments = resolveProjectRepoBranchAssignments;
 exports.buildDatabaseEnvironmentTarget = buildDatabaseEnvironmentTarget;
 exports.describeSwitch = describeSwitch;
+exports.claimSwitchToken = claimSwitchToken;
+exports.isCurrentSwitch = isCurrentSwitch;
+exports.supersedePendingSwitch = supersedePendingSwitch;
 exports.alignEnvironment = alignEnvironment;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(9));
@@ -5675,6 +5683,24 @@ async function applyRepoCheckouts(assignments) {
  * No-ops silently when everything already matches. Failures never throw; they
  * are summarized in a single warning.
  */
+/**
+ * Token for the pending `ask` notification. A newer switch invalidates the
+ * older one, so an answer that arrives after the workspace has moved on is
+ * discarded rather than applied to a workspace it was never about.
+ */
+let pendingSwitchToken = 0;
+/** Claims the pending slot for a new prompt, invalidating any older one. */
+function claimSwitchToken() {
+    pendingSwitchToken += 1;
+    return pendingSwitchToken;
+}
+function isCurrentSwitch(token) {
+    return token === pendingSwitchToken;
+}
+/** Invalidates the pending prompt without claiming the slot for a new one. */
+function supersedePendingSwitch() {
+    pendingSwitchToken += 1;
+}
 async function alignEnvironment(target, options) {
     const behavior = options.behavior ?? getDatabaseSwitchBehavior();
     if (behavior === 'never') {
@@ -5687,8 +5713,9 @@ async function alignEnvironment(target, options) {
     if (behavior === 'ask') {
         // Fire-and-forget so the selection itself (and the tree refresh) is not
         // held hostage by an unanswered notification.
+        const token = claimSwitchToken();
         void (0, notifications_1.showInfo)(`${options.label} targets ${diff.descriptions.join(', ')}. Align your workspace?`, 'Switch', 'Keep Current').then(async (choice) => {
-            if (choice !== 'Switch') {
+            if (choice !== 'Switch' || !isCurrentSwitch(token)) {
                 return;
             }
             try {

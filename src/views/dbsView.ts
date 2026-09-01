@@ -87,6 +87,12 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             parts.push(runningPart);
         }
 
+        // The repo mapping used to be discoverable only by hovering the row.
+        const repoBranches = sanitizeProjectRepoBranchAssignments(db.projectRepoBranches);
+        if (repoBranches.length > 0) {
+            parts.push(`${repoBranches.length} repo${repoBranches.length === 1 ? '' : 's'}`);
+        }
+
         // The version is the only source of the core branch; a database with
         // none falls back to its legacy odooVersion.
         if (db.versionId) {

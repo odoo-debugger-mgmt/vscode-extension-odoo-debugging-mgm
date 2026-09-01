@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { describeSwitch } from '../services/environment';
+import { describeSwitch, claimSwitchToken, isCurrentSwitch, supersedePendingSwitch } from '../services/environment';
 
 suite('Switch summary wording', () => {
     test('says the worktree is reused when no checkout is needed', () => {
@@ -47,5 +47,19 @@ suite('Switch summary wording', () => {
 
     test('describes nothing when there is nothing to do', () => {
         assert.deepStrictEqual(describeSwitch({ repoBranchCount: 0 }), []);
+    });
+
+    test('only the newest switch token stays current', () => {
+        // Two fast database selections must not leave two contradictory
+        // notifications standing: the older answer is discarded.
+        const first = claimSwitchToken();
+        assert.strictEqual(isCurrentSwitch(first), true);
+
+        const second = claimSwitchToken();
+        assert.strictEqual(isCurrentSwitch(second), true);
+        assert.strictEqual(isCurrentSwitch(first), false);
+
+        supersedePendingSwitch();
+        assert.strictEqual(isCurrentSwitch(second), false);
     });
 });

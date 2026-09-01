@@ -897,7 +897,7 @@
         {
           "when": "view == dbSelector && viewItem == database",
           "command": "dbSelector.configureRepoBranches",
-          "group": "3_config@2"
+          "group": "inline@2"
         },
         {
           "when": "view == dbSelector && viewItem == database",
