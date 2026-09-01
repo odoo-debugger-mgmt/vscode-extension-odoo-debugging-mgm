@@ -5,6 +5,7 @@
  * and breakpoints set in a stale checkout bind to the wrong files.
  */
 import { normalizePath } from '../utils';
+import type { ResolvedRepo } from './repoPaths';
 
 export interface WorkspaceFolderEntry {
     path: string;
@@ -47,6 +48,29 @@ export function versionFolderEntries(
     add(version.settings.odooPath, 'odoo');
     add(version.settings.enterprisePath, 'enterprise');
     add(version.settings.designThemesPath, 'design-themes');
+
+    return entries;
+}
+
+/**
+ * Project repositories as workspace folders, resolved to the active version's
+ * worktrees. A worktree is labelled with its branch so two open copies of the
+ * same repository are told apart at a glance.
+ */
+export function repoFolderEntries(resolved: ResolvedRepo[], existingPaths: string[]): WorkspaceFolderEntry[] {
+    const seen = new Set(existingPaths.map(entry => normalizePath(entry)));
+    const entries: WorkspaceFolderEntry[] = [];
+
+    for (const entry of resolved) {
+        const resolvedPath = normalizePath(entry.path);
+        if (seen.has(resolvedPath)) {
+            continue;
+        }
+        seen.add(resolvedPath);
+        entries.push(entry.isWorktree && entry.branch
+            ? { path: resolvedPath, name: `${entry.repo.name} (${entry.branch})` }
+            : { path: resolvedPath });
+    }
 
     return entries;
 }

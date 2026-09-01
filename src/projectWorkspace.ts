@@ -8,7 +8,10 @@ import { ProjectModel } from './models/project';
 import { RepoModel } from './models/repo';
 import { showInfo, normalizePath } from './utils';
 import { VersionsService } from './versionsService';
-import { versionFolderEntries } from './services/workspaceFolders';
+import { versionFolderEntries, repoFolderEntries } from './services/workspaceFolders';
+import { resolveProjectRepos } from './services/repoPaths';
+import { resolveProjectRepoBranchAssignments } from './services/environment';
+import { readSetupState } from './services/setupState';
 
 interface ProjectSelectionResult {
     project: ProjectModel;
@@ -73,6 +76,18 @@ async function buildWorkspaceFile(context: vscode.ExtensionContext, project: Pro
     await versionsService.initialize();
     folders.push(...versionFolderEntries(
         versionsService.getActiveVersion(),
+        folders.map(folder => folder.path)
+    ));
+
+    // Project repos resolved to the active version's worktrees, so opening a
+    // file from this workspace cannot land in another version's copy.
+    const selectedDb = project.dbs?.find(entry => entry.isSelected);
+    folders.push(...repoFolderEntries(
+        resolveProjectRepos(
+            project.repos ?? [],
+            selectedDb ? resolveProjectRepoBranchAssignments(selectedDb, project.repos ?? []) : [],
+            readSetupState().provisioningRoot
+        ),
         folders.map(folder => folder.path)
     ));
 

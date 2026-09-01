@@ -15262,6 +15262,9 @@ const filesExclude_1 = __webpack_require__(79);
 const baseTreeProvider_1 = __webpack_require__(5);
 const sortOptions_1 = __webpack_require__(29);
 const branches_1 = __webpack_require__(32);
+const repoPaths_1 = __webpack_require__(60);
+const environment_1 = __webpack_require__(31);
+const setupState_1 = __webpack_require__(64);
 const dumpImport_1 = __webpack_require__(45);
 class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
     sortPreferences;
@@ -15360,15 +15363,21 @@ class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
             if (!repos.length) {
                 return [];
             }
-            this.resetWatchers(repos);
+            // Resolved once per refresh: the explorer must show the active
+            // version's worktrees, so a file opened from it - and every command
+            // that acts on the row's uri - belongs to the version being run.
+            const resolved = this.resolveRepos(project);
+            const resolvedByRepo = new Map(resolved.map(entry => [entry.repo, entry]));
+            this.resetWatchers(resolved.map(entry => entry.path));
             const sortId = this.sortPreferences.get('projectRepos', (0, sortOptions_1.getDefaultSortOption)('projectRepos'));
             const sortedRepos = [...repos].sort((a, b) => this.compareRepos(a, b, sortId));
             return Promise.all(sortedRepos.map(async (repo) => {
-                const repoPath = (0, utils_1.normalizePath)(repo.path);
+                const entry = resolvedByRepo.get(repo);
+                const repoPath = entry?.path ?? (0, utils_1.normalizePath)(repo.path);
                 const missing = !(await (0, dumpImport_1.pathExists)(repoPath));
                 return {
                     kind: 'repo',
-                    label: repo.name,
+                    label: entry?.isWorktree && entry.branch ? `${repo.name} (${entry.branch})` : repo.name,
                     repo,
                     uri: vscode.Uri.file(repoPath),
                     branch: missing ? null : await (0, branches_1.getRepoBranch)(repoPath),
@@ -15404,18 +15413,20 @@ class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
         }
         return 0;
     }
-    resetWatchers(repos) {
-        const nextKey = repos
-            .map(repo => repo.path)
-            .sort((a, b) => a.localeCompare(b))
-            .join('|');
+    /** The active version's directory for each project repo. */
+    resolveRepos(project) {
+        const db = project.dbs?.find(entry => entry.isSelected);
+        return (0, repoPaths_1.resolveProjectRepos)(project.repos ?? [], db ? (0, environment_1.resolveProjectRepoBranchAssignments)(db, project.repos ?? []) : [], (0, setupState_1.readSetupState)().provisioningRoot);
+    }
+    resetWatchers(repoPaths) {
+        const nextKey = [...repoPaths].sort((a, b) => a.localeCompare(b)).join('|');
         if (nextKey === this.watcherKey) {
             return;
         }
         this.disposeWatchers();
         this.watcherKey = nextKey;
-        for (const repo of repos) {
-            const pattern = new vscode.RelativePattern(repo.path, '**/*');
+        for (const repoPath of repoPaths) {
+            const pattern = new vscode.RelativePattern(repoPath, '**/*');
             const watcher = vscode.workspace.createFileSystemWatcher(pattern, false, false, false);
             watcher.onDidCreate(uri => this.onWatcherEvent(uri));
             watcher.onDidChange(uri => this.onWatcherEvent(uri));
@@ -16742,6 +16753,9 @@ const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const versionsService_1 = __webpack_require__(24);
 const workspaceFolders_1 = __webpack_require__(87);
+const repoPaths_1 = __webpack_require__(60);
+const environment_1 = __webpack_require__(31);
+const setupState_1 = __webpack_require__(64);
 async function getActiveProjectOrPrompt() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
@@ -16789,6 +16803,10 @@ async function buildWorkspaceFile(context, project) {
     const versionsService = versionsService_1.VersionsService.getInstance();
     await versionsService.initialize();
     folders.push(...(0, workspaceFolders_1.versionFolderEntries)(versionsService.getActiveVersion(), folders.map(folder => folder.path)));
+    // Project repos resolved to the active version's worktrees, so opening a
+    // file from this workspace cannot land in another version's copy.
+    const selectedDb = project.dbs?.find(entry => entry.isSelected);
+    folders.push(...(0, workspaceFolders_1.repoFolderEntries)((0, repoPaths_1.resolveProjectRepos)(project.repos ?? [], selectedDb ? (0, environment_1.resolveProjectRepoBranchAssignments)(selectedDb, project.repos ?? []) : [], (0, setupState_1.readSetupState)().provisioningRoot), folders.map(folder => folder.path)));
     const workspaceData = {
         folders,
         settings: {}
@@ -16843,6 +16861,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.versionFolderEntries = versionFolderEntries;
+exports.repoFolderEntries = repoFolderEntries;
 /**
  * The active version's core checkouts, as multi-root workspace folders. Each
  * version owns its own worktree, so a project workspace that lists only the
@@ -16871,6 +16890,26 @@ function versionFolderEntries(version, existingPaths) {
     add(version.settings.odooPath, 'odoo');
     add(version.settings.enterprisePath, 'enterprise');
     add(version.settings.designThemesPath, 'design-themes');
+    return entries;
+}
+/**
+ * Project repositories as workspace folders, resolved to the active version's
+ * worktrees. A worktree is labelled with its branch so two open copies of the
+ * same repository are told apart at a glance.
+ */
+function repoFolderEntries(resolved, existingPaths) {
+    const seen = new Set(existingPaths.map(entry => (0, utils_1.normalizePath)(entry)));
+    const entries = [];
+    for (const entry of resolved) {
+        const resolvedPath = (0, utils_1.normalizePath)(entry.path);
+        if (seen.has(resolvedPath)) {
+            continue;
+        }
+        seen.add(resolvedPath);
+        entries.push(entry.isWorktree && entry.branch
+            ? { path: resolvedPath, name: `${entry.repo.name} (${entry.branch})` }
+            : { path: resolvedPath });
+    }
     return entries;
 }
 

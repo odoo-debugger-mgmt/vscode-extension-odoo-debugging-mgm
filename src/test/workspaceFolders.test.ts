@@ -1,5 +1,6 @@
 import * as assert from 'assert';
-import { versionFolderEntries, WorkspaceFolderEntry } from '../services/workspaceFolders';
+import { versionFolderEntries, repoFolderEntries, WorkspaceFolderEntry } from '../services/workspaceFolders';
+import { RepoModel } from '../models/repo';
 
 const VERSION = {
     name: 'Odoo 17.0',
@@ -44,5 +45,34 @@ suite('Workspace folders', () => {
             []
         );
         assert.deepStrictEqual(entries, [{ path: '/srv/same', name: 'odoo (Dup)' }]);
+    });
+
+    test('contributes worktrees, labelled with their branch', () => {
+        const resolved = [
+            {
+                repo: new RepoModel('psae-internal', '/custom/psae-internal', true, undefined, 'worktree'),
+                path: '/root/psae-internal@19.0',
+                branch: '19.0',
+                mode: 'worktree' as const,
+                isWorktree: true
+            }
+        ];
+        assert.deepStrictEqual(repoFolderEntries(resolved, []), [
+            { path: '/root/psae-internal@19.0', name: 'psae-internal (19.0)' }
+        ]);
+    });
+
+    test('leaves a checkout-mode repo unlabelled and skips duplicates', () => {
+        const resolved = [
+            {
+                repo: new RepoModel('shared', '/custom/shared'),
+                path: '/custom/shared',
+                branch: 'main',
+                mode: 'checkout' as const,
+                isWorktree: false
+            }
+        ];
+        assert.deepStrictEqual(repoFolderEntries(resolved, []), [{ path: '/custom/shared' }]);
+        assert.deepStrictEqual(repoFolderEntries(resolved, ['/custom/shared']), []);
     });
 });

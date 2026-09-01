@@ -14,6 +14,9 @@ import { BaseTreeProvider } from './views/baseTreeProvider';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { getRepoBranch } from './services/branches';
+import { resolveProjectRepos, ResolvedRepo } from './services/repoPaths';
+import { resolveProjectRepoBranchAssignments } from './services/environment';
+import { readSetupState } from './services/setupState';
 import { pathExists as fsPathExists } from './services/dumpImport';
 
 type NodeKind = 'repo' | 'folder' | 'file';
@@ -148,16 +151,23 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
                 return [];
             }
 
-            this.resetWatchers(repos);
+            // Resolved once per refresh: the explorer must show the active
+            // version's worktrees, so a file opened from it - and every command
+            // that acts on the row's uri - belongs to the version being run.
+            const resolved = this.resolveRepos(project);
+            const resolvedByRepo = new Map(resolved.map(entry => [entry.repo, entry]));
+
+            this.resetWatchers(resolved.map(entry => entry.path));
 
             const sortId = this.sortPreferences.get('projectRepos', getDefaultSortOption('projectRepos'));
             const sortedRepos = [...repos].sort((a, b) => this.compareRepos(a, b, sortId));
             return Promise.all(sortedRepos.map(async repo => {
-                const repoPath = normalizePath(repo.path);
+                const entry = resolvedByRepo.get(repo);
+                const repoPath = entry?.path ?? normalizePath(repo.path);
                 const missing = !(await fsPathExists(repoPath));
                 return {
                     kind: 'repo' as const,
-                    label: repo.name,
+                    label: entry?.isWorktree && entry.branch ? `${repo.name} (${entry.branch})` : repo.name,
                     repo,
                     uri: vscode.Uri.file(repoPath),
                     branch: missing ? null : await getRepoBranch(repoPath),
@@ -198,11 +208,18 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
         return 0;
     }
 
-    private resetWatchers(repos: RepoModel[]) {
-        const nextKey = repos
-            .map(repo => repo.path)
-            .sort((a, b) => a.localeCompare(b))
-            .join('|');
+    /** The active version's directory for each project repo. */
+    private resolveRepos(project: ProjectModel): ResolvedRepo[] {
+        const db = project.dbs?.find(entry => entry.isSelected);
+        return resolveProjectRepos(
+            project.repos ?? [],
+            db ? resolveProjectRepoBranchAssignments(db, project.repos ?? []) : [],
+            readSetupState().provisioningRoot
+        );
+    }
+
+    private resetWatchers(repoPaths: string[]) {
+        const nextKey = [...repoPaths].sort((a, b) => a.localeCompare(b)).join('|');
 
         if (nextKey === this.watcherKey) {
             return;
@@ -210,8 +227,8 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
 
         this.disposeWatchers();
         this.watcherKey = nextKey;
-        for (const repo of repos) {
-            const pattern = new vscode.RelativePattern(repo.path, '**/*');
+        for (const repoPath of repoPaths) {
+            const pattern = new vscode.RelativePattern(repoPath, '**/*');
             const watcher = vscode.workspace.createFileSystemWatcher(pattern, false, false, false);
             watcher.onDidCreate(uri => this.onWatcherEvent(uri));
             watcher.onDidChange(uri => this.onWatcherEvent(uri));
