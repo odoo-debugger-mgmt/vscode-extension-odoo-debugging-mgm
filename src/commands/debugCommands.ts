@@ -38,7 +38,7 @@ export function registerDebugCommands(deps: CommandDeps): void {
     context.subscriptions.push(vscode.commands.registerCommand('odoo.openInBrowser', async () => {
         const result = await SettingsStore.getSelectedProject();
         const selectedDb = (result?.project.dbs as DatabaseModel[] | undefined)?.find(db => db.isSelected);
-        await openServerInBrowser(selectedDb?.id);
+        await openServerInBrowser(selectedDb?.id, selectedDb?.versionId);
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand('odoo.copyCommand', async () => {

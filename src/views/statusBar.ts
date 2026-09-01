@@ -3,6 +3,7 @@ import { SettingsStore } from '../settingsStore';
 import { VersionsService } from '../versionsService';
 import { getDatabaseLabel } from '../utils';
 import { logger } from '../services/logger';
+import { getRunningInstances } from '../services/runningState';
 
 /**
  * Status bar indicators for the active project, database and version.
@@ -60,8 +61,21 @@ export class StatusBarIndicators implements vscode.Disposable {
             }
 
             if (version) {
-                this.versionItem.text = `$(versions) ${version.odooVersion}`;
-                this.versionItem.tooltip = `Active version: ${version.name} (${version.odooVersion}) - click to switch`;
+                // The port belongs on the indicator: with several versions
+                // runnable at once, "which localhost" is the question this
+                // item is most often consulted for.
+                const port = Number(version.settings?.portNumber) || undefined;
+                const running = (await getRunningInstances()).some(instance => instance.versionId === version.id);
+                const marker = running ? '$(debug-alt)' : '$(versions)';
+                this.versionItem.text = port
+                    ? `${marker} ${version.odooVersion} :${port}`
+                    : `${marker} ${version.odooVersion}`;
+                this.versionItem.tooltip = [
+                    `Active version: ${version.name} (${version.odooVersion})`,
+                    port ? `Server: http://localhost:${port}` : undefined,
+                    running ? 'Currently running' : 'Not running',
+                    'Click to switch'
+                ].filter(Boolean).join('\n');
                 this.versionItem.show();
             } else {
                 this.versionItem.hide();

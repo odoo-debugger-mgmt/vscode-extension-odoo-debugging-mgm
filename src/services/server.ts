@@ -7,6 +7,8 @@ import * as vscode from 'vscode';
 import * as net from 'node:net';
 import { VersionsService } from '../versionsService';
 import { logger } from './logger';
+import { showWarning } from './notifications';
+import { getRunningInstances, RunningInstance } from './runningState';
 import { trackSession, untrackSession, anySessionRunning } from './debugSessions';
 
 const DEFAULT_ODOO_PORT = 8069;
@@ -23,6 +25,48 @@ export async function getActiveServerPort(): Promise<number> {
         logger.debug('Could not read active version port, using default:', error);
     }
     return DEFAULT_ODOO_PORT;
+}
+
+export interface PortResolution {
+    port: number;
+    /** Where the port came from, so callers can explain a surprising choice. */
+    source: 'running' | 'version' | 'active';
+    versionName?: string;
+}
+
+export interface PortCandidateVersion {
+    id: string;
+    name: string;
+    portNumber?: number;
+}
+
+/**
+ * Which port serves `dbId`. With several versions running, the active
+ * version's port is usually the wrong answer: a database belongs to the
+ * version that is actually serving it.
+ */
+export function pickPortForDatabase(
+    dbId: string | undefined,
+    running: RunningInstance[],
+    versions: PortCandidateVersion[],
+    dbVersionId: string | undefined,
+    activePort: number
+): PortResolution {
+    const byId = (id: string | undefined) => versions.find(version => version.id === id);
+
+    if (dbId) {
+        const live = running.find(instance => instance.dbName === dbId && !!instance.port);
+        if (live?.port) {
+            return { port: live.port, source: 'running', versionName: byId(live.versionId)?.name };
+        }
+    }
+
+    const owner = byId(dbVersionId);
+    if (owner?.portNumber) {
+        return { port: owner.portNumber, source: 'version', versionName: owner.name };
+    }
+
+    return { port: activePort, source: 'active' };
 }
 
 /** Local server URL, optionally routed straight into a database. */
@@ -60,10 +104,53 @@ export function waitForPort(port: number, timeoutMs: number): Promise<boolean> {
     })();
 }
 
-/** Opens the Odoo web client for the given (or server-selected) database. */
-export async function openServerInBrowser(dbName?: string): Promise<void> {
-    const port = await getActiveServerPort();
-    await vscode.env.openExternal(buildServerUrl(port, dbName));
+/** Resolves the port serving `dbId`, consulting live sessions first. */
+export async function resolvePortForDatabase(
+    dbId: string | undefined,
+    dbVersionId?: string
+): Promise<PortResolution> {
+    try {
+        const service = VersionsService.getInstance();
+        await service.initialize();
+        const versions: PortCandidateVersion[] = service.getVersions().map(version => ({
+            id: version.id,
+            name: version.name,
+            portNumber: Number(version.settings.portNumber) || undefined
+        }));
+        return pickPortForDatabase(
+            dbId,
+            await getRunningInstances(),
+            versions,
+            dbVersionId,
+            await getActiveServerPort()
+        );
+    } catch (error) {
+        logger.debug('Could not resolve the port for a database, using the active version:', error);
+        return { port: await getActiveServerPort(), source: 'active' };
+    }
+}
+
+/**
+ * Opens the Odoo web client for the given (or server-selected) database, on
+ * the port actually serving it. A dead port is reported rather than opened:
+ * a browser tab showing a connection error is worse than being told why.
+ */
+export async function openServerInBrowser(dbName?: string, dbVersionId?: string): Promise<void> {
+    const resolved = await resolvePortForDatabase(dbName, dbVersionId);
+    const url = buildServerUrl(resolved.port, dbName);
+
+    if (await waitForPort(resolved.port, 400)) {
+        await vscode.env.openExternal(url);
+        return;
+    }
+
+    const target = resolved.versionName
+        ? `${resolved.versionName} (port ${resolved.port})`
+        : `port ${resolved.port}`;
+    const choice = await showWarning(`No Odoo server is answering on ${target}.`, 'Open Anyway');
+    if (choice === 'Open Anyway') {
+        await vscode.env.openExternal(url);
+    }
 }
 
 /** The version whose launch configuration this session was started from. */

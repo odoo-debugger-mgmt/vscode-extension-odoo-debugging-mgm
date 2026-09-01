@@ -6,6 +6,7 @@ import { VersionModel } from './models/version';
 import { VersionsService } from './versionsService';
 import { getSettingDisplayName, getSettingDisplayValue, resolveOptionalPath } from './utils';
 import { isVersionProvisioned } from './services/provisioning';
+import { getRunningInstances, RunningInstance } from './services/runningState';
 import { activeIcon } from './views/icons';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
@@ -23,13 +24,21 @@ function provisioningLabel(version: VersionModel): string {
 export class VersionTreeItem extends vscode.TreeItem {
     constructor(
         public readonly version: VersionModel,
-        public override readonly collapsibleState: vscode.TreeItemCollapsibleState
+        public override readonly collapsibleState: vscode.TreeItemCollapsibleState,
+        public readonly running?: RunningInstance
     ) {
         super(version.name, collapsibleState);
 
         this.id = version.id;
-        this.tooltip = VersionTreeItem.buildTooltip(version);
-        this.description = `${version.odooVersion} \u2022 ${provisioningLabel(version)}`;
+        this.tooltip = VersionTreeItem.buildTooltip(version, running);
+        // The port is always visible: with several versions runnable at once,
+        // knowing which localhost to open is the first thing you need.
+        const parts = [version.odooVersion];
+        if (version.settings.portNumber) {
+            parts.push(`:${version.settings.portNumber}`);
+        }
+        parts.push(running ? 'running' : provisioningLabel(version));
+        this.description = parts.join(' \u2022 ');
         this.contextValue = version.isActive ? 'activeVersion' : 'version';
         this.iconPath = version.isActive ? activeIcon : new vscode.ThemeIcon('versions');
 
@@ -41,14 +50,20 @@ export class VersionTreeItem extends vscode.TreeItem {
         };
     }
 
-    private static buildTooltip(version: VersionModel): vscode.MarkdownString {
+    private static buildTooltip(version: VersionModel, running?: RunningInstance): vscode.MarkdownString {
         const lines: string[] = [
             `**${version.name}**${version.isActive ? ' (active)' : ''}`,
             `**Odoo Version:** ${version.odooVersion}`
         ];
         const settings = version.settings ?? {};
+        if (running) {
+            lines.push(`**Status:** running${running.dbName ? ` on \`${running.dbName}\`` : ''}`);
+        }
         if (settings.portNumber) {
-            lines.push(`**Port:** ${settings.portNumber}`);
+            lines.push(`**Port:** ${settings.portNumber} \u2014 http://localhost:${settings.portNumber}`);
+        }
+        if (settings.shellPortNumber) {
+            lines.push(`**Shell Port:** ${settings.shellPortNumber}`);
         }
         if (settings.odooPath) {
             lines.push(`**Odoo Path:** ${settings.odooPath}`);
@@ -132,11 +147,17 @@ export class VersionsTreeProvider extends BaseTreeProvider<VersionTreeItem | Ver
     getChildren(element?: VersionTreeItem | VersionSettingTreeItem): Thenable<(VersionTreeItem | VersionSettingTreeItem)[]> {
         if (!element) {
             // Root level - show versions
-            return this.versionsService.initialize().then(() => {
+            return this.versionsService.initialize().then(async () => {
                 const sortId = this.sortPreferences.get('versionsManager', getDefaultSortOption('versionsManager'));
                 const versions = this.versionsService.getVersions().slice().sort((a, b) => this.compareVersions(a, b, sortId));
+                // Probed once per refresh, not once per row.
+                const running = new Map<string, RunningInstance>(
+                    (await getRunningInstances())
+                        .filter(instance => !!instance.versionId)
+                        .map(instance => [instance.versionId!, instance])
+                );
                 return versions.map(version =>
-                    new VersionTreeItem(version, vscode.TreeItemCollapsibleState.Collapsed)
+                    new VersionTreeItem(version, vscode.TreeItemCollapsibleState.Collapsed, running.get(version.id))
                 );
             }).catch(error => {
                 logger.error('Failed to load versions for tree view:', error);

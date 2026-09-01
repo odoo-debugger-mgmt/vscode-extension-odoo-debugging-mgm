@@ -14,9 +14,64 @@ import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } fr
 import { alignEnvironment } from '../services/environment';
 import { provisionAndCreateVersion } from '../odooInstaller';
 import { removeWorktree, removeManagedBranch, resolveSourceRepo } from '../services/worktree';
+import { buildServerUrl, waitForPort } from '../services/server';
+import { resolveDbForVersion } from '../services/dbResolution';
+import { SettingsStore } from '../settingsStore';
 
 export function registerVersionCommands(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
+
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.openVersionInBrowser', async (versionIdOrTreeItem?: unknown) => {
+        try {
+            let versionId = extractVersionId(versionIdOrTreeItem);
+            if (!versionId) {
+                const picked = await vscode.window.showQuickPick(
+                    versionsService.getVersions().map(version => ({
+                        label: version.name,
+                        description: version.settings.portNumber ? `:${version.settings.portNumber}` : version.odooVersion,
+                        versionId: version.id
+                    })),
+                    { title: 'Open which version in the browser?', placeHolder: 'Select a version' }
+                );
+                if (!picked) { return; }
+                versionId = picked.versionId;
+            }
+
+            const version = versionsService.getVersion(versionId);
+            if (!version) {
+                void showError('The selected version could not be found.');
+                return;
+            }
+
+            const port = Number(version.settings.portNumber);
+            if (!Number.isInteger(port) || port <= 0) {
+                void showError(`"${version.name}" has no server port.`);
+                return;
+            }
+
+            // The database this version runs, not the project's selection:
+            // with several versions up they are usually different.
+            const result = await SettingsStore.getSelectedProject();
+            const db = result
+                ? resolveDbForVersion(result.project.dbs, result.project.selectedDbByVersion, version.id)
+                : undefined;
+            const url = buildServerUrl(port, db?.id);
+
+            if (await waitForPort(port, 400)) {
+                await vscode.env.openExternal(url);
+                return;
+            }
+            const choice = await showWarning(
+                `No Odoo server is answering on port ${port} for "${version.name}".`,
+                'Open Anyway'
+            );
+            if (choice === 'Open Anyway') {
+                await vscode.env.openExternal(url);
+            }
+        } catch (error) {
+            void showError(`Failed to open the server in the browser: ${errorMessage(error)}`);
+        }
+    }));
 
     context.subscriptions.push(vscode.commands.registerCommand('odoo.createVersion', async () => {
         try {

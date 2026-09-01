@@ -14063,6 +14063,7 @@ const vscode = __importStar(__webpack_require__(1));
 const versionsService_1 = __webpack_require__(23);
 const utils_1 = __webpack_require__(7);
 const provisioning_1 = __webpack_require__(67);
+const runningState_1 = __webpack_require__(50);
 const icons_1 = __webpack_require__(29);
 const sortOptions_1 = __webpack_require__(28);
 const logger_1 = __webpack_require__(11);
@@ -14077,13 +14078,22 @@ function provisioningLabel(version) {
 class VersionTreeItem extends vscode.TreeItem {
     version;
     collapsibleState;
-    constructor(version, collapsibleState) {
+    running;
+    constructor(version, collapsibleState, running) {
         super(version.name, collapsibleState);
         this.version = version;
         this.collapsibleState = collapsibleState;
+        this.running = running;
         this.id = version.id;
-        this.tooltip = VersionTreeItem.buildTooltip(version);
-        this.description = `${version.odooVersion} \u2022 ${provisioningLabel(version)}`;
+        this.tooltip = VersionTreeItem.buildTooltip(version, running);
+        // The port is always visible: with several versions runnable at once,
+        // knowing which localhost to open is the first thing you need.
+        const parts = [version.odooVersion];
+        if (version.settings.portNumber) {
+            parts.push(`:${version.settings.portNumber}`);
+        }
+        parts.push(running ? 'running' : provisioningLabel(version));
+        this.description = parts.join(' \u2022 ');
         this.contextValue = version.isActive ? 'activeVersion' : 'version';
         this.iconPath = version.isActive ? icons_1.activeIcon : new vscode.ThemeIcon('versions');
         // Add command to switch to this version when clicked
@@ -14093,14 +14103,20 @@ class VersionTreeItem extends vscode.TreeItem {
             arguments: [version.id]
         };
     }
-    static buildTooltip(version) {
+    static buildTooltip(version, running) {
         const lines = [
             `**${version.name}**${version.isActive ? ' (active)' : ''}`,
             `**Odoo Version:** ${version.odooVersion}`
         ];
         const settings = version.settings ?? {};
+        if (running) {
+            lines.push(`**Status:** running${running.dbName ? ` on \`${running.dbName}\`` : ''}`);
+        }
         if (settings.portNumber) {
-            lines.push(`**Port:** ${settings.portNumber}`);
+            lines.push(`**Port:** ${settings.portNumber} \u2014 http://localhost:${settings.portNumber}`);
+        }
+        if (settings.shellPortNumber) {
+            lines.push(`**Shell Port:** ${settings.shellPortNumber}`);
         }
         if (settings.odooPath) {
             lines.push(`**Odoo Path:** ${settings.odooPath}`);
@@ -14190,10 +14206,14 @@ class VersionsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     getChildren(element) {
         if (!element) {
             // Root level - show versions
-            return this.versionsService.initialize().then(() => {
+            return this.versionsService.initialize().then(async () => {
                 const sortId = this.sortPreferences.get('versionsManager', (0, sortOptions_1.getDefaultSortOption)('versionsManager'));
                 const versions = this.versionsService.getVersions().slice().sort((a, b) => this.compareVersions(a, b, sortId));
-                return versions.map(version => new VersionTreeItem(version, vscode.TreeItemCollapsibleState.Collapsed));
+                // Probed once per refresh, not once per row.
+                const running = new Map((await (0, runningState_1.getRunningInstances)())
+                    .filter(instance => !!instance.versionId)
+                    .map(instance => [instance.versionId, instance]));
+                return versions.map(version => new VersionTreeItem(version, vscode.TreeItemCollapsibleState.Collapsed, running.get(version.id)));
             }).catch(error => {
                 logger_1.logger.error('Failed to load versions for tree view:', error);
                 return [];
@@ -14290,8 +14310,10 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getActiveServerPort = getActiveServerPort;
+exports.pickPortForDatabase = pickPortForDatabase;
 exports.buildServerUrl = buildServerUrl;
 exports.waitForPort = waitForPort;
+exports.resolvePortForDatabase = resolvePortForDatabase;
 exports.openServerInBrowser = openServerInBrowser;
 exports.registerServerLifecycle = registerServerLifecycle;
 /**
@@ -14303,6 +14325,8 @@ const vscode = __importStar(__webpack_require__(1));
 const net = __importStar(__webpack_require__(27));
 const versionsService_1 = __webpack_require__(23);
 const logger_1 = __webpack_require__(11);
+const notifications_1 = __webpack_require__(15);
+const runningState_1 = __webpack_require__(50);
 const debugSessions_1 = __webpack_require__(51);
 const DEFAULT_ODOO_PORT = 8069;
 /** Port the Odoo server listens on, from the active version's settings. */
@@ -14318,6 +14342,25 @@ async function getActiveServerPort() {
         logger_1.logger.debug('Could not read active version port, using default:', error);
     }
     return DEFAULT_ODOO_PORT;
+}
+/**
+ * Which port serves `dbId`. With several versions running, the active
+ * version's port is usually the wrong answer: a database belongs to the
+ * version that is actually serving it.
+ */
+function pickPortForDatabase(dbId, running, versions, dbVersionId, activePort) {
+    const byId = (id) => versions.find(version => version.id === id);
+    if (dbId) {
+        const live = running.find(instance => instance.dbName === dbId && !!instance.port);
+        if (live?.port) {
+            return { port: live.port, source: 'running', versionName: byId(live.versionId)?.name };
+        }
+    }
+    const owner = byId(dbVersionId);
+    if (owner?.portNumber) {
+        return { port: owner.portNumber, source: 'version', versionName: owner.name };
+    }
+    return { port: activePort, source: 'active' };
 }
 /** Local server URL, optionally routed straight into a database. */
 function buildServerUrl(port, dbName) {
@@ -14350,10 +14393,42 @@ function waitForPort(port, timeoutMs) {
         return false;
     })();
 }
-/** Opens the Odoo web client for the given (or server-selected) database. */
-async function openServerInBrowser(dbName) {
-    const port = await getActiveServerPort();
-    await vscode.env.openExternal(buildServerUrl(port, dbName));
+/** Resolves the port serving `dbId`, consulting live sessions first. */
+async function resolvePortForDatabase(dbId, dbVersionId) {
+    try {
+        const service = versionsService_1.VersionsService.getInstance();
+        await service.initialize();
+        const versions = service.getVersions().map(version => ({
+            id: version.id,
+            name: version.name,
+            portNumber: Number(version.settings.portNumber) || undefined
+        }));
+        return pickPortForDatabase(dbId, await (0, runningState_1.getRunningInstances)(), versions, dbVersionId, await getActiveServerPort());
+    }
+    catch (error) {
+        logger_1.logger.debug('Could not resolve the port for a database, using the active version:', error);
+        return { port: await getActiveServerPort(), source: 'active' };
+    }
+}
+/**
+ * Opens the Odoo web client for the given (or server-selected) database, on
+ * the port actually serving it. A dead port is reported rather than opened:
+ * a browser tab showing a connection error is worse than being told why.
+ */
+async function openServerInBrowser(dbName, dbVersionId) {
+    const resolved = await resolvePortForDatabase(dbName, dbVersionId);
+    const url = buildServerUrl(resolved.port, dbName);
+    if (await waitForPort(resolved.port, 400)) {
+        await vscode.env.openExternal(url);
+        return;
+    }
+    const target = resolved.versionName
+        ? `${resolved.versionName} (port ${resolved.port})`
+        : `port ${resolved.port}`;
+    const choice = await (0, notifications_1.showWarning)(`No Odoo server is answering on ${target}.`, 'Open Anyway');
+    if (choice === 'Open Anyway') {
+        await vscode.env.openExternal(url);
+    }
 }
 /** The version whose launch configuration this session was started from. */
 async function versionForSession(session) {
@@ -14978,6 +15053,7 @@ const settingsStore_1 = __webpack_require__(5);
 const versionsService_1 = __webpack_require__(23);
 const utils_1 = __webpack_require__(7);
 const logger_1 = __webpack_require__(11);
+const runningState_1 = __webpack_require__(50);
 /**
  * Status bar indicators for the active project, database and version.
  * Clicking each opens the corresponding quick-switch picker, so the current
@@ -15028,8 +15104,21 @@ class StatusBarIndicators {
                 this.dbItem.hide();
             }
             if (version) {
-                this.versionItem.text = `$(versions) ${version.odooVersion}`;
-                this.versionItem.tooltip = `Active version: ${version.name} (${version.odooVersion}) - click to switch`;
+                // The port belongs on the indicator: with several versions
+                // runnable at once, "which localhost" is the question this
+                // item is most often consulted for.
+                const port = Number(version.settings?.portNumber) || undefined;
+                const running = (await (0, runningState_1.getRunningInstances)()).some(instance => instance.versionId === version.id);
+                const marker = running ? '$(debug-alt)' : '$(versions)';
+                this.versionItem.text = port
+                    ? `${marker} ${version.odooVersion} :${port}`
+                    : `${marker} ${version.odooVersion}`;
+                this.versionItem.tooltip = [
+                    `Active version: ${version.name} (${version.odooVersion})`,
+                    port ? `Server: http://localhost:${port}` : undefined,
+                    running ? 'Currently running' : 'Not running',
+                    'Click to switch'
+                ].filter(Boolean).join('\n');
                 this.versionItem.show();
             }
             else {
@@ -16306,7 +16395,9 @@ function registerDbCommands(deps) {
             void (0, notifications_1.showError)('Could not identify the database to open in the browser.');
             return;
         }
-        await (0, server_1.openServerInBrowser)(db.id);
+        // Pass the database's own version so the port comes from the server
+        // serving it, not from whichever version happens to be active.
+        await (0, server_1.openServerInBrowser)(db.id, db.versionId);
     }));
     context.subscriptions.push(vscode.commands.registerCommand('dbSelector.openPsqlShell', async (event) => {
         const db = (0, dbs_1.extractDatabaseFromEvent)(event);
@@ -16666,8 +16757,55 @@ const runtimeCache_1 = __webpack_require__(14);
 const environment_1 = __webpack_require__(30);
 const odooInstaller_1 = __webpack_require__(81);
 const worktree_1 = __webpack_require__(34);
+const server_1 = __webpack_require__(72);
+const dbResolution_1 = __webpack_require__(40);
+const settingsStore_1 = __webpack_require__(5);
 function registerVersionCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
+    context.subscriptions.push(vscode.commands.registerCommand('odoo.openVersionInBrowser', async (versionIdOrTreeItem) => {
+        try {
+            let versionId = (0, args_1.extractVersionId)(versionIdOrTreeItem);
+            if (!versionId) {
+                const picked = await vscode.window.showQuickPick(versionsService.getVersions().map(version => ({
+                    label: version.name,
+                    description: version.settings.portNumber ? `:${version.settings.portNumber}` : version.odooVersion,
+                    versionId: version.id
+                })), { title: 'Open which version in the browser?', placeHolder: 'Select a version' });
+                if (!picked) {
+                    return;
+                }
+                versionId = picked.versionId;
+            }
+            const version = versionsService.getVersion(versionId);
+            if (!version) {
+                void (0, notifications_1.showError)('The selected version could not be found.');
+                return;
+            }
+            const port = Number(version.settings.portNumber);
+            if (!Number.isInteger(port) || port <= 0) {
+                void (0, notifications_1.showError)(`"${version.name}" has no server port.`);
+                return;
+            }
+            // The database this version runs, not the project's selection:
+            // with several versions up they are usually different.
+            const result = await settingsStore_1.SettingsStore.getSelectedProject();
+            const db = result
+                ? (0, dbResolution_1.resolveDbForVersion)(result.project.dbs, result.project.selectedDbByVersion, version.id)
+                : undefined;
+            const url = (0, server_1.buildServerUrl)(port, db?.id);
+            if (await (0, server_1.waitForPort)(port, 400)) {
+                await vscode.env.openExternal(url);
+                return;
+            }
+            const choice = await (0, notifications_1.showWarning)(`No Odoo server is answering on port ${port} for "${version.name}".`, 'Open Anyway');
+            if (choice === 'Open Anyway') {
+                await vscode.env.openExternal(url);
+            }
+        }
+        catch (error) {
+            void (0, notifications_1.showError)(`Failed to open the server in the browser: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
     context.subscriptions.push(vscode.commands.registerCommand('odoo.createVersion', async () => {
         try {
             // Two prompts: branch, then name. Paths and ports come from the
@@ -17448,7 +17586,7 @@ function registerDebugCommands(deps) {
     context.subscriptions.push(vscode.commands.registerCommand('odoo.openInBrowser', async () => {
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         const selectedDb = result?.project.dbs?.find(db => db.isSelected);
-        await (0, server_1.openServerInBrowser)(selectedDb?.id);
+        await (0, server_1.openServerInBrowser)(selectedDb?.id, selectedDb?.versionId);
     }));
     context.subscriptions.push(vscode.commands.registerCommand('odoo.copyCommand', async () => {
         const command = await (0, debugger_1.buildOdooCommandLine)(false);

@@ -405,6 +405,12 @@
         "title": "Clone Version",
         "icon": "$(copy)"
       },
+        {
+          "command": "odoo.openVersionInBrowser",
+          "title": "Open Server in Browser",
+          "category": "Odoo DevTools",
+          "icon": "$(globe)"
+        },
       {
         "command": "odoo.deleteVersion",
         "title": "Delete Version",
@@ -930,6 +936,11 @@
           "command": "odoo.changeBranch",
           "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
           "group": "1_version@1"
+        },
+        {
+          "command": "odoo.openVersionInBrowser",
+          "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
+          "group": "inline@1"
         },
         {
           "command": "odooDebugger.revealInExplorer",

@@ -123,7 +123,9 @@ export function registerDbCommands(deps: CommandDeps): void {
             void showError('Could not identify the database to open in the browser.');
             return;
         }
-        await openServerInBrowser(db.id);
+        // Pass the database's own version so the port comes from the server
+        // serving it, not from whichever version happens to be active.
+        await openServerInBrowser(db.id, db.versionId);
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand('dbSelector.openPsqlShell', async (event) => {
