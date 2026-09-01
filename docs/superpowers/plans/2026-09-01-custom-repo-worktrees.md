@@ -35,7 +35,7 @@ Adds the opt-in flag. Nothing reads it yet; this task exists so later tasks have
 **Interfaces:**
 - Produces: `type RepoBranchMode = 'checkout' | 'worktree'`; `RepoModel.branchMode: RepoBranchMode`; `function normalizeBranchMode(value: unknown): RepoBranchMode`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/test/repoMode.test.ts`:
 
@@ -65,12 +65,12 @@ suite('Repository branch mode', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm run compile-tests`
 Expected: FAIL with `error TS2305: Module '"../models/repo"' has no exported member 'normalizeBranchMode'`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Replace `src/models/repo.ts` entirely:
 
@@ -119,12 +119,12 @@ export class RepoModel {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 152 passing (149 + 3), no `error TS`, no lint errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/models/repo.ts src/test/repoMode.test.ts
@@ -151,7 +151,7 @@ The mechanism the whole design rests on: one pure function mapping `(repo, branc
   - `function toDiscoveryRepos(resolved: ResolvedRepo[]): RepoModel[]`
   - `function identifyWorktreeOwner(filePath: string, resolved: ResolvedRepo[]): { repo: RepoModel; branch: string } | undefined`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src/test/repoPaths.test.ts`:
 
@@ -284,12 +284,12 @@ suite('Repository path resolution', () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `npm run compile-tests`
 Expected: FAIL with `error TS2307: Cannot find module '../services/repoPaths'`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `src/services/repoPaths.ts`:
 
@@ -419,12 +419,12 @@ export function identifyWorktreeOwner(
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 160 passing (152 + 8), no `error TS`, no lint errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/services/repoPaths.ts src/test/repoPaths.test.ts
@@ -448,7 +448,7 @@ Custom worktrees check out the real branch, so the source checkout must not be h
   - `function describeSourceConflict(conflict: SourceConflict, repoName: string): string`
   - `function parsePorcelainStatus(stdout: string): string[]`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src/test/sourceConflict.test.ts`:
 
@@ -517,12 +517,12 @@ suite('Source checkout conflict', () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `npm run compile-tests`
 Expected: FAIL with `error TS2307: Cannot find module '../services/sourceConflict'`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `src/services/sourceConflict.ts`:
 
@@ -596,12 +596,12 @@ export function parsePorcelainStatus(stdout: string): string[] {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 165 passing (160 + 5), no `error TS`, no lint errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/services/sourceConflict.ts src/test/sourceConflict.test.ts
@@ -625,7 +625,7 @@ Wires Tasks 2 and 3 into an impure operation that creates a worktree on the real
   - `function ensureRealBranchWorktree(repoPath: string, branch: string, destPath: string, token?: vscode.CancellationToken): Promise<WorktreeResult>` in `src/services/worktree.ts`
   - `async function ensureCustomWorktrees(resolved: ResolvedRepo[], token?: vscode.CancellationToken): Promise<{ ready: ResolvedRepo[]; problems: string[] }>` in `src/services/customWorktree.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `src/test/worktree.test.ts`, inside the existing `suite`:
 
@@ -640,12 +640,12 @@ Append to `src/test/worktree.test.ts`, inside the existing `suite`:
     });
 ```
 
-- [ ] **Step 2: Run the test to verify it compiles and passes**
+- [x] **Step 2: Run the test to verify it compiles and passes**
 
 Run: `npm run compile-tests && npm test`
 Expected: PASS — this test pins existing behaviour that Task 4 must not change. If `managedBranchName` or `branchSatisfiesTarget` are not already imported in that file, add them to the existing import from `../services/worktree`.
 
-- [ ] **Step 3: Add a real-branch worktree creator**
+- [x] **Step 3: Add a real-branch worktree creator**
 
 In `src/services/worktree.ts`, add after `ensureWorktree`:
 
@@ -701,7 +701,7 @@ export async function ensureRealBranchWorktree(
 }
 ```
 
-- [ ] **Step 4: Write the orchestration**
+- [x] **Step 4: Write the orchestration**
 
 Create `src/services/customWorktree.ts`:
 
@@ -822,12 +822,12 @@ export async function ensureCustomWorktrees(
 }
 ```
 
-- [ ] **Step 5: Verify the whole gate**
+- [x] **Step 5: Verify the whole gate**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 166 passing (165 + 1), no `error TS`, no lint errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
@@ -849,7 +849,7 @@ The functional payoff: a version's addons path points at its own worktrees, so t
 - Consumes: `resolveProjectRepos`, `toDiscoveryRepos` (Task 2); `readSetupState` from `src/services/setupState.ts` for the provisioning root.
 - Produces: `collectModuleDiscovery(project: ProjectModel, resolved?: ResolvedRepo[])` — passing `resolved` makes discovery see worktrees; omitting it preserves today's behaviour.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `src/test/repoPaths.test.ts`, inside the `suite`:
 
@@ -882,12 +882,12 @@ Append to `src/test/repoPaths.test.ts`, inside the `suite`:
     });
 ```
 
-- [ ] **Step 2: Run the tests to verify they pass**
+- [x] **Step 2: Run the tests to verify they pass**
 
 Run: `npm run compile-tests && npm test`
 Expected: 168 passing (166 + 2). These pass against Task 2's implementation; they pin the behaviour Steps 3-4 must preserve while threading it through.
 
-- [ ] **Step 3: Let module discovery accept resolved repos**
+- [x] **Step 3: Let module discovery accept resolved repos**
 
 In `src/services/psaeInternal.ts`, replace `collectModuleDiscovery`:
 
@@ -908,7 +908,7 @@ Add to that file's imports:
 import { toDiscoveryRepos, ResolvedRepo } from './repoPaths';
 ```
 
-- [ ] **Step 4: Resolve repos in `prepareArgs`**
+- [x] **Step 4: Resolve repos in `prepareArgs`**
 
 In `src/debugger.ts`, add to the imports:
 
@@ -940,7 +940,7 @@ with:
 
 This must come **after** the `const db = resolveDbForVersion(...)` line, because the assignments come from the resolved database. Move the `discovery` declaration below the database lookup if it is not already there.
 
-- [ ] **Step 5: Create the worktrees before launching**
+- [x] **Step 5: Create the worktrees before launching**
 
 In `src/debugger.ts`, in `setupDebugger`, immediately before the `for (const version of targets)` loop, add:
 
@@ -975,7 +975,7 @@ After the loop, before `await selectPythonInterpreter(...)`, add:
 
 Add `showWarning` to the existing `./utils` import in `src/debugger.ts`.
 
-- [ ] **Step 6: Scaffold into the resolved repository**
+- [x] **Step 6: Scaffold into the resolved repository**
 
 `src/module.ts:583` scaffolds a new module into `normalizePath(targetRepo.path)` — the source checkout, which in worktree mode is not what any version runs. Replace:
 
@@ -1007,12 +1007,12 @@ import { readSetupState } from './services/setupState';
 
 The destination picker at `src/module.ts:558` shows `repo.path`; change its `description` to the resolved path so the user picks a directory that matches where the file lands.
 
-- [ ] **Step 7: Verify the whole gate**
+- [x] **Step 7: Verify the whole gate**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 168 passing, no `error TS`, no lint errors.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A
@@ -1040,7 +1040,7 @@ Scoping, the first half of the wrong-copy defence: the UI never offers a copy be
 
 *The Repos view (`repoSelector`) deliberately keeps source paths.* The spec lists `RepoTreeProvider` as a consumer, but reading it shows it does not iterate `project.repos` at all: it scans `customAddonsPath` for repositories on disk so the user can pick which belong to the project. That is a discovery picker over *source* repositories, and resolving it to worktrees would be wrong — you cannot add a worktree to a project. Leave it alone.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `src/test/workspaceFolders.test.ts`, inside the `suite`:
 
@@ -1082,12 +1082,12 @@ import { versionFolderEntries, repoFolderEntries, WorkspaceFolderEntry } from '.
 import { RepoModel } from '../models/repo';
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `npm run compile-tests`
 Expected: FAIL with `error TS2305: Module '"../services/workspaceFolders"' has no exported member 'repoFolderEntries'`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `src/services/workspaceFolders.ts`, add:
 
@@ -1118,7 +1118,7 @@ export function repoFolderEntries(resolved: ResolvedRepo[], existingPaths: strin
 }
 ```
 
-- [ ] **Step 4: Scope the Project Repos explorer**
+- [x] **Step 4: Scope the Project Repos explorer**
 
 In `src/projectReposExplorer.ts`, find where it maps `project.repos` to tree entries (around line 156, `const repoPath = normalizePath(repo.path);`) and the watcher registration (around line 203-214, `.map(repo => repo.path)` and `new vscode.RelativePattern(repo.path, '**/*')`).
 
@@ -1147,7 +1147,7 @@ import { readSetupState } from './services/setupState';
 
 Use `this.resolveRepos(project)` in both the tree-building and the watcher-registration paths, reading `entry.path` instead of `repo.path`, and show `entry.branch` in the row description when `entry.isWorktree`.
 
-- [ ] **Step 5: Add the repos to the generated workspace**
+- [x] **Step 5: Add the repos to the generated workspace**
 
 In `src/projectWorkspace.ts`, in `buildWorkspaceFile`, after the `versionFolderEntries` block added by the previous plan, add:
 
@@ -1167,12 +1167,12 @@ In `src/projectWorkspace.ts`, in `buildWorkspaceFile`, after the `versionFolderE
 
 Add the matching imports (`repoFolderEntries`, `resolveProjectRepos`, `resolveProjectRepoBranchAssignments`, `readSetupState`).
 
-- [ ] **Step 6: Verify the whole gate**
+- [x] **Step 6: Verify the whole gate**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 170 passing (168 + 2), no `error TS`, no lint errors.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A
@@ -1194,7 +1194,7 @@ The second half of the defence: scoping does not help a file reached through sea
 - Consumes: `identifyWorktreeOwner`, `resolveProjectRepos` (Task 2).
 - Produces: `function registerWrongCopyGuard(context: vscode.ExtensionContext): void`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `src/test/repoPaths.test.ts`, inside the `suite`:
 
@@ -1221,12 +1221,12 @@ Append to `src/test/repoPaths.test.ts`, inside the `suite`:
     });
 ```
 
-- [ ] **Step 2: Run the test to verify it passes**
+- [x] **Step 2: Run the test to verify it passes**
 
 Run: `npm run compile-tests && npm test`
 Expected: 171 passing (170 + 1). This pins the semantics the guard relies on.
 
-- [ ] **Step 3: Write the guard**
+- [x] **Step 3: Write the guard**
 
 Create `src/services/wrongCopyGuard.ts`:
 
@@ -1325,7 +1325,7 @@ export function registerWrongCopyGuard(context: vscode.ExtensionContext): void {
 }
 ```
 
-- [ ] **Step 4: Register it**
+- [x] **Step 4: Register it**
 
 In `src/extension.ts`, add to the imports:
 
@@ -1339,12 +1339,12 @@ and after `registerAllCommands({ ... });`, add:
     registerWrongCopyGuard(context);
 ```
 
-- [ ] **Step 5: Verify the whole gate**
+- [x] **Step 5: Verify the whole gate**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 171 passing, no `error TS`, no lint errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
@@ -1366,7 +1366,7 @@ The command that makes the feature reachable, including the modal that names the
 - Consumes: `worktreeDirName`, `resolveRepoPath` (Task 2); `removeWorktree` from `src/services/worktree.ts`; `parsePorcelainStatus` (Task 3).
 - Produces: command `odt.repo.toggleBranchMode`; `function describeModeChange(repoName: string, mode: RepoBranchMode, root: string, branches: string[]): string`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `src/test/repoMode.test.ts`, inside the `suite`:
 
@@ -1395,12 +1395,12 @@ import { describeModeChange } from '../services/repoPaths';
 
 `describeModeChange` lives in `repoPaths.ts`, not in the command module: it is pure string-building over the same naming rules as `worktreeDirName`, and a test should not import a command module.
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm run compile-tests`
 Expected: FAIL with `has no exported member 'describeModeChange'`.
 
-- [ ] **Step 3: Write the description helper**
+- [x] **Step 3: Write the description helper**
 
 In `src/services/repoPaths.ts`, add:
 
@@ -1428,7 +1428,7 @@ export function describeModeChange(
 
 Add `RepoBranchMode` to the existing `../models/repo` import in that file.
 
-- [ ] **Step 4: Register the command**
+- [x] **Step 4: Register the command**
 
 In `package.json`, add to `contributes.commands`:
 
@@ -1453,7 +1453,7 @@ and to `contributes.menus.view/item/context`:
 
 `projectRepoRoot` is the context value `src/projectReposExplorer.ts:113` sets for a repository row. A missing repo uses `projectRepoRootMissing` and is deliberately excluded — relocate it first.
 
-- [ ] **Step 5: Implement the handler**
+- [x] **Step 5: Implement the handler**
 
 In `src/commands/reposExplorerCommands.ts`, add:
 
@@ -1517,12 +1517,12 @@ In `src/commands/reposExplorerCommands.ts`, add:
 
 Add the imports this needs to that file: `fs`, `normalizePath`, `stripSettings`, `SettingsStore`, `showError`, `showInfo`, `showWarning`, `showModalWarning`, `errorMessage`, `logger`, `tryRunCommand`, `removeWorktree`, `readSetupState`, `describeModeChange`, `resolveRepoPath`, `parsePorcelainStatus`, `normalizeBranchMode`, `RepoBranchMode`, `RepoModel`, `sanitizeProjectRepoBranchAssignments`, `extractUri`.
 
-- [ ] **Step 6: Verify the whole gate**
+- [x] **Step 6: Verify the whole gate**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 173 passing (171 + 2), no `error TS`, no lint errors.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A
@@ -1545,7 +1545,7 @@ Deletes `db.branchName`, the field that duplicated the version's branch and drif
 **Interfaces:**
 - Produces: `function applyBranchNameMigration(data: DebuggerData): { changed: boolean; preserved: number }`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/test/branchNameMigration.test.ts`:
 
@@ -1593,12 +1593,12 @@ suite('branchName migration', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm run compile-tests`
 Expected: FAIL with `has no exported member 'applyBranchNameMigration'`.
 
-- [ ] **Step 3: Write the migration**
+- [x] **Step 3: Write the migration**
 
 In `src/services/dataMigration.ts`, add:
 
@@ -1634,7 +1634,7 @@ export function applyBranchNameMigration(data: DebuggerData): { changed: boolean
 
 Call it from `migrateDebuggerData` alongside the existing migrations, saving when `changed` is true, and log `preserved`.
 
-- [ ] **Step 4: Remove the field from the model and the views**
+- [x] **Step 4: Remove the field from the model and the views**
 
 In `src/models/db.ts`: delete `branchName` from `DatabaseOptions` and from the class (field declaration and constructor assignment).
 
@@ -1642,12 +1642,12 @@ In `src/views/dbsView.ts`: in `buildDescription`, delete the `db.branchName` bra
 
 In `src/dbs.ts`: delete every write to `branchName`, including the one added by the previous fix in `changeDatabaseVersion` and the `branchLabel` plumbing in `resolveVersionForNewDatabase` if it exists only to populate it.
 
-- [ ] **Step 5: Verify the whole gate**
+- [x] **Step 5: Verify the whole gate**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 178 passing (173 + 5), no `error TS`, no lint errors. The compiler will name every remaining reader of `branchName`; fix each rather than casting around it.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
@@ -1676,7 +1676,7 @@ The prompt itself already exists: `promptProjectRepoBranchAssignments` in
 - Consumes: `promptProjectRepoBranchAssignments(repos, existing, mode)` — already exported from `src/dbs.ts`, returns `ProjectRepoBranchAssignment[] | undefined` where `undefined` means the user cancelled.
 - Produces: `function describeRepoBranchChoice(assignments: ProjectRepoBranchAssignment[]): string`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/test/dbCreationSummary.test.ts`:
 
@@ -1715,12 +1715,12 @@ suite('Database creation repo branches', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm run compile-tests`
 Expected: FAIL with `has no exported member 'describeRepoBranchChoice'`.
 
-- [ ] **Step 3: Write the summary helper**
+- [x] **Step 3: Write the summary helper**
 
 In `src/dbs.ts`, add near `promptProjectRepoBranchAssignments`:
 
@@ -1737,7 +1737,7 @@ export function describeRepoBranchChoice(assignments: ProjectRepoBranchAssignmen
 }
 ```
 
-- [ ] **Step 4: Ask before creating anything**
+- [x] **Step 4: Ask before creating anything**
 
 In `src/dbs.ts`, in `createDb`, move the branch decision above the creation work. Replace this block:
 
@@ -1784,7 +1784,7 @@ with:
 `resolveVersionForNewDatabase` still returns `branchLabel` and nothing else
 reads it, drop it from its return type.
 
-- [ ] **Step 5: Report what was recorded**
+- [x] **Step 5: Report what was recorded**
 
 At the end of `createDb`, immediately before the `return new DatabaseModel(...)`, add:
 
@@ -1794,7 +1794,7 @@ At the end of `createDb`, immediately before the `return new DatabaseModel(...)`
 
 Confirm `showAutoInfo` is imported in `src/dbs.ts`; it is already used elsewhere in the file.
 
-- [ ] **Step 6: A clone inherits its source's branches**
+- [x] **Step 6: A clone inherits its source's branches**
 
 `cloneDb` calls `captureCurrentRepoBranches(project.repos ?? [])`, so a clone
 picks up whatever the repos happen to be on now rather than what the database
@@ -1813,7 +1813,7 @@ with:
     const projectRepoBranches = sanitizeProjectRepoBranchAssignments(db.projectRepoBranches);
 ```
 
-- [ ] **Step 7: Remove the now-unused capture, if nothing else uses it**
+- [x] **Step 7: Remove the now-unused capture, if nothing else uses it**
 
 Run: `grep -rn "captureCurrentRepoBranches" src/ --include=*.ts`
 
@@ -1822,12 +1822,12 @@ and its import in `src/dbs.ts`, delete both — the function existed to make the
 assumption this task removes. If another caller remains, leave it and note
 which one in the commit message.
 
-- [ ] **Step 8: Verify the whole gate**
+- [x] **Step 8: Verify the whole gate**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 181 passing (178 + 3), no `error TS`, no lint errors.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add -A
@@ -1847,7 +1847,7 @@ git commit -m "[IMP] Ask which repo branches a database uses, before creating it
 **Interfaces:**
 - Produces: `function supersedePendingSwitch(): void` in `src/services/environment.ts`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `src/test/switchSummary.test.ts`, inside the `suite`:
 
@@ -1873,12 +1873,12 @@ Add to that file's import from `../services/environment`:
 import { describeSwitch, claimSwitchToken, isCurrentSwitch, supersedePendingSwitch } from '../services/environment';
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm run compile-tests`
 Expected: FAIL with `has no exported member 'supersedePendingSwitch'`.
 
-- [ ] **Step 3: Make the prompt supersedable**
+- [x] **Step 3: Make the prompt supersedable**
 
 In `src/services/environment.ts`, add above `alignEnvironment`:
 
@@ -1920,7 +1920,7 @@ In the `behavior === 'ask'` branch, capture and check the token:
             }
 ```
 
-- [ ] **Step 4: Show the mapping on the row**
+- [x] **Step 4: Show the mapping on the row**
 
 In `src/views/dbsView.ts`, in `buildDescription`, after the running marker, add:
 
@@ -1933,12 +1933,12 @@ In `src/views/dbsView.ts`, in `buildDescription`, after the running marker, add:
 
 In `package.json`, change the `dbSelector.configureRepoBranches` context-menu entry's `group` from `3_config@2` to `inline@2` so it is one click from the row.
 
-- [ ] **Step 5: Verify the whole gate**
+- [x] **Step 5: Verify the whole gate**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 182 passing (181 + 1), no `error TS`, no lint errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
@@ -1969,7 +1969,7 @@ fix.
   - `interface VersionDiagnosis { versionId: string; name: string; health: VersionHealth; odooPath?: string; expectedOdooPath: string; detail: string }`
   - `function diagnoseVersion(input: { id: string; name: string; odooVersion: string; odooPath?: string; pythonPath?: string }, root: string, exists: (p: string) => boolean): VersionDiagnosis`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src/test/versionMigration.test.ts`:
 
@@ -2049,12 +2049,12 @@ suite('Version migration diagnosis', () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `npm run compile-tests`
 Expected: FAIL with `error TS2307: Cannot find module '../services/versionMigration'`.
 
-- [ ] **Step 3: Write the diagnosis**
+- [x] **Step 3: Write the diagnosis**
 
 Create `src/services/versionMigration.ts`:
 
@@ -2139,12 +2139,12 @@ export function needsAttention(diagnoses: VersionDiagnosis[]): VersionDiagnosis[
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npm run compile-tests && npm test`
 Expected: 187 passing (182 + 5).
 
-- [ ] **Step 5: Add the command**
+- [x] **Step 5: Add the command**
 
 In `package.json`, add to `contributes.commands`:
 
@@ -2214,7 +2214,7 @@ In `src/commands/versionCommands.ts`, register it:
     }));
 ```
 
-- [ ] **Step 6: Re-provision an existing version in place**
+- [x] **Step 6: Re-provision an existing version in place**
 
 In `src/odooInstaller.ts`, add:
 
@@ -2285,7 +2285,7 @@ export async function provisionExistingVersion(versionId: string): Promise<void>
 
 Add the imports `versionCommands.ts` needs: `fs`, `resolveOptionalPath`, `readSetupState`, `diagnoseVersion`, `needsAttention`, `provisionExistingVersion`.
 
-- [ ] **Step 7: Prompt once when versions need attention**
+- [x] **Step 7: Prompt once when versions need attention**
 
 In `src/extension.ts`, after `void statusBar.update();`, add:
 
@@ -2324,12 +2324,12 @@ In `src/extension.ts`, after `void statusBar.update();`, add:
     })();
 ```
 
-- [ ] **Step 8: Verify the whole gate**
+- [x] **Step 8: Verify the whole gate**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 187 passing, no `error TS`, no lint errors.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add -A
@@ -2345,7 +2345,7 @@ git commit -m "[ADD] Diagnose and re-provision versions onto the current layout"
 - Modify: `CHANGELOG.md`
 - Modify: `docs/superpowers/notes/2026-09-01-onboarding-rework.md`
 
-- [ ] **Step 1: Document in the README**
+- [x] **Step 1: Document in the README**
 
 In the Databases section, replace any wording that says the current branch of each project repo is captured automatically — it is now asked for. Then add to the Repos section:
 
@@ -2376,7 +2376,7 @@ Turning the mode back off removes the worktrees the extension created, keeping
 any with uncommitted changes and telling you which.
 ```
 
-- [ ] **Step 2: Document in the CHANGELOG**
+- [x] **Step 2: Document in the CHANGELOG**
 
 Add under the unreleased heading:
 
@@ -2391,7 +2391,7 @@ Add under the unreleased heading:
 - **Check Version Environments** diagnoses every version against the current provisioning root — missing, unprovisioned, relocated or healthy — and re-provisions the ones that need it in place. Versions pointing at directories that no longer exist are flagged once on activation, rather than failing confusingly the next time you provision.
 ```
 
-- [ ] **Step 3: Name what the provisioning root holds**
+- [x] **Step 3: Name what the provisioning root holds**
 
 Spec §3 asks for the Setup summary to say what the environments directory is for, now that it also holds copies of custom code. In `src/services/setupFlow.ts`, in `describe`, change the `Environments:` row to:
 
@@ -2405,16 +2405,16 @@ and in `package.json`, change the `odooDebugger.provisioning.root` description t
 "Directory holding per-version worktrees, virtualenvs, and per-branch copies of custom repositories. Empty means `~/odoo-dev`."
 ```
 
-- [ ] **Step 4: Close out the notes**
+- [x] **Step 4: Close out the notes**
 
 In `docs/superpowers/notes/2026-09-01-onboarding-rework.md`, update the status line to record that the branch-model observations are now implemented, leaving observations 4 (walkthrough) and 9 (`updateActiveSettings` dead code) open.
 
-- [ ] **Step 5: Verify the whole gate one final time**
+- [x] **Step 5: Verify the whole gate one final time**
 
 Run: `npm run compile-tests && npm run lint && npm run compile && npm test`
 Expected: 187 passing, no `error TS`, no lint errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A

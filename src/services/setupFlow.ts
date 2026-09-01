@@ -58,7 +58,7 @@ function describe(proposal: SetupProposal): string {
         `Source: ${proposal.sourceRepo ?? 'not found'}${proposal.sourceBranch ? ` (${proposal.sourceBranch})` : ''}`,
         proposal.enterpriseRepo ? `Enterprise: ${proposal.enterpriseRepo}` : undefined,
         proposal.designThemesRepo ? `Design themes: ${proposal.designThemesRepo}` : undefined,
-        `Environments: ${proposal.provisioningRoot}${fs.existsSync(proposal.provisioningRoot) ? '' : ' (will be created)'}`
+        `Environments: ${proposal.provisioningRoot}${fs.existsSync(proposal.provisioningRoot) ? '' : ' (will be created)'} \u2014 worktrees, virtualenvs and per-branch copies of custom repos`
     ];
     return rows.filter(Boolean).join('  •  ');
 }

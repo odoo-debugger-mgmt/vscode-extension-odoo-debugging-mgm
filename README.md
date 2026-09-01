@@ -20,8 +20,8 @@ The source repository is never run directly: every version gets its own worktree
 1. Open a folder in VS Code.
    The extension stores its state in `.vscode/odoo-debugger-data.json`, so projects/versions/databases are **workspace-specific**.
 
-2. **(Optional — skip if Odoo is already set up)** Run `Setup Odoo` from the Projects view title bar.
-   Pick **Full setup** (clone + Python venv + requirements) or **Clone repositories only**, choose the destination folder (workspace by default), the repositories (community/enterprise/design-themes), the branch, and whether to make a **shallow copy** (single branch, no history — fast and small) or a full clone. After a clone-only run you can continue the full setup or have a matching **version profile created for you** in one click.
+2. Run **`Odoo DevTools: Set Up`** — once per machine, not per workspace.
+   It looks for Odoo checkouts you already have and shows what it found for confirmation, so this is usually one click. If there is nothing to find it offers to clone the repositories (community/enterprise/design-themes, any branch, optionally a **shallow copy**) and records where it put them.
 
    ![Odoo Setup](resources/assets/odoo-setup.gif)
 
@@ -97,6 +97,7 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 - The Odoo version is **auto-detected** from the database contents and linked to the matching version profile.
 - Context actions: **rename display name**, copy name, clone, restore, **open in browser**, **open psql shell**, change linked version, configure per-repo branches, delete. Renaming only changes the label — the PostgreSQL database keeps its name.
 - **Templates** (`Manage Database Templates`): register or create template databases and clone from them in seconds; import/export template lists as JSON.
+- **Creating a database asks which branch each project repo should use** — before anything is created or restored, so cancelling costs nothing. *Use current branches* is one of the answers; it is no longer an assumption. Cloning a database inherits its source's mapping.
 - **Running databases are marked** in the list: `running :8017` for a server this extension started, `running (external)` for one started from a terminal or another window. Each version also remembers the database it last launched, so switching versions restores the right `-d`.
 - **Reconcile Databases** finds stored references whose PostgreSQL database no longer exists and removes them in one pass.
 
@@ -125,9 +126,41 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 - The required Python version is read from the branch itself (`setup.py`'s `python_requires` or `odoo/release.py`'s `MIN_PY_VERSION`, plus the distributions named in `requirements.txt`'s header), so 17.0 gets 3.10 and 19.0 gets 3.12 without any hand-maintained table. An interpreter already installed via pyenv or your system is reused when it fits; otherwise [uv](https://docs.astral.sh/uv/) installs the right one.
 - After provisioning, a **dependency check** reports what's missing (`wkhtmltopdf`, PostgreSQL client tools, `rtlcss`, and the build headers `lxml`/`psycopg2`/`ldap` need) with a copy-paste install command for your platform. Nothing is installed for you and nothing runs `sudo`.
 - Each version's **debugger name, HTTP port and shell port are derived from its branch** — `odoo:17.0` on ports 8017/5017, `odoo:18.0` on 8018/5018 — and shown in the tree as read-only rows. That is what lets two versions run at the same time, which is the point when you are comparing a database before and after an upgrade. `odooDebugger.debuggerNamePrefix` changes the `odoo` part; the ports follow the series and step upward if another version, or any other process, has already claimed one.
+- **Check Version Environments** (Versions view title bar) reports any version whose directories are missing, unprovisioned or sitting outside the current environments folder, and re-provisions the ones that need it. Versions pointing at directories that no longer exist are flagged once on activation.
 - Each version row shows whether it is provisioned. Deleting a version offers to remove the folders the extension created — and never the ones you made yourself.
 - Clone, delete, activate; edit any setting inline from the tree.
 - Reset settings to the configured defaults, or save a version's settings as the new defaults.
+
+### One copy per branch (upgrades)
+
+During an upgrade you need two versions running against **their own** custom
+code. Right-click a repository in Project Repos and choose **Use One Copy Per
+Branch**: each branch that repository is mapped to gets its own working
+directory under your environments folder, so 17.0 and 19.0 stop competing for
+one checkout.
+
+This is opt-in per repository, and off by default — ordinary development, where
+a feature branch simply follows staging and prod, does not need it.
+
+The confirmation names the exact directories that will be created, because that
+is where you will edit that branch's code from then on. Your original checkout
+becomes a **source**: never in the addons path, never run, and yours to switch
+freely without changing what any version runs. Commits and pushes from a
+worktree go to the real branch — it is the same repository, one object store,
+so nothing needs syncing back.
+
+Because git can only check a branch out in one place, the source checkout has
+to let go of a branch a worktree needs. You are asked, never surprised: moving
+it to another branch is offered first (it keeps working normally), detaching is
+the alternative, and a checkout with uncommitted changes is refused with its
+changed files named.
+
+Two safeguards keep you out of the wrong copy: the repo views, Modules view and
+generated workspace show only the active version's copies, and opening a file
+belonging to another version offers to reopen the same file in the active one.
+
+Turning the mode back off removes the worktrees the extension created, keeping
+any with uncommitted changes and telling you which.
 
 ### Project Repos (Explorer)
 

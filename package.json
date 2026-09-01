@@ -1622,7 +1622,7 @@
           "type": "string",
           "default": "",
           "scope": "machine-overridable",
-          "markdownDescription": "Directory holding per-version worktrees and virtualenvs. Empty means `~/odoo-dev`."
+          "markdownDescription": "Directory holding per-version worktrees, virtualenvs, and per-branch copies of custom repositories. Empty means `~/odoo-dev`."
         },
         "odooDebugger.provisioning.uvPath": {
           "type": "string",

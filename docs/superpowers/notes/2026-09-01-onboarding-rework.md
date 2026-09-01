@@ -4,8 +4,9 @@ Running notes gathered while implementing the parallel-versions plan. Not a
 design yet — raw observations plus the one decision already taken.
 
 **Status:** answered by `docs/superpowers/specs/2026-09-01-first-run-setup-design.md`,
-implemented on branch `v-1.3`. Observations 4 (walkthrough) and 9
-(`updateActiveSettings` dead code) are still open.
+implemented on branch `v-1.3`, and the branch-model observations by
+`2026-09-01-custom-repo-worktrees-design.md`. Observations 4 (the rest of the
+walkthrough) and 9 (`updateActiveSettings` dead code) are still open.
 
 ---
 
