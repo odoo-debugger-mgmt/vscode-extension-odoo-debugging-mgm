@@ -119,6 +119,16 @@ export function getWorkspacePath(): string | null {
 /**
  * Normalizes a path to be absolute, relative to workspace if needed
  */
+/**
+ * Absolute form of an optional stored path, or undefined when it is unset.
+ * `normalizePath('')` yields the workspace root - which exists - so anything
+ * testing a configured path for existence must go through this first.
+ */
+export function resolveOptionalPath(stored: string | undefined): string | undefined {
+    const trimmed = stored?.trim();
+    return trimmed ? normalizePath(trimmed) : undefined;
+}
+
 export function normalizePath(inputPath: string): string {
     if (path.isAbsolute(inputPath)) {
         return inputPath;

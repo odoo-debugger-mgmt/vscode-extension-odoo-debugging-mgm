@@ -873,6 +873,7 @@ exports.CONFIG = exports.showBriefStatus = exports.showAutoInfo = exports.showMo
 exports.stripSettings = stripSettings;
 exports.getDatabaseLabel = getDatabaseLabel;
 exports.getWorkspacePath = getWorkspacePath;
+exports.resolveOptionalPath = resolveOptionalPath;
 exports.normalizePath = normalizePath;
 exports.findModules = findModules;
 exports.findRepositories = findRepositories;
@@ -983,6 +984,15 @@ function getWorkspacePath() {
 /**
  * Normalizes a path to be absolute, relative to workspace if needed
  */
+/**
+ * Absolute form of an optional stored path, or undefined when it is unset.
+ * `normalizePath('')` yields the workspace root - which exists - so anything
+ * testing a configured path for existence must go through this first.
+ */
+function resolveOptionalPath(stored) {
+    const trimmed = stored?.trim();
+    return trimmed ? normalizePath(trimmed) : undefined;
+}
 function normalizePath(inputPath) {
     if (path.isAbsolute(inputPath)) {
         return inputPath;
@@ -12596,10 +12606,8 @@ async function setupDebugger() {
     // database: launch.json accumulates durable entries instead of one being
     // renamed out from under the Run and Debug dropdown, and two versions can
     // run at once. Unprovisioned versions have no interpreter to launch.
-    const targets = versionsService.getVersions().filter(version => {
-        const stored = version.settings.pythonPath?.trim();
-        return (0, provisioning_1.isVersionProvisioned)(stored ? (0, utils_1.normalizePath)(stored) : undefined);
-    });
+    const targets = versionsService.getVersions()
+        .filter(version => (0, provisioning_1.isVersionProvisioned)((0, utils_1.resolveOptionalPath)(version.settings.pythonPath)));
     if (activeVersion && !targets.some(version => version.id === activeVersion.id)) {
         targets.push(activeVersion);
     }
@@ -13880,7 +13888,6 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VersionsTreeProvider = exports.VersionSettingTreeItem = exports.VersionTreeItem = void 0;
-exports.versionInterpreterPath = versionInterpreterPath;
 /**
  * Versions view: version profiles with their settings as editable children.
  */
@@ -13895,16 +13902,9 @@ const baseTreeProvider_1 = __webpack_require__(4);
 const versionIdentity_1 = __webpack_require__(26);
 /** Provisioned state for the tree description, from the shared predicate. */
 function provisioningLabel(version) {
-    return (0, provisioning_1.isVersionProvisioned)(versionInterpreterPath(version)) ? 'provisioned' : 'not provisioned';
-}
-/**
- * A version's interpreter as an absolute path, or undefined when it has none.
- * Normalizing an empty string would yield the workspace root - which exists -
- * so the emptiness check has to come first.
- */
-function versionInterpreterPath(version) {
-    const stored = version.settings.pythonPath?.trim();
-    return stored ? (0, utils_1.normalizePath)(stored) : undefined;
+    return (0, provisioning_1.isVersionProvisioned)((0, utils_1.resolveOptionalPath)(version.settings.pythonPath))
+        ? 'provisioned'
+        : 'not provisioned';
 }
 class VersionTreeItem extends vscode.TreeItem {
     version;

@@ -7,7 +7,7 @@ import * as vscode from "vscode";
 import * as path from 'node:path';
 import { ProjectModel } from "./models/project";
 import { SettingsModel } from "./models/settings";
-import { getWorkspacePath, normalizePath, showError, showInfo, showAutoInfo } from './utils';
+import { getWorkspacePath, normalizePath, resolveOptionalPath, showError, showInfo, showAutoInfo } from './utils';
 import { collectModuleDiscovery, resolvePsaeDirectories } from './services/psaeInternal';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
@@ -74,10 +74,8 @@ export async function setupDebugger(): Promise<any> {
     // database: launch.json accumulates durable entries instead of one being
     // renamed out from under the Run and Debug dropdown, and two versions can
     // run at once. Unprovisioned versions have no interpreter to launch.
-    const targets = versionsService.getVersions().filter(version => {
-        const stored = version.settings.pythonPath?.trim();
-        return isVersionProvisioned(stored ? normalizePath(stored) : undefined);
-    });
+    const targets = versionsService.getVersions()
+        .filter(version => isVersionProvisioned(resolveOptionalPath(version.settings.pythonPath)));
     if (activeVersion && !targets.some(version => version.id === activeVersion.id)) {
         targets.push(activeVersion);
     }

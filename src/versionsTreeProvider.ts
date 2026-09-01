@@ -4,7 +4,7 @@
 import * as vscode from 'vscode';
 import { VersionModel } from './models/version';
 import { VersionsService } from './versionsService';
-import { getSettingDisplayName, getSettingDisplayValue, normalizePath } from './utils';
+import { getSettingDisplayName, getSettingDisplayValue, resolveOptionalPath } from './utils';
 import { isVersionProvisioned } from './services/provisioning';
 import { activeIcon } from './views/icons';
 import { SortPreferences } from './sortPreferences';
@@ -15,17 +15,9 @@ import { isDerivedSetting } from './services/versionIdentity';
 
 /** Provisioned state for the tree description, from the shared predicate. */
 function provisioningLabel(version: VersionModel): string {
-    return isVersionProvisioned(versionInterpreterPath(version)) ? 'provisioned' : 'not provisioned';
-}
-
-/**
- * A version's interpreter as an absolute path, or undefined when it has none.
- * Normalizing an empty string would yield the workspace root - which exists -
- * so the emptiness check has to come first.
- */
-export function versionInterpreterPath(version: VersionModel): string | undefined {
-    const stored = version.settings.pythonPath?.trim();
-    return stored ? normalizePath(stored) : undefined;
+    return isVersionProvisioned(resolveOptionalPath(version.settings.pythonPath))
+        ? 'provisioned'
+        : 'not provisioned';
 }
 
 export class VersionTreeItem extends vscode.TreeItem {
