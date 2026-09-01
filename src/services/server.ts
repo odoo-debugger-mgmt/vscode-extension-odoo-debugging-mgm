@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import * as net from 'node:net';
 import { VersionsService } from '../versionsService';
 import { logger } from './logger';
+import { trackSession, untrackSession, anySessionRunning } from './debugSessions';
 
 const DEFAULT_ODOO_PORT = 8069;
 
@@ -65,13 +66,23 @@ export async function openServerInBrowser(dbName?: string): Promise<void> {
     await vscode.env.openExternal(buildServerUrl(port, dbName));
 }
 
-/** Whether the debug session is the one launched by the extension. */
-async function isOwnSession(session: vscode.DebugSession): Promise<boolean> {
+/** The version whose launch configuration this session was started from. */
+async function versionForSession(session: vscode.DebugSession): Promise<{ portNumber: number } | undefined> {
+    const name = session.configuration?.name;
+    if (typeof name !== 'string' || name.length === 0) {
+        return undefined;
+    }
     try {
-        const settings = await VersionsService.getInstance().getActiveVersionSettings();
-        return session.configuration?.name === settings.debuggerName;
+        const service = VersionsService.getInstance();
+        await service.initialize();
+        const version = service.getVersions().find(entry => entry.settings?.debuggerName === name);
+        if (!version) {
+            return undefined;
+        }
+        const port = Number(version.settings.portNumber);
+        return { portNumber: Number.isInteger(port) && port > 0 && port <= 65535 ? port : DEFAULT_ODOO_PORT };
     } catch {
-        return false;
+        return undefined;
     }
 }
 
@@ -89,10 +100,12 @@ export function registerServerLifecycle(
     }
 ): void {
     context.subscriptions.push(vscode.debug.onDidStartDebugSession(async session => {
-        if (!(await isOwnSession(session))) {
+        const version = await versionForSession(session);
+        if (!version) {
             return;
         }
-        hooks.onRunningChanged(true);
+        trackSession(session);
+        hooks.onRunningChanged(anySessionRunning());
 
         const openBrowser = vscode.workspace
             .getConfiguration('odooDebugger')
@@ -100,18 +113,18 @@ export function registerServerLifecycle(
         if (!openBrowser) {
             return;
         }
-        const port = await getActiveServerPort();
-        if (await waitForPort(port, 60000)) {
+        // The session's own port, not the active version's: another version
+        // may have been activated since this one was launched.
+        if (await waitForPort(version.portNumber, 60000)) {
             const dbName = await hooks.getSelectedDbName();
-            await vscode.env.openExternal(buildServerUrl(port, dbName));
+            await vscode.env.openExternal(buildServerUrl(version.portNumber, dbName));
         } else {
-            logger.debug(`Server port ${port} did not open within 60s; not opening browser.`);
+            logger.debug(`Server port ${version.portNumber} did not open within 60s; not opening browser.`);
         }
     }));
 
-    context.subscriptions.push(vscode.debug.onDidTerminateDebugSession(async session => {
-        if (await isOwnSession(session)) {
-            hooks.onRunningChanged(false);
-        }
+    context.subscriptions.push(vscode.debug.onDidTerminateDebugSession(session => {
+        untrackSession(session);
+        hooks.onRunningChanged(anySessionRunning());
     }));
 }

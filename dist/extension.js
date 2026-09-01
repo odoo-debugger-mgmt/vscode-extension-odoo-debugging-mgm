@@ -51,16 +51,16 @@ const module_1 = __webpack_require__(58);
 const testing_1 = __webpack_require__(60);
 const debugger_1 = __webpack_require__(62);
 const settingsStore_1 = __webpack_require__(5);
-const versionsTreeProvider_1 = __webpack_require__(64);
+const versionsTreeProvider_1 = __webpack_require__(65);
 const versionsService_1 = __webpack_require__(23);
 const context_1 = __webpack_require__(61);
-const server_1 = __webpack_require__(66);
-const sortPreferences_1 = __webpack_require__(67);
-const projectReposExplorer_1 = __webpack_require__(68);
+const server_1 = __webpack_require__(67);
+const sortPreferences_1 = __webpack_require__(68);
+const projectReposExplorer_1 = __webpack_require__(69);
 const logger_1 = __webpack_require__(11);
 const reconcile_1 = __webpack_require__(48);
-const statusBar_1 = __webpack_require__(70);
-const commands_1 = __webpack_require__(71);
+const statusBar_1 = __webpack_require__(71);
+const commands_1 = __webpack_require__(72);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -12494,6 +12494,7 @@ const testing_1 = __webpack_require__(53);
 const database_1 = __webpack_require__(41);
 const logger_1 = __webpack_require__(11);
 const launchConfig_1 = __webpack_require__(63);
+const debugSessions_1 = __webpack_require__(64);
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
 const baseInstallNotifiedDbs = new Set();
@@ -12815,24 +12816,34 @@ function quoteShellArg(value) {
     const escapedValue = value.replaceAll("'", String.raw `'\''`);
     return `'${escapedValue}'`;
 }
-/** Finds the running debug session launched from the extension's configuration. */
-async function findOwnDebugSession() {
-    const versionsService = versionsService_1.VersionsService.getInstance();
-    const settings = await versionsService.getActiveVersionSettings();
-    const session = vscode.debug.activeDebugSession;
-    if (session && session.configuration?.name === settings.debuggerName) {
-        return session;
-    }
-    return undefined;
-}
-/** Stops the debug session launched from the extension's configuration. */
+/** Stops one of the extension's running sessions, asking only when ambiguous. */
 async function stopDebugServer() {
-    const session = await findOwnDebugSession();
-    if (session) {
-        await vscode.debug.stopDebugging(session);
+    const settings = await versionsService_1.VersionsService.getInstance().getActiveVersionSettings();
+    const target = (0, debugSessions_1.resolveStopTarget)((0, debugSessions_1.runningDebuggerNames)(), settings.debuggerName);
+    if (target.kind === 'none') {
+        void (0, utils_1.showInfo)('No Odoo debug session is currently running.');
         return;
     }
-    void (0, utils_1.showInfo)('No Odoo debug session is currently running.');
+    let name;
+    if (target.kind === 'single') {
+        name = target.name;
+    }
+    else {
+        const picked = await vscode.window.showQuickPick(target.names, {
+            title: 'Stop which Odoo server?',
+            placeHolder: 'Several versions are running'
+        });
+        if (!picked) {
+            return;
+        }
+        name = picked;
+    }
+    const session = (0, debugSessions_1.getSessionByName)(name);
+    if (!session) {
+        void (0, utils_1.showInfo)('No Odoo debug session is currently running.');
+        return;
+    }
+    await vscode.debug.stopDebugging(session);
 }
 async function startDebugServer(options = {}) {
     const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -12847,10 +12858,10 @@ async function startDebugServer(options = {}) {
     // Get settings from active version instead of legacy settings
     const versionsService = versionsService_1.VersionsService.getInstance();
     const workspaceSettings = await versionsService.getActiveVersionSettings();
-    // Stop only the session launched from the extension's own configuration;
-    // unrelated debug sessions must survive a server (re)start.
-    const existingSession = vscode.debug.activeDebugSession;
-    if (existingSession && existingSession.configuration?.name === workspaceSettings.debuggerName) {
+    // Restarting this version stops only this version's session; other
+    // versions running side by side must survive.
+    const existingSession = (0, debugSessions_1.getSessionByName)(workspaceSettings.debuggerName);
+    if (existingSession) {
         await vscode.debug.stopDebugging(existingSession);
     }
     void vscode.debug.startDebugging(workspaceFolders[0], workspaceSettings.debuggerName, { noDebug: options.noDebug === true });
@@ -12946,6 +12957,68 @@ async function updateManagedLaunchConfig(workspacePath, managedConfig) {
 
 /***/ }),
 /* 64 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.trackSession = trackSession;
+exports.untrackSession = untrackSession;
+exports.getSessionByName = getSessionByName;
+exports.runningDebuggerNames = runningDebuggerNames;
+exports.anySessionRunning = anySessionRunning;
+exports.clearSessions = clearSessions;
+exports.resolveStopTarget = resolveStopTarget;
+const sessions = new Map();
+function nameOf(session) {
+    const name = session.configuration?.name;
+    return typeof name === 'string' && name.length > 0 ? name : undefined;
+}
+function trackSession(session) {
+    const name = nameOf(session);
+    if (name) {
+        sessions.set(name, session);
+    }
+}
+function untrackSession(session) {
+    const name = nameOf(session);
+    if (name) {
+        sessions.delete(name);
+    }
+}
+function getSessionByName(name) {
+    return sessions.get(name);
+}
+function runningDebuggerNames() {
+    return Array.from(sessions.keys());
+}
+function anySessionRunning() {
+    return sessions.size > 0;
+}
+/** Test seam: the registry is module state that outlives a single suite. */
+function clearSessions() {
+    sessions.clear();
+}
+/**
+ * What "Stop Server" should act on. The active version's session wins
+ * outright; otherwise a lone session is unambiguous and anything else needs
+ * the user to choose.
+ */
+function resolveStopTarget(running, activeName) {
+    if (running.length === 0) {
+        return { kind: 'none' };
+    }
+    if (activeName && running.includes(activeName)) {
+        return { kind: 'single', name: activeName };
+    }
+    if (running.length === 1) {
+        return { kind: 'single', name: running[0] };
+    }
+    return { kind: 'prompt', names: [...running] };
+}
+
+
+/***/ }),
+/* 65 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12992,7 +13065,7 @@ const fs = __importStar(__webpack_require__(35));
 const path = __importStar(__webpack_require__(3));
 const versionsService_1 = __webpack_require__(23);
 const utils_1 = __webpack_require__(7);
-const pythonToolchain_1 = __webpack_require__(65);
+const pythonToolchain_1 = __webpack_require__(66);
 const icons_1 = __webpack_require__(29);
 const sortOptions_1 = __webpack_require__(28);
 const logger_1 = __webpack_require__(11);
@@ -13187,7 +13260,7 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 
 /***/ }),
-/* 65 */
+/* 66 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13435,7 +13508,7 @@ async function installRequirements(venvPath, requirementsPath, uvPath, onLine, t
 
 
 /***/ }),
-/* 66 */
+/* 67 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13487,6 +13560,7 @@ const vscode = __importStar(__webpack_require__(1));
 const net = __importStar(__webpack_require__(27));
 const versionsService_1 = __webpack_require__(23);
 const logger_1 = __webpack_require__(11);
+const debugSessions_1 = __webpack_require__(64);
 const DEFAULT_ODOO_PORT = 8069;
 /** Port the Odoo server listens on, from the active version's settings. */
 async function getActiveServerPort() {
@@ -13538,14 +13612,24 @@ async function openServerInBrowser(dbName) {
     const port = await getActiveServerPort();
     await vscode.env.openExternal(buildServerUrl(port, dbName));
 }
-/** Whether the debug session is the one launched by the extension. */
-async function isOwnSession(session) {
+/** The version whose launch configuration this session was started from. */
+async function versionForSession(session) {
+    const name = session.configuration?.name;
+    if (typeof name !== 'string' || name.length === 0) {
+        return undefined;
+    }
     try {
-        const settings = await versionsService_1.VersionsService.getInstance().getActiveVersionSettings();
-        return session.configuration?.name === settings.debuggerName;
+        const service = versionsService_1.VersionsService.getInstance();
+        await service.initialize();
+        const version = service.getVersions().find(entry => entry.settings?.debuggerName === name);
+        if (!version) {
+            return undefined;
+        }
+        const port = Number(version.settings.portNumber);
+        return { portNumber: Number.isInteger(port) && port > 0 && port <= 65535 ? port : DEFAULT_ODOO_PORT };
     }
     catch {
-        return false;
+        return undefined;
     }
 }
 /**
@@ -13556,35 +13640,37 @@ async function isOwnSession(session) {
  */
 function registerServerLifecycle(context, hooks) {
     context.subscriptions.push(vscode.debug.onDidStartDebugSession(async (session) => {
-        if (!(await isOwnSession(session))) {
+        const version = await versionForSession(session);
+        if (!version) {
             return;
         }
-        hooks.onRunningChanged(true);
+        (0, debugSessions_1.trackSession)(session);
+        hooks.onRunningChanged((0, debugSessions_1.anySessionRunning)());
         const openBrowser = vscode.workspace
             .getConfiguration('odooDebugger')
             .get('server.openBrowserOnStart', false);
         if (!openBrowser) {
             return;
         }
-        const port = await getActiveServerPort();
-        if (await waitForPort(port, 60000)) {
+        // The session's own port, not the active version's: another version
+        // may have been activated since this one was launched.
+        if (await waitForPort(version.portNumber, 60000)) {
             const dbName = await hooks.getSelectedDbName();
-            await vscode.env.openExternal(buildServerUrl(port, dbName));
+            await vscode.env.openExternal(buildServerUrl(version.portNumber, dbName));
         }
         else {
-            logger_1.logger.debug(`Server port ${port} did not open within 60s; not opening browser.`);
+            logger_1.logger.debug(`Server port ${version.portNumber} did not open within 60s; not opening browser.`);
         }
     }));
-    context.subscriptions.push(vscode.debug.onDidTerminateDebugSession(async (session) => {
-        if (await isOwnSession(session)) {
-            hooks.onRunningChanged(false);
-        }
+    context.subscriptions.push(vscode.debug.onDidTerminateDebugSession(session => {
+        (0, debugSessions_1.untrackSession)(session);
+        hooks.onRunningChanged((0, debugSessions_1.anySessionRunning)());
     }));
 }
 
 
 /***/ }),
-/* 67 */
+/* 68 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -13607,7 +13693,7 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 68 */
+/* 69 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13659,7 +13745,7 @@ const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
 const runtimeCache_1 = __webpack_require__(14);
-const filesExclude_1 = __webpack_require__(69);
+const filesExclude_1 = __webpack_require__(70);
 const baseTreeProvider_1 = __webpack_require__(4);
 const sortOptions_1 = __webpack_require__(28);
 const branches_1 = __webpack_require__(31);
@@ -13959,7 +14045,7 @@ async function selectProjectForExplorer() {
 
 
 /***/ }),
-/* 69 */
+/* 70 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14105,7 +14191,7 @@ function createFilesExcludeMatcher(scopeUri) {
 
 
 /***/ }),
-/* 70 */
+/* 71 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14227,23 +14313,23 @@ exports.StatusBarIndicators = StatusBarIndicators;
 
 
 /***/ }),
-/* 71 */
+/* 72 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(72);
-const projectCommands_1 = __webpack_require__(74);
-const repoCommands_1 = __webpack_require__(80);
-const dbCommands_1 = __webpack_require__(81);
-const moduleCommands_1 = __webpack_require__(82);
-const testingCommands_1 = __webpack_require__(83);
-const versionCommands_1 = __webpack_require__(84);
-const debugCommands_1 = __webpack_require__(87);
-const reposExplorerCommands_1 = __webpack_require__(88);
-const editorCommands_1 = __webpack_require__(89);
-const helpCommands_1 = __webpack_require__(90);
+const viewCommands_1 = __webpack_require__(73);
+const projectCommands_1 = __webpack_require__(75);
+const repoCommands_1 = __webpack_require__(81);
+const dbCommands_1 = __webpack_require__(82);
+const moduleCommands_1 = __webpack_require__(83);
+const testingCommands_1 = __webpack_require__(84);
+const versionCommands_1 = __webpack_require__(85);
+const debugCommands_1 = __webpack_require__(88);
+const reposExplorerCommands_1 = __webpack_require__(89);
+const editorCommands_1 = __webpack_require__(90);
+const helpCommands_1 = __webpack_require__(91);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -14261,7 +14347,7 @@ function registerAllCommands(deps) {
 
 
 /***/ }),
-/* 72 */
+/* 73 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14301,7 +14387,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(73);
+const quickSearch_1 = __webpack_require__(74);
 const sortOptions_1 = __webpack_require__(28);
 const notifications_1 = __webpack_require__(15);
 const module_1 = __webpack_require__(58);
@@ -14433,7 +14519,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 73 */
+/* 74 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14545,7 +14631,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 74 */
+/* 75 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14593,8 +14679,8 @@ const notifications_1 = __webpack_require__(15);
 const logger_1 = __webpack_require__(11);
 const project_1 = __webpack_require__(50);
 const dbs_1 = __webpack_require__(36);
-const odooInstaller_1 = __webpack_require__(75);
-const projectWorkspace_1 = __webpack_require__(79);
+const odooInstaller_1 = __webpack_require__(76);
+const projectWorkspace_1 = __webpack_require__(80);
 function registerProjectCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('projectSelector.create', async () => {
@@ -14710,7 +14796,7 @@ function registerProjectCommands(deps) {
 
 
 /***/ }),
-/* 75 */
+/* 76 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14764,9 +14850,9 @@ const process_1 = __webpack_require__(12);
 const logger_1 = __webpack_require__(11);
 const notifications_1 = __webpack_require__(15);
 const versionsService_1 = __webpack_require__(23);
-const provisioning_1 = __webpack_require__(76);
-const systemDeps_1 = __webpack_require__(78);
-const pythonToolchain_1 = __webpack_require__(65);
+const provisioning_1 = __webpack_require__(77);
+const systemDeps_1 = __webpack_require__(79);
+const pythonToolchain_1 = __webpack_require__(66);
 const CLONE_TARGETS = {
     odoo: {
         dirName: 'odoo',
@@ -15090,7 +15176,7 @@ async function setupOdooBranch() {
 
 
 /***/ }),
-/* 76 */
+/* 77 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15141,10 +15227,10 @@ exports.executeProvision = executeProvision;
  */
 const fs = __importStar(__webpack_require__(35));
 const path = __importStar(__webpack_require__(3));
-const odooRequirements_1 = __webpack_require__(77);
+const odooRequirements_1 = __webpack_require__(78);
 const worktree_1 = __webpack_require__(34);
-const pythonToolchain_1 = __webpack_require__(65);
-const systemDeps_1 = __webpack_require__(78);
+const pythonToolchain_1 = __webpack_require__(66);
+const systemDeps_1 = __webpack_require__(79);
 const logger_1 = __webpack_require__(11);
 function slugifyBranch(branch) {
     return branch.replace(/[^A-Za-z0-9._-]+/g, '-');
@@ -15305,7 +15391,7 @@ async function executeProvision(spec, progress, token) {
 
 
 /***/ }),
-/* 77 */
+/* 78 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15443,7 +15529,7 @@ async function readOdooPythonWindow(odooPath) {
 
 
 /***/ }),
-/* 78 */
+/* 79 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15492,7 +15578,7 @@ exports.checkSystemDeps = checkSystemDeps;
  */
 const fs = __importStar(__webpack_require__(35));
 const process_1 = __webpack_require__(12);
-const pythonToolchain_1 = __webpack_require__(65);
+const pythonToolchain_1 = __webpack_require__(66);
 const INSTALL_HINTS = {
     wkhtmltopdf: {
         apt: 'sudo apt install wkhtmltopdf',
@@ -15573,7 +15659,7 @@ async function checkSystemDeps(venvPath) {
 
 
 /***/ }),
-/* 79 */
+/* 80 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15711,7 +15797,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 80 */
+/* 81 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15755,7 +15841,7 @@ exports.registerRepoCommands = registerRepoCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const repos_1 = __webpack_require__(57);
-const projectWorkspace_1 = __webpack_require__(79);
+const projectWorkspace_1 = __webpack_require__(80);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
@@ -15767,7 +15853,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 81 */
+/* 82 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15815,7 +15901,7 @@ const notifications_1 = __webpack_require__(15);
 const logger_1 = __webpack_require__(11);
 const dbs_1 = __webpack_require__(36);
 const notifications_2 = __webpack_require__(15);
-const server_1 = __webpack_require__(66);
+const server_1 = __webpack_require__(67);
 const utils_1 = __webpack_require__(7);
 function registerDbCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
@@ -15992,7 +16078,7 @@ function registerDbCommands(deps) {
 
 
 /***/ }),
-/* 82 */
+/* 83 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16127,7 +16213,7 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 83 */
+/* 84 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16220,7 +16306,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 84 */
+/* 85 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16264,15 +16350,15 @@ exports.registerVersionCommands = registerVersionCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(35));
-const args_1 = __webpack_require__(85);
+const args_1 = __webpack_require__(86);
 const utils_1 = __webpack_require__(7);
 const versionIdentity_1 = __webpack_require__(26);
 const notifications_1 = __webpack_require__(15);
 const logger_1 = __webpack_require__(11);
-const branchPick_1 = __webpack_require__(86);
+const branchPick_1 = __webpack_require__(87);
 const runtimeCache_1 = __webpack_require__(14);
 const environment_1 = __webpack_require__(30);
-const odooInstaller_1 = __webpack_require__(75);
+const odooInstaller_1 = __webpack_require__(76);
 const worktree_1 = __webpack_require__(34);
 function registerVersionCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
@@ -16752,7 +16838,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 85 */
+/* 86 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16845,7 +16931,7 @@ function extractUri(arg) {
 
 
 /***/ }),
-/* 86 */
+/* 87 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16986,7 +17072,7 @@ async function pickOdooBranch(odooPath, title) {
 
 
 /***/ }),
-/* 87 */
+/* 88 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17030,7 +17116,7 @@ exports.registerDebugCommands = registerDebugCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const debugger_1 = __webpack_require__(62);
-const server_1 = __webpack_require__(66);
+const server_1 = __webpack_require__(67);
 const notifications_1 = __webpack_require__(15);
 const settingsStore_1 = __webpack_require__(5);
 function registerDebugCommands(deps) {
@@ -17070,7 +17156,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 88 */
+/* 89 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17116,13 +17202,13 @@ exports.registerReposExplorerCommands = registerReposExplorerCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(35));
 const path = __importStar(__webpack_require__(3));
-const args_1 = __webpack_require__(85);
+const args_1 = __webpack_require__(86);
 const notifications_1 = __webpack_require__(15);
 const notifications_2 = __webpack_require__(15);
 const settingsStore_1 = __webpack_require__(5);
 const utils_1 = __webpack_require__(7);
 const runtimeCache_1 = __webpack_require__(14);
-const projectReposExplorer_1 = __webpack_require__(68);
+const projectReposExplorer_1 = __webpack_require__(69);
 async function copyPathToClipboard(uri, relative) {
     if (!uri) {
         void (0, notifications_1.showInfo)('Select a file or folder first.');
@@ -17240,7 +17326,7 @@ function registerReposExplorerCommands(deps) {
 
 
 /***/ }),
-/* 89 */
+/* 90 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17347,7 +17433,7 @@ function registerEditorCommands(deps) {
 
 
 /***/ }),
-/* 90 */
+/* 91 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 

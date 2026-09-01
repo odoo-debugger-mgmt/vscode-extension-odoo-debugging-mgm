@@ -15,6 +15,7 @@ import { ensureTestingConfigModel } from './models/testing';
 import { getInstalledModuleNames, databaseHasModuleTable } from './services/database';
 import { logger, errorMessage } from './services/logger';
 import { updateManagedLaunchConfig } from './services/launchConfig';
+import { getSessionByName, runningDebuggerNames, resolveStopTarget } from './services/debugSessions';
 
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
@@ -376,25 +377,36 @@ function quoteShellArg(value: string): string {
     return `'${escapedValue}'`;
 }
 
-/** Finds the running debug session launched from the extension's configuration. */
-async function findOwnDebugSession(): Promise<vscode.DebugSession | undefined> {
-    const versionsService = VersionsService.getInstance();
-    const settings = await versionsService.getActiveVersionSettings();
-    const session = vscode.debug.activeDebugSession;
-    if (session && session.configuration?.name === settings.debuggerName) {
-        return session;
-    }
-    return undefined;
-}
-
-/** Stops the debug session launched from the extension's configuration. */
+/** Stops one of the extension's running sessions, asking only when ambiguous. */
 export async function stopDebugServer(): Promise<void> {
-    const session = await findOwnDebugSession();
-    if (session) {
-        await vscode.debug.stopDebugging(session);
+    const settings = await VersionsService.getInstance().getActiveVersionSettings();
+    const target = resolveStopTarget(runningDebuggerNames(), settings.debuggerName);
+
+    if (target.kind === 'none') {
+        void showInfo('No Odoo debug session is currently running.');
         return;
     }
-    void showInfo('No Odoo debug session is currently running.');
+
+    let name: string;
+    if (target.kind === 'single') {
+        name = target.name;
+    } else {
+        const picked = await vscode.window.showQuickPick(target.names, {
+            title: 'Stop which Odoo server?',
+            placeHolder: 'Several versions are running'
+        });
+        if (!picked) {
+            return;
+        }
+        name = picked;
+    }
+
+    const session = getSessionByName(name);
+    if (!session) {
+        void showInfo('No Odoo debug session is currently running.');
+        return;
+    }
+    await vscode.debug.stopDebugging(session);
 }
 
 export async function startDebugServer(options: { noDebug?: boolean } = {}): Promise<void> {
@@ -410,10 +422,10 @@ export async function startDebugServer(options: { noDebug?: boolean } = {}): Pro
     // Get settings from active version instead of legacy settings
     const versionsService = VersionsService.getInstance();
     const workspaceSettings = await versionsService.getActiveVersionSettings();
-    // Stop only the session launched from the extension's own configuration;
-    // unrelated debug sessions must survive a server (re)start.
-    const existingSession = vscode.debug.activeDebugSession;
-    if (existingSession && existingSession.configuration?.name === workspaceSettings.debuggerName) {
+    // Restarting this version stops only this version's session; other
+    // versions running side by side must survive.
+    const existingSession = getSessionByName(workspaceSettings.debuggerName);
+    if (existingSession) {
         await vscode.debug.stopDebugging(existingSession);
     }
     void vscode.debug.startDebugging(
