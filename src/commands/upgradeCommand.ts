@@ -13,6 +13,7 @@ import { stripSettings, normalizePath } from '../utils';
 import { showError, showInfo, showModalWarning } from '../services/notifications';
 import { errorMessage, logger } from '../services/logger';
 import { getRepoBranch } from '../services/branches';
+import { pickRepoBranch } from './branchPick';
 import { branchToSeries } from '../services/versionProposal';
 import { buildUpgradePlan, describeUpgradePlan, UpgradeInput, UpgradeRepo } from '../services/upgradePlan';
 import { describeModeChange } from '../services/repoPaths';
@@ -57,30 +58,42 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
                 return;
             }
 
-            const currentBranch = await getRepoBranch(normalizePath(pickedRepos[0].repo.path));
-            const fromBranch = await vscode.window.showInputBox({
-                title: 'Upgrading from',
-                prompt: 'The branch your custom code is on today',
-                value: currentBranch ?? '',
-                ignoreFocusOut: true,
-                validateInput: value => branchToSeries(value) ? undefined : 'Must name an Odoo series, e.g. "17.0-client".'
-            });
+            // Both branches are picked from what the repository actually has.
+            // Asking the user to type them was the same defect this release
+            // fixed for the Odoo branch: a branch typed from memory is a
+            // branch that gets misspelled, and the error arrives much later.
+            const branchRepoPath = normalizePath(pickedRepos[0].repo.path);
+            const currentBranch = await getRepoBranch(branchRepoPath);
+
+            const fromBranch = await pickRepoBranch(
+                branchRepoPath,
+                'Upgrading from',
+                'The branch your custom code is on today',
+                currentBranch ?? undefined
+            );
             if (!fromBranch) {
                 return;
             }
 
-            const toBranch = await vscode.window.showInputBox({
-                title: 'Upgrading to',
-                prompt: 'The branch the upgraded code lives on',
-                ignoreFocusOut: true,
-                validateInput: value => branchToSeries(value) ? undefined : 'Must name an Odoo series, e.g. "19.0-client".'
-            });
+            const toBranch = await pickRepoBranch(
+                branchRepoPath,
+                'Upgrading to',
+                'The branch the upgraded code lives on',
+                currentBranch ?? undefined
+            );
             if (!toBranch) {
                 return;
             }
 
-            const fromSeries = branchToSeries(fromBranch)!;
-            const toSeries = branchToSeries(toBranch)!;
+            const fromSeries = branchToSeries(fromBranch);
+            const toSeries = branchToSeries(toBranch);
+            if (!fromSeries || !toSeries) {
+                // Reachable now that the branches are picked rather than
+                // validated on the way in.
+                void showError(
+                    `"${!fromSeries ? fromBranch : toBranch}" does not name an Odoo series (e.g. "17.0-client").`);
+                return;
+            }
             if (fromSeries === toSeries) {
                 void showError('Both branches are on the same Odoo series, so there is nothing to run side by side.');
                 return;
@@ -111,18 +124,16 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
             };
             const plan = buildUpgradePlan(input);
 
-            const confirmed = await vscode.window.showQuickPick(
-                [
-                    { label: '$(check) Use these', detail: describeUpgradePlan(plan, input), apply: true },
-                    { label: '$(x) Cancel', detail: 'Change nothing', apply: false }
-                ],
-                {
-                    title: `Upgrade ${upgradeRepos.map(repo => repo.name).join(', ')}: ${fromSeries} → ${toSeries}`,
-                    placeHolder: 'Nothing is written until you accept',
-                    ignoreFocusOut: true
-                }
+            // A modal, not a quick pick: the plan is several lines and a quick
+            // pick's detail is one truncated line. Nothing is written until
+            // this is accepted, so the interruption buys something.
+            const confirmed = await showModalWarning(
+                `Upgrade ${upgradeRepos.map(repo => repo.name).join(', ')}: ${fromSeries} → ${toSeries}\n\n`
+                + `${describeUpgradePlan(plan, input)}\n\n`
+                + 'Nothing has been written yet.',
+                'Use These'
             );
-            if (!confirmed?.apply) {
+            if (confirmed !== 'Use These') {
                 return;
             }
 

@@ -49,7 +49,7 @@ Your addon repos are still a **plain checkout** by default — one branch at a
 time, exactly as before. Nothing changes unless you opt in.
 
 When you need two versions of your own code live at once (upgrades, mostly),
-right-click the repository in **Repos** → **Use One Copy Per Branch**. From then
+right-click the repository in **Repos** (or Project Repos in the Explorer) → **Use One Copy Per Branch**. From then
 on each branch gets its own directory, and the addons path, the module list, the
 Project Repos tree and the generated workspace all follow the active version.
 

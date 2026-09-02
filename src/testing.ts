@@ -235,7 +235,6 @@ export async function toggleTesting(event: any): Promise<void> {
         const { isEnabled } = event;
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            void showError('Select a project before running this action.');
             return;
         }
 
@@ -316,7 +315,6 @@ export async function toggleTesting(event: any): Promise<void> {
 export async function prepareTestRunForFile(filePath: string, moduleName: string): Promise<boolean> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        void showError('Select a project before running this action.');
         return false;
     }
     const { data, project } = result;
@@ -370,7 +368,6 @@ export async function toggleStopAfterInit(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            void showError('Select a project before running this action.');
             return;
         }
 
@@ -395,7 +392,6 @@ export async function setTestFile(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            void showError('Select a project before running this action.');
             return;
         }
 
@@ -432,7 +428,6 @@ export async function addTestTag(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            void showError('Select a project before running this action.');
             return;
         }
 
@@ -618,7 +613,6 @@ export async function cycleTestTagState(tag: TestTag): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            void showError('Select a project before running this action.');
             return;
         }
 
@@ -659,7 +653,6 @@ export async function removeTestTag(tagOrTreeItem: TestTag | vscode.TreeItem): P
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            void showError('Select a project before running this action.');
             return;
         }
 
@@ -713,7 +706,6 @@ export async function toggleLogLevel(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            void showError('Select a project before running this action.');
             return;
         }
 
@@ -743,7 +735,6 @@ export async function setSpecificLogLevel(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            void showError('Select a project before running this action.');
             return;
         }
 

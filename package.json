@@ -613,6 +613,12 @@
         "icon": "$(repo-forked)"
       },
       {
+        "command": "odoo.chooseCustomAddonsPath",
+        "title": "Choose Custom Addons Folder",
+        "category": "Odoo DevTools",
+        "icon": "$(folder-opened)"
+      },
+      {
         "command": "odoo.checkVersions",
         "title": "Check Version Environments",
         "category": "Odoo DevTools",
@@ -743,6 +749,11 @@
           "command": "repoSelector.quickSearch",
           "when": "view == repoSelector",
           "group": "navigation@1"
+        },
+        {
+          "command": "odoo.chooseCustomAddonsPath",
+          "when": "view == repoSelector",
+          "group": "1_view@0"
         },
         {
           "command": "repoSelector.sort",
@@ -970,6 +981,16 @@
           "command": "odoo.openVersionInBrowser",
           "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
           "group": "inline@1"
+        },
+        {
+          "command": "odt.repo.toggleBranchMode",
+          "when": "view == repoSelector && viewItem == repo",
+          "group": "1_repo@1"
+        },
+        {
+          "command": "odoo.setUpUpgrade",
+          "when": "view == repoSelector && viewItem == repo",
+          "group": "1_repo@2"
         },
         {
           "command": "odooDebugger.revealInExplorer",
@@ -1351,7 +1372,7 @@
       {
         "view": "repoSelector",
         "when": "odoo-debugger.is_active",
-        "contents": "No repositories found. Repositories are discovered in the active version's custom addons folder.\n[Manage Versions](command:odoo.manageVersions)"
+        "contents": "No repositories found. Repositories are discovered in your custom addons folder.\n[Choose Custom Addons Folder](command:odoo.chooseCustomAddonsPath)\n[Manage Versions](command:odoo.manageVersions)"
       },
       {
         "view": "moduleSelector",
@@ -1361,7 +1382,7 @@
       {
         "view": "testingSelector",
         "when": "odoo-debugger.is_active",
-        "contents": "Select a project and a database to configure test runs."
+        "contents": "Select a project and a database to configure test runs.\n[Switch Database](command:dbSelector.quickSearch)"
       },
       {
         "view": "versionsManager",

@@ -20,6 +20,7 @@ import { registerReposExplorerCommands } from './reposExplorerCommands';
 import { registerEditorCommands } from './editorCommands';
 import { registerHelpCommands } from './helpCommands';
 import { registerUpgradeCommand } from './upgradeCommand';
+import { registerCustomAddonsCommand } from './customAddonsCommand';
 
 export type RefreshReason = 'ui' | 'debugger' | 'all';
 
@@ -62,4 +63,5 @@ export function registerAllCommands(deps: CommandDeps): void {
     registerEditorCommands(deps);
     registerHelpCommands(deps);
     registerUpgradeCommand(deps);
+    registerCustomAddonsCommand(deps);
 }

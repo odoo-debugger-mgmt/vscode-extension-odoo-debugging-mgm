@@ -130,7 +130,7 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 ### One copy per branch (upgrades)
 
 During an upgrade you need two versions running against **their own** custom
-code. Right-click a repository in Project Repos and choose **Use One Copy Per
+code. Right-click a repository in Repos or Project Repos and choose **Use One Copy Per
 Branch**: each branch that repository is mapped to gets its own working
 directory under your environments folder, so 17.0 and 19.0 stop competing for
 one checkout.

@@ -28,11 +28,16 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - **Database creation asks which branch each project repository should use** instead of silently recording whatever was checked out at the time.
 - `db.branchName` is removed: a database's core branch comes from its version, which is the only place it was ever authoritative. Legacy values are folded into the database's Odoo version where no version profile matches.
 - Switch notifications say what will actually happen — reusing an existing worktree, checking out a branch, or reporting a missing environment — rather than always promising a checkout. Rapid database selections no longer leave two contradictory prompts standing.
+- **Use One Copy Per Branch** and **Set Up an Upgrade** are on the repository right-click menu in the **Repos** view, not only in Project Repos.
+- The upgrade flow picks both branches from the repository instead of asking you to type them, and shows its plan as a readable modal.
+- **Choose Custom Addons Folder** is a command and an action on the empty Repos view; choosing a folder now updates the active version, so discovery picks it up immediately instead of only affecting versions created later.
+- Actions that need a project no longer stack a second, less useful notification on top of the one that offers **Create Project** / **Select Project**.
 - Checkout hooks are consolidated into `odooDebugger.postSwitchCommands`, which now also runs when the version changes. Legacy hook settings are migrated automatically.
 - The configured source repository is never run directly; versions always run from their own worktree, leaving that checkout yours to switch freely.
 
 ### Fixed
 
+- **Migrating a version built before provisioning no longer duplicates it.** Accepting *Migrate* rebuilt the environment but created a second version for the same branch, on a shifted port; the existing version is now repointed in place.
 - Stale `git worktree` records no longer reserve a branch a new version needs (the `'odt/19.0' is already used by worktree at ...` failure).
 - Interpreter selection steps up to the next supported Python when a pinned requirement has no wheel for the closest match.
 - The branch picker opens immediately instead of after enumerating every ref.

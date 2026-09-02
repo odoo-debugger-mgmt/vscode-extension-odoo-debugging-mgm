@@ -17,9 +17,9 @@ import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { logger } from './services/logger';
 import { showModalInfo, showWarning } from './services/notifications';
-import { invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
 import { showModalWarning } from './services/notifications';
 import { BaseTreeProvider } from './views/baseTreeProvider';
+import { chooseCustomAddonsFolder } from './commands/customAddonsCommand';
 import { getRepoBranch } from './services/branches';
 import { readModuleManifest, extractTicketIdsFromBranch } from './services/manifest';
 import { collectModuleDiscovery } from './services/psaeInternal';
@@ -383,14 +383,7 @@ export async function getRepo(targetPath:string, searchFilter?: string): Promise
             throw new Error('No repositories found in the custom-addons path.');
         }
 
-        const picked = await vscode.window.showOpenDialog({
-            canSelectFolders: true,
-            canSelectFiles: false,
-            canSelectMany: false,
-            openLabel: 'Use This Folder',
-            title: 'Select the folder holding your addon repositories'
-        });
-        const chosen = picked?.[0]?.fsPath;
+        const chosen = await chooseCustomAddonsFolder();
         if (!chosen) {
             throw new Error('No repositories found in the custom-addons path.');
         }
@@ -402,13 +395,6 @@ export async function getRepo(targetPath:string, searchFilter?: string): Promise
         }
 
         scanPath = chosen;
-        // Remembered, so the next project does not ask again.
-        await vscode.workspace.getConfiguration('odooDebugger').update(
-            'defaultVersion.customAddonsPath',
-            chosen,
-            vscode.ConfigurationTarget.Global
-        );
-        invalidateRepositoryDiscoveryCache();
     }
 
     // Show QuickPick with both name and path as label and description

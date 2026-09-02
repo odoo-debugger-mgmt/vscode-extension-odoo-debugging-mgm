@@ -43,7 +43,15 @@ export function registerRepoBranchModeCommand(deps: CommandDeps): void {
             const repoPath = extractUri(event)?.fsPath;
             const repo = (project.repos ?? []).find(entry => normalizePath(entry.path) === normalizePath(repoPath ?? ''));
             if (!repo) {
-                void showError('Could not identify the repository.');
+                // Reachable from the Repos view, which lists every repository
+                // discovered in the addons folder, not only the project's.
+                const choice = await showError(
+                    `"${path.basename(repoPath ?? '')}" is not part of "${project.name}" yet.`,
+                    'Select Repositories'
+                );
+                if (choice === 'Select Repositories') {
+                    await vscode.commands.executeCommand('repoSelector.selectRepo');
+                }
                 return;
             }
 

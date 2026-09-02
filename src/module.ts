@@ -423,7 +423,6 @@ export async function quickConfigureModules(): Promise<void> {
     const loadItems = async (): Promise<ModulePick[] | undefined> => {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
-            void showInfo('Select a project before configuring modules.');
             return undefined;
         }
         const { project } = result;
@@ -798,7 +797,6 @@ export async function togglePsaeInternalModule(event: unknown): Promise<void> {
 export async function updateAllModules(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        void showError('Select a project before running this action.');
         return;
     }
 
@@ -857,7 +855,6 @@ export async function updateAllModules(): Promise<void> {
 export async function updateInstalledModules(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        void showError('Select a project before running this action.');
         return;
     }
 
@@ -900,7 +897,6 @@ export async function updateInstalledModules(): Promise<void> {
 export async function installAllModules(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        void showError('Select a project before running this action.');
         return;
     }
 
@@ -959,7 +955,6 @@ export async function installAllModules(): Promise<void> {
 export async function clearAllModuleSelections(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        void showError('Select a project before running this action.');
         return;
     }
 
@@ -993,7 +988,6 @@ export async function clearAllModuleSelections(): Promise<void> {
 export async function viewInstalledModules(): Promise<void> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        void showError('Select a project before running this action.');
         return;
     }
 

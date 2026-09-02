@@ -111,3 +111,46 @@ export async function pickOdooBranch(odooPath: string | undefined, title: string
         picker.dispose();
     }
 }
+
+/**
+ * Asks for a branch in one of the user's own repositories.
+ *
+ * Kept separate from `pickOdooBranch`: a custom repository has tens of
+ * branches rather than tens of thousands, so the whole list is affordable up
+ * front and needs no "search all" escape hatch. The point is the same one -
+ * a branch the user has to type from memory is a branch they get wrong.
+ */
+export async function pickRepoBranch(
+    repoPath: string | undefined,
+    title: string,
+    placeHolder: string,
+    current?: string
+): Promise<string | undefined> {
+    const branches = repoPath && fs.existsSync(repoPath)
+        ? await listAllBranches(repoPath).catch(() => [])
+        : [];
+
+    if (branches.length === 0) {
+        return promptManualBranch(title);
+    }
+
+    const items: BranchPickItem[] = branches.map(branch => ({
+        label: branch,
+        description: branch === current ? 'current branch' : undefined,
+        action: 'branch' as const,
+        branch
+    }));
+    items.push(MANUAL_ITEM);
+
+    const picked = await vscode.window.showQuickPick(items, {
+        title,
+        placeHolder,
+        ignoreFocusOut: true,
+        matchOnDescription: true
+    });
+
+    if (!picked) {
+        return undefined;
+    }
+    return picked.action === 'manual' ? promptManualBranch(title) : picked.branch;
+}

@@ -76,13 +76,16 @@ export function describeUpgradePlan(plan: UpgradePlan, input: UpgradeInput): str
             : `Odoo ${series} (exists)`)
         .join(', ');
 
+    // One line per repository: a single joined line was unreadable past two
+    // repositories, and this is shown in a modal that can hold the lines.
     const mapping = input.repos
-        .map(repo => `${repo.fromBranch} → ${input.fromSeries}, ${repo.toBranch} → ${input.toSeries}`)
-        .join('; ');
+        .map(repo => `    ${repo.name}: ${repo.fromBranch} → Odoo ${input.fromSeries}, ${repo.toBranch} → Odoo ${input.toSeries}`)
+        .join('\n');
 
     return [
-        `Versions: ${versionRow}`,
-        `Custom code: ${plan.reposToWorktree.join(', ')} — one copy per branch`,
-        `Branches: ${mapping}`
-    ].join('  •  ');
+        `Versions      ${versionRow}`,
+        `Custom code   ${plan.reposToWorktree.join(', ')} — one copy per branch`,
+        'Branches',
+        mapping
+    ].join('\n');
 }
