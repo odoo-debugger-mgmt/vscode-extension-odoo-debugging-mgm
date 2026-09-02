@@ -10,7 +10,15 @@ import * as vscode from 'vscode';
 import { showError, showInfo } from './notifications';
 import { errorMessage, logger } from './logger';
 import { getRepoBranch } from './branches';
-import { detectRepos, pickBest, searchRoots, RepoKind } from './setupDetection';
+import {
+    countCustomRepos,
+    detectCustomAddonsRoot,
+    detectRepos,
+    pickBest,
+    readAddonsChildren,
+    searchRoots,
+    RepoKind
+} from './setupDetection';
 import {
     defaultProvisioningRoot,
     readRawSetupSettings,
@@ -25,6 +33,22 @@ export interface SetupProposal {
     designThemesRepo?: string;
     provisioningRoot: string;
     sourceBranch?: string;
+    /** Where the user's own repositories live. Optional: not everyone has any. */
+    customAddonsPath?: string;
+    customAddonsCount?: number;
+}
+
+/** The per-version key that every repository-discovery site already reads. */
+const CUSTOM_ADDONS_KEY = 'defaultVersion.customAddonsPath';
+
+function readConfiguredCustomAddons(): string | undefined {
+    const configured = vscode.workspace
+        .getConfiguration('odooDebugger')
+        .get<string>(CUSTOM_ADDONS_KEY, '')
+        .trim();
+    // A configured value only counts when it is there; the shipped default is
+    // a workspace-relative path that usually is not.
+    return configured && fs.existsSync(configured) ? configured : undefined;
 }
 
 function workspaceFolderPaths(): string[] {
@@ -44,12 +68,18 @@ export async function buildProposal(): Promise<SetupProposal> {
         configured?.trim() || best[kind]?.path;
 
     const sourceRepo = pick('odoo', raw.sourceRepo);
+    const customAddonsPath = readConfiguredCustomAddons() ?? detectCustomAddonsRoot(roots);
+
     return {
         sourceRepo,
         enterpriseRepo: pick('enterprise', raw.enterpriseRepo),
         designThemesRepo: pick('design-themes', raw.designThemesRepo),
         provisioningRoot: raw.provisioningRoot?.trim() || defaultProvisioningRoot(),
-        sourceBranch: sourceRepo ? (await getRepoBranch(sourceRepo)) ?? undefined : undefined
+        sourceBranch: sourceRepo ? (await getRepoBranch(sourceRepo)) ?? undefined : undefined,
+        customAddonsPath,
+        customAddonsCount: customAddonsPath
+            ? countCustomRepos(readAddonsChildren(customAddonsPath))
+            : undefined
     };
 }
 
@@ -58,6 +88,9 @@ function describe(proposal: SetupProposal): string {
         `Source: ${proposal.sourceRepo ?? 'not found'}${proposal.sourceBranch ? ` (${proposal.sourceBranch})` : ''}`,
         proposal.enterpriseRepo ? `Enterprise: ${proposal.enterpriseRepo}` : undefined,
         proposal.designThemesRepo ? `Design themes: ${proposal.designThemesRepo}` : undefined,
+        proposal.customAddonsPath
+            ? `Custom addons: ${proposal.customAddonsPath} (${proposal.customAddonsCount ?? 0} repositories)`
+            : undefined,
         `Environments: ${proposal.provisioningRoot}${fs.existsSync(proposal.provisioningRoot) ? '' : ' (will be created)'} \u2014 worktrees, virtualenvs and per-branch copies of custom repos`
     ];
     return rows.filter(Boolean).join('  •  ');
@@ -99,12 +132,24 @@ async function editProposal(proposal: SetupProposal): Promise<SetupProposal | un
         return fs.existsSync(candidate) ? candidate : undefined;
     };
 
+    // Optional: someone doing pure Odoo work has no custom addons, and the
+    // repository picker in project creation recovers when this is unset.
+    const addons = await browseForFolder(
+        'Select the folder holding your addon repositories (Esc to skip)',
+        proposal.customAddonsPath ?? path.dirname(source)
+    );
+    const customAddonsPath = addons ?? proposal.customAddonsPath;
+
     return {
         sourceRepo: source,
         enterpriseRepo: proposal.enterpriseRepo ?? sibling('enterprise'),
         designThemesRepo: proposal.designThemesRepo ?? sibling('design-themes'),
         provisioningRoot: root,
-        sourceBranch: (await getRepoBranch(source)) ?? undefined
+        sourceBranch: (await getRepoBranch(source)) ?? undefined,
+        customAddonsPath,
+        customAddonsCount: customAddonsPath
+            ? countCustomRepos(readAddonsChildren(customAddonsPath))
+            : undefined
     };
 }
 
@@ -116,6 +161,17 @@ async function persist(proposal: SetupProposal): Promise<void> {
         provisioningRoot: proposal.provisioningRoot
     };
     await writeSetupSettings(values);
+
+    // Written at user scope like the rest of the setup: where custom code
+    // lives is a fact about the machine, and every discovery site reads it.
+    if (proposal.customAddonsPath) {
+        await vscode.workspace.getConfiguration('odooDebugger').update(
+            CUSTOM_ADDONS_KEY,
+            proposal.customAddonsPath,
+            vscode.ConfigurationTarget.Global
+        );
+    }
+
     fs.mkdirSync(proposal.provisioningRoot, { recursive: true });
 }
 

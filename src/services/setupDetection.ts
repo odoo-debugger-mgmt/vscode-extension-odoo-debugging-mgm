@@ -153,3 +153,60 @@ export function detectRepos(roots: string[]): RepoCandidate[] {
     logger.debug(`[setup] detected ${found.length} candidate repositories`);
     return found;
 }
+
+// ---------------------------------------------------------------------------
+// Custom addons
+// ---------------------------------------------------------------------------
+
+export interface AddonsChild {
+    name: string;
+    isGitRepo: boolean;
+    hasOdooBin: boolean;
+}
+
+/**
+ * How many of a directory's children are the user's own repositories. The
+ * core repos are excluded by the same rules detection uses elsewhere:
+ * `odoo-bin` identifies the source repo whatever it is named, and the two
+ * optional repos are identified by name.
+ */
+export function countCustomRepos(children: AddonsChild[]): number {
+    return children.filter(child =>
+        child.isGitRepo && !child.hasOdooBin && !classifyByName(child.name)
+    ).length;
+}
+
+export function readAddonsChildren(dir: string): AddonsChild[] {
+    let entries: fs.Dirent[];
+    try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+        return [];
+    }
+
+    return entries
+        .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
+        .map(entry => {
+            const child = path.join(dir, entry.name);
+            return {
+                name: entry.name,
+                isGitRepo: fs.existsSync(path.join(child, '.git')),
+                hasOdooBin: fs.existsSync(path.join(child, 'odoo-bin'))
+            };
+        });
+}
+
+/**
+ * The first search root holding at least one repository of the user's own.
+ * Roots are already ordered by trust, and the workspace comes before the home
+ * directory, which is the common case: the workspace *is* that directory.
+ */
+export function detectCustomAddonsRoot(roots: string[]): string | undefined {
+    for (const root of roots) {
+        if (countCustomRepos(readAddonsChildren(root)) > 0) {
+            logger.debug(`[setup] custom addons look like they live in ${root}`);
+            return root;
+        }
+    }
+    return undefined;
+}
