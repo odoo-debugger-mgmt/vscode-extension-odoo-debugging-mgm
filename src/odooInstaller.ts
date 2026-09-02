@@ -275,22 +275,34 @@ export async function provisionAndCreateVersion(
  * Rebuilds an existing version's environment under the current provisioning
  * root and repoints the version at it. Reuses the provisioning orchestrator,
  * which adopts whatever already exists rather than rebuilding it.
+ *
+ * Returns whether the version now points at a built environment, so the
+ * provisioning queue can report one summary rather than a toast per version.
  */
-export async function provisionExistingVersion(versionId: string): Promise<void> {
+export async function provisionExistingVersion(
+    versionId: string,
+    options: { silent?: boolean } = {}
+): Promise<boolean> {
     const service = VersionsService.getInstance();
     const version = service.getVersion(versionId);
     if (!version) {
-        void showError('The selected version could not be found.');
-        return;
+        if (!options.silent) {
+            void showError('The selected version could not be found.');
+        }
+        return false;
     }
 
     const setup = readSetupState();
     if (!setup.isConfigured || !setup.sourceRepo) {
+        if (options.silent) {
+            logger.warn(`[queue] skipping ${version.name}: the machine is not set up`);
+            return false;
+        }
         const choice = await showWarning('Odoo DevTools is not set up yet.', 'Set Up');
         if (choice === 'Set Up') {
             await vscode.commands.executeCommand('odoo.setup');
         }
-        return;
+        return false;
     }
 
     const spec: ProvisionSpec = {
@@ -318,7 +330,7 @@ export async function provisionExistingVersion(versionId: string): Promise<void>
     });
 
     if (!result) {
-        return;
+        return false;
     }
 
     await service.updateVersion(version.id, {
@@ -331,7 +343,10 @@ export async function provisionExistingVersion(versionId: string): Promise<void>
         }
     } as never);
 
-    void showInfo(`${version.name} now uses ${result.paths.odooPath} on Python ${result.pythonVersion}.`);
+    if (!options.silent) {
+        void showInfo(`${version.name} now uses ${result.paths.odooPath} on Python ${result.pythonVersion}.`);
+    }
+    return true;
 }
 
 export async function cloneOdooRepositories(defaultBaseDir: string): Promise<string | undefined> {

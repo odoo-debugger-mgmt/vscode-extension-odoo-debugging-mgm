@@ -80,6 +80,25 @@ export function queueLabel(state: QueueState, branch: string): 'building…' | '
     return state.pending.some(entry => entry.branch === branch) ? 'queued' : undefined;
 }
 
+/**
+ * Whether a queued branch should rebuild a version that already exists or
+ * create a new one.
+ *
+ * The queue serves two callers with the same entries: setup, where no version
+ * exists yet, and the migration offer, where one does and must be repointed
+ * rather than duplicated. Creating unconditionally left the legacy version in
+ * place, still pointing at its hand-built paths, beside a new version that
+ * derived a different port because the original had taken the matching one.
+ */
+export function resolveQueueTarget(
+    branch: string,
+    versions: Array<{ id: string; odooVersion?: string }>
+): { kind: 'rebuild'; versionId: string } | { kind: 'create' } {
+    const wanted = branch.trim();
+    const existing = versions.find(version => (version.odooVersion ?? '').trim() === wanted);
+    return existing ? { kind: 'rebuild', versionId: existing.id } : { kind: 'create' };
+}
+
 /** One summary sentence for the whole drain, rather than one per version. */
 export function describeDrain(succeeded: string[], failed: string[]): string {
     const parts: string[] = [];

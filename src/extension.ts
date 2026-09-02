@@ -13,11 +13,12 @@ import {
     drainProvisionQueue,
     enqueue,
     readQueue,
+    resolveQueueTarget,
     setQueueProvisioner,
     setQueueSnapshot,
     writeQueue
 } from './services/provisionQueue';
-import { provisionAndCreateVersion } from './odooInstaller';
+import { provisionAndCreateVersion, provisionExistingVersion } from './odooInstaller';
 import { SettingsStore } from './settingsStore';
 import { VersionsTreeProvider } from './versionsTreeProvider';
 import { VersionsService } from './versionsService';
@@ -229,8 +230,16 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // The queue builds versions one at a time and survives a reload, so a
     // window that closed mid-drain resumes rather than dropping the rest.
-    setQueueProvisioner(async (branch, name) =>
-        !!(await provisionAndCreateVersion(branch, name, { silent: true })));
+    setQueueProvisioner(async (branch, name) => {
+        // The migration offer queues versions that already exist. Creating
+        // unconditionally would leave the legacy version in place, still
+        // pointing at its hand-built paths, beside a duplicate on a shifted
+        // port - so an existing version for the branch is rebuilt in place.
+        const target = resolveQueueTarget(branch, VersionsService.getInstance().getVersions());
+        return target.kind === 'rebuild'
+            ? provisionExistingVersion(target.versionId, { silent: true })
+            : !!(await provisionAndCreateVersion(branch, name, { silent: true }));
+    });
     setQueueSnapshot(readQueue(context));
     void drainProvisionQueue(context, () => void refreshAll({ reason: 'ui' }))
         .catch(error => logger.warn('Provisioning queue failed:', error));

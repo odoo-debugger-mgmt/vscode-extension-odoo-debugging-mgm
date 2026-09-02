@@ -1,5 +1,6 @@
 import * as assert from 'assert';
 import {
+    resolveQueueTarget,
     EMPTY_QUEUE,
     QueueState,
     describeDrain,
@@ -70,5 +71,34 @@ suite('Provisioning queue', () => {
             describeDrain([], ['18.0']),
             'Failed: 18.0 - use Check Version Environments to retry.'
         );
+    });
+
+    test('a queued branch rebuilds the version that already has it', () => {
+        // The migration offer queues existing versions. Creating a second one
+        // left the legacy version untouched beside a duplicate on a shifted
+        // port, and database lookup by series then picked either.
+        const target = resolveQueueTarget('17.0', [
+            { id: 'v19', odooVersion: '19.0' },
+            { id: 'v17', odooVersion: '17.0' }
+        ]);
+        assert.deepStrictEqual(target, { kind: 'rebuild', versionId: 'v17' });
+    });
+
+    test('a queued branch with no version creates one', () => {
+        assert.deepStrictEqual(
+            resolveQueueTarget('18.0', [{ id: 'v19', odooVersion: '19.0' }]),
+            { kind: 'create' }
+        );
+    });
+
+    test('matching a branch ignores surrounding whitespace', () => {
+        assert.deepStrictEqual(
+            resolveQueueTarget(' 17.0 ', [{ id: 'v17', odooVersion: '17.0 ' }]),
+            { kind: 'rebuild', versionId: 'v17' }
+        );
+    });
+
+    test('a version with no branch never matches', () => {
+        assert.deepStrictEqual(resolveQueueTarget('17.0', [{ id: 'v' }]), { kind: 'create' });
     });
 });
