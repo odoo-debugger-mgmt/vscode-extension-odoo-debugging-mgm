@@ -17,6 +17,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - **Running indicators.** The Databases view marks which databases are live, and each version shows the port it serves. **Open in Browser** opens the port of the version you are actually running.
 - **Odoo DevTools: Check Version Environments** diagnoses versions left behind by an older layout (missing, unprovisioned or outside the current provisioning root) and offers to rebuild them.
 - A warning when you open a file belonging to a version other than the active one, so edits do not land in the wrong copy. Dismissible for the session or permanently.
+- **Setup offers the versions to build.** Finishing setup now asks which Odoo versions you want, the list coming from your own repositories' branches and the source repository's real branch list rather than a hardcoded table. The first is built while you wait; the rest are queued and built one at a time, resuming after a window reload, with `building…` and `queued` shown on the version rows.
+- **Setup records where your custom addons live**, so creating a project finds your repositories instead of failing on a path nobody configured. Leaving it unset stays a valid answer — the repository picker then offers to browse.
+- **Set Up an Upgrade** (Versions view title bar) configures a whole upgrade from one confirmation: both versions, one copy per branch of the repositories being upgraded, and the branch each database maps to. It is also offered in context when a repository sits on a series that has no version.
+- **Versions built before provisioning are offered a migration** rather than left to fail later. A version running out of the source repository is now reported as unsafe rather than merely relocated, because switching that repository's branch changes what it runs.
 
 ### Changed
 
@@ -33,6 +37,11 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - Interpreter selection steps up to the next supported Python when a pinned requirement has no wheel for the closest match.
 - The branch picker opens immediately instead of after enumerating every ref.
 - A database is remembered against the version it switches *to*, not the one it switched from.
+- The first branch pick after setup lists the source repository's branches instead of falling back to a free-text box.
+- Cloning during setup no longer asks for a branch or a clone depth: that clone is only ever a source to cut worktrees from.
+- Creating a project no longer dead-ends when the custom addons path points at nothing; it offers a folder picker and remembers the answer.
+- A background refresh no longer raises "create a project first" on an install that has no projects yet.
+- Starting the server reports what is actually wrong — an unprovisioned version or an unselected database — instead of VS Code's generic launch failure.
 
 ## [1.2.0] - 2026-07-23
 
