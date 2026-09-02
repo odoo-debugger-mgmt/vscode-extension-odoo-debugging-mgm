@@ -25,7 +25,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
 
     context.subscriptions.push(vscode.commands.registerCommand('odoo.checkVersions', async () => {
         try {
-            const root = readSetupState().provisioningRoot;
+            const setup = readSetupState();
             const diagnoses = versionsService.getVersions().map(version => diagnoseVersion(
                 {
                     id: version.id,
@@ -34,8 +34,9 @@ export function registerVersionCommands(deps: CommandDeps): void {
                     odooPath: resolveOptionalPath(version.settings.odooPath),
                     pythonPath: resolveOptionalPath(version.settings.pythonPath)
                 },
-                root,
-                candidate => fs.existsSync(candidate)
+                setup.provisioningRoot,
+                candidate => fs.existsSync(candidate),
+                setup.sourceRepo
             ));
 
             const problems = needsAttention(diagnoses);

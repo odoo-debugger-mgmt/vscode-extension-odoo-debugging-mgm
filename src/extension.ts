@@ -11,9 +11,11 @@ import { TestingTreeProvider } from './testing';
 import { setupDebugger } from './debugger';
 import {
     drainProvisionQueue,
+    enqueue,
     readQueue,
     setQueueProvisioner,
-    setQueueSnapshot
+    setQueueSnapshot,
+    writeQueue
 } from './services/provisionQueue';
 import { provisionAndCreateVersion } from './odooInstaller';
 import { SettingsStore } from './settingsStore';
@@ -28,7 +30,8 @@ import { logger, registerLogger } from './services/logger';
 import { logStaleReferences } from './services/reconcile';
 import { invalidateRunningState } from './services/runningState';
 import { registerWrongCopyGuard } from './services/wrongCopyGuard';
-import { diagnoseVersion } from './services/versionMigration';
+import { diagnoseVersion, migratable } from './services/versionMigration';
+import type { VersionModel } from './models/version';
 import { readSetupState, shouldAdoptLegacySourceRepo, readRawSetupSettings, writeSetupSettings } from './services/setupState';
 import { showInfo } from './services/notifications';
 import { getDefaultVersionSettings, normalizePath, resolveOptionalPath } from './utils';
@@ -231,7 +234,7 @@ export async function activate(context: vscode.ExtensionContext) {
         .catch(error => logger.warn('Provisioning queue failed:', error));
 
     promptFirstRunSetup(context).catch(error => logger.warn('First-run setup prompt failed:', error));
-    promptStaleVersions().catch(error => logger.debug('Version health check failed:', error));
+    promptLegacyVersions(context).catch(error => logger.debug('Version health check failed:', error));
 }
 
 /**
@@ -276,34 +279,62 @@ async function promptFirstRunSetup(context: vscode.ExtensionContext): Promise<vo
     }
 }
 
-/**
- * One passive nudge: a version pointing at a deleted directory fails
- * confusingly at provisioning time, which is far too late to find out.
- */
-async function promptStaleVersions(): Promise<void> {
-    const root = readSetupState().provisioningRoot;
-    const stale = VersionsService.getInstance().getVersions().filter(version =>
-        diagnoseVersion(
-            {
-                id: version.id,
-                name: version.name,
-                odooVersion: version.odooVersion,
-                odooPath: resolveOptionalPath(version.settings.odooPath),
-                pythonPath: resolveOptionalPath(version.settings.pythonPath)
-            },
-            root,
-            candidate => fs.existsSync(candidate)
-        ).health === 'missing');
+/** One dismissible offer; "Later" is remembered so it never nags. */
+const MIGRATION_DISMISSED_KEY = 'odooDevtools.versionMigrationDismissed';
 
+/**
+ * Versions built before provisioning keep working, but nothing told the user
+ * a migration existed - and one shape of them runs out of the source
+ * repository, which is unsafe rather than untidy: switching that repository's
+ * branch changes what the version runs.
+ *
+ * `relocated` is deliberately not offered. It works, moving it is optional,
+ * and a nag about tidiness is worse than none.
+ */
+async function promptLegacyVersions(context: vscode.ExtensionContext): Promise<void> {
+    if (context.globalState.get<boolean>(MIGRATION_DISMISSED_KEY)) {
+        return;
+    }
+
+    const setup = readSetupState();
+    const versionsService = VersionsService.getInstance();
+    const diagnoses = versionsService.getVersions().map(version => diagnoseVersion(
+        {
+            id: version.id,
+            name: version.name,
+            odooVersion: version.odooVersion,
+            odooPath: resolveOptionalPath(version.settings.odooPath),
+            pythonPath: resolveOptionalPath(version.settings.pythonPath)
+        },
+        setup.provisioningRoot,
+        candidate => fs.existsSync(candidate),
+        setup.sourceRepo
+    ));
+
+    const stale = migratable(diagnoses);
     if (stale.length === 0) {
         return;
     }
+
     const choice = await showInfo(
-        `${stale.length} version(s) point at directories that no longer exist.`,
-        'Check Versions'
+        `${stale.length} version(s) were built before provisioning and can be migrated.`,
+        'Migrate',
+        'Later'
     );
-    if (choice === 'Check Versions') {
-        await vscode.commands.executeCommand('odoo.checkVersions');
+    if (choice === 'Migrate') {
+        // Migration is re-provisioning, which the queue already does: one
+        // background drain and one summary rather than a modal per version.
+        const entries = stale
+            .map(entry => versionsService.getVersion(entry.versionId))
+            .filter((version): version is VersionModel => !!version)
+            .map(version => ({ branch: version.odooVersion, name: version.name }));
+
+        const queued = enqueue(readQueue(context), entries);
+        setQueueSnapshot(queued);
+        await writeQueue(context, queued);
+        void drainProvisionQueue(context);
+    } else if (choice === 'Later') {
+        await context.globalState.update(MIGRATION_DISMISSED_KEY, true);
     }
 }
 

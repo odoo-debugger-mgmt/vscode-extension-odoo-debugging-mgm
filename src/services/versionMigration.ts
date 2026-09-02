@@ -10,7 +10,7 @@
  */
 import * as path from 'node:path';
 
-export type VersionHealth = 'healthy' | 'relocated' | 'missing' | 'unprovisioned';
+export type VersionHealth = 'healthy' | 'relocated' | 'missing' | 'unprovisioned' | 'source-repo';
 
 export interface VersionDiagnosis {
     versionId: string;
@@ -37,7 +37,8 @@ function slugifyBranch(branch: string): string {
 export function diagnoseVersion(
     version: VersionLike,
     root: string,
-    exists: (candidate: string) => boolean
+    exists: (candidate: string) => boolean,
+    sourceRepo?: string
 ): VersionDiagnosis {
     const expectedOdooPath = path.join(root, `odoo-${slugifyBranch(version.odooVersion)}`);
     const odooPath = version.odooPath?.trim() || undefined;
@@ -58,6 +59,18 @@ export function diagnoseVersion(
     if (!exists(pythonPath)) {
         return { ...base, health: 'unprovisioned', detail: `Its interpreter at ${pythonPath} is gone.` };
     }
+    // Before provisioning existed, a version ran out of whatever checkout the
+    // user had. When that checkout is the source repository, the version is
+    // not merely untidy: switching that repo's branch changes what it runs,
+    // and activating it switches that repo's branch.
+    if (sourceRepo?.trim() && path.resolve(odooPath) === path.resolve(sourceRepo.trim())) {
+        return {
+            ...base,
+            health: 'source-repo',
+            detail: `It runs out of the source repository at ${odooPath}. Migrating gives it its own worktree at ${expectedOdooPath}.`
+        };
+    }
+
     if (path.resolve(odooPath) !== path.resolve(expectedOdooPath)) {
         return {
             ...base,
@@ -71,8 +84,24 @@ export function diagnoseVersion(
 
 /** Versions worth offering to fix, worst first. */
 export function needsAttention(diagnoses: VersionDiagnosis[]): VersionDiagnosis[] {
-    const rank: Record<VersionHealth, number> = { missing: 0, unprovisioned: 1, relocated: 2, healthy: 3 };
+    const rank: Record<VersionHealth, number> = {
+        'source-repo': 0,
+        missing: 1,
+        unprovisioned: 2,
+        relocated: 3,
+        healthy: 4
+    };
     return diagnoses
         .filter(entry => entry.health !== 'healthy')
         .sort((a, b) => rank[a.health] - rank[b.health]);
+}
+
+/**
+ * The healths where something is broken or unsafe. `relocated` is left out
+ * deliberately: it works, moving it is optional, and a nag about tidiness is
+ * worse than none.
+ */
+export function migratable(diagnoses: VersionDiagnosis[]): VersionDiagnosis[] {
+    const unsafe = new Set<VersionHealth>(['source-repo', 'missing', 'unprovisioned']);
+    return needsAttention(diagnoses).filter(entry => unsafe.has(entry.health));
 }

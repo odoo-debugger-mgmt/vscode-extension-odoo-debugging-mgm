@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as path from 'node:path';
-import { diagnoseVersion } from '../services/versionMigration';
+import { diagnoseVersion, migratable } from '../services/versionMigration';
 
 const ROOT = '/home/dev/odoo-dev';
 
@@ -69,5 +69,69 @@ suite('Version migration diagnosis', () => {
         );
         assert.strictEqual(diagnosis.health, 'unprovisioned');
         assert.ok(diagnosis.detail.length > 0);
+    });
+
+    test('a version running out of the source repository is not merely relocated', () => {
+        const diagnosis = diagnoseVersion(
+            {
+                id: 'v1',
+                name: 'Odoo 17.0',
+                odooVersion: '17.0',
+                odooPath: '/home/dev/src/odoo',
+                pythonPath: '/home/dev/src/venv/bin/python'
+            },
+            ROOT,
+            () => true,
+            '/home/dev/src/odoo'
+        );
+
+        assert.strictEqual(diagnosis.health, 'source-repo');
+        assert.ok(diagnosis.detail.includes('source repository'));
+    });
+
+    test('the source repo is compared after path resolution', () => {
+        const diagnosis = diagnoseVersion(
+            {
+                id: 'v1',
+                name: 'Odoo 17.0',
+                odooVersion: '17.0',
+                odooPath: '/home/dev/src/odoo/',
+                pythonPath: '/home/dev/src/venv/bin/python'
+            },
+            ROOT,
+            () => true,
+            '/home/dev/src/./odoo'
+        );
+
+        assert.strictEqual(diagnosis.health, 'source-repo');
+    });
+
+    test('a working version outside the provisioning root stays relocated', () => {
+        const diagnosis = diagnoseVersion(
+            {
+                id: 'v1',
+                name: 'Odoo 17.0',
+                odooVersion: '17.0',
+                odooPath: '/home/dev/old/odoo-17.0',
+                pythonPath: '/home/dev/old/venv/bin/python'
+            },
+            ROOT,
+            () => true,
+            '/home/dev/src/odoo'
+        );
+
+        assert.strictEqual(diagnosis.health, 'relocated');
+    });
+
+    test('migratable returns the unsafe healths worst first, without relocated', () => {
+        const entries = migratable([
+            { versionId: 'a', name: 'a', health: 'relocated', expectedOdooPath: '', detail: '' },
+            { versionId: 'b', name: 'b', health: 'unprovisioned', expectedOdooPath: '', detail: '' },
+            { versionId: 'c', name: 'c', health: 'source-repo', expectedOdooPath: '', detail: '' },
+            { versionId: 'd', name: 'd', health: 'missing', expectedOdooPath: '', detail: '' },
+            { versionId: 'e', name: 'e', health: 'healthy', expectedOdooPath: '', detail: '' }
+        ]);
+
+        assert.deepStrictEqual(entries.map(entry => entry.versionId), ['c', 'd', 'b']);
     });
 });
