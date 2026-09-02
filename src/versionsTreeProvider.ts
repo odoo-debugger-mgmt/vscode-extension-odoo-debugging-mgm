@@ -13,9 +13,16 @@ import { getDefaultSortOption } from './sortOptions';
 import { logger } from './services/logger';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 import { isDerivedSetting } from './services/versionIdentity';
+import { currentQueueSnapshot, queueLabel } from './services/provisionQueue';
 
 /** Provisioned state for the tree description, from the shared predicate. */
 function provisioningLabel(version: VersionModel): string {
+    // The queue owns the row while it is building: "not provisioned" during a
+    // build that is actively running reads as a failure.
+    const queued = queueLabel(currentQueueSnapshot(), version.odooVersion);
+    if (queued) {
+        return queued;
+    }
     return isVersionProvisioned(resolveOptionalPath(version.settings.pythonPath))
         ? 'provisioned'
         : 'not provisioned';

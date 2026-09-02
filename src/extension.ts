@@ -9,6 +9,13 @@ import { RepoTreeProvider } from './repos';
 import { ModuleTreeProvider } from './module';
 import { TestingTreeProvider } from './testing';
 import { setupDebugger } from './debugger';
+import {
+    drainProvisionQueue,
+    readQueue,
+    setQueueProvisioner,
+    setQueueSnapshot
+} from './services/provisionQueue';
+import { provisionAndCreateVersion } from './odooInstaller';
 import { SettingsStore } from './settingsStore';
 import { VersionsTreeProvider } from './versionsTreeProvider';
 import { VersionsService } from './versionsService';
@@ -214,6 +221,15 @@ export async function activate(context: vscode.ExtensionContext) {
     registerWrongCopyGuard(context);
 
     void statusBar.update();
+
+    // The queue builds versions one at a time and survives a reload, so a
+    // window that closed mid-drain resumes rather than dropping the rest.
+    setQueueProvisioner(async (branch, name) =>
+        !!(await provisionAndCreateVersion(branch, name, { silent: true })));
+    setQueueSnapshot(readQueue(context));
+    void drainProvisionQueue(context, () => void refreshAll({ reason: 'ui' }))
+        .catch(error => logger.warn('Provisioning queue failed:', error));
+
     promptFirstRunSetup(context).catch(error => logger.warn('First-run setup prompt failed:', error));
     promptStaleVersions().catch(error => logger.debug('Version health check failed:', error));
 }

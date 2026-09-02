@@ -204,9 +204,19 @@ async function cloneRepository(
  * requirements - and creates the matching version profile pointing at it.
  * Returns undefined when the user cancels or provisioning fails.
  */
-export async function provisionAndCreateVersion(branch: string, name: string): Promise<VersionModel | undefined> {
+export async function provisionAndCreateVersion(
+    branch: string,
+    name: string,
+    options: { silent?: boolean } = {}
+): Promise<VersionModel | undefined> {
     const setup = readSetupState();
     if (!setup.isConfigured || !setup.sourceRepo) {
+        if (options.silent) {
+            // The queue reports failures in one summary; a prompt per entry
+            // during a background drain is worse than the summary.
+            logger.warn(`[queue] skipping ${branch}: the machine is not set up`);
+            return undefined;
+        }
         // Offer the fix rather than instructing the user to find it.
         const choice = await showWarning('Odoo DevTools is not set up yet.', 'Set Up');
         if (choice === 'Set Up') {
@@ -223,32 +233,36 @@ export async function provisionAndCreateVersion(branch: string, name: string): P
         root: setup.provisioningRoot
     };
 
-    const plan = buildPlan(spec, await probeProvision(spec));
-    const detail = plan
-        .map(step => `${step.status === 'satisfied' ? '$(check)' : '$(add)'} ${step.label}`)
-        .join('  ');
+    // A queued entry was already chosen from the multi-select; asking again
+    // per version would defeat the point of queueing them.
+    if (!options.silent) {
+        const plan = buildPlan(spec, await probeProvision(spec));
+        const detail = plan
+            .map(step => `${step.status === 'satisfied' ? '$(check)' : '$(add)'} ${step.label}`)
+            .join('  ');
 
-    const choice = await vscode.window.showQuickPick(
-        [
-            {
-                label: isFullySatisfied(plan) ? 'Create profile (already provisioned)' : 'Provision',
-                detail,
-                provision: true
-            },
-            {
-                label: 'Profile only',
-                detail: 'Create the version without building an environment',
-                provision: false
-            }
-        ],
-        { title: `Provision Odoo ${branch}?`, placeHolder: 'Choose how to create this version', ignoreFocusOut: true }
-    );
-    if (!choice) {
-        return undefined;
-    }
+        const choice = await vscode.window.showQuickPick(
+            [
+                {
+                    label: isFullySatisfied(plan) ? 'Create profile (already provisioned)' : 'Provision',
+                    detail,
+                    provision: true
+                },
+                {
+                    label: 'Profile only',
+                    detail: 'Create the version without building an environment',
+                    provision: false
+                }
+            ],
+            { title: `Provision Odoo ${branch}?`, placeHolder: 'Choose how to create this version', ignoreFocusOut: true }
+        );
+        if (!choice) {
+            return undefined;
+        }
 
-    if (!choice.provision) {
-        return VersionsService.getInstance().createVersion(name, branch);
+        if (!choice.provision) {
+            return VersionsService.getInstance().createVersion(name, branch);
+        }
     }
 
     const result = await vscode.window.withProgress({
@@ -281,15 +295,17 @@ export async function provisionAndCreateVersion(branch: string, name: string): P
         managedPaths: result.managedPaths
     });
 
-    const notes = [...result.warnings];
-    const missing = summarizeMissing(result.deps);
-    if (missing) {
-        notes.push(`Missing: ${missing}`);
-    }
-    if (notes.length > 0) {
-        void showWarning(`Provisioned ${branch} on Python ${result.pythonVersion}. ${notes.join(' ')}`);
-    } else {
-        void showInfo(`Provisioned ${branch} on Python ${result.pythonVersion}.`);
+    if (!options.silent) {
+        const notes = [...result.warnings];
+        const missing = summarizeMissing(result.deps);
+        if (missing) {
+            notes.push(`Missing: ${missing}`);
+        }
+        if (notes.length > 0) {
+            void showWarning(`Provisioned ${branch} on Python ${result.pythonVersion}. ${notes.join(' ')}`);
+        } else {
+            void showInfo(`Provisioned ${branch} on Python ${result.pythonVersion}.`);
+        }
     }
 
     return version;
