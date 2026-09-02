@@ -201,6 +201,55 @@ pickers, matching the pattern `runSetup` already establishes.
   their prompts; they are genuine choices.
 - `BRANCH_OPTIONS` is deleted with §2.
 
+### 6. Versions that predate provisioning are offered a migration
+
+`diagnoseVersion` (`src/services/versionMigration.ts:37`) already classifies an
+existing version as `missing`, `unprovisioned`, `relocated` or `healthy`. Only
+`missing` is ever surfaced without being asked for: `promptStaleVersions`
+(`src/extension.ts:267`) filters on it alone. The shape a v1.2 upgrader
+actually has — a hand-built `./odoo` and `./venv` that both still exist — is
+`relocated`, and is silent. Those versions keep running the pre-provisioning
+layout indefinitely, and nothing tells the user that a migration exists.
+
+**A fourth health, for the case the current wording gets wrong.** When a
+version's `odooPath` *is* the configured source repository, `diagnoseVersion`
+returns `relocated` with the detail *"Leaving it is fine; re-provisioning moves
+it."* Leaving it is not fine. Activating that version reaches `alignCoreRepos`
+through `applyEnvironmentDiff` and runs `git checkout <series>` in the
+repository every other version's worktrees are cut from — the failure `f1d4d4c`
+closed for new versions, still reachable through old ones, and silent because
+the switch pipeline cannot tell that core path from any other.
+
+`diagnoseVersion` therefore takes the source repository as an argument and
+gains `VersionHealth = 'source-repo'`, ranked worst in `needsAttention`, with a
+detail that says what is actually at stake: this version runs out of the source
+repository, so switching that repository's branch changes what it runs, and
+activating it switches that repository's branch.
+
+**One notification, once.** `promptStaleVersions` widens from `missing` to
+`missing`, `source-repo` and `unprovisioned` — the three states where something
+is broken or unsafe — and offers to fix them together:
+
+> 2 versions were built before provisioning and can be migrated.
+> **[Migrate]** **[Later]**
+
+*Migrate* enqueues them through the §3 queue, which is the same resumable
+mechanism new versions use, so the user gets one background drain and one
+summary rather than a per-version modal. *Later* is remembered in `globalState`,
+matching `promptFirstRunSetup`; the current prompt has no dismissal flag and
+re-fires on every window, which the extension's own rule about silenceable
+prompts forbids.
+
+`relocated` stays deliberately silent. It works, moving it is optional, and a
+nag about tidiness is worse than none. It remains visible on the version row
+and through `odoo.checkVersions`.
+
+**Migration is re-provisioning, not a new code path.** `provisionExistingVersion`
+(`src/odooInstaller.ts:305`) already builds the environment under the current
+root and repoints the version at it. The migration is that function, driven from
+the queue. The old directories are never deleted: a hand-built checkout is the
+user's, and `Delete Version` remains the only thing that removes anything.
+
 ## Failure modes
 
 | Situation | Behaviour |
@@ -211,6 +260,10 @@ pickers, matching the pattern `runSetup` already establishes.
 | A queued branch does not exist locally or on origin | That entry fails with the existing `ensureWorktree` message; the queue continues |
 | Window closed mid-queue | Remaining entries drain on next activation |
 | Provisioning root becomes unwritable mid-queue | Entries fail in turn and are reported in the summary; the queue is not retried automatically |
+| Legacy version whose `odooPath` is the source repository | Diagnosed `source-repo`, included in the migration offer; re-provisioning repoints it at its own worktree |
+| Legacy version that still works outside the provisioning root | Diagnosed `relocated`, left alone and left silent |
+| User answers *Later* to the migration offer | Remembered globally; the versions stay reachable through `odoo.checkVersions` |
+| Migration fails for one version | Same as any queue failure: removed from the queue, reported in the summary, old paths untouched |
 | Upgrade plan names a repo whose source checkout is dirty | That repo's mode change is refused with its dirty files listed; other steps proceed |
 | Upgrade plan names a series that has no database yet | Versions and repo mode are configured; branch assignments are written when the database is created |
 
@@ -226,10 +279,14 @@ its own pass once this flow lands.
 Pure and unit-tested: `proposeVersions` across its ordering rules, deduplication
 and `existing` filtering; branch-to-series extraction including `master` and
 non-parsing branches; queue state transitions (enqueue, drain, failure removal,
-cancel) over plain data with the provisioning call injected.
+cancel) over plain data with the provisioning call injected; and `diagnoseVersion`'s
+new `source-repo` health, including its rank in `needsAttention` and the
+boundary where `odooPath` equals the source repository only after path
+resolution.
 
 Requires the Extension Development Host: the multi-select itself, queue
-resumption across a window reload, the version-row states, and the upgrade
+resumption across a window reload, the version-row states, the migration offer and its
+dismissal across a window reload, and the upgrade
 plan's write-through to repository mode and branch assignments — including the
 source-conflict path, which cannot be exercised without a real git checkout
 holding the branch.
