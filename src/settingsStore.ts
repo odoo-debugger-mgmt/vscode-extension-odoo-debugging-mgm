@@ -2,6 +2,7 @@
  * Workspace data store for .vscode/odoo-debugger-data.json: mtime-based
  * read cache and debounced, single-flight writes.
  */
+import * as vscode from 'vscode';
 import { SettingsModel } from './models/settings';
 import { readFromFile, DebuggerData, showError, getWorkspacePath, stripSettings, getDefaultVersionSettings } from './utils';
 import { ProjectModel } from './models/project';
@@ -233,12 +234,32 @@ export class SettingsStore {
     /**
      * Gets the currently selected project with validation
      */
+    /**
+     * The selected project without any notification. Background callers - the
+     * debugger sync in particular - must not raise "create a project first"
+     * from a refresh the user never asked for.
+     */
+    static async peekSelectedProject(): Promise<{ data: DebuggerData; project: ProjectModel } | null> {
+        const data = await this.get('odoo-debugger-data.json');
+        const projects: ProjectModel[] = data.projects;
+        if (!Array.isArray(projects) || projects.length === 0) {
+            return null;
+        }
+        const project = projects.find((p: ProjectModel) => p.isSelected === true);
+        return project ? { data, project } : null;
+    }
+
     static async getSelectedProject(): Promise<{ data: DebuggerData; project: ProjectModel } | null> {
         const data = await this.get('odoo-debugger-data.json');
 
         const projects: ProjectModel[] = data.projects;
         if (!projects || projects.length === 0) {
-            void showError('Unable to load projects, please create a project first');
+            // The action is named, so it is offered rather than instructed.
+            void showError('No projects yet.', 'Create Project').then(choice => {
+                if (choice === 'Create Project') {
+                    void vscode.commands.executeCommand('projectSelector.create');
+                }
+            });
             return null;
         }
 
@@ -249,7 +270,11 @@ export class SettingsStore {
 
         const project = projects.find((p: ProjectModel) => p.isSelected === true);
         if (!project) {
-            void showError('Select a project before running this action.');
+            void showError('No project is selected.', 'Select Project').then(choice => {
+                if (choice === 'Select Project') {
+                    void vscode.commands.executeCommand('odoo-debugger.quickProjectSearch');
+                }
+            });
             return null;
         }
 

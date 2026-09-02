@@ -22,6 +22,7 @@ import { resolveProjectRepos } from './services/repoPaths';
 import { ensureCustomWorktrees } from './services/customWorktree';
 import { readSetupState } from './services/setupState';
 import { resolveProjectRepoBranchAssignments } from './services/environment';
+import { provisionExistingVersion } from './odooInstaller';
 
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
@@ -63,7 +64,9 @@ export async function setupDebugger(): Promise<any> {
     if (!workspacePath) {
         return undefined;
     }
-    const result = await SettingsStore.getSelectedProject();
+    // Silent: this runs from every refresh, and an install with no projects
+    // yet must not be told to create one by a sync it did not request.
+    const result = await SettingsStore.peekSelectedProject();
     if (!result) {
         return undefined;
     }
@@ -486,15 +489,44 @@ export async function startDebugServer(options: { noDebug?: boolean } = {}): Pro
     // Get settings from active version instead of legacy settings
     const versionsService = VersionsService.getInstance();
     const workspaceSettings = await versionsService.getActiveVersionSettings();
+    const activeVersion = versionsService.getActiveVersion();
+
+    // Handing an unprovisioned version to vscode.debug produces its generic
+    // "configuration not found" error, which says nothing about the cause.
+    if (!isVersionProvisioned(resolveOptionalPath(workspaceSettings.pythonPath))) {
+        const choice = await showError(
+            `"${activeVersion?.name ?? 'This version'}" has no environment to run.`,
+            'Provision'
+        );
+        if (choice === 'Provision' && activeVersion) {
+            await provisionExistingVersion(activeVersion.id);
+        }
+        return;
+    }
+
+    const db = activeVersion
+        ? resolveDbForVersion(result.project.dbs, result.project.selectedDbByVersion, activeVersion.id)
+        : undefined;
+    if (!db) {
+        const choice = await showError('No database is selected for this version.', 'Select Database');
+        if (choice === 'Select Database') {
+            await vscode.commands.executeCommand('dbSelector.quickSearch');
+        }
+        return;
+    }
+
     // Restarting this version stops only this version's session; other
     // versions running side by side must survive.
     const existingSession = getSessionByName(workspaceSettings.debuggerName);
     if (existingSession) {
         await vscode.debug.stopDebugging(existingSession);
     }
-    void vscode.debug.startDebugging(
+    const started = await vscode.debug.startDebugging(
         workspaceFolders[0],
         workspaceSettings.debuggerName,
         { noDebug: options.noDebug === true }
     );
+    if (!started) {
+        void showError(`Could not start "${workspaceSettings.debuggerName}". Its launch entry may not be written yet.`);
+    }
 }

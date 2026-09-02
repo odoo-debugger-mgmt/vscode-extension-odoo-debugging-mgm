@@ -6,6 +6,7 @@
 import { ModuleModel, InstalledModuleInfo } from "./models/module";
 import { DatabaseModel } from "./models/db";
 import { RepoModel } from "./models/repo";
+import { ProjectModel } from "./models/project";
 import * as vscode from "vscode";
 import { showError, showInfo, showAutoInfo, stripSettings, getDatabaseLabel, normalizePath } from './utils';
 import { collectModuleDiscovery, resolvePsaeDirectories, setPsaeDirectoryIncluded, PSAE_INTERNAL_REGEX, PsaeDirectoryState } from './services/psaeInternal';
@@ -26,6 +27,38 @@ import { BaseTreeProvider } from './views/baseTreeProvider';
 import { runCommand, tryRunCommand } from './services/process';
 import { errorMessage } from './services/logger';
 import { readModuleManifest } from './services/manifest';
+
+/**
+ * Whether module selections may be edited right now. Both refusals were
+ * repeated at nine call sites with no way forward; hoisting them means the
+ * button that fixes each one exists in a single place.
+ */
+export async function ensureModuleEditable(
+    project: ProjectModel,
+    db: DatabaseModel | undefined
+): Promise<DatabaseModel | undefined> {
+    if (!db) {
+        void showError('No database is selected.', 'Select Database').then(choice => {
+            if (choice === 'Select Database') {
+                void vscode.commands.executeCommand('dbSelector.quickSearch');
+            }
+        });
+        return undefined;
+    }
+    if (project.testingConfig?.isEnabled) {
+        void showError('Testing mode is on, so module selections are locked.', 'Disable Testing Mode')
+            .then(choice => {
+                if (choice === 'Disable Testing Mode') {
+                    void vscode.commands.executeCommand('odoo.toggleTestingMode');
+                }
+            });
+        return undefined;
+    }
+    // Returned rather than a boolean so callers narrow the type: TypeScript
+    // cannot narrow through an awaited predicate.
+    return db;
+}
+
 
 interface ModuleData {
     name: string;
@@ -348,15 +381,8 @@ export async function selectModule(event: any) {
         return;
     }
     const { data, project } = result;
-    const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    const db = await ensureModuleEditable(project, project.dbs.find((db: DatabaseModel) => db.isSelected === true));
     if (!db) {
-        void showError('Select a database before running this action.');
-        return;
-    }
-
-    // Check if testing is enabled - prevent module modifications
-    if (project.testingConfig && project.testingConfig.isEnabled) {
-        void showError('Disable testing mode before changing module selections.');
         return;
     }
     const moduleExistsInDb = db.modules.find(mod => mod.name === module.name);
@@ -401,13 +427,8 @@ export async function quickConfigureModules(): Promise<void> {
             return undefined;
         }
         const { project } = result;
-        const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+        const db = await ensureModuleEditable(project, project.dbs.find((db: DatabaseModel) => db.isSelected === true));
         if (!db) {
-            void showError('Select a database before configuring modules.');
-            return undefined;
-        }
-        if (project.testingConfig && project.testingConfig.isEnabled) {
-            void showError('Disable testing mode before changing module selections.');
             return undefined;
         }
 
@@ -678,15 +699,8 @@ export async function setModuleToInstall(event: any): Promise<void> {
         return;
     }
     const { data, project } = result;
-    const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    const db = await ensureModuleEditable(project, project.dbs.find((db: DatabaseModel) => db.isSelected === true));
     if (!db) {
-        void showError('Select a database before running this action.');
-        return;
-    }
-
-    // Check if testing is enabled
-    if (project.testingConfig && project.testingConfig.isEnabled) {
-        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -709,15 +723,8 @@ export async function setModuleToUpgrade(event: any): Promise<boolean> {
         return false;
     }
     const { data, project } = result;
-    const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    const db = await ensureModuleEditable(project, project.dbs.find((db: DatabaseModel) => db.isSelected === true));
     if (!db) {
-        void showError('Select a database before running this action.');
-        return false;
-    }
-
-    // Check if testing is enabled
-    if (project.testingConfig && project.testingConfig.isEnabled) {
-        void showError('Disable testing mode before changing module selections.');
         return false;
     }
 
@@ -741,15 +748,8 @@ export async function clearModuleState(event: any): Promise<void> {
         return;
     }
     const { data, project } = result;
-    const db: DatabaseModel | undefined = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    const db = await ensureModuleEditable(project, project.dbs.find((db: DatabaseModel) => db.isSelected === true));
     if (!db) {
-        void showError('Select a database before running this action.');
-        return;
-    }
-
-    // Check if testing is enabled
-    if (project.testingConfig && project.testingConfig.isEnabled) {
-        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -773,14 +773,8 @@ export async function togglePsaeInternalModule(event: unknown): Promise<void> {
     }
 
     const { data, project } = result;
-    const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    const db = await ensureModuleEditable(project, project.dbs.find((db: DatabaseModel) => db.isSelected === true));
     if (!db) {
-        void showError('Select a database before running this action.');
-        return;
-    }
-
-    if (project.testingConfig && project.testingConfig.isEnabled) {
-        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -809,15 +803,8 @@ export async function updateAllModules(): Promise<void> {
     }
 
     const { data, project } = result;
-    const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    const db = await ensureModuleEditable(project, project.dbs.find((db: DatabaseModel) => db.isSelected === true));
     if (!db) {
-        void showError('Select a database before running this action.');
-        return;
-    }
-
-    // Check if testing is enabled - prevent module modifications
-    if (project.testingConfig && project.testingConfig.isEnabled) {
-        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -875,15 +862,8 @@ export async function updateInstalledModules(): Promise<void> {
     }
 
     const { data, project } = result;
-    const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    const db = await ensureModuleEditable(project, project.dbs.find((db: DatabaseModel) => db.isSelected === true));
     if (!db) {
-        void showError('Select a database before running this action.');
-        return;
-    }
-
-    // Check if testing is enabled - prevent module modifications
-    if (project.testingConfig && project.testingConfig.isEnabled) {
-        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -925,15 +905,8 @@ export async function installAllModules(): Promise<void> {
     }
 
     const { data, project } = result;
-    const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    const db = await ensureModuleEditable(project, project.dbs.find((db: DatabaseModel) => db.isSelected === true));
     if (!db) {
-        void showError('Select a database before running this action.');
-        return;
-    }
-
-    // Check if testing is enabled - prevent module modifications
-    if (project.testingConfig && project.testingConfig.isEnabled) {
-        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -991,15 +964,8 @@ export async function clearAllModuleSelections(): Promise<void> {
     }
 
     const { data, project } = result;
-    const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
+    const db = await ensureModuleEditable(project, project.dbs.find((db: DatabaseModel) => db.isSelected === true));
     if (!db) {
-        void showError('Select a database before running this action.');
-        return;
-    }
-
-    // Check if testing is enabled - prevent module modifications
-    if (project.testingConfig && project.testingConfig.isEnabled) {
-        void showError('Disable testing mode before changing module selections.');
         return;
     }
 
@@ -1034,7 +1000,11 @@ export async function viewInstalledModules(): Promise<void> {
     const { project } = result;
     const db = project.dbs.find((db: DatabaseModel) => db.isSelected === true);
     if (!db) {
-        void showError('Select a database before running this action.');
+        void showError('No database is selected.', 'Select Database').then(choice => {
+            if (choice === 'Select Database') {
+                void vscode.commands.executeCommand('dbSelector.quickSearch');
+            }
+        });
         return;
     }
 

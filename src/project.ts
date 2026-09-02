@@ -17,6 +17,7 @@ import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { logger } from './services/logger';
 import { showModalInfo, showWarning } from './services/notifications';
+import { invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
 import { showModalWarning } from './services/notifications';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 import { getRepoBranch } from './services/branches';
@@ -370,10 +371,44 @@ export async function selectProject(projectUid: string) {
 }
 
 export async function getRepo(targetPath:string, searchFilter?: string): Promise<RepoModel[] > {
-    const devsRepos = findRepositories(targetPath);
+    let scanPath = targetPath;
+    let devsRepos = findRepositories(scanPath);
+
     if (devsRepos.length === 0) {
-        void showInfo('No repositories found in the custom-addons path.');
-        throw new Error('No repositories found in the custom-addons path.');
+        // The custom addons folder is the one location setup can legitimately
+        // be left without, so this must offer a way forward rather than throw
+        // after the project name has already been typed.
+        const choice = await showWarning(`No repositories found in ${scanPath}.`, 'Choose Folder…');
+        if (choice !== 'Choose Folder…') {
+            throw new Error('No repositories found in the custom-addons path.');
+        }
+
+        const picked = await vscode.window.showOpenDialog({
+            canSelectFolders: true,
+            canSelectFiles: false,
+            canSelectMany: false,
+            openLabel: 'Use This Folder',
+            title: 'Select the folder holding your addon repositories'
+        });
+        const chosen = picked?.[0]?.fsPath;
+        if (!chosen) {
+            throw new Error('No repositories found in the custom-addons path.');
+        }
+
+        devsRepos = findRepositories(chosen);
+        if (devsRepos.length === 0) {
+            void showError(`No repositories found in ${chosen}.`);
+            throw new Error('No repositories found in the custom-addons path.');
+        }
+
+        scanPath = chosen;
+        // Remembered, so the next project does not ask again.
+        await vscode.workspace.getConfiguration('odooDebugger').update(
+            'defaultVersion.customAddonsPath',
+            chosen,
+            vscode.ConfigurationTarget.Global
+        );
+        invalidateRepositoryDiscoveryCache();
     }
 
     // Show QuickPick with both name and path as label and description
