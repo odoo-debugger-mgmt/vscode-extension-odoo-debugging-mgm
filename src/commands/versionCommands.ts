@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import type { CommandDeps } from './index';
 import { extractVersionId, extractVersionSettingRef } from './args';
-import { getSettingDisplayName, normalizePath, resolveOptionalPath } from '../utils';
+import { getSettingDisplayName, resolveOptionalPath } from '../utils';
 import { isDerivedSetting } from '../services/versionIdentity';
 import { showError, showInfo, showWarning, showModalWarning } from '../services/notifications';
 import { errorMessage, logger } from '../services/logger';
@@ -123,10 +123,12 @@ export function registerVersionCommands(deps: CommandDeps): void {
             // Two prompts: branch, then name. Paths and ports come from the
             // odooDebugger.defaultVersion.* settings and stay editable in the
             // Versions tree after creation.
-            const activeSettings = await versionsService.getActiveVersionSettings();
-            const odooPath = activeSettings?.odooPath ? normalizePath(activeSettings.odooPath) : undefined;
-
-            const odooVersion = await pickOdooBranch(odooPath, 'Create Version');
+            //
+            // The branch list comes from the source repository, not the active
+            // version's worktree: on a first run there is no active version,
+            // and the picker would fall back to a free-text box seconds after
+            // setup configured a repository full of branches.
+            const odooVersion = await pickOdooBranch(readSetupState().sourceRepo, 'Create Version');
             if (!odooVersion) { return; }
 
             const name = (await vscode.window.showInputBox({

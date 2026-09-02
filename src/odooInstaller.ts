@@ -44,35 +44,8 @@ const CLONE_TARGETS: Record<string, CloneTarget> = {
     }
 };
 
-const BRANCH_OPTIONS = [
-    { label: '19.0', description: 'Latest stable version' },
-    { label: '18.0', description: 'Stable version' },
-    { label: '17.0', description: 'Previous stable version' },
-    { label: 'master', description: 'Development branch (unstable)' },
-    { label: 'saas-19.2', description: 'SaaS version' },
-    { label: 'saas-19.1', description: 'SaaS version' },
-    { label: 'saas-18.4', description: 'SaaS version' },
-    { label: 'Custom', description: 'Enter a custom branch name' }
-];
-
-async function pickBranch(): Promise<string | undefined> {
-    const selected = await vscode.window.showQuickPick(BRANCH_OPTIONS, {
-        placeHolder: 'Select an Odoo branch to clone',
-        ignoreFocusOut: true
-    });
-    if (!selected) {
-        return undefined;
-    }
-    if (selected.label !== 'Custom') {
-        return selected.label;
-    }
-    const custom = await vscode.window.showInputBox({
-        prompt: 'Enter the branch name',
-        placeHolder: 'e.g., 19.0, master, saas-19.2',
-        ignoreFocusOut: true
-    });
-    return custom?.trim() || undefined;
-}
+/** The clone is only ever a worktree source; its own branch is immaterial. */
+const DEFAULT_CLONE_BRANCH = '19.0';
 
 /** Where to clone: the workspace folder by default, or any picked folder. */
 async function pickDestination(workspaceDir: string): Promise<string | undefined> {
@@ -106,25 +79,6 @@ async function pickDestination(workspaceDir: string): Promise<string | undefined
         title: 'Select the folder to clone the repositories into'
     });
     return picked?.[0]?.fsPath;
-}
-
-async function pickCloneDepth(): Promise<boolean | undefined> {
-    const choice = await vscode.window.showQuickPick(
-        [
-            {
-                label: 'Shallow copy (recommended)',
-                description: 'Single branch, no history — fast and small (--depth 1)',
-                shallow: true
-            },
-            {
-                label: 'Full clone',
-                description: 'All branches and full history — several GB for odoo',
-                shallow: false
-            }
-        ],
-        { placeHolder: 'How should the repositories be cloned?', ignoreFocusOut: true }
-    );
-    return choice?.shallow;
 }
 
 async function pickCloneTargets(): Promise<CloneTarget[] | undefined> {
@@ -391,15 +345,11 @@ export async function cloneOdooRepositories(defaultBaseDir: string): Promise<str
         return undefined;
     }
 
-    const branch = await pickBranch();
-    if (!branch) {
-        return undefined;
-    }
-
-    const shallow = await pickCloneDepth();
-    if (shallow === undefined) {
-        return undefined;
-    }
+    // Neither branch nor depth is asked: this clone is only ever a source to
+    // cut worktrees from, and `ensureWorktree` fetches whatever branch a
+    // version needs on demand.
+    const branch = DEFAULT_CLONE_BRANCH;
+    const shallow = true;
 
     if (!(await confirmExistingDirectories(baseDir, targets.map(target => target.dirName)))) {
         return undefined;
