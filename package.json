@@ -3,7 +3,7 @@
   "displayName": "Odoo DevTools for VSCode",
   "description": "All-in-one VS Code extension for managing Odoo projects, databases, modules, and debugging.",
   "icon": "resources/extension-icon.png",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "publisher": "AhmadMansour",
   "contributors": [
     {
@@ -1744,6 +1744,17 @@
             },
             "completionEvents": [
               "onCommand:projectSelector.create"
+            ]
+          },
+          {
+            "id": "perVersionCode",
+            "title": "Work on several versions at once",
+            "description": "Give a repository one copy per branch when you need two versions of your custom code live.\n[Open Repos](command:repoSelector.focus)",
+            "media": {
+              "markdown": "media/walkthrough/per-version-code.md"
+            },
+            "completionEvents": [
+              "onCommand:odt.repo.toggleBranchMode"
             ]
           },
           {

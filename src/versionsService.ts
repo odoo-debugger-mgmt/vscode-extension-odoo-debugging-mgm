@@ -445,23 +445,6 @@ export class VersionsService {
     }
 
     /**
-     * Update settings for active version
-     */
-    public async updateActiveSettings(settings: Partial<any>): Promise<void> {
-        await this.initialize(); // Ensure initialization
-        const activeVersion = this.getActiveVersion();
-        if (!activeVersion) {
-            logger.warn('No active version is configured, cannot update settings');
-            return;
-        }
-
-        Object.assign(activeVersion.settings, settings);
-        activeVersion.updatedAt = new Date();
-        await this.saveVersions();
-        vscode.commands.executeCommand('odoo.versionsChanged');
-    }
-
-    /**
      * Refresh from odoo-debugger-data.json (useful when data changes externally)
      */
     public async refresh(): Promise<void> {

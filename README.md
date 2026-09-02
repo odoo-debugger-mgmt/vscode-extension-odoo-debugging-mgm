@@ -25,24 +25,26 @@ The source repository is never run directly: every version gets its own worktree
 
    ![Odoo Setup](resources/assets/odoo-setup.gif)
 
-3. Configure defaults under `odooDebugger.defaultVersion.*` in VS Code settings — most importantly the paths:
+3. Where do the paths come from? **Provisioning sets them.** Creating a version builds its own worktree and virtualenv, so `odooPath`, `enterprisePath`, `designThemesPath` and `pythonPath` are filled in for you and tracked as extension-managed. You do not set them by hand — they stay editable in the Versions tree for the unusual case, but editing one points the version away from the environment that was built for it.
+
+   The debugger name and both ports are derived from the version's branch and are read-only, so parallel versions cannot collide.
+
+   What is still worth configuring under `odooDebugger.defaultVersion.*` are the runtime knobs applied to new versions:
 
    ```jsonc
    {
-     "odooDebugger.defaultVersion.odooPath": "./odoo",
-     "odooDebugger.defaultVersion.enterprisePath": "./enterprise",
-     "odooDebugger.defaultVersion.designThemesPath": "./design-themes",
-     "odooDebugger.defaultVersion.customAddonsPath": "./custom-addons",
-     "odooDebugger.defaultVersion.pythonPath": "./venv/bin/python",
-     "odooDebugger.defaultVersion.dumpsFolder": "./dumps"
+     "odooDebugger.defaultVersion.customAddonsPath": "/home/you/custom-addons",
+     "odooDebugger.defaultVersion.dumpsFolder": "/home/you/dumps",
+     "odooDebugger.defaultVersion.extraParams": "",
+     "odooDebugger.defaultVersion.limitTimeReal": 0
    }
    ```
 
    Absolute paths are recommended.
 
-   ![VS Code Setting](resources/assets/vscode-settings.gif)
+   If you used an earlier release, run **`Odoo DevTools: Check Version Environments`**: it reports versions still pointing at hand-configured paths and offers to rebuild them under the environments folder.
 
-4. In the **Versions** view: create a version (branch pick + name — settings come from the defaults) and activate it.
+4. In the **Versions** view: create a version — pick the branch, confirm the name, and the extension provisions its worktree, interpreter and virtualenv with live progress. Activate it when it is built. (*Profile only* registers the version without building anything.)
 
    ![Version Setup](resources/assets/version-setup.gif)
 

@@ -4,6 +4,36 @@ All notable changes to the "odoo-devtools-vscode" extension will be documented i
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [1.3.0] - 2026-09-02
+
+> **Beta.** The provisioning, worktree and setup flows in this release are new and have had limited real-world use. Please report anything that surprises you.
+
+### Added
+
+- **Versions provision themselves.** Create Version now builds a complete environment for a branch: a git **worktree**, an interpreter that branch actually supports, a `uv`-backed virtualenv and its `requirements.txt` — with live progress and cancellation. Choose *Profile only* to register a version without building anything.
+- **Several versions can be checked out at once.** Each version owns its worktree, so activating one no longer checks anything out and can no longer fail on a dirty working tree. Comparing a database before and after an upgrade is now two live environments rather than two checkouts of the same directory.
+- **Per-version custom code.** A repository can be switched to **Use One Copy Per Branch** (right-click it in Repos), after which each branch it is mapped to gets its own worktree under the provisioning root. The addons path, module discovery, scaffolding, the Project Repos tree and the generated workspace all follow the active version, so two versions run against their own custom addons. Repositories stay in plain checkout mode unless you opt in.
+- **First-run setup.** **Odoo DevTools: Set Up** asks for the source repository and the environments directory (`~/odoo-dev` by default), detecting both where it can. Answers are stored at user level, so later workspaces are already configured; a workspace needing a different fork can override them. A notification offers this on first activation.
+- **Running indicators.** The Databases view marks which databases are live, and each version shows the port it serves. **Open in Browser** opens the port of the version you are actually running.
+- **Odoo DevTools: Check Version Environments** diagnoses versions left behind by an older layout (missing, unprovisioned or outside the current provisioning root) and offers to rebuild them.
+- A warning when you open a file belonging to a version other than the active one, so edits do not land in the wrong copy. Dismissible for the session or permanently.
+
+### Changed
+
+- **Debugger name and ports are derived from the version's branch** and are read-only, so parallel versions cannot collide on a port. Existing versions are healed on load.
+- **Database creation asks which branch each project repository should use** instead of silently recording whatever was checked out at the time.
+- `db.branchName` is removed: a database's core branch comes from its version, which is the only place it was ever authoritative. Legacy values are folded into the database's Odoo version where no version profile matches.
+- Switch notifications say what will actually happen — reusing an existing worktree, checking out a branch, or reporting a missing environment — rather than always promising a checkout. Rapid database selections no longer leave two contradictory prompts standing.
+- Checkout hooks are consolidated into `odooDebugger.postSwitchCommands`, which now also runs when the version changes. Legacy hook settings are migrated automatically.
+- The configured source repository is never run directly; versions always run from their own worktree, leaving that checkout yours to switch freely.
+
+### Fixed
+
+- Stale `git worktree` records no longer reserve a branch a new version needs (the `'odt/19.0' is already used by worktree at ...` failure).
+- Interpreter selection steps up to the next supported Python when a pinned requirement has no wheel for the closest match.
+- The branch picker opens immediately instead of after enumerating every ref.
+- A database is remembered against the version it switches *to*, not the one it switched from.
+
 ## [1.2.0] - 2026-07-23
 
 ### Changed
