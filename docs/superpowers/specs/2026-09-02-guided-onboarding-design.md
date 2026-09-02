@@ -23,7 +23,13 @@ The cost is not just length. The user is asked to arrive independently at the
 conclusion that per-branch repository copies are the mechanism for their
 situation. `branchMode` is an implementation detail surfaced as a decision.
 
-Three defects in the current flow come from the same gap:
+Two gaps sit underneath the length. Setup records where the Odoo repositories
+live but not where the user's own code lives, so the first thing they try after
+finishing setup — creating a project — throws (§7). And when any of this goes
+wrong, the extension names the action needed without offering it: thirty-six
+messages instruct rather than offer, one of them from a background refresh (§8).
+
+Five defects in the current flow come from the same place:
 
 1. **The first branch pick degrades to a free-text box.** `odoo.createVersion`
    passes the *active version's* `odooPath` to `pickOdooBranch`
@@ -40,6 +46,12 @@ Three defects in the current flow come from the same gap:
    (`src/odooInstaller.ts:45`) names 19.0, 18.0, 17.0 and three saas releases.
    It is wrong the day 20.0 ships, and it is wrong now for anyone whose work is
    on a branch it does not list.
+4. **Project creation dead-ends.** Repository discovery reads a
+   `customAddonsPath` that setup never asks about and provisioning never writes,
+   so `getRepo` throws after the project name has been typed.
+5. **Old versions are migrated silently or not at all.** Only a `missing`
+   version is ever surfaced unasked; the shape a v1.2 upgrader actually has is
+   never mentioned, and one shape is described as safe when it is not.
 
 ## Design
 
@@ -191,7 +203,10 @@ message, and the rest of the plan continues.
 The plan is shown before anything is written, and *Change…* opens the individual
 pickers, matching the pattern `runSetup` already establishes.
 
-### 5. The three defects
+### 5. Defects 1-3
+
+Defect 4 is answered by §7 and defect 5 by §6; the first three are one-line
+corrections with no design behind them.
 
 - `odoo.createVersion` passes `readSetupState().sourceRepo` to `pickOdooBranch`,
   not the active version's `odooPath`, so the first branch pick is a real list.
@@ -250,6 +265,99 @@ root and repoints the version at it. The migration is that function, driven from
 the queue. The old directories are never deleted: a hand-built checkout is the
 user's, and `Delete Version` remains the only thing that removes anything.
 
+### 7. Setup records where custom addons live
+
+Setup asks about the Odoo repositories and the provisioning root. It never asks
+about the one directory the user's own work is in, and nothing else fills the
+gap: provisioning writes `odooPath`, `enterprisePath`, `designThemesPath` and
+`pythonPath`, never `customAddonsPath`, which is left on its shipped default of
+`./custom-addons` relative to the workspace.
+
+Every repository-discovery site reads that value —
+`projectSelector.create` (`src/commands/projectCommands.ts:44`), the Repos view
+(`src/repos.ts:78`), and the project's repo editor (`src/project.ts:1087`). For
+a user who has just finished setup the directory usually does not exist, so
+project creation ends in a throw, *after* the project name has been typed:
+
+```ts
+// src/project.ts:373
+if (devsRepos.length === 0) {
+    void showInfo('No repositories found in the custom-addons path.');
+    throw new Error('No repositories found in the custom-addons path.');
+}
+```
+
+No recovery, no picker, no pointer at the setting. Nothing downstream works
+without project repositories — including the upgrade flow in §4.
+
+**Setup proposes a location.** The confirmation summary from
+`2026-09-01-first-run-setup-design.md` §4 gains a fourth row:
+
+```
+  Custom addons  ~/Dev/custom-addons     4 repositories
+```
+
+Detection reuses the `searchRoots` / `detectRepos` shape already in
+`src/services/setupDetection.ts` with a different predicate: a directory
+containing at least one git repository that is not `odoo`, `enterprise` or
+`design-themes`. The workspace folders are searched first, because the workspace
+*is* that directory in the common case.
+
+The value is written to the existing `odooDebugger.defaultVersion.customAddonsPath`
+at user scope, not to a new key. It stays a per-version setting with a
+per-version override, which is right — a client version may point somewhere
+else — and because setup runs before §1 creates any version, every version
+created from the multi-select inherits it. No migration is needed: an existing
+workspace that already has a working value keeps it, since setup proposes
+current configuration ahead of detection.
+
+**Skip is a real answer.** A user doing pure Odoo work has no custom addons, so
+the row can be left empty and setup still completes. That makes the recovery in
+§8 mandatory rather than decorative.
+
+### 8. Dead ends become offers
+
+Thirty-six messages across the extension name an action without offering it —
+`'Select a database before running this action.'`,
+`'Unable to load projects, please create a project first'`. The first-run design
+already fixed one instance of this, turning provisioning's *no repository* error
+into an offer to run setup. The pattern simply never propagated.
+
+Buttons are added to the messages that gate the daily loop, not to all
+thirty-six. The rest stay as they are; an error nobody is blocked by does not
+need a button.
+
+| Site | Message | Action |
+| --- | --- | --- |
+| `getRepo` (`src/project.ts:373`) | No repositories in the custom-addons path | **Choose Folder…**, which sets the active version's `customAddonsPath` and re-scans |
+| `SettingsStore.getSelectedProject` | No projects exist | **Create Project** |
+| `SettingsStore.getSelectedProject` | None selected | **Select Project** |
+| Module commands (`src/module.ts`) | No database selected | **Select Database** |
+| Module commands (`src/module.ts`) | Testing mode is on | **Disable Testing Mode** |
+
+The testing-mode refusal appears six times in `src/module.ts` with identical
+wording; it becomes one guard helper returning whether the caller may proceed,
+so the button exists in one place.
+
+**A background sync must not raise a user-facing error.**
+`SettingsStore.getSelectedProject` shows an error as a side effect of returning
+`null` (`src/settingsStore.ts:240`). `setupDebugger` calls it, and `refreshAll`
+runs `setupDebugger` on its default reason — so a freshly configured install
+with versions but no project yet shows *"Unable to load projects, please create
+a project first"* out of nowhere, triggered by a refresh the user did not ask
+for. A silent `peekSelectedProject` is added for background callers;
+`getSelectedProject` keeps its prompting behaviour for the command paths that
+want it.
+
+**Start Server checks its preconditions.** `startDebugServer`
+(`src/debugger.ts:476`) calls `vscode.debug.startDebugging` with no checks and
+without awaiting it, so an unprovisioned version, an absent database selection
+and a launch entry that has not been written yet all surface as VS Code's own
+generic failure. It checks three things first — `isVersionProvisioned` (already
+imported in that file), a resolved database for the active version, and the
+managed launch entry — and each failure offers its fix: **Provision**, **Select
+Database**, **Retry**.
+
 ## Failure modes
 
 | Situation | Behaviour |
@@ -264,6 +372,10 @@ user's, and `Delete Version` remains the only thing that removes anything.
 | Legacy version that still works outside the provisioning root | Diagnosed `relocated`, left alone and left silent |
 | User answers *Later* to the migration offer | Remembered globally; the versions stay reachable through `odoo.checkVersions` |
 | Migration fails for one version | Same as any queue failure: removed from the queue, reported in the summary, old paths untouched |
+| No custom addons directory detected during setup | The row is left empty; setup completes, and `getRepo` offers **Choose Folder…** on first use |
+| Custom addons row skipped, then Create Project run | The picker offers a folder, writes it to the active version, and re-scans without losing the typed project name |
+| Start Server on an unprovisioned version | Refused with **Provision**, which runs the existing re-provisioning flow |
+| Background refresh with no project | Silent: `peekSelectedProject` returns nothing and the debugger sync stops |
 | Upgrade plan names a repo whose source checkout is dirty | That repo's mode change is refused with its dirty files listed; other steps proceed |
 | Upgrade plan names a series that has no database yet | Versions and repo mode are configured; branch assignments are written when the database is created |
 
@@ -282,11 +394,13 @@ non-parsing branches; queue state transitions (enqueue, drain, failure removal,
 cancel) over plain data with the provisioning call injected; and `diagnoseVersion`'s
 new `source-repo` health, including its rank in `needsAttention` and the
 boundary where `odooPath` equals the source repository only after path
-resolution.
+resolution; and custom-addons detection, including the predicate that excludes
+the core repositories.
 
 Requires the Extension Development Host: the multi-select itself, queue
 resumption across a window reload, the version-row states, the migration offer and its
-dismissal across a window reload, and the upgrade
+dismissal across a window reload, every message that gains a button, the
+Start Server preconditions, and the upgrade
 plan's write-through to repository mode and branch assignments — including the
 source-conflict path, which cannot be exercised without a real git checkout
 holding the branch.
