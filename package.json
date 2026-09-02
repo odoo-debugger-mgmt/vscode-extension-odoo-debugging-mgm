@@ -617,6 +617,12 @@
         "title": "Check Version Environments",
         "category": "Odoo DevTools",
         "icon": "$(checklist)"
+      },
+      {
+        "command": "odoo.setUpUpgrade",
+        "title": "Set Up an Upgrade",
+        "category": "Odoo DevTools",
+        "icon": "$(arrow-up)"
       }
     ],
     "menus": {
@@ -857,6 +863,11 @@
           "command": "odoo.checkVersions",
           "when": "view == versionsManager",
           "group": "navigation@9"
+        },
+        {
+          "command": "odoo.setUpUpgrade",
+          "when": "view == versionsManager",
+          "group": "navigation@8"
         }
       ],
       "view/item/context": [

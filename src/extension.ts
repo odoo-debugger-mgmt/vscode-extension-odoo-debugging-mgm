@@ -32,6 +32,8 @@ import { invalidateRunningState } from './services/runningState';
 import { registerWrongCopyGuard } from './services/wrongCopyGuard';
 import { diagnoseVersion, migratable } from './services/versionMigration';
 import type { VersionModel } from './models/version';
+import { branchToSeries } from './services/versionProposal';
+import { getRepoBranch } from './services/branches';
 import { readSetupState, shouldAdoptLegacySourceRepo, readRawSetupSettings, writeSetupSettings } from './services/setupState';
 import { showInfo } from './services/notifications';
 import { getDefaultVersionSettings, normalizePath, resolveOptionalPath } from './utils';
@@ -235,6 +237,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     promptFirstRunSetup(context).catch(error => logger.warn('First-run setup prompt failed:', error));
     promptLegacyVersions(context).catch(error => logger.debug('Version health check failed:', error));
+    promptUpgradeSetup(context).catch(error => logger.debug('Upgrade hint failed:', error));
 }
 
 /**
@@ -335,6 +338,51 @@ async function promptLegacyVersions(context: vscode.ExtensionContext): Promise<v
         void drainProvisionQueue(context);
     } else if (choice === 'Later') {
         await context.globalState.update(MIGRATION_DISMISSED_KEY, true);
+    }
+}
+
+/** One dismissible offer; "Later" is remembered so it never nags. */
+const UPGRADE_HINT_DISMISSED_KEY = 'odooDevtools.upgradeHintDismissed';
+
+/**
+ * A user mid-upgrade will not go looking for a command they have never seen.
+ * The state that identifies one is concrete: a repository on a branch whose
+ * Odoo series has no version, while other versions exist.
+ */
+async function promptUpgradeSetup(context: vscode.ExtensionContext): Promise<void> {
+    if (context.globalState.get<boolean>(UPGRADE_HINT_DISMISSED_KEY)) {
+        return;
+    }
+
+    const result = await SettingsStore.peekSelectedProject();
+    if (!result) {
+        return;
+    }
+
+    const existing = new Set(VersionsService.getInstance().getVersions().map(version => version.odooVersion));
+    if (existing.size === 0) {
+        // Nothing is set up yet; the first-run prompt owns this moment.
+        return;
+    }
+
+    for (const repo of result.project.repos ?? []) {
+        const branch = await getRepoBranch(normalizePath(repo.path));
+        const series = branch ? branchToSeries(branch) : undefined;
+        if (!series || existing.has(series)) {
+            continue;
+        }
+
+        const choice = await showInfo(
+            `"${repo.name}" is on ${branch}, but there is no Odoo ${series} version.`,
+            'Set Up an Upgrade',
+            'Later'
+        );
+        if (choice === 'Set Up an Upgrade') {
+            await vscode.commands.executeCommand('odoo.setUpUpgrade');
+        } else if (choice === 'Later') {
+            await context.globalState.update(UPGRADE_HINT_DISMISSED_KEY, true);
+        }
+        return;
     }
 }
 
