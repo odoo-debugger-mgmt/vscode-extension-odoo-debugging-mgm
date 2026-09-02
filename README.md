@@ -23,8 +23,6 @@ The source repository is never run directly: every version gets its own worktree
 2. Run **`Odoo DevTools: Set Up`** — once per machine, not per workspace.
    It looks for Odoo checkouts you already have and shows what it found for confirmation, so this is usually one click. If there is nothing to find it offers to clone the repositories (community/enterprise/design-themes, any branch, optionally a **shallow copy**) and records where it put them.
 
-   ![Odoo Setup](resources/assets/odoo-setup.gif)
-
 3. Where do the paths come from? **Provisioning sets them.** Creating a version builds its own worktree and virtualenv, so `odooPath`, `enterprisePath`, `designThemesPath` and `pythonPath` are filled in for you and tracked as extension-managed. You do not set them by hand — they stay editable in the Versions tree for the unusual case, but editing one points the version away from the environment that was built for it.
 
    The debugger name and both ports are derived from the version's branch and are read-only, so parallel versions cannot collide.
@@ -46,15 +44,9 @@ The source repository is never run directly: every version gets its own worktree
 
 4. In the **Versions** view: create a version — pick the branch, confirm the name, and the extension provisions its worktree, interpreter and virtualenv with live progress. Activate it when it is built. (*Profile only* registers the version without building anything.)
 
-   ![Version Setup](resources/assets/version-setup.gif)
-
 5. In the **Projects** view: create a project. The wizard covers repositories and the first database.
 
-   ![Project Creation](resources/assets/project-creation.gif)
-
 6. In the **Modules** view: mark modules for **Install** or **Upgrade**.
-
-   ![Module Management](resources/assets/module-management.gif)
 
 7. Launch: `Odoo DevTools: Start Server` (`Ctrl+Alt+O S`) or `Start Shell` from the Projects view / Command Palette.
 
