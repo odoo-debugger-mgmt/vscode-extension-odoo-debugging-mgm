@@ -51,11 +51,20 @@ export function describeSourceConflict(conflict: SourceConflict, repoName: strin
 }
 
 /** Changed paths from `git status --porcelain`, staged and unstaged alike. */
+/** Status letters git can put in either column of `--porcelain` output. */
+const STATUS_LINE = /^([ MADRCU?!]{1,2})\s+(.*)$/;
+
 export function parsePorcelainStatus(stdout: string): string[] {
     const paths: string[] = [];
     for (const rawLine of stdout.split('\n')) {
-        // Status codes occupy the first two columns; the path follows a space.
-        const line = rawLine.slice(3).trim();
+        // Matched rather than sliced at a fixed offset. An unstaged change has
+        // a *space* in the first column, and every caller here reaches this
+        // through `tryRunCommand`, which trims - so the first line lost that
+        // space and a fixed slice(3) ate the first letter of its filename.
+        // A refusal whose whole job is naming the files blocking you cannot
+        // report "EADME.md".
+        const match = STATUS_LINE.exec(rawLine.replace(/\r$/, ''));
+        const line = match?.[2].trim();
         if (!line) {
             continue;
         }

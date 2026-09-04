@@ -1,11 +1,11 @@
 # Manual test brief — v1.3.0 beta
 
 **For:** an agent or person who can drive a VS Code window and see it.
-**Branch:** `v-1.3` (currently `6d9cb6e`). **Build:** `npm run build:vsix`, or press <kbd>F5</kbd> in this repo to open an Extension Development Host.
+**Branch:** `v-1.3` (currently `e0571f8`). **Build:** `npm run build:vsix`, or press <kbd>F5</kbd> in this repo to open an Extension Development Host.
 
 ## Read this first: what is already covered
 
-Do **not** spend time re-checking these. The repo has 223 passing tests
+Do **not** spend time re-checking these. The repo has 243 passing tests
 (`npm test`), and they run inside a real Extension Host, not a mock:
 
 - Every pure decision — branch→series parsing, the provisioning queue's state
@@ -15,6 +15,9 @@ Do **not** spend time re-checking these. The repo has 223 passing tests
   a copy is created when the source is free; a background sync stays silent,
   reports the conflict, falls back to the source checkout and leaves the working
   tree untouched; a dirty source is refused; one blocked repo does not stop others.
+- **Items 4 and 5 in full** (`src/test/sourceConflict.integration.test.ts`): the
+  move/detach arbitration and the rule that a sync never blocks. See those
+  sections — they now ask for almost nothing.
 
 What no test here can judge is **whether a human can tell what is happening**.
 That is what this brief is for. Report on wording, sequence, and whether the
@@ -40,6 +43,27 @@ test something and why**; a gap reported is worth more than a guess.
 - PostgreSQL running.
 - Expect provisioning to take minutes and download ~2 GB per version. Budget for
   it, and do not report slowness as a defect unless the UI gives no sign of life.
+
+### Driving the window on this machine
+
+The session is GNOME on **Wayland**, where VS Code is a native Wayland client
+and invisible to X automation: `import -window root` captures a 0x0 XWayland
+surface, `grim` fails (no wlr-screencopy under GNOME), and there is no Xorg
+session to fall back to. The way around it is an X *server*, not an X session:
+
+```bash
+Xvfb :99 -screen 0 1920x1080x24 &
+DISPLAY=:99 code --extensionDevelopmentPath=<repo> \
+  --user-data-dir=<scratch> --extensions-dir=<scratch> \
+  --ozone-platform=x11 --disable-gpu --new-window <fixture>
+# drive:    xdotool key/type/mousemove --window <id>
+# observe:  import -window root shot.png
+```
+
+Prefer an integration test in `src/test/*.integration.test.ts` wherever the
+question is behavioural. Those run in the Extension Host the suite already
+launches, assert real git and filesystem state, and do not go stale. Reach for
+the GUI only when the question is genuinely about what something looks like.
 
 ---
 
@@ -78,8 +102,10 @@ that — and whether you would have known without being told to look.
 Right-click a repository in **Repos** → **Use One Copy Per Branch**. It is also
 on Project Repos in the Explorer; confirm both.
 
-1. Read the modal. **Does it name the exact directories that will be created?**
-   Is it clear that this is where you will edit that branch's code from now on?
+1. Read the modal. It should name absolute directories, say *copies* rather
+   than *worktrees*, and — when no branches are mapped yet — say plainly that
+   nothing is created now. Confirm the menu entry flips to **Use a Single
+   Checkout** once the mode is on.
 2. Accept, then switch between two versions and confirm the Project Repos tree,
    the Modules list and the addons path follow.
 3. Open a file from one version's copy while the *other* version is active. A
@@ -88,33 +114,29 @@ on Project Repos in the Explorer; confirm both.
 4. Turn the mode back off. Confirm copies are removed — and that a copy with
    uncommitted changes is **kept** and named.
 
-## 4 · The source-conflict path — highest risk, least covered
+## 4 · The source-conflict path — now automated
 
-Automated tests cover the non-interactive half. **The interactive half has never
-been exercised.**
+**Covered by `src/test/sourceConflict.integration.test.ts`.** Move, Detach,
+dismissal, declining the move picker, and the dirty refusal are all asserted
+against real repositories: that the checkout lands where the dialog promised,
+that the copy is created, that nothing is stashed and no untracked file is lost.
 
-Put a repository's own checkout on a branch a copy needs, then run
-**Odoo DevTools: Create Missing Per-Branch Copies**.
+Only the *appearance* is left. If you have a spare minute, trigger it once and
+say whether the modal reads clearly — but do not spend a session on it.
 
-1. You should be offered **Move to Another Branch** first, **Detach It** second.
-2. Take **Move**: pick a branch, and confirm the checkout really moved and the
-   copy was created.
-3. Redo the setup and take **Detach**. Confirm the checkout is detached and say
-   whether the dialog made that consequence clear *before* you chose.
-4. Redo with **uncommitted changes** in the checkout. It must refuse and name the
-   changed files. Confirm your changes are untouched — nothing stashed, nothing
-   forced.
+## 5 · The sync must never interrupt you — now automated
 
-## 5 · The sync must never interrupt you
+**Covered by the same file.** Three consecutive non-interactive passes over two
+conflicting repositories raise zero modals, warn about nothing, move neither
+checkout, still build the copies that need no arbitration, and report both
+blocked repos for the offer. A repeat pass once the copies exist is a no-op.
 
-With a repository in worktree mode and its source checkout holding a needed
-branch, just *work*: run commands, start and stop a debug session, hit refresh.
+The stub counts only `{ modal: true }` calls, which is the distinction that
+matters: a dismissible notification from a sync is fine, a blocking dialog is
+not.
 
-**A blocking modal about your working tree must never appear on its own.** You
-should get at most a dismissible notification offering **Resolve**.
-
-This is the single most important item in this brief. If a modal appears
-unprompted, capture what you did immediately before it.
+What is still worth a human: whether the **Resolve** offer arrives at a sensible
+moment during ordinary work, rather than whether it blocks.
 
 ## 6 · Set Up an Upgrade — with two differently-named repos
 
@@ -211,8 +233,9 @@ Things I could not verify and am genuinely unsure about:
   to break it if it is breakable.
 - **`Create Missing Per-Branch Copies`** was added with this change and has never
   been run. It may not appear where you expect — it is palette-only.
-- **The three "Later" dismissals** (first-run, migration, upgrade hint) are
-  permanent and machine-wide by design. If you dismiss one you will not see it
-  again without clearing global state. Note it if that costs you a test.
+- **Four permanent, machine-wide dismissals**, not three: first-run, migration,
+  upgrade hint, and the wrong-copy guard's *Don't warn again*. All are by design
+  and none re-arms. Do not press any of them until you have finished the item
+  they belong to; clearing global state is the only way back.
 - Whether **`Set Up an Upgrade`** on the Repos context menu is confusing: it
   ignores which repository you right-clicked and asks for all of them.

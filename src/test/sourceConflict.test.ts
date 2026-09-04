@@ -59,4 +59,36 @@ suite('Source checkout conflict', () => {
         // Renames report "old -> new"; the new path is what matters.
         assert.deepStrictEqual(parsePorcelainStatus('R  old.py -> new.py\n'), ['new.py']);
     });
+
+    test('parses a status whose leading space was trimmed away', () => {
+        // tryRunCommand trims stdout, so the first line of a real status loses
+        // the space that marks an unstaged change. A fixed slice(3) then ate
+        // the first letter and the refusal named "EADME.md".
+        assert.deepStrictEqual(
+            parsePorcelainStatus('M  README.md\n?? untracked.txt'),
+            ['README.md', 'untracked.txt']
+        );
+        assert.deepStrictEqual(
+            parsePorcelainStatus('M README.md\n?? untracked.txt'),
+            ['README.md', 'untracked.txt']
+        );
+    });
+
+    test('parses an untrimmed status exactly as git emits it', () => {
+        assert.deepStrictEqual(
+            parsePorcelainStatus(' M README.md\n?? untracked.txt\n'),
+            ['README.md', 'untracked.txt']
+        );
+    });
+
+    test('keeps paths containing spaces intact', () => {
+        assert.deepStrictEqual(
+            parsePorcelainStatus(' M models/sale order.py'),
+            ['models/sale order.py']
+        );
+    });
+
+    test('tolerates CRLF line endings', () => {
+        assert.deepStrictEqual(parsePorcelainStatus(' M a.py\r\n?? b.py\r\n'), ['a.py', 'b.py']);
+    });
 });
