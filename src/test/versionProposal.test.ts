@@ -70,4 +70,32 @@ suite('Version proposal', () => {
         assert.strictEqual(candidates.length, 1);
         assert.strictEqual(candidates[0].branch, '17.0');
     });
+
+    test('master is never the pre-ticked default', () => {
+        // master ranks first, so the out-of-the-box answer used to spend ~2 GB
+        // building the development branch.
+        const candidates = proposeVersions([], ['master', '19.0', '18.0'], []);
+        assert.strictEqual(candidates[0].branch, 'master');
+        assert.strictEqual(candidates[0].picked, false);
+        assert.strictEqual(candidates[1].branch, '19.0');
+        assert.strictEqual(candidates[1].picked, true);
+    });
+
+    test('exactly one series is pre-ticked when nothing else suggested a version', () => {
+        const picked = proposeVersions([], ['19.0', '18.0', '17.0'], []).filter(entry => entry.picked);
+        assert.strictEqual(picked.length, 1);
+        assert.strictEqual(picked[0].branch, '19.0');
+    });
+
+    test('a repo-derived candidate keeps the series rows unticked', () => {
+        const candidates = proposeVersions(
+            [{ repoName: 'acme', branch: '17.0-acme' }],
+            ['19.0', '18.0'],
+            []
+        );
+        assert.deepStrictEqual(
+            candidates.filter(entry => entry.picked).map(entry => entry.branch),
+            ['17.0']
+        );
+    });
 });

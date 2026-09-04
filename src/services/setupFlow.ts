@@ -7,9 +7,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { showError, showInfo } from './notifications';
+import { showError, showInfo, showModalWarning } from './notifications';
 import { errorMessage, logger } from './logger';
 import { getRepoBranch } from './branches';
+import { rememberCustomAddonsFolder } from '../commands/customAddonsCommand';
 import {
     countCustomRepos,
     detectCustomAddonsRoot,
@@ -83,17 +84,27 @@ export async function buildProposal(): Promise<SetupProposal> {
     };
 }
 
-function describe(proposal: SetupProposal): string {
+/**
+ * One line per fact, for a modal.
+ *
+ * This used to be joined with bullets into a quick pick's `detail`, which VS
+ * Code renders as a single truncated line: everything after "Source:" was off
+ * the end of the dialog. That mattered because detection reaches outside the
+ * workspace - it can propose enterprise, design-themes and an addons folder
+ * from anywhere on the machine, and all five values are written at user scope
+ * on one keystroke. A confirmation the user cannot read is not a confirmation.
+ */
+export function describe(proposal: SetupProposal): string {
     const rows = [
-        `Source: ${proposal.sourceRepo ?? 'not found'}${proposal.sourceBranch ? ` (${proposal.sourceBranch})` : ''}`,
-        proposal.enterpriseRepo ? `Enterprise: ${proposal.enterpriseRepo}` : undefined,
-        proposal.designThemesRepo ? `Design themes: ${proposal.designThemesRepo}` : undefined,
+        `Source repository   ${proposal.sourceRepo ?? 'not found'}${proposal.sourceBranch ? `  (on ${proposal.sourceBranch})` : ''}`,
+        proposal.enterpriseRepo ? `Enterprise          ${proposal.enterpriseRepo}` : undefined,
+        proposal.designThemesRepo ? `Design themes       ${proposal.designThemesRepo}` : undefined,
         proposal.customAddonsPath
-            ? `Custom addons: ${proposal.customAddonsPath} (${proposal.customAddonsCount ?? 0} repositories)`
-            : undefined,
-        `Environments: ${proposal.provisioningRoot}${fs.existsSync(proposal.provisioningRoot) ? '' : ' (will be created)'} \u2014 worktrees, virtualenvs and per-branch copies of custom repos`
+            ? `Custom addons       ${proposal.customAddonsPath}  (${proposal.customAddonsCount ?? 0} repositories)`
+            : 'Custom addons       not found - you can choose it later',
+        `Environments        ${proposal.provisioningRoot}${fs.existsSync(proposal.provisioningRoot) ? '' : '  (will be created)'}`
     ];
-    return rows.filter(Boolean).join('  •  ');
+    return rows.filter(Boolean).join('\n');
 }
 
 async function browseForFolder(title: string, defaultPath?: string): Promise<string | undefined> {
@@ -162,14 +173,13 @@ async function persist(proposal: SetupProposal): Promise<void> {
     };
     await writeSetupSettings(values);
 
-    // Written at user scope like the rest of the setup: where custom code
-    // lives is a fact about the machine, and every discovery site reads it.
+    // Written at user scope like the rest of the setup, *and* onto the active
+    // version. The user-level value is only a default for versions created
+    // afterwards, but repository discovery reads the active version's own copy
+    // - so writing one alone left setup reporting success while Create Project
+    // searched the shipped `./custom-addons`, which has never existed.
     if (proposal.customAddonsPath) {
-        await vscode.workspace.getConfiguration('odooDebugger').update(
-            CUSTOM_ADDONS_KEY,
-            proposal.customAddonsPath,
-            vscode.ConfigurationTarget.Global
-        );
+        await rememberCustomAddonsFolder(proposal.customAddonsPath);
     }
 
     fs.mkdirSync(proposal.provisioningRoot, { recursive: true });
@@ -209,16 +219,19 @@ export async function runSetup(options: { cloneFallback: () => Promise<string | 
         return false;
     }
 
-    const confirmed = await vscode.window.showQuickPick(
-        [
-            { label: '$(check) Use these', detail: describe(proposal), edit: false },
-            { label: '$(edit) Change…', detail: 'Pick the source repository and environment directory yourself', edit: true }
-        ],
-        { title: 'Set up Odoo DevTools', placeHolder: 'Confirm where Odoo lives', ignoreFocusOut: true }
+    // A modal, so every proposed path is legible before it is written at user
+    // scope. Detection reaches outside the workspace, so these values can name
+    // repositories that belong to entirely different work.
+    const answer = await showModalWarning(
+        `Set up Odoo DevTools with these?\n\n${describe(proposal)}\n\n`
+        + 'These are saved for every workspace on this machine.',
+        'Use These',
+        'Change...'
     );
-    if (!confirmed) {
+    if (!answer) {
         return false;
     }
+    const confirmed = { edit: answer === 'Change...' };
 
     if (confirmed.edit) {
         const edited = await editProposal(proposal);

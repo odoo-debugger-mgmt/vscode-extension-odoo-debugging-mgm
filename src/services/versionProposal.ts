@@ -71,6 +71,7 @@ export function proposeVersions(
     }
 
     let offered = 0;
+    let anyPicked = candidates.length > 0;
     for (const branch of seriesBranches) {
         if (offered >= MAX_SERIES_ROWS) {
             break;
@@ -80,11 +81,16 @@ export function proposeVersions(
             continue;
         }
         seen.add(trimmed);
+        const pick = !anyPicked && !/^master$/i.test(trimmed);
+        anyPicked = anyPicked || pick;
         candidates.push({
             branch: trimmed,
             reason: seriesReason(trimmed, offered),
-            // Nothing else suggested a version: offer to build the newest.
-            picked: candidates.length === 0
+            // Nothing else suggested a version: offer to build the newest
+            // stable one. Never master - a pre-ticked default that spends two
+            // gigabytes on the development branch is the wrong thing to guess,
+            // and it is ranked first, so it would otherwise always win.
+            picked: pick
         });
         offered += 1;
     }

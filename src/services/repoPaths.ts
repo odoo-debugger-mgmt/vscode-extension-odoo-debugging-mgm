@@ -127,17 +127,32 @@ export function describeModeChange(
     repoName: string,
     mode: RepoBranchMode,
     root: string,
-    branches: string[]
+    branches: string[],
+    repoPath?: string
 ): string {
+    const original = repoPath ?? repoName;
+
     if (mode === 'checkout') {
         return `Switch "${repoName}" back to a single checkout?\n\n`
-            + `The worktrees the extension created for it will be removed. `
+            + `The copies the extension created for it will be removed. `
             + `Any with uncommitted changes are kept and reported.`;
+    }
+
+    // A project whose databases carry no branch assignments yet is the ordinary
+    // state before the branch picker has ever been used, and it produced a
+    // dialog that promised directories and then listed none.
+    if (branches.length === 0) {
+        return `Give "${repoName}" one working copy per branch?\n\n`
+            + `No branches are mapped to it yet, so nothing is created now. A copy appears under\n`
+            + `  ${root}\n`
+            + `the first time a database maps this repository to a branch.\n\n`
+            + `The original checkout at ${original} becomes a source only: it stays yours to switch `
+            + `freely, and nothing that happens to it changes what a version runs.`;
     }
 
     const dirs = branches.map(branch => `  ${path.join(root, worktreeDirName(repoName, branch))}`).join('\n');
     return `Give "${repoName}" one working copy per branch?\n\n`
         + `These directories will be created, and this is where you will edit that branch's code:\n\n${dirs}\n\n`
-        + `The original checkout at ${repoName} becomes a source only: it stays yours to switch freely, `
+        + `The original checkout at ${original} becomes a source only: it stays yours to switch freely, `
         + `and nothing that happens to it changes what a version runs.`;
 }

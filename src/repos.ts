@@ -2,7 +2,7 @@
  * Repos view: lists git repositories discovered under the version's custom
  * addons folder and toggles their membership in the active project.
  */
-import { RepoModel } from "./models/repo";
+import { RepoModel, normalizeBranchMode } from "./models/repo";
 import * as vscode from "vscode";
 import { findRepositories, getWorkspacePath, normalizePath, stripSettings } from './utils';
 import { SettingsStore } from './settingsStore';
@@ -131,7 +131,9 @@ export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             ].filter(Boolean).join('\n\n'));
             treeItem.id = entry.path;
             treeItem.description = entry.isGitRepo ? (entry.branch ?? '') : 'addons folder';
-            treeItem.contextValue = 'repo';
+            treeItem.contextValue = normalizeBranchMode(entry.repoModel?.branchMode) === 'worktree'
+                ? 'repoPerBranch'
+                : 'repo';
             // Carried for the shared reveal/copy-path/terminal commands (extractUri).
             (treeItem as vscode.TreeItem & { uri?: vscode.Uri }).uri = vscode.Uri.file(entry.path);
             treeItem.command = {

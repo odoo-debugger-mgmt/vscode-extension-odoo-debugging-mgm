@@ -45,6 +45,9 @@
     "Debuggers",
     "Extension Packs"
   ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -607,6 +610,12 @@
         "icon": "$(search-fuzzy)"
       },
       {
+        "command": "odt.repo.useSingleCheckout",
+        "title": "Use a Single Checkout",
+        "category": "Odoo DevTools",
+        "icon": "$(repo)"
+      },
+      {
         "command": "odt.repo.toggleBranchMode",
         "title": "Use One Copy Per Branch",
         "category": "Odoo DevTools",
@@ -994,6 +1003,11 @@
           "group": "1_repo@1"
         },
         {
+          "command": "odt.repo.useSingleCheckout",
+          "when": "view == repoSelector && viewItem == repoPerBranch",
+          "group": "1_repo@1"
+        },
+        {
           "command": "odoo.setUpUpgrade",
           "when": "view == repoSelector && viewItem == repo",
           "group": "1_repo@2"
@@ -1136,6 +1150,11 @@
         {
           "command": "odt.repo.toggleBranchMode",
           "when": "view == odt.projectReposExplorer && viewItem == projectRepoRoot",
+          "group": "1_repo@1"
+        },
+        {
+          "command": "odt.repo.useSingleCheckout",
+          "when": "view == odt.projectReposExplorer && viewItem == projectRepoRootPerBranch",
           "group": "1_repo@1"
         }
       ],

@@ -49,6 +49,21 @@ export function diagnoseVersion(
     if (!odooPath || !pythonPath) {
         return { ...base, health: 'unprovisioned', detail: 'No environment has been built for this version.' };
     }
+    // Tested before the interpreter guards, not after. The legacy 1.2 shape is
+    // a version running out of the source repository whose hand-built venv is
+    // also gone; checking the interpreter first classified exactly that case as
+    // "unprovisioned" and dropped it from rank 0 to rank 2, losing the only
+    // wording that says why it is unsafe rather than untidy.
+    if (sourceRepo?.trim() && path.resolve(odooPath) === path.resolve(sourceRepo.trim())) {
+        return {
+            ...base,
+            health: 'source-repo',
+            detail: `It runs out of the source repository at ${odooPath}. Activating it switches that repository's `
+                + `branch, and switching that repository changes what this version runs. `
+                + `Migrating gives it its own worktree at ${expectedOdooPath}.`
+        };
+    }
+
     if (!exists(odooPath)) {
         return {
             ...base,
@@ -59,18 +74,6 @@ export function diagnoseVersion(
     if (!exists(pythonPath)) {
         return { ...base, health: 'unprovisioned', detail: `Its interpreter at ${pythonPath} is gone.` };
     }
-    // Before provisioning existed, a version ran out of whatever checkout the
-    // user had. When that checkout is the source repository, the version is
-    // not merely untidy: switching that repo's branch changes what it runs,
-    // and activating it switches that repo's branch.
-    if (sourceRepo?.trim() && path.resolve(odooPath) === path.resolve(sourceRepo.trim())) {
-        return {
-            ...base,
-            health: 'source-repo',
-            detail: `It runs out of the source repository at ${odooPath}. Migrating gives it its own worktree at ${expectedOdooPath}.`
-        };
-    }
-
     if (path.resolve(odooPath) !== path.resolve(expectedOdooPath)) {
         return {
             ...base,

@@ -34,7 +34,10 @@ import { sanitizeProjectRepoBranchAssignments } from '../services/environment';
 export function registerRepoBranchModeCommand(deps: CommandDeps): void {
     const { context, refreshAll } = deps;
 
-    context.subscriptions.push(vscode.commands.registerCommand('odt.repo.toggleBranchMode', async (event?: unknown) => {
+    // Two command ids, one handler. The menu shows whichever names the
+    // direction the click will take: a single entry meant the action that
+    // removes the copies still read "Use One Copy Per Branch".
+    const toggle = async (event?: unknown) => {
         try {
             const result = await SettingsStore.getSelectedProject();
             if (!result) {
@@ -66,8 +69,8 @@ export function registerRepoBranchModeCommand(deps: CommandDeps): void {
             ));
 
             const confirm = await showModalWarning(
-                describeModeChange(repo.name, nextMode, root, branches),
-                nextMode === 'worktree' ? 'Create Worktrees' : 'Remove Worktrees'
+                describeModeChange(repo.name, nextMode, root, branches, normalizePath(repo.path)),
+                nextMode === 'worktree' ? 'Create Copies' : 'Remove Copies'
             );
             if (!confirm) {
                 return;
@@ -96,7 +99,12 @@ export function registerRepoBranchModeCommand(deps: CommandDeps): void {
         } catch (error) {
             void showError(`Could not change the repository mode: ${errorMessage(error)}`);
         }
-    }));
+    };
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('odt.repo.toggleBranchMode', toggle),
+        vscode.commands.registerCommand('odt.repo.useSingleCheckout', toggle)
+    );
 }
 
 /**

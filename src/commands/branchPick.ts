@@ -124,11 +124,16 @@ export async function pickRepoBranch(
     repoPath: string | undefined,
     title: string,
     placeHolder: string,
-    current?: string
+    current?: string,
+    exclude?: string
 ): Promise<string | undefined> {
-    const branches = repoPath && fs.existsSync(repoPath)
+    const all = repoPath && fs.existsSync(repoPath)
         ? await listAllBranches(repoPath).catch(() => [])
         : [];
+    // An upgrade never runs from a branch to itself, and leaving it in the list
+    // meant the "upgrading to" picker opened highlighted on the branch just
+    // chosen as "upgrading from".
+    const branches = exclude ? all.filter(name => name !== exclude) : all;
 
     if (branches.length === 0) {
         return promptManualBranch(title);
@@ -142,11 +147,33 @@ export async function pickRepoBranch(
     }));
     items.push(MANUAL_ITEM);
 
-    const picked = await vscode.window.showQuickPick(items, {
-        title,
-        placeHolder,
-        ignoreFocusOut: true,
-        matchOnDescription: true
+    // createQuickPick, not showQuickPick: `current` has to *preselect* a row,
+    // and showQuickPick always opens on its first item however the rows are
+    // described. Without this the seed was decoration - the caller's claim
+    // that a shared naming convention is Enter-Enter was simply not true.
+    const picker = vscode.window.createQuickPick<BranchPickItem>();
+    picker.title = title;
+    picker.placeholder = placeHolder;
+    picker.ignoreFocusOut = true;
+    picker.matchOnDescription = true;
+    picker.items = items;
+
+    const preselect = current ? items.find(item => item.branch === current) : undefined;
+    if (preselect) {
+        picker.activeItems = [preselect];
+    }
+
+    const picked = await new Promise<BranchPickItem | undefined>(resolve => {
+        let accepted: BranchPickItem | undefined;
+        picker.onDidAccept(() => {
+            accepted = picker.selectedItems[0] ?? picker.activeItems[0];
+            picker.hide();
+        });
+        picker.onDidHide(() => {
+            picker.dispose();
+            resolve(accepted);
+        });
+        picker.show();
     });
 
     if (!picked) {

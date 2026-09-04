@@ -182,7 +182,7 @@ export function registerProjectCommands(deps: CommandDeps): void {
         // beside the foreground one - exactly the wheel-cache contention the
         // one-at-a-time queue exists to prevent.
         const [first, ...rest] = branches;
-        await provisionAndCreateVersion(first, `Odoo ${first}`);
+        await provisionAndCreateVersion(first, `Odoo ${first}`, { skipPlan: true });
         await refreshAll({ reason: 'ui' });
 
         if (rest.length > 0) {

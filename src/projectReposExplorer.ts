@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { SettingsStore } from './settingsStore';
 import { ProjectModel } from './models/project';
-import { RepoModel } from './models/repo';
+import { RepoModel, normalizeBranchMode } from './models/repo';
 import { showError, showInfo, normalizePath } from './utils';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
 import { createFilesExcludeMatcher } from './services/filesExclude';
@@ -113,7 +113,12 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
                 item.resourceUri = element.uri;
                 item.description = element.branch ?? undefined;
                 item.tooltip = element.branch ? `${element.repo.path}\nBranch: ${element.branch}` : element.repo.path;
-                item.contextValue = 'projectRepoRoot';
+                // The mode is in the contextValue so the menu entry can name
+                // what it will do: one label for both directions meant the
+                // entry that removes the copies read "Use One Copy Per Branch".
+                item.contextValue = normalizeBranchMode(element.repo.branchMode) === 'worktree'
+                    ? 'projectRepoRootPerBranch'
+                    : 'projectRepoRoot';
                 return item;
             }
             case 'folder': {
@@ -358,7 +363,11 @@ export async function renameEntry(uri?: vscode.Uri): Promise<void> {
 export async function selectProjectForExplorer(): Promise<void> {
     const data = await SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
-        void showInfo('No projects found. Create a project first.');
+        void showInfo('No projects yet.', 'Create Project').then(choice => {
+            if (choice === 'Create Project') {
+                void vscode.commands.executeCommand('projectSelector.create');
+            }
+        });
         return;
     }
 

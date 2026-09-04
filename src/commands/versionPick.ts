@@ -4,6 +4,8 @@
  * branch row.
  */
 import * as vscode from 'vscode';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { VersionCandidate, RepoBranch } from '../services/versionProposal';
 import { SettingsStore } from '../settingsStore';
 import { getRepoBranch } from '../services/branches';
@@ -72,12 +74,39 @@ export async function pickVersionsToBuild(candidates: VersionCandidate[]): Promi
  * there are no projects, so this costs nothing; the cap keeps it cheap for
  * someone with a large workspace.
  */
+/** Git repositories directly under the configured custom addons folder. */
+function discoverAddonsRepos(): Array<{ name: string; path: string }> {
+    const configured = vscode.workspace
+        .getConfiguration('odooDebugger')
+        .get<string>('defaultVersion.customAddonsPath', '')
+        .trim();
+    const root = configured ? normalizePath(configured) : '';
+    if (!root || !fs.existsSync(root)) {
+        return [];
+    }
+    try {
+        return fs.readdirSync(root, { withFileTypes: true })
+            .filter(entry => entry.isDirectory() && fs.existsSync(path.join(root, entry.name, '.git')))
+            .map(entry => ({ name: entry.name, path: path.join(root, entry.name) }));
+    } catch {
+        return [];
+    }
+}
+
 export async function collectRepoBranches(): Promise<RepoBranch[]> {
     try {
         const data = await SettingsStore.get('odoo-debugger-data.json');
-        const repos = (data.projects ?? [])
-            .flatMap((project: { repos?: Array<{ name: string; path: string }> }) => project.repos ?? [])
-            .slice(0, MAX_REPOS_SCANNED);
+        let repos: Array<{ name: string; path: string }> = (data.projects ?? [])
+            .flatMap((project: { repos?: Array<{ name: string; path: string }> }) => project.repos ?? []);
+
+        // On a first run there are no projects yet, which is exactly when this
+        // list is shown - so the repo-derived rows never materialised and every
+        // row read "stable release". Fall back to the addons folder setup has
+        // just recorded, which is where those repositories are.
+        if (repos.length === 0) {
+            repos = discoverAddonsRepos();
+        }
+        repos = repos.slice(0, MAX_REPOS_SCANNED);
 
         const branches: RepoBranch[] = [];
         for (const repo of repos) {

@@ -36,4 +36,26 @@ suite('Repository branch mode', () => {
         assert.ok(message.toLowerCase().includes('remove'));
         assert.ok(message.includes('psae-internal'));
     });
+
+    test('names an absolute path for the original checkout when given one', () => {
+        // The sentence promises a path; it used to print a bare repository name.
+        const message = describeModeChange(
+            'psae-internal', 'worktree', '/home/dev/odoo-dev', ['17.0'], '/home/dev/custom/psae-internal'
+        );
+        assert.ok(message.includes('/home/dev/custom/psae-internal'));
+    });
+
+    test('says nothing is created yet when no branches are mapped', () => {
+        // The ordinary state before the branch picker has been used: the old
+        // wording promised directories and then listed none.
+        const message = describeModeChange('psae-internal', 'worktree', '/home/dev/odoo-dev', []);
+        assert.ok(!message.includes('These directories will be created'));
+        assert.ok(message.includes('nothing is created now'));
+        assert.ok(message.includes('/home/dev/odoo-dev'));
+    });
+
+    test('turning the mode off speaks of copies, not worktrees', () => {
+        const message = describeModeChange('psae-internal', 'checkout', '/home/dev/odoo-dev', ['19.0']);
+        assert.ok(!/worktree/i.test(message), message);
+    });
 });

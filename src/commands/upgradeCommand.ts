@@ -87,7 +87,8 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
                     repoPath,
                     `Upgrading to — ${pick.repo.name}`,
                     'The branch this repository is upgraded on',
-                    seedTo
+                    seedTo,
+                    fromBranch
                 );
                 if (!toBranch) {
                     return;
@@ -190,11 +191,12 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
                         repo.name,
                         'worktree',
                         root,
-                        planned ? [planned.fromBranch, planned.toBranch] : []
+                        planned ? [planned.fromBranch, planned.toBranch] : [],
+                        normalizePath(repo.path)
                     ),
-                    'Create Worktrees'
+                    'Create Copies'
                 );
-                if (confirm !== 'Create Worktrees') {
+                if (confirm !== 'Create Copies') {
                     skipped.push(repo.name);
                     continue;
                 }

@@ -22,7 +22,11 @@ interface ProjectSelectionResult {
 async function getActiveProjectOrPrompt(): Promise<ProjectSelectionResult | undefined> {
     const data = await SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
-        void showInfo('No projects found. Create a project first.');
+        void showInfo('No projects yet.', 'Create Project').then(choice => {
+            if (choice === 'Create Project') {
+                void vscode.commands.executeCommand('projectSelector.create');
+            }
+        });
         return undefined;
     }
 
@@ -131,7 +135,11 @@ export async function openProjectWorkspace(context: vscode.ExtensionContext): Pr
 export async function quickSwitchProjectWorkspace(context: vscode.ExtensionContext): Promise<void> {
     const data = await SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
-        void showInfo('No projects found. Create a project first.');
+        void showInfo('No projects yet.', 'Create Project').then(choice => {
+            if (choice === 'Create Project') {
+                void vscode.commands.executeCommand('projectSelector.create');
+            }
+        });
         return;
     }
 

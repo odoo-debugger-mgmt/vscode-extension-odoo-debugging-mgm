@@ -161,7 +161,7 @@ async function cloneRepository(
 export async function provisionAndCreateVersion(
     branch: string,
     name: string,
-    options: { silent?: boolean } = {}
+    options: { silent?: boolean; skipPlan?: boolean } = {}
 ): Promise<VersionModel | undefined> {
     const setup = readSetupState();
     if (!setup.isConfigured || !setup.sourceRepo) {
@@ -187,9 +187,11 @@ export async function provisionAndCreateVersion(
         root: setup.provisioningRoot
     };
 
-    // A queued entry was already chosen from the multi-select; asking again
-    // per version would defeat the point of queueing them.
-    if (!options.silent) {
+    // A version chosen from the multi-select was already committed to, queued
+    // or not: asking "provision or profile only?" straight afterwards is the
+    // decision arriving after it was made. `skipPlan` keeps the completion
+    // message that `silent` also suppresses.
+    if (!options.silent && !options.skipPlan) {
         const plan = buildPlan(spec, await probeProvision(spec));
         const detail = plan
             .map(step => `${step.status === 'satisfied' ? '$(check)' : '$(add)'} ${step.label}`)

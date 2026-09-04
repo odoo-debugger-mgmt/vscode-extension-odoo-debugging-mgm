@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as path from 'node:path';
-import { diagnoseVersion, migratable } from '../services/versionMigration';
+import { diagnoseVersion, migratable, needsAttention } from '../services/versionMigration';
 
 const ROOT = '/home/dev/odoo-dev';
 
@@ -133,5 +133,37 @@ suite('Version migration diagnosis', () => {
         ]);
 
         assert.deepStrictEqual(entries.map(entry => entry.versionId), ['c', 'd', 'b']);
+    });
+
+    test('a version running out of the source repository is diagnosed as such even when its interpreter is gone', () => {
+        // The legacy 1.2 shape: a hand-built ./odoo that IS the source repo,
+        // beside a ./venv that has since been deleted. Checking the interpreter
+        // first called this "unprovisioned" and lost the unsafe framing.
+        const source = '/home/dev/src/odoo';
+        const diagnosis = diagnoseVersion(
+            {
+                id: 'v17',
+                name: 'Odoo 17.0',
+                odooVersion: '17.0',
+                odooPath: source,
+                pythonPath: '/home/dev/src/venv/bin/python'
+            },
+            ROOT,
+            probe(source),
+            source
+        );
+        assert.strictEqual(diagnosis.health, 'source-repo');
+        assert.ok(diagnosis.detail.includes('switches that repository'));
+    });
+
+    test('source-repo outranks every other unhealthy state', () => {
+        const source = '/home/dev/src/odoo';
+        const ranked = needsAttention([
+            { versionId: 'a', name: 'A', health: 'missing', expectedOdooPath: '', detail: '' },
+            { versionId: 'b', name: 'B', health: 'source-repo', expectedOdooPath: '', detail: '' },
+            { versionId: 'c', name: 'C', health: 'unprovisioned', expectedOdooPath: '', detail: '' }
+        ]);
+        assert.strictEqual(ranked[0].versionId, 'b');
+        assert.ok(source.length > 0);
     });
 });
