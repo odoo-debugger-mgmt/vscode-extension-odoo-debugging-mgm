@@ -52,8 +52,14 @@ export function registerProjectCommands(deps: CommandDeps): void {
             const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
             if (!workspaceFolder) { throw new Error('Open a workspace to use this command.'); }
             const name = await getProjectName(workspaceFolder);
+            if (!name) {
+                return; // Cancelled at the name.
+            }
             const customAddonsPath = normalizePath(settings.customAddonsPath);
             const repos = await getRepo(customAddonsPath, name); // Pass project name as search filter
+            if (!repos) {
+                return; // Cancelled at the repository picker.
+            }
             const databaseChoice = await vscode.window.showQuickPick([
                 {
                     label: 'Create a new database',
@@ -169,15 +175,21 @@ export function registerProjectCommands(deps: CommandDeps): void {
 
         // The first is built in the foreground so work can start; the rest
         // are queued and drained one at a time.
+        //
+        // Enqueued *after* the foreground build, not before: a drain started at
+        // activation re-reads the queue on every iteration, so entries written
+        // up front get picked up immediately and a queued `pip install` runs
+        // beside the foreground one - exactly the wheel-cache contention the
+        // one-at-a-time queue exists to prevent.
         const [first, ...rest] = branches;
+        await provisionAndCreateVersion(first, `Odoo ${first}`);
+        await refreshAll({ reason: 'ui' });
+
         if (rest.length > 0) {
             const queued = enqueue(readQueue(context), rest.map(branch => ({ branch, name: `Odoo ${branch}` })));
             setQueueSnapshot(queued);
             await writeQueue(context, queued);
         }
-
-        await provisionAndCreateVersion(first, `Odoo ${first}`);
-        await refreshAll({ reason: 'ui' });
         void drainProvisionQueue(context, () => void refreshAll({ reason: 'ui' }));
         // Offered alongside the drain, so a long build can be abandoned
         // without waiting it out.

@@ -34,6 +34,7 @@ import { registerWrongCopyGuard } from './services/wrongCopyGuard';
 import { diagnoseVersion, migratable } from './services/versionMigration';
 import type { VersionModel } from './models/version';
 import { branchToSeries } from './services/versionProposal';
+import { sanitizeProjectRepoBranchAssignments } from './services/environment';
 import { getRepoBranch } from './services/branches';
 import { readSetupState, shouldAdoptLegacySourceRepo, readRawSetupSettings, writeSetupSettings } from './services/setupState';
 import { showInfo } from './services/notifications';
@@ -374,8 +375,25 @@ async function promptUpgradeSetup(context: vscode.ExtensionContext): Promise<voi
         return;
     }
 
+    // Branches already recorded on the databases answer the same question with
+    // no subprocess. Git is the fallback, not the first move: this runs on the
+    // startup path, and spawning one process per repository there is a real
+    // cost for a notification most users see once.
+    const recorded = new Map<string, string>();
+    for (const db of result.project.dbs ?? []) {
+        for (const entry of sanitizeProjectRepoBranchAssignments(db.projectRepoBranches)) {
+            const key = normalizePath(entry.repoPath || '') || entry.repoName;
+            if (key && !recorded.has(key)) {
+                recorded.set(key, entry.branch);
+            }
+        }
+    }
+
     for (const repo of result.project.repos ?? []) {
-        const branch = await getRepoBranch(normalizePath(repo.path));
+        const repoPath = normalizePath(repo.path);
+        const branch = recorded.get(repoPath)
+            ?? recorded.get(repo.name)
+            ?? (await getRepoBranch(repoPath));
         const series = branch ? branchToSeries(branch) : undefined;
         if (!series || existing.has(series)) {
             continue;

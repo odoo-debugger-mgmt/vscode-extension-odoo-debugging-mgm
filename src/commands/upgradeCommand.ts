@@ -58,53 +58,79 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
                 return;
             }
 
-            // Both branches are picked from what the repository actually has.
-            // Asking the user to type them was the same defect this release
-            // fixed for the Odoo branch: a branch typed from memory is a
-            // branch that gets misspelled, and the error arrives much later.
-            const branchRepoPath = normalizePath(pickedRepos[0].repo.path);
-            const currentBranch = await getRepoBranch(branchRepoPath);
+            // Asked per repository. Reading both branches from the first
+            // repository and applying them to the rest produced one correct
+            // assignment and one naming a branch the second repository does
+            // not have - surfacing much later as a checkout failure during a
+            // database switch. Each picker is seeded with the previous
+            // repository's answer, so repos that share a naming convention
+            // are still Enter-Enter.
+            const upgradeRepos: UpgradeRepo[] = [];
+            let seedFrom: string | undefined;
+            let seedTo: string | undefined;
 
-            const fromBranch = await pickRepoBranch(
-                branchRepoPath,
-                'Upgrading from',
-                'The branch your custom code is on today',
-                currentBranch ?? undefined
-            );
-            if (!fromBranch) {
-                return;
+            for (const pick of pickedRepos) {
+                const repoPath = normalizePath(pick.repo.path);
+                const onDisk = await getRepoBranch(repoPath);
+
+                const fromBranch = await pickRepoBranch(
+                    repoPath,
+                    `Upgrading from — ${pick.repo.name}`,
+                    'The branch this repository is on today',
+                    seedFrom ?? onDisk ?? undefined
+                );
+                if (!fromBranch) {
+                    return;
+                }
+
+                const toBranch = await pickRepoBranch(
+                    repoPath,
+                    `Upgrading to — ${pick.repo.name}`,
+                    'The branch this repository is upgraded on',
+                    seedTo
+                );
+                if (!toBranch) {
+                    return;
+                }
+
+                seedFrom = fromBranch;
+                seedTo = toBranch;
+                upgradeRepos.push({
+                    name: pick.repo.name,
+                    path: pick.repo.path,
+                    fromBranch: fromBranch.trim(),
+                    toBranch: toBranch.trim()
+                });
             }
 
-            const toBranch = await pickRepoBranch(
-                branchRepoPath,
-                'Upgrading to',
-                'The branch the upgraded code lives on',
-                currentBranch ?? undefined
-            );
-            if (!toBranch) {
-                return;
-            }
+            // The series must agree across repositories: they are what the two
+            // versions are built for, and one pair of versions serves them all.
+            const seriesOf = (branches: string[], label: string): string | undefined => {
+                const mapped = branches.map(branch => branchToSeries(branch));
+                const bad = mapped.findIndex(series => !series);
+                if (bad >= 0) {
+                    void showError(`"${branches[bad]}" does not name an Odoo series (e.g. "17.0-client").`);
+                    return undefined;
+                }
+                const unique = Array.from(new Set(mapped as string[]));
+                if (unique.length > 1) {
+                    void showError(
+                        `The "${label}" branches are on different Odoo series (${unique.join(', ')}). `
+                        + 'One upgrade runs between two series.');
+                    return undefined;
+                }
+                return unique[0];
+            };
 
-            const fromSeries = branchToSeries(fromBranch);
-            const toSeries = branchToSeries(toBranch);
+            const fromSeries = seriesOf(upgradeRepos.map(repo => repo.fromBranch), 'upgrading from');
+            const toSeries = seriesOf(upgradeRepos.map(repo => repo.toBranch), 'upgrading to');
             if (!fromSeries || !toSeries) {
-                // Reachable now that the branches are picked rather than
-                // validated on the way in.
-                void showError(
-                    `"${!fromSeries ? fromBranch : toBranch}" does not name an Odoo series (e.g. "17.0-client").`);
                 return;
             }
             if (fromSeries === toSeries) {
                 void showError('Both branches are on the same Odoo series, so there is nothing to run side by side.');
                 return;
             }
-
-            const upgradeRepos: UpgradeRepo[] = pickedRepos.map(pick => ({
-                name: pick.repo.name,
-                path: pick.repo.path,
-                fromBranch: fromBranch.trim(),
-                toBranch: toBranch.trim()
-            }));
 
             const versionIdBySeries: Record<string, string | undefined> = {};
             for (const version of versionsService.getVersions()) {
@@ -156,8 +182,16 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
                 if (repo.branchMode === 'worktree') {
                     continue;
                 }
+                // Each repository's own pair: the modal names the directories
+                // that will be created, and those follow this repo's branches.
+                const planned = upgradeRepos.find(entry => entry.name === repo.name);
                 const confirm = await showModalWarning(
-                    describeModeChange(repo.name, 'worktree', root, [fromBranch.trim(), toBranch.trim()]),
+                    describeModeChange(
+                        repo.name,
+                        'worktree',
+                        root,
+                        planned ? [planned.fromBranch, planned.toBranch] : []
+                    ),
                     'Create Worktrees'
                 );
                 if (confirm !== 'Create Worktrees') {

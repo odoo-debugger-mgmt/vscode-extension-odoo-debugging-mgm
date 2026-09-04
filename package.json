@@ -613,6 +613,12 @@
         "icon": "$(repo-forked)"
       },
       {
+        "command": "odt.repo.resolveWorktrees",
+        "title": "Create Missing Per-Branch Copies",
+        "category": "Odoo DevTools",
+        "icon": "$(repo-sync)"
+      },
+      {
         "command": "odoo.chooseCustomAddonsPath",
         "title": "Choose Custom Addons Folder",
         "category": "Odoo DevTools",
@@ -1372,7 +1378,7 @@
       {
         "view": "repoSelector",
         "when": "odoo-debugger.is_active",
-        "contents": "No repositories found. Repositories are discovered in your custom addons folder.\n[Choose Custom Addons Folder](command:odoo.chooseCustomAddonsPath)\n[Manage Versions](command:odoo.manageVersions)"
+        "contents": "No repositories found. Repositories are discovered in your custom addons folder.\n[Choose Custom Addons Folder](command:odoo.chooseCustomAddonsPath)\n[Create Project](command:projectSelector.create)"
       },
       {
         "view": "moduleSelector",

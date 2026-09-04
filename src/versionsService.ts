@@ -289,6 +289,30 @@ export class VersionsService {
     }
 
     /**
+     * Re-derives a version's identity for the branch it now names.
+     *
+     * `healIdentities` deliberately keeps a stored identity that is complete
+     * and non-colliding, so a branch change alone never reaches it: the
+     * version would keep the old branch's debugger name and ports and report
+     * them in the Run and Debug dropdown. Changing the branch is the one edit
+     * that has to override a perfectly valid stored identity.
+     */
+    public async rederiveIdentity(versionId: string): Promise<void> {
+        await this.initialize();
+        const version = this.versions.get(versionId);
+        if (!version) {
+            return;
+        }
+        version.settings = {
+            ...version.settings,
+            ...(await this.deriveFreshIdentity(version.odooVersion, version.id))
+        };
+        version.updatedAt = new Date();
+        await this.saveVersions();
+        vscode.commands.executeCommand('odoo.versionsChanged');
+    }
+
+    /**
      * Create a new version
      */
     public async createVersion(name: string, odooVersion: string, settingsOverrides: Partial<VersionSettings> = {}): Promise<VersionModel> {

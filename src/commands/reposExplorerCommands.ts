@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import type { CommandDeps } from './index';
 import { extractUri } from './args';
 import { showInfo, showError } from '../services/notifications';
+import { ensureCustomWorktrees } from '../services/customWorktree';
 import { showAutoInfo } from '../services/notifications';
 import { SettingsStore } from '../settingsStore';
 import { stripSettings } from '../utils';
@@ -24,7 +25,7 @@ import { errorMessage, logger } from '../services/logger';
 import { tryRunCommand } from '../services/process';
 import { removeWorktree } from '../services/worktree';
 import { readSetupState } from '../services/setupState';
-import { describeModeChange, resolveRepoPath } from '../services/repoPaths';
+import { describeModeChange, resolveRepoPath, resolveProjectRepos } from '../services/repoPaths';
 import { parsePorcelainStatus } from '../services/sourceConflict';
 import { normalizeBranchMode, RepoBranchMode, RepoModel } from '../models/repo';
 import { sanitizeProjectRepoBranchAssignments } from '../services/environment';
@@ -98,6 +99,57 @@ export function registerRepoBranchModeCommand(deps: CommandDeps): void {
     }));
 }
 
+/**
+ * `odt.repo.resolveWorktrees`: creates the per-branch copies the debugger sync
+ * could not, asking about any branch the source checkout is holding.
+ *
+ * This is the interactive half of the split: the sync creates what needs no
+ * arbitration and reports the rest, and this command is where the questions
+ * are allowed to happen, because the user started it.
+ */
+export function registerResolveWorktreesCommand(deps: CommandDeps): void {
+    const { context, refreshAll } = deps;
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('odt.repo.resolveWorktrees', async () => {
+            try {
+                const result = await SettingsStore.getSelectedProject();
+                if (!result) {
+                    return;
+                }
+                const { project } = result;
+                const root = readSetupState().provisioningRoot;
+
+                // Every branch any of this project's databases maps, so one
+                // pass fixes the whole project rather than one version of it.
+                const assignments = (project.dbs ?? []).flatMap(db =>
+                    sanitizeProjectRepoBranchAssignments(db.projectRepoBranches));
+                const resolved = resolveProjectRepos(project.repos ?? [], assignments, root);
+                const pending = resolved.filter(entry => entry.isWorktree);
+
+                if (pending.length === 0) {
+                    void showInfo('No repositories are set to one copy per branch.');
+                    return;
+                }
+
+                const { problems } = await vscode.window.withProgress(
+                    { location: vscode.ProgressLocation.Notification, title: 'Creating per-branch copies', cancellable: true },
+                    (_progress, token) => ensureCustomWorktrees(pending, token, { interactive: true })
+                );
+
+                await refreshAll();
+                if (problems.length > 0) {
+                    void showWarning(`Still using the source checkout — ${problems.join('; ')}`);
+                } else {
+                    void showInfo('Every repository now has its own copy per branch.');
+                }
+            } catch (error) {
+                void showError(`Could not create the per-branch copies: ${errorMessage(error)}`);
+            }
+        })
+    );
+}
+
 async function copyPathToClipboard(uri: vscode.Uri | undefined, relative: boolean): Promise<void> {
     if (!uri) {
         void showInfo('Select a file or folder first.');
@@ -140,6 +192,7 @@ async function openUriInIntegratedTerminal(uri: vscode.Uri | undefined): Promise
 
 export function registerReposExplorerCommands(deps: CommandDeps): void {
     registerRepoBranchModeCommand(deps);
+    registerResolveWorktreesCommand(deps);
     const { context, providers } = deps;
 
     // Tree context menus pass the tree node (which carries `.uri`), while

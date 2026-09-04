@@ -35,8 +35,19 @@ async function pickOtherBranch(sourcePath: string, exclude: string): Promise<str
 /**
  * Frees `branch` from the source checkout, asking first. Returns true when the
  * branch is available afterwards.
+ *
+ * `interactive` is what separates a command from a sync. The debugger sync
+ * runs after almost every command and on a 200 ms debounce; raising a modal
+ * about someone's working tree from there is a question nobody asked, and
+ * running `git switch` in a directory they own is worse. Non-interactive
+ * callers report the conflict instead and leave the decision to the offer.
  */
-async function freeBranch(sourcePath: string, repoName: string, branch: string): Promise<boolean> {
+async function freeBranch(
+    sourcePath: string,
+    repoName: string,
+    branch: string,
+    interactive: boolean
+): Promise<boolean> {
     const conflict = classifySourceConflict(
         await getRepoBranch(sourcePath),
         branch,
@@ -49,7 +60,14 @@ async function freeBranch(sourcePath: string, repoName: string, branch: string):
 
     const message = describeSourceConflict(conflict, repoName);
     if (conflict.kind === 'dirty') {
-        void showWarning(message);
+        if (interactive) {
+            void showWarning(message);
+        }
+        return false;
+    }
+
+    if (!interactive) {
+        // Arbitration belongs to a command the user started.
         return false;
     }
 
@@ -82,10 +100,14 @@ async function freeBranch(sourcePath: string, repoName: string, branch: string):
  */
 export async function ensureCustomWorktrees(
     resolved: ResolvedRepo[],
-    token?: vscode.CancellationToken
-): Promise<{ ready: ResolvedRepo[]; problems: string[] }> {
+    token?: vscode.CancellationToken,
+    options: { interactive?: boolean } = {}
+): Promise<{ ready: ResolvedRepo[]; problems: string[]; needsResolution: string[] }> {
+    const interactive = options.interactive ?? false;
     const ready: ResolvedRepo[] = [];
     const problems: string[] = [];
+    /** Repositories a command could still fix by asking. */
+    const needsResolution: string[] = [];
 
     for (const entry of resolved) {
         if (!entry.isWorktree || !entry.branch) {
@@ -95,8 +117,9 @@ export async function ensureCustomWorktrees(
 
         const sourcePath = entry.repo.path;
         try {
-            if (!(await freeBranch(sourcePath, entry.repo.name, entry.branch))) {
+            if (!(await freeBranch(sourcePath, entry.repo.name, entry.branch, interactive))) {
                 problems.push(`${entry.repo.name}: could not free "${entry.branch}" from its source checkout`);
+                needsResolution.push(entry.repo.name);
                 ready.push({ ...entry, path: sourcePath, isWorktree: false });
                 continue;
             }
@@ -110,5 +133,5 @@ export async function ensureCustomWorktrees(
         }
     }
 
-    return { ready, problems };
+    return { ready, problems, needsResolution };
 }

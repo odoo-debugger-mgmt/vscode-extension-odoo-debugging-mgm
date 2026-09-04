@@ -91,6 +91,7 @@ export async function setupDebugger(): Promise<any> {
     // same branch is often shared by several versions.
     const setupRoot = readSetupState().provisioningRoot;
     const worktreeProblems = new Set<string>();
+    const worktreesNeedingResolution = new Set<string>();
 
     let activeConfig: unknown;
 
@@ -101,12 +102,20 @@ export async function setupDebugger(): Promise<any> {
 
         const versionDb = resolveDbForVersion(project.dbs, project.selectedDbByVersion, version.id);
         if (versionDb) {
-            const { problems } = await ensureCustomWorktrees(resolveProjectRepos(
-                project.repos ?? [],
-                resolveProjectRepoBranchAssignments(versionDb, project.repos ?? []),
-                setupRoot
-            ));
+            // Non-interactive on purpose: this sync runs on a debounce after
+            // almost every command, so it creates the worktrees that need no
+            // arbitration and reports the rest instead of raising a modal.
+            const { problems, needsResolution } = await ensureCustomWorktrees(
+                resolveProjectRepos(
+                    project.repos ?? [],
+                    resolveProjectRepoBranchAssignments(versionDb, project.repos ?? []),
+                    setupRoot
+                ),
+                undefined,
+                { interactive: false }
+            );
             problems.forEach(problem => worktreeProblems.add(problem));
+            needsResolution.forEach(name => worktreesNeedingResolution.add(name));
         }
 
         let args: string[];
@@ -152,7 +161,22 @@ export async function setupDebugger(): Promise<any> {
     }
 
     if (worktreeProblems.size > 0) {
-        void showWarning(`Some repositories fell back to their source checkout — ${Array.from(worktreeProblems).join('; ')}`);
+        const names = Array.from(worktreesNeedingResolution);
+        if (names.length > 0) {
+            // Offered, not forced: freeing the branch edits a checkout the
+            // user owns, so it happens inside a command they started.
+            void showWarning(
+                `${names.join(', ')} ${names.length === 1 ? 'is' : 'are'} using the source checkout: `
+                + 'the branch each needs is checked out there.',
+                'Resolve'
+            ).then(choice => {
+                if (choice === 'Resolve') {
+                    void vscode.commands.executeCommand('odt.repo.resolveWorktrees');
+                }
+            });
+        } else {
+            void showWarning(`Some repositories fell back to their source checkout — ${Array.from(worktreeProblems).join('; ')}`);
+        }
     }
 
     await selectPythonInterpreter(activeSettings.pythonPath);

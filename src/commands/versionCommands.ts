@@ -13,6 +13,7 @@ import { pickOdooBranch } from './branchPick';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from '../services/runtimeCache';
 import { alignEnvironment } from '../services/environment';
 import { provisionAndCreateVersion, provisionExistingVersion } from '../odooInstaller';
+import { isVersionProvisioned } from '../services/provisioning';
 import { removeWorktree, removeManagedBranch, resolveSourceRepo } from '../services/worktree';
 import { buildServerUrl, waitForPort } from '../services/server';
 import { resolveDbForVersion } from '../services/dbResolution';
@@ -209,8 +210,35 @@ export function registerVersionCommands(deps: CommandDeps): void {
                 return; // No change or cancelled
             }
 
+            // A provisioned version's environment is built for its branch: its
+            // worktree, its interpreter and its derived debugger name and ports
+            // all belong to the old one. Writing odooVersion alone left a
+            // version that claimed one branch, ran another, and reported a
+            // third in the Run and Debug dropdown, with nothing saying so.
+            const provisioned = isVersionProvisioned(resolveOptionalPath(version.settings.pythonPath));
+            if (provisioned) {
+                const choice = await showModalWarning(
+                    `"${version.name}" has an environment built for ${version.odooVersion}: its own worktree, `
+                    + `interpreter and virtualenv.\n\nChanging the branch to ${newBranch} means rebuilding that `
+                    + 'environment. Nothing is deleted - the existing directories stay where they are.',
+                    'Change and Rebuild'
+                );
+                if (choice !== 'Change and Rebuild') {
+                    return;
+                }
+            }
+
             await versionsService.updateVersion(versionId, { odooVersion: newBranch });
-            void showInfo(`Branch changed from "${version.odooVersion}" to "${newBranch}" for version "${version.name}"`);
+            // The identity is derived from the branch, so it has to be re-derived
+            // or the version keeps the old branch's debugger name and ports.
+            await versionsService.rederiveIdentity(versionId);
+
+            if (provisioned) {
+                await provisionExistingVersion(versionId);
+            } else {
+                void showInfo(`Branch changed from "${version.odooVersion}" to "${newBranch}" for version "${version.name}"`);
+            }
+            await refreshAll();
         } catch (error) {
             void showError(`Failed to change branch: ${errorMessage(error)}`);
         }

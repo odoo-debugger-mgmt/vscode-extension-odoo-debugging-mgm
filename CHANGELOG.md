@@ -28,7 +28,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - **Database creation asks which branch each project repository should use** instead of silently recording whatever was checked out at the time.
 - `db.branchName` is removed: a database's core branch comes from its version, which is the only place it was ever authoritative. Legacy values are folded into the database's Odoo version where no version profile matches.
 - Switch notifications say what will actually happen — reusing an existing worktree, checking out a branch, or reporting a missing environment — rather than always promising a checkout. Rapid database selections no longer leave two contradictory prompts standing.
-- **Use One Copy Per Branch** and **Set Up an Upgrade** are on the repository right-click menu in the **Repos** view, not only in Project Repos.
+- **Per-repository branch mapping is one picker, not one dialog per repository.** Every row is pre-seeded with the branch already mapped, or the branch the repository is on, so the common case is a single confirmation instead of N; only rows that are wrong cost anything. Cancelling no longer discards every answer given so far.
+- **The upgrade flow asks per repository.** Reading both branches from the first repository and applying them to the rest produced a branch assignment naming a branch the other repositories did not have, surfacing much later as a checkout failure.
+- **The debugger sync no longer arbitrates git state.** It creates the per-branch copies that need no decision and reports the rest as an offer; the modal that asks to move or detach a source checkout now only appears inside a command you started. **Create Missing Per-Branch Copies** is that command.
+- **Change Branch rebuilds the version's environment** instead of leaving it running the old branch under the old branch's debugger name and ports.
+- Cancelling project creation is no longer reported as an error.
+- - **Use One Copy Per Branch** and **Set Up an Upgrade** are on the repository right-click menu in the **Repos** view, not only in Project Repos.
 - The upgrade flow picks both branches from the repository instead of asking you to type them, and shows its plan as a readable modal.
 - **Choose Custom Addons Folder** is a command and an action on the empty Repos view; choosing a folder now updates the active version, so discovery picks it up immediately instead of only affecting versions created later.
 - Actions that need a project no longer stack a second, less useful notification on top of the one that offers **Create Project** / **Select Project**.
@@ -37,7 +42,9 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Fixed
 
-- **Migrating a version built before provisioning no longer duplicates it.** Accepting *Migrate* rebuilt the environment but created a second version for the same branch, on a shifted port; the existing version is now repointed in place.
+- **The version offered when a database's Odoo series has no profile can now run.** It created a bare profile that Start Server immediately refused; it goes through provisioning.
+- Setup no longer queues the remaining versions before the foreground build finishes, which let a queued `pip install` run beside it.
+- - **Migrating a version built before provisioning no longer duplicates it.** Accepting *Migrate* rebuilt the environment but created a second version for the same branch, on a shifted port; the existing version is now repointed in place.
 - Stale `git worktree` records no longer reserve a branch a new version needs (the `'odt/19.0' is already used by worktree at ...` failure).
 - Interpreter selection steps up to the next supported Python when a pinned requirement has no wheel for the closest match.
 - The branch picker opens immediately instead of after enumerating every ref.

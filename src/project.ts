@@ -370,7 +370,7 @@ export async function selectProject(projectUid: string) {
     }
 }
 
-export async function getRepo(targetPath:string, searchFilter?: string): Promise<RepoModel[] > {
+export async function getRepo(targetPath: string, searchFilter?: string): Promise<RepoModel[] | undefined> {
     let scanPath = targetPath;
     let devsRepos = findRepositories(scanPath);
 
@@ -433,25 +433,22 @@ export async function getRepo(targetPath:string, searchFilter?: string): Promise
         matchOnDetail: true
     });
 
-    if (selectedItems) {
-        return selectedItems.map(item => {
-            return new RepoModel(item.label, item.description, true);
-        });
-    }else{
-        void showError("Select at least one folder to continue.");
-        throw new Error("Select at least one folder to continue.");
+    // Escape is a decision, not a failure: the caller stops quietly rather
+    // than showing a red error for a mind that was changed.
+    if (!selectedItems) {
+        return undefined;
     }
+    return selectedItems.map(item => new RepoModel(item.label, item.description, true));
 }
 
-export async function getProjectName(_workspaceFolder?: vscode.WorkspaceFolder): Promise<string> {
+export async function getProjectName(_workspaceFolder?: vscode.WorkspaceFolder): Promise<string | undefined> {
     const name = await vscode.window.showInputBox({
         prompt: "Enter a name for your new project",
         title: "Project Name",
         placeHolder: "e.g., My Odoo Project"
     });
     if (!name) {
-        void showError('Enter a project name to continue.');
-        throw new Error('Enter a project name to continue.');
+        return undefined;
     }
     return name;
 }

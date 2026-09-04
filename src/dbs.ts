@@ -8,6 +8,7 @@ import { RepoModel } from './models/repo';
 import { DatabaseTemplateModel } from './models/dbTemplate';
 import { SettingsModel } from './models/settings';
 import { normalizePath, getGitBranches, stripSettings, getDatabaseLabel, DebuggerData } from './utils';
+import { provisionAndCreateVersion } from './odooInstaller';
 import { showError, showInfo, showWarning, showAutoInfo, showBriefStatus, showModalWarning } from './services/notifications';
 import { logger, errorMessage } from './services/logger';
 import { getRepoBranch } from './services/branches';
@@ -190,100 +191,192 @@ export async function promptProjectRepoBranchAssignments(
         return mapped.filter((entry): entry is ProjectRepoBranchAssignment => !!entry);
     }
 
-    const assignments: ProjectRepoBranchAssignment[] = [];
-    for (let i = 0; i < repos.length; i++) {
-        const repo = repos[i];
+    return pickBranchPerRepo(repos, existingByPath, existingByName, mode);
+}
+
+/**
+ * One picker that stays open, instead of one dialog per repository.
+ *
+ * Every row is pre-seeded with the branch already mapped, or failing that the
+ * branch the repository is on, so the common case - every repo already where
+ * it should be - is a single Enter on Done. Only the rows that are wrong cost
+ * anything. The sequential version asked N questions and threw all N away if
+ * the last one was cancelled.
+ */
+async function pickBranchPerRepo(
+    repos: RepoModel[],
+    existingByPath: Map<string, ProjectRepoBranchAssignment>,
+    existingByName: Map<string, ProjectRepoBranchAssignment>,
+    mode: 'create' | 'edit'
+): Promise<ProjectRepoBranchAssignment[] | undefined> {
+    type Row = vscode.QuickPickItem & { repoPath?: string; done?: boolean };
+
+    const changeButton: vscode.QuickInputButton = {
+        iconPath: new vscode.ThemeIcon('edit'),
+        tooltip: 'Choose a different branch'
+    };
+    const clearButton: vscode.QuickInputButton = {
+        iconPath: new vscode.ThemeIcon('circle-slash'),
+        tooltip: 'Do not map this repository'
+    };
+
+    // Seed: mapped branch wins over the branch the repository is on.
+    const chosen = new Map<string, string | undefined>();
+    const names = new Map<string, string>();
+    for (const repo of repos) {
         const repoPath = normalizePath(repo.path);
+        names.set(repoPath, repo.name);
         const existing = existingByPath.get(repoPath) ?? existingByName.get(repo.name.toLowerCase());
-        const existingBranch = existing?.branch;
-        const currentBranch = await getRepoBranch(repoPath);
-        const branches = await getGitBranches(repoPath);
-        const uniqueBranches = Array.from(new Set([
-            ...(existingBranch ? [existingBranch] : []),
-            ...(currentBranch ? [currentBranch] : []),
-            ...branches
-        ]));
-        const selectableBranches = uniqueBranches.filter(branch => branch !== currentBranch && branch !== existingBranch);
-
-        const options: Array<{ label: string; description?: string; detail?: string; action: 'use' | 'custom' | 'skip'; branch?: string }> = [
-            ...(existingBranch ? [{
-                label: `$(bookmark) Keep mapped branch (${existingBranch})`,
-                description: repo.name,
-                action: 'use' as const,
-                branch: existingBranch
-            }] : []),
-            ...(currentBranch ? [{
-                label: `$(git-branch) Keep current branch (${currentBranch})`,
-                description: repo.name,
-                action: 'use' as const,
-                branch: currentBranch
-            }] : []),
-            ...selectableBranches.map(branch => ({
-                label: branch,
-                description: repo.name,
-                action: 'use' as const,
-                branch
-            })),
-            {
-                label: '$(pencil) Enter a custom branch',
-                description: repo.name,
-                action: 'custom' as const
-            },
-            {
-                label: mode === 'edit' && existingBranch
-                    ? '$(close) Keep existing mapping for this repository'
-                    : '$(close) Skip this repository',
-                description: repo.name,
-                action: 'skip' as const
-            }
-        ];
-
-        const picked = await vscode.window.showQuickPick(options, {
-            placeHolder: `[${i + 1}/${repos.length}] Select branch for repository "${repo.name}"${existingBranch ? ` (mapped: ${existingBranch})` : ''}`,
-            ignoreFocusOut: true
-        });
-
-        if (!picked) {
-            return undefined;
-        }
-
-        if (picked.action === 'skip') {
-            if (mode === 'edit' && existingBranch) {
-                assignments.push({
-                    repoName: repo.name,
-                    repoPath,
-                    branch: existingBranch
-                });
-            }
-            continue;
-        }
-
-        let branch = picked.branch;
-        if (picked.action === 'custom') {
-            const customBranchInput = await vscode.window.showInputBox({
-                placeHolder: existingBranch ?? currentBranch ?? 'Enter branch name',
-                value: existingBranch ?? currentBranch ?? '',
-                prompt: `Enter the branch to checkout for "${repo.name}" when this DB is selected`,
-                ignoreFocusOut: true
-            });
-            if (customBranchInput === undefined) {
-                return undefined;
-            }
-            branch = customBranchInput.trim();
-        }
-
-        if (!branch) {
-            continue;
-        }
-
-        assignments.push({
-            repoName: repo.name,
-            repoPath,
-            branch
-        });
+        chosen.set(repoPath, existing?.branch ?? (await getRepoBranch(repoPath)) ?? undefined);
     }
 
-    return assignments;
+    const collect = (): ProjectRepoBranchAssignment[] =>
+        repos
+            .map(repo => {
+                const repoPath = normalizePath(repo.path);
+                const branch = chosen.get(repoPath);
+                return branch ? { repoName: repo.name, repoPath, branch } : undefined;
+            })
+            .filter((entry): entry is ProjectRepoBranchAssignment => !!entry);
+
+    const buildRows = (): Row[] => {
+        const mapped = collect().length;
+        return [
+            {
+                label: `$(check) Done`,
+                description: `${mapped} of ${repos.length} repositories mapped`,
+                done: true
+            },
+            { label: '', kind: vscode.QuickPickItemKind.Separator },
+            ...repos.map(repo => {
+                const repoPath = normalizePath(repo.path);
+                const branch = chosen.get(repoPath);
+                return {
+                    label: `${branch ? '$(git-branch)' : '$(circle-slash)'} ${repo.name}`,
+                    description: branch ?? 'not mapped',
+                    detail: repoPath,
+                    repoPath,
+                    buttons: [changeButton, clearButton]
+                } as Row;
+            })
+        ];
+    };
+
+    const picker = vscode.window.createQuickPick<Row>();
+    picker.title = mode === 'edit' ? 'Project repository branches' : 'Branches for this database';
+    picker.placeholder = 'Enter on a repository changes its branch; Done applies the list';
+    picker.matchOnDescription = true;
+    picker.ignoreFocusOut = true;
+    picker.keepScrollPosition = true;
+    picker.items = buildRows();
+
+    // A nested picker hides this one; without this flag that reads as a cancel.
+    let suspended = false;
+    let result: ProjectRepoBranchAssignment[] | undefined;
+
+    const changeBranch = async (repoPath: string) => {
+        suspended = true;
+        picker.hide();
+        try {
+            const branch = await pickBranchForRepo(repoPath, names.get(repoPath) ?? repoPath, chosen.get(repoPath));
+            if (branch !== undefined) {
+                chosen.set(repoPath, branch || undefined);
+            }
+        } finally {
+            // Cleared only after the picker is back up: onDidHide is not
+            // guaranteed to have fired by now, and a late one arriving with
+            // the flag already down would dispose the picker mid-edit.
+            picker.items = buildRows();
+            picker.show();
+            suspended = false;
+        }
+    };
+
+    await new Promise<void>(resolve => {
+        picker.onDidAccept(() => {
+            const active = picker.selectedItems[0] ?? picker.activeItems[0];
+            if (!active) {
+                return;
+            }
+            if (active.done) {
+                result = collect();
+                picker.hide();
+                return;
+            }
+            if (active.repoPath) {
+                void changeBranch(active.repoPath);
+            }
+        });
+
+        picker.onDidTriggerItemButton(event => {
+            const repoPath = event.item.repoPath;
+            if (!repoPath) {
+                return;
+            }
+            if (event.button === clearButton) {
+                chosen.set(repoPath, undefined);
+                picker.items = buildRows();
+                return;
+            }
+            void changeBranch(repoPath);
+        });
+
+        picker.onDidHide(() => {
+            if (suspended) {
+                return;
+            }
+            picker.dispose();
+            resolve();
+        });
+
+        picker.show();
+    });
+
+    return result;
+}
+
+/** The branch list for one repository, with manual entry as the escape. */
+async function pickBranchForRepo(
+    repoPath: string,
+    repoName: string,
+    current: string | undefined
+): Promise<string | undefined> {
+    const onDisk = await getRepoBranch(repoPath);
+    const branches = await getGitBranches(repoPath);
+    const ordered = Array.from(new Set([
+        ...(current ? [current] : []),
+        ...(onDisk ? [onDisk] : []),
+        ...branches
+    ]));
+
+    type Item = vscode.QuickPickItem & { branch?: string; custom?: boolean };
+    const items: Item[] = ordered.map(branch => ({
+        label: branch,
+        description: branch === current ? 'mapped' : branch === onDisk ? 'checked out' : undefined,
+        branch
+    }));
+    items.push({ label: '$(pencil) Enter a branch name…', custom: true });
+
+    const picked = await vscode.window.showQuickPick(items, {
+        title: `Branch for "${repoName}"`,
+        placeHolder: 'Which branch this database expects in this repository',
+        ignoreFocusOut: true,
+        matchOnDescription: true
+    });
+    if (!picked) {
+        return undefined;
+    }
+    if (!picked.custom) {
+        return picked.branch;
+    }
+
+    const entered = await vscode.window.showInputBox({
+        title: `Branch for "${repoName}"`,
+        value: current ?? onDisk ?? '',
+        prompt: 'Branch to check out when this database is selected',
+        ignoreFocusOut: true
+    });
+    return entered === undefined ? undefined : entered.trim();
 }
 
 /**
@@ -475,7 +568,15 @@ async function resolveVersionForNewDatabase(dbName: string, method: CreationMeth
             return;
         }
         try {
-            const created = await versionsService.createVersion(`Odoo ${series}`, series);
+            // Through the provisioning flow, not createVersion: a bare profile
+            // has no worktree and no interpreter, so Start Server refuses it
+            // straight after the user accepted something called "Create
+            // Version". That flow still offers "Profile only" for the case
+            // where an environment already exists.
+            const created = await provisionAndCreateVersion(`Odoo ${series}`, series);
+            if (!created) {
+                return;
+            }
             await linkDatabaseToVersion(dbName, created.id);
             showAutoInfo(`Created version "Odoo ${series}" and linked it to "${dbName}"`, 3000);
             await vscode.commands.executeCommand('dbSelector.refresh');
