@@ -14,6 +14,7 @@ import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } fr
 import { alignEnvironment } from '../services/environment';
 import { provisionAndCreateVersion, provisionExistingVersion } from '../odooInstaller';
 import { isVersionProvisioned } from '../services/provisioning';
+import { inputStep, runWizard, step } from '../services/wizard';
 import { removeWorktree, removeManagedBranch, resolveSourceRepo } from '../services/worktree';
 import { buildServerUrl, waitForPort } from '../services/server';
 import { resolveDbForVersion } from '../services/dbResolution';
@@ -130,17 +131,29 @@ export function registerVersionCommands(deps: CommandDeps): void {
             // version's worktree: on a first run there is no active version,
             // and the picker would fall back to a free-text box seconds after
             // setup configured a repository full of branches.
-            const odooVersion = await pickOdooBranch(readSetupState().sourceRepo, 'Create Version');
-            if (!odooVersion) { return; }
+            let odooVersion = '';
+            let name = '';
 
-            const name = (await vscode.window.showInputBox({
-                title: 'Create Version',
-                prompt: 'Version name',
-                value: `Odoo ${odooVersion}`,
-                ignoreFocusOut: true,
-                validateInput: value => value.trim() ? undefined : 'Name is required.'
-            }))?.trim();
-            if (!name) { return; }
+            const answered = await runWizard([
+                step<string>(
+                    () => pickOdooBranch(readSetupState().sourceRepo, 'Create Version'),
+                    branch => { odooVersion = branch; }
+                ),
+                step<string>(
+                    canGoBack => inputStep({
+                        title: 'Create Version',
+                        prompt: 'Version name',
+                        // Re-suggested from the branch unless the name was
+                        // edited, so going back and changing the branch does
+                        // not leave the old branch's name behind.
+                        value: !name || name === `Odoo ${odooVersion}` ? `Odoo ${odooVersion}` : name,
+                        canGoBack,
+                        validateInput: value => value.trim() ? undefined : 'Name is required.'
+                    }),
+                    value => { name = value.trim(); }
+                )
+            ]);
+            if (answered !== 'completed') { return; }
 
             // Provisioning gives the version its own worktree, interpreter and
             // virtualenv; the flow offers a profile-only path for anyone who

@@ -14,7 +14,7 @@ import { showError, showInfo, showModalWarning } from '../services/notifications
 import { errorMessage, logger } from '../services/logger';
 import { getRepoBranch } from '../services/branches';
 import { pickRepoBranch } from './branchPick';
-import { branchToSeries } from '../services/versionProposal';
+import { branchToSeries, statesSeries } from '../services/versionProposal';
 import { buildUpgradePlan, describeUpgradePlan, UpgradeInput, UpgradeRepo } from '../services/upgradePlan';
 import { describeModeChange } from '../services/repoPaths';
 import {
@@ -26,7 +26,93 @@ import {
 } from '../services/provisionQueue';
 import { sanitizeProjectRepoBranchAssignments } from '../services/environment';
 import { readSetupState } from '../services/setupState';
+import { listSeriesBranches } from '../services/gitService';
+import { BACK, isBack, multiPickStep, pickStep, inputStep, runWizard, step, StepResult, WizardStep } from '../services/wizard';
 import { RepoModel } from '../models/repo';
+
+/** The branch the previous repository answered for this side, as a seed. */
+function previousAnswer(
+    answers: Map<string, { from?: string; to?: string }>,
+    repoName: string,
+    side: 'from' | 'to'
+): string | undefined {
+    let seed: string | undefined;
+    for (const [name, answer] of answers) {
+        if (name === repoName) {
+            break;
+        }
+        seed = answer[side] ?? seed;
+    }
+    return seed;
+}
+
+/**
+ * The Odoo series one side of the upgrade runs.
+ *
+ * Parsed from the branch names when they state it, asked when they do not:
+ * refusing "dev/upgrade-client" as "not an Odoo series" was rejecting a
+ * perfectly ordinary branch name after five answers had already been given.
+ * Repositories must agree, because one pair of versions serves them all.
+ */
+async function resolveSeries(
+    repos: UpgradeRepo[],
+    side: 'from' | 'to',
+    knownSeries: string[]
+): Promise<StepResult<string>> {
+    const branches = repos.map(repo => (side === 'from' ? repo.fromBranch : repo.toBranch));
+    const stated = Array.from(new Set(
+        branches.filter(statesSeries).map(branch => branchToSeries(branch) as string)
+    ));
+
+    if (stated.length > 1) {
+        void showError(
+            `The "upgrading ${side}" branches name different Odoo series (${stated.join(', ')}). `
+            + 'One upgrade runs between two series.');
+        return undefined;
+    }
+    if (stated.length === 1 && branches.every(statesSeries)) {
+        return stated[0];
+    }
+
+    const unnamed = branches.filter(branch => !statesSeries(branch));
+    const label = side === 'from' ? 'upgrading from' : 'upgrading to';
+    const rows: Array<vscode.QuickPickItem & { series?: string; custom?: boolean }> = [
+        ...knownSeries.map(series => ({
+            label: series,
+            description: series === stated[0] ? 'named by the other branches' : undefined,
+            series
+        })),
+        { label: '$(pencil) Enter a series...', description: 'e.g. "17.0", "saas-18.4", "master"', custom: true }
+    ];
+
+    const picked = await pickStep(rows, {
+        title: `Which Odoo version is "${label}"?`,
+        placeHolder: `${unnamed.join(', ')} ${unnamed.length === 1 ? 'does' : 'do'} not say, so it has to be told`,
+        canGoBack: true,
+        matchOnDescription: true,
+        activeItem: item => (item as { series?: string }).series === stated[0]
+    });
+
+    if (picked === undefined || isBack(picked)) {
+        return picked;
+    }
+    if (!picked.custom) {
+        return picked.series;
+    }
+
+    const entered = await inputStep({
+        title: `Which Odoo version is "${label}"?`,
+        prompt: 'The Odoo series these branches run',
+        placeHolder: '17.0',
+        value: stated[0] ?? '',
+        canGoBack: true,
+        validateInput: value => value.trim() ? undefined : 'A series is required.'
+    });
+    if (entered === undefined) {
+        return undefined;
+    }
+    return isBack(entered) ? BACK : entered.trim();
+}
 
 export function registerUpgradeCommand(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
@@ -45,92 +131,114 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
                 return;
             }
 
-            const pickedRepos = await vscode.window.showQuickPick(
-                repos.map(repo => ({ label: repo.name, description: repo.path, repo, picked: true })),
-                {
-                    title: 'Set Up an Upgrade',
-                    placeHolder: 'Which repositories are being upgraded?',
-                    canPickMany: true,
-                    ignoreFocusOut: true
-                }
-            );
-            if (!pickedRepos || pickedRepos.length === 0) {
-                return;
-            }
+            // Every question is backable, and the branch pickers no longer
+            // refuse a branch whose name does not state its Odoo series -
+            // plenty of real branches are called "dev/upgrade-client". The
+            // series is asked for instead, right after the branch it belongs
+            // to, so a flow six answers deep never dies on the last one.
+            const knownSeries = Array.from(new Set([
+                ...versionsService.getVersions().map(version => version.odooVersion),
+                ...(readSetupState().sourceRepo
+                    ? await listSeriesBranches(readSetupState().sourceRepo as string).catch(() => [])
+                    : [])
+            ].map(entry => entry.trim()).filter(Boolean)));
 
-            // Asked per repository. Reading both branches from the first
-            // repository and applying them to the rest produced one correct
-            // assignment and one naming a branch the second repository does
-            // not have - surfacing much later as a checkout failure during a
-            // database switch. Each picker is seeded with the previous
-            // repository's answer, so repos that share a naming convention
-            // are still Enter-Enter.
-            const upgradeRepos: UpgradeRepo[] = [];
-            let seedFrom: string | undefined;
-            let seedTo: string | undefined;
+            let upgradeRepos: UpgradeRepo[] = [];
+            let fromSeries: string | undefined;
+            let toSeries: string | undefined;
 
-            for (const pick of pickedRepos) {
-                const repoPath = normalizePath(pick.repo.path);
-                const onDisk = await getRepoBranch(repoPath);
-
-                const fromBranch = await pickRepoBranch(
-                    repoPath,
-                    `Upgrading from — ${pick.repo.name}`,
-                    'The branch this repository is on today',
-                    seedFrom ?? onDisk ?? undefined
+            // Looped so backing out of the first branch question returns to the
+            // repository selection rather than closing the flow.
+            for (;;) {
+                const pickedRepos = await multiPickStep(
+                    repos.map(repo => ({ label: repo.name, description: repo.path, repo })),
+                    {
+                        title: 'Set Up an Upgrade',
+                        placeHolder: 'Which repositories are being upgraded?',
+                        selected: () => true,
+                        canGoBack: false
+                    }
                 );
-                if (!fromBranch) {
+                if (!pickedRepos || isBack(pickedRepos) || pickedRepos.length === 0) {
                     return;
                 }
 
-                const toBranch = await pickRepoBranch(
-                    repoPath,
-                    `Upgrading to — ${pick.repo.name}`,
-                    'The branch this repository is upgraded on',
-                    seedTo,
-                    fromBranch
-                );
-                if (!toBranch) {
-                    return;
+                upgradeRepos = [];
+                const answers = new Map<string, { from?: string; to?: string }>();
+                const steps: WizardStep[] = [];
+
+                for (const pick of pickedRepos) {
+                    const repoPath = normalizePath(pick.repo.path);
+                    const repoName = pick.repo.name;
+                    answers.set(repoName, {});
+
+                    steps.push(step<string>(
+                        async canGoBack => {
+                            const onDisk = await getRepoBranch(repoPath);
+                            const seed = previousAnswer(answers, repoName, 'from') ?? onDisk ?? undefined;
+                            return pickRepoBranch(
+                                repoPath,
+                                `Upgrading from \u2014 ${repoName}`,
+                                'The branch this repository is on today',
+                                seed,
+                                undefined,
+                                canGoBack
+                            );
+                        },
+                        branch => { answers.get(repoName)!.from = branch; }
+                    ));
+
+                    steps.push(step<string>(
+                        async canGoBack => pickRepoBranch(
+                            repoPath,
+                            `Upgrading to \u2014 ${repoName}`,
+                            'The branch this repository is upgraded on',
+                            previousAnswer(answers, repoName, 'to'),
+                            answers.get(repoName)!.from,
+                            canGoBack
+                        ),
+                        branch => { answers.get(repoName)!.to = branch; }
+                    ));
                 }
 
-                seedFrom = fromBranch;
-                seedTo = toBranch;
-                upgradeRepos.push({
+                const outcome = await runWizard(steps);
+                if (outcome === 'cancelled') {
+                    return;
+                }
+                if (outcome === 'back') {
+                    continue; // Back to the repository selection.
+                }
+
+                upgradeRepos = pickedRepos.map(pick => ({
                     name: pick.repo.name,
                     path: pick.repo.path,
-                    fromBranch: fromBranch.trim(),
-                    toBranch: toBranch.trim()
-                });
-            }
+                    fromBranch: answers.get(pick.repo.name)!.from!.trim(),
+                    toBranch: answers.get(pick.repo.name)!.to!.trim()
+                }));
 
-            // The series must agree across repositories: they are what the two
-            // versions are built for, and one pair of versions serves them all.
-            const seriesOf = (branches: string[], label: string): string | undefined => {
-                const mapped = branches.map(branch => branchToSeries(branch));
-                const bad = mapped.findIndex(series => !series);
-                if (bad >= 0) {
-                    void showError(`"${branches[bad]}" does not name an Odoo series (e.g. "17.0-client").`);
-                    return undefined;
+                // The series each side runs, asked only when a branch name does
+                // not state one. Agreement across repositories still matters:
+                // one pair of versions serves them all.
+                const resolvedFrom = await resolveSeries(upgradeRepos, 'from', knownSeries);
+                if (resolvedFrom === undefined) {
+                    return;
                 }
-                const unique = Array.from(new Set(mapped as string[]));
-                if (unique.length > 1) {
+                const resolvedTo = await resolveSeries(upgradeRepos, 'to', knownSeries);
+                if (resolvedTo === undefined) {
+                    return;
+                }
+                if (isBack(resolvedFrom) || isBack(resolvedTo)) {
+                    continue;
+                }
+
+                if (resolvedFrom === resolvedTo) {
                     void showError(
-                        `The "${label}" branches are on different Odoo series (${unique.join(', ')}). `
-                        + 'One upgrade runs between two series.');
-                    return undefined;
+                        `Both sides are on Odoo ${resolvedFrom}, so there is nothing to run side by side.`);
+                    return;
                 }
-                return unique[0];
-            };
-
-            const fromSeries = seriesOf(upgradeRepos.map(repo => repo.fromBranch), 'upgrading from');
-            const toSeries = seriesOf(upgradeRepos.map(repo => repo.toBranch), 'upgrading to');
-            if (!fromSeries || !toSeries) {
-                return;
-            }
-            if (fromSeries === toSeries) {
-                void showError('Both branches are on the same Odoo series, so there is nothing to run side by side.');
-                return;
+                fromSeries = resolvedFrom;
+                toSeries = resolvedTo;
+                break;
             }
 
             const versionIdBySeries: Record<string, string | undefined> = {};

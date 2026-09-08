@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { branchToSeries, proposeVersions } from '../services/versionProposal';
+import { branchToSeries, proposeVersions, statesSeries } from '../services/versionProposal';
 
 suite('Version proposal', () => {
     test('maps a prefixed custom branch to its Odoo series', () => {
@@ -97,5 +97,21 @@ suite('Version proposal', () => {
             candidates.filter(entry => entry.picked).map(entry => entry.branch),
             ['17.0']
         );
+    });
+
+    test('recognises branch names that state their series', () => {
+        assert.strictEqual(statesSeries('17.0'), true);
+        assert.strictEqual(statesSeries('17.0-acme'), true);
+        assert.strictEqual(statesSeries('saas-18.4-client'), true);
+        assert.strictEqual(statesSeries('master'), true);
+    });
+
+    test('recognises branch names that do not', () => {
+        // These are ordinary branch names. They are not an error - they just
+        // mean the series has to be asked for rather than parsed.
+        assert.strictEqual(statesSeries('dev/upgrade-client'), false);
+        assert.strictEqual(statesSeries('main'), false);
+        assert.strictEqual(statesSeries('feature-bunka'), false);
+        assert.strictEqual(statesSeries(''), false);
     });
 });

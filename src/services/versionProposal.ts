@@ -39,6 +39,17 @@ export function branchToSeries(branch: string): string | undefined {
     return parseOdooSeries(trimmed);
 }
 
+/**
+ * Whether a branch name states its Odoo series on its own.
+ *
+ * Branch conventions vary: `17.0-acme` says which series it targets, and
+ * `dev/upgrade-client` says nothing. Callers that need a series must ask
+ * rather than refuse, so this is the test for "do I have to ask".
+ */
+export function statesSeries(branch: string): boolean {
+    return branchToSeries(branch) !== undefined;
+}
+
 function seriesReason(branch: string, index: number): string {
     if (/^master$/i.test(branch)) {
         return 'development branch';

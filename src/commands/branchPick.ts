@@ -10,6 +10,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import { listSeriesBranches, listAllBranches } from '../services/gitService';
+import { BACK, StepResult } from '../services/wizard';
 
 interface BranchPickItem extends vscode.QuickPickItem {
     action: 'branch' | 'manual' | 'all';
@@ -125,8 +126,9 @@ export async function pickRepoBranch(
     title: string,
     placeHolder: string,
     current?: string,
-    exclude?: string
-): Promise<string | undefined> {
+    exclude?: string,
+    canGoBack = false
+): Promise<StepResult<string>> {
     const all = repoPath && fs.existsSync(repoPath)
         ? await listAllBranches(repoPath).catch(() => [])
         : [];
@@ -156,6 +158,7 @@ export async function pickRepoBranch(
     picker.placeholder = placeHolder;
     picker.ignoreFocusOut = true;
     picker.matchOnDescription = true;
+    picker.buttons = canGoBack ? [vscode.QuickInputButtons.Back] : [];
     picker.items = items;
 
     const preselect = current ? items.find(item => item.branch === current) : undefined;
@@ -163,8 +166,14 @@ export async function pickRepoBranch(
         picker.activeItems = [preselect];
     }
 
-    const picked = await new Promise<BranchPickItem | undefined>(resolve => {
-        let accepted: BranchPickItem | undefined;
+    const picked = await new Promise<BranchPickItem | 'back' | undefined>(resolve => {
+        let accepted: BranchPickItem | 'back' | undefined;
+        picker.onDidTriggerButton(button => {
+            if (button === vscode.QuickInputButtons.Back) {
+                accepted = 'back';
+                picker.hide();
+            }
+        });
         picker.onDidAccept(() => {
             accepted = picker.selectedItems[0] ?? picker.activeItems[0];
             picker.hide();
@@ -178,6 +187,9 @@ export async function pickRepoBranch(
 
     if (!picked) {
         return undefined;
+    }
+    if (picked === 'back') {
+        return BACK;
     }
     return picked.action === 'manual' ? promptManualBranch(title) : picked.branch;
 }

@@ -20,6 +20,7 @@ import { showModalInfo, showWarning } from './services/notifications';
 import { showModalWarning } from './services/notifications';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 import { chooseCustomAddonsFolder } from './commands/customAddonsCommand';
+import { inputStep, isBack, multiPickStep, StepResult } from './services/wizard';
 import { getRepoBranch } from './services/branches';
 import { readModuleManifest, extractTicketIdsFromBranch } from './services/manifest';
 import { collectModuleDiscovery } from './services/psaeInternal';
@@ -370,7 +371,11 @@ export async function selectProject(projectUid: string) {
     }
 }
 
-export async function getRepo(targetPath: string, searchFilter?: string): Promise<RepoModel[] | undefined> {
+export async function getRepo(
+    targetPath: string,
+    searchFilter?: string,
+    options: { canGoBack?: boolean; preselected?: string[] } = {}
+): Promise<StepResult<RepoModel[]>> {
     let scanPath = targetPath;
     let devsRepos = findRepositories(scanPath);
 
@@ -424,33 +429,41 @@ export async function getRepo(targetPath: string, searchFilter?: string): Promis
         itemsToShow = [...exactMatches, ...partialMatches, ...noMatches];
     }
 
-    const selectedItems = await vscode.window.showQuickPick(itemsToShow, {
+    const selectedItems = await multiPickStep(itemsToShow, {
+        title: 'Project Repositories',
         placeHolder: searchFilter
             ? `Select folders from custom-addons (showing "${searchFilter}" matches first)`
             : 'Select a folder from custom-addons',
-        canPickMany: true,
         matchOnDescription: true,
-        matchOnDetail: true
+        matchOnDetail: true,
+        canGoBack: options.canGoBack,
+        selected: item => (options.preselected ?? []).includes(item.label)
     });
 
     // Escape is a decision, not a failure: the caller stops quietly rather
     // than showing a red error for a mind that was changed.
-    if (!selectedItems) {
-        return undefined;
+    if (selectedItems === undefined || isBack(selectedItems)) {
+        return selectedItems;
     }
     return selectedItems.map(item => new RepoModel(item.label, item.description, true));
 }
 
-export async function getProjectName(_workspaceFolder?: vscode.WorkspaceFolder): Promise<string | undefined> {
-    const name = await vscode.window.showInputBox({
-        prompt: "Enter a name for your new project",
-        title: "Project Name",
-        placeHolder: "e.g., My Odoo Project"
+export async function getProjectName(
+    _workspaceFolder?: vscode.WorkspaceFolder,
+    options: { canGoBack?: boolean; value?: string } = {}
+): Promise<StepResult<string>> {
+    const name = await inputStep({
+        prompt: 'Enter a name for your new project',
+        title: 'Project Name',
+        placeHolder: 'e.g., My Odoo Project',
+        value: options.value,
+        canGoBack: options.canGoBack,
+        validateInput: value => value.trim() ? undefined : 'A project name is required.'
     });
-    if (!name) {
-        return undefined;
+    if (name === undefined || isBack(name)) {
+        return name;
     }
-    return name;
+    return name.trim() || undefined;
 }
 
 export async function deleteProject(event: any) {

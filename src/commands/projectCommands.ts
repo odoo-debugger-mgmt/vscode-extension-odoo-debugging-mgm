@@ -4,6 +4,8 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import type { CommandDeps } from './index';
+import { RepoModel } from '../models/repo';
+import { pickStep, runWizard, step } from '../services/wizard';
 import { normalizePath } from '../utils';
 import { showError } from '../services/notifications';
 import { errorMessage } from '../services/logger';
@@ -51,48 +53,67 @@ export function registerProjectCommands(deps: CommandDeps): void {
 
             const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
             if (!workspaceFolder) { throw new Error('Open a workspace to use this command.'); }
-            const name = await getProjectName(workspaceFolder);
-            if (!name) {
-                return; // Cancelled at the name.
-            }
-            const customAddonsPath = normalizePath(settings.customAddonsPath);
-            const repos = await getRepo(customAddonsPath, name); // Pass project name as search filter
-            if (!repos) {
-                return; // Cancelled at the repository picker.
-            }
-            const databaseChoice = await vscode.window.showQuickPick([
-                {
-                    label: 'Create a new database',
-                    description: 'Set up a fresh database or restore from a dump',
-                    detail: 'You can add more databases later from the Databases view.',
-                    value: 'create'
-                },
-                {
-                    label: 'Connect to an existing database',
-                    description: 'Link this project to a database that already exists in PostgreSQL',
-                    value: 'connect'
-                },
-                {
-                    label: 'Skip for now',
-                    description: 'You can configure databases later from the Databases view.',
-                    value: 'skip'
-                }
-            ], {
-                placeHolder: 'Set up a database for this project?',
-                ignoreFocusOut: true
-            });
-            if (!databaseChoice) {
+
+            // Every question is backable. Picking the wrong repository used to
+            // mean escaping the whole flow and retyping the project name.
+            let name = '';
+            let repos: RepoModel[] = [];
+            let databaseChoice = '';
+
+            const completed = await runWizard([
+                step<string>(
+                    canGoBack => getProjectName(workspaceFolder, { canGoBack, value: name }),
+                    value => { name = value; }
+                ),
+                step<RepoModel[]>(
+                    canGoBack => getRepo(normalizePath(settings.customAddonsPath), name, {
+                        canGoBack,
+                        preselected: repos.map(repo => repo.name)
+                    }),
+                    value => { repos = value; }
+                ),
+                step<{ value: string }>(
+                    canGoBack => pickStep(
+                        [
+                            {
+                                label: 'Create a new database',
+                                description: 'Set up a fresh database or restore from a dump',
+                                detail: 'You can add more databases later from the Databases view.',
+                                value: 'create'
+                            },
+                            {
+                                label: 'Connect to an existing database',
+                                description: 'Link this project to a database that already exists in PostgreSQL',
+                                value: 'connect'
+                            },
+                            {
+                                label: 'Skip for now',
+                                description: 'You can configure databases later from the Databases view.',
+                                value: 'skip'
+                            }
+                        ],
+                        {
+                            title: 'Project Database',
+                            placeHolder: 'Set up a database for this project?',
+                            canGoBack,
+                            activeItem: item => (item as { value?: string }).value === databaseChoice
+                        }
+                    ),
+                    picked => { databaseChoice = picked.value; }
+                )
+            ]);
+            if (completed !== 'completed') {
                 return;
             }
 
             let db: DatabaseModel | undefined;
-            if (databaseChoice.value === 'create') {
+            if (databaseChoice === 'create') {
                 db = await createDb(name, repos, settings.dumpsFolder, settings, { allowExistingOption: false });
-            } else if (databaseChoice.value === 'connect') {
+            } else if (databaseChoice === 'connect') {
                 db = await createDb(name, repos, settings.dumpsFolder, settings, { initialMethod: 'existing' });
             }
 
-            if (databaseChoice.value !== 'skip' && !db) {
+            if (databaseChoice !== 'skip' && !db) {
                 // User cancelled within DB creation flow.
                 return;
             }

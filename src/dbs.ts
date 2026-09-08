@@ -9,6 +9,7 @@ import { DatabaseTemplateModel } from './models/dbTemplate';
 import { SettingsModel } from './models/settings';
 import { normalizePath, getGitBranches, stripSettings, getDatabaseLabel, DebuggerData } from './utils';
 import { provisionAndCreateVersion } from './odooInstaller';
+import { inputStep, isBack, pickStep, runWizard, step, StepResult, WizardStep } from './services/wizard';
 import { showError, showInfo, showWarning, showAutoInfo, showBriefStatus, showModalWarning } from './services/notifications';
 import { logger, errorMessage } from './services/logger';
 import { getRepoBranch } from './services/branches';
@@ -109,8 +110,9 @@ export function describeRepoBranchChoice(assignments: ProjectRepoBranchAssignmen
 export async function promptProjectRepoBranchAssignments(
     repos: RepoModel[],
     existingAssignments: ProjectRepoBranchAssignment[] = [],
-    mode: 'create' | 'edit' = 'create'
-): Promise<ProjectRepoBranchAssignment[] | undefined> {
+    mode: 'create' | 'edit' = 'create',
+    canGoBack = false
+): Promise<StepResult<ProjectRepoBranchAssignment[]>> {
     if (repos.length === 0) {
         return [];
     }
@@ -155,15 +157,16 @@ export async function promptProjectRepoBranchAssignments(
         });
     }
 
-    const setupChoice = await vscode.window.showQuickPick(setupChoices, {
+    const setupChoice = await pickStep(setupChoices, {
+        title: 'Project Repository Branches',
         placeHolder: mode === 'edit'
             ? 'Edit project repository branches for this database'
             : 'Attach project repository branches to this database?',
-        ignoreFocusOut: true
+        canGoBack
     });
 
-    if (!setupChoice) {
-        return undefined;
+    if (setupChoice === undefined || isBack(setupChoice)) {
+        return setupChoice;
     }
 
     if (setupChoice.action === 'keep') {
@@ -403,7 +406,11 @@ export function extractDatabaseFromEvent(event: unknown): DatabaseModel | null {
     return null;
 }
 
-async function getDbDumpFolder(dumpsFolder: string, searchFilter?: string): Promise<DumpSelection | undefined> {
+async function getDbDumpFolder(
+    dumpsFolder: string,
+    searchFilter?: string,
+    canGoBack = false
+): Promise<StepResult<DumpSelection>> {
     dumpsFolder = normalizePath(dumpsFolder);
 
     if (!(await pathExists(dumpsFolder))) {
@@ -433,14 +440,17 @@ async function getDbDumpFolder(dumpsFolder: string, searchFilter?: string): Prom
         foldersToShow = [...exact, ...partial, ...rest];
     }
 
-    const selected = await vscode.window.showQuickPick(foldersToShow, {
+    const selected = await pickStep(foldersToShow, {
+        title: 'Restore From Dump',
         placeHolder: searchFilter
             ? `Select a dump source (showing "${searchFilter}" matches first)`
             : 'Select a folder or zip archive containing dump.sql',
-        ignoreFocusOut: true
+        canGoBack
     });
-
-    return selected?.item;
+    if (selected === undefined || isBack(selected)) {
+        return selected;
+    }
+    return selected.item;
 }
 
 type CreationMethod = 'fresh' | 'dump' | 'existing' | 'template';
@@ -479,7 +489,7 @@ const CREATION_METHOD_ITEMS: Record<CreationMethod, { label: string; description
 
 const NEW_DB_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/;
 
-async function pickExistingPostgresDatabase(): Promise<string | undefined> {
+async function pickExistingPostgresDatabase(canGoBack = false): Promise<StepResult<string>> {
     const linkedIdentifiers = await collectExistingDatabaseIdentifiers();
     const candidates = (await listPostgresDatabases())
         .filter(name => !RESERVED_DATABASE_NAMES.has(name.toLowerCase()));
@@ -498,10 +508,14 @@ async function pickExistingPostgresDatabase(): Promise<string | undefined> {
         }
     ];
 
-    const selection = await vscode.window.showQuickPick(choices, {
+    const selection = await pickStep(choices, {
+        title: 'Connect to an Existing Database',
         placeHolder: 'Select the existing PostgreSQL database to connect',
-        ignoreFocusOut: true
+        canGoBack
     });
+    if (selection !== undefined && isBack(selection)) {
+        return selection;
+    }
     if (!selection) {
         return undefined;
     }
@@ -591,121 +605,160 @@ async function resolveVersionForNewDatabase(dbName: string, method: CreationMeth
 }
 
 export async function createDb(projectName: string, repos: RepoModel[], dumpFolderPath: string, _settings: SettingsModel, options: CreateDbOptions = {}): Promise<DatabaseModel | undefined> {
-    // Step 1: creation method — the only decision that cannot be inferred.
-    let creationMethod: CreationMethod;
-    if (options.initialMethod) {
-        creationMethod = options.initialMethod;
-    } else {
-        const methodItems = Object.values(CREATION_METHOD_ITEMS)
-            .filter(item => options.allowExistingOption !== false || item.method !== 'existing');
-
-        const selection = await vscode.window.showQuickPick(methodItems, {
-            placeHolder: 'How do you want to create this database?',
-            ignoreFocusOut: true
-        });
-        if (!selection) {
-            return undefined;
-        }
-        creationMethod = selection.method;
-    }
-
-    // Step 2: method-specific source.
+    // Steps 1-4 are one backable wizard. Everything that could invalidate the
+    // work is asked before any of it starts, so Back is always free here: no
+    // database has been created and no dump restored.
+    let creationMethod: CreationMethod = options.initialMethod ?? 'fresh';
     let sqlDumpPath: string | undefined;
     let selectedTemplate: DatabaseTemplateModel | undefined;
     let existingDbName: string | undefined;
+    let dbName = '';
+    let projectRepoBranches: ProjectRepoBranchAssignment[] = [];
 
-    switch (creationMethod) {
-        case 'dump': {
-            const selection = await getDbDumpFolder(dumpFolderPath, projectName);
-            if (!selection) {
-                return undefined;
-            }
-            if (selection.kind === 'folder') {
-                const candidate = path.join(selection.path, 'dump.sql');
-                if (!(await pathExists(candidate))) {
-                    void showError(`dump.sql not found inside ${selection.path}`);
-                    return undefined;
-                }
-                sqlDumpPath = candidate;
-            } else {
-                sqlDumpPath = selection.path;
-            }
-            break;
-        }
-        case 'template': {
-            const data = await SettingsStore.get('odoo-debugger-data.json');
-            const templates = sanitizeDatabaseTemplates(data.dbTemplates);
-            if (templates.length === 0) {
-                void showInfo('No database templates found. Use "Manage Database Templates" to create one first.');
-                return undefined;
-            }
-            selectedTemplate = await promptTemplateSelection(templates, 'Select a template to clone into the new database');
-            if (!selectedTemplate) {
-                return undefined;
-            }
-            break;
-        }
-        case 'existing': {
-            existingDbName = await pickExistingPostgresDatabase();
-            if (!existingDbName) {
-                return undefined;
-            }
-            break;
-        }
-        case 'fresh':
-            break;
-    }
-
-    // Step 3: database name — pre-filled suggestion, one Enter to accept.
     const creationTimestamp = new Date();
     const existingIdentifiers = await collectExistingDatabaseIdentifiers();
-    const dbKind: DatabaseKind = creationMethod;
 
-    let dbName: string;
-    if (existingDbName) {
-        dbName = existingDbName;
-    } else {
-        const suggestion = generateDatabaseIdentifiers({
-            projectName,
-            kind: dbKind,
-            timestamp: creationTimestamp,
-            existingInternalNames: existingIdentifiers
-        }).internalName;
+    const methodStep = step<{ method: CreationMethod }>(
+        canGoBack => {
+            const methodItems = Object.values(CREATION_METHOD_ITEMS)
+                .filter(item => options.allowExistingOption !== false || item.method !== 'existing');
+            return pickStep(methodItems, {
+                title: 'New Database',
+                placeHolder: 'How do you want to create this database?',
+                canGoBack,
+                activeItem: item => (item as { method?: CreationMethod }).method === creationMethod
+            });
+        },
+        picked => { creationMethod = picked.method; }
+    );
 
-        const nameInput = await vscode.window.showInputBox({
-            prompt: 'Database name (used as the PostgreSQL identifier)',
-            value: suggestion,
-            ignoreFocusOut: true,
-            validateInput: value => {
-                const trimmed = value.trim();
-                if (!trimmed) {
-                    return 'Database name cannot be empty.';
+    const sourceStep: WizardStep = {
+        async run(canGoBack) {
+            // Reset the other sources: the method may have changed on the way
+            // back through, and a stale dump path would be used silently.
+            sqlDumpPath = undefined;
+            selectedTemplate = undefined;
+            existingDbName = undefined;
+
+            switch (creationMethod) {
+                case 'dump': {
+                    const selection = await getDbDumpFolder(dumpFolderPath, projectName, canGoBack);
+                    if (selection === undefined) {
+                        return 'cancel';
+                    }
+                    if (isBack(selection)) {
+                        return 'back';
+                    }
+                    if (selection.kind === 'folder') {
+                        const candidate = path.join(selection.path, 'dump.sql');
+                        if (!(await pathExists(candidate))) {
+                            void showError(`dump.sql not found inside ${selection.path}`);
+                            return 'back';
+                        }
+                        sqlDumpPath = candidate;
+                    } else {
+                        sqlDumpPath = selection.path;
+                    }
+                    return 'next';
                 }
-                if (!NEW_DB_NAME_PATTERN.test(trimmed)) {
-                    return 'Use letters, numbers, "-" or "_" only. The name must not start with "-".';
+                case 'template': {
+                    const data = await SettingsStore.get('odoo-debugger-data.json');
+                    const templates = sanitizeDatabaseTemplates(data.dbTemplates);
+                    if (templates.length === 0) {
+                        void showInfo('No database templates found. Use "Manage Database Templates" to create one first.');
+                        return canGoBack ? 'back' : 'cancel';
+                    }
+                    const picked = await promptTemplateSelection(
+                        templates, 'Select a template to clone into the new database', canGoBack);
+                    if (picked === undefined) {
+                        return 'cancel';
+                    }
+                    if (isBack(picked)) {
+                        return 'back';
+                    }
+                    selectedTemplate = picked;
+                    return 'next';
                 }
-                if (RESERVED_DATABASE_NAMES.has(trimmed.toLowerCase())) {
-                    return `"${trimmed}" is a reserved database name.`;
+                case 'existing': {
+                    const picked = await pickExistingPostgresDatabase(canGoBack);
+                    if (picked === undefined) {
+                        return 'cancel';
+                    }
+                    if (isBack(picked)) {
+                        return 'back';
+                    }
+                    existingDbName = picked;
+                    return 'next';
                 }
-                if (existingIdentifiers.has(trimmed.toLowerCase())) {
-                    return 'A database with this name is already linked to a project.';
-                }
-                return null;
+                default:
+                    // Nothing to ask for a fresh database, so there is nothing
+                    // to come back to either.
+                    return 'next';
             }
-        });
-        if (nameInput === undefined) {
-            return undefined;
         }
-        dbName = nameInput.trim();
-    }
+    };
 
-    // Step 4: decide the environment before doing any work. Asking after the
-    // dump has been restored means a cancellation costs the user the restore,
-    // and capturing the current branch silently was never a decision they made.
-    const projectRepoBranches = await promptProjectRepoBranchAssignments(repos, [], 'create');
-    if (projectRepoBranches === undefined) {
+    const nameStep: WizardStep = {
+        async run(canGoBack) {
+            if (existingDbName) {
+                // The name is the database's own; asking would be theatre.
+                dbName = existingDbName;
+                return 'next';
+            }
+            const suggestion = dbName || generateDatabaseIdentifiers({
+                projectName,
+                kind: creationMethod as DatabaseKind,
+                timestamp: creationTimestamp,
+                existingInternalNames: existingIdentifiers
+            }).internalName;
+
+            const nameInput = await inputStep({
+                title: 'Database Name',
+                prompt: 'Database name (used as the PostgreSQL identifier)',
+                value: suggestion,
+                canGoBack,
+                validateInput: value => {
+                    const trimmed = value.trim();
+                    if (!trimmed) {
+                        return 'Database name cannot be empty.';
+                    }
+                    if (!NEW_DB_NAME_PATTERN.test(trimmed)) {
+                        return 'Use letters, numbers, "-" or "_" only. The name must not start with "-".';
+                    }
+                    if (RESERVED_DATABASE_NAMES.has(trimmed.toLowerCase())) {
+                        return `"${trimmed}" is a reserved database name.`;
+                    }
+                    if (existingIdentifiers.has(trimmed.toLowerCase())) {
+                        return 'A database with this name is already linked to a project.';
+                    }
+                    return undefined;
+                }
+            });
+            if (nameInput === undefined) {
+                return 'cancel';
+            }
+            if (isBack(nameInput)) {
+                return 'back';
+            }
+            dbName = nameInput.trim();
+            return 'next';
+        }
+    };
+
+    const branchStep = step<ProjectRepoBranchAssignment[]>(
+        canGoBack => promptProjectRepoBranchAssignments(repos, projectRepoBranches, 'create', canGoBack),
+        assignments => { projectRepoBranches = assignments; }
+    );
+
+    const steps: WizardStep[] = options.initialMethod
+        ? [sourceStep, nameStep, branchStep]
+        : [methodStep, sourceStep, nameStep, branchStep];
+
+    if (await runWizard(steps) !== 'completed') {
         return undefined;
     }
+
+    const dbKind: DatabaseKind = creationMethod;
 
     // Step 5: create/restore the PostgreSQL database.
     if (creationMethod === 'dump' && sqlDumpPath) {
@@ -1282,8 +1335,10 @@ export async function changeDatabaseProjectRepoBranches(event: unknown): Promise
         }
 
         const existingAssignments = sanitizeProjectRepoBranchAssignments(project.dbs[dbIndex].projectRepoBranches);
-        const updatedAssignments = await promptProjectRepoBranchAssignments(project.repos ?? [], existingAssignments, 'edit');
-        if (updatedAssignments === undefined) {
+        // Invoked on its own, so there is no earlier question to go back to.
+        const updatedAssignments = await promptProjectRepoBranchAssignments(
+            project.repos ?? [], existingAssignments, 'edit');
+        if (updatedAssignments === undefined || isBack(updatedAssignments)) {
             return;
         }
 
@@ -1324,16 +1379,24 @@ function getTemplateQuickPickItems(templates: DatabaseTemplateModel[]): Array<{ 
     }));
 }
 
-async function promptTemplateSelection(templates: DatabaseTemplateModel[], placeHolder: string): Promise<DatabaseTemplateModel | undefined> {
+async function promptTemplateSelection(
+    templates: DatabaseTemplateModel[],
+    placeHolder: string,
+    canGoBack = false
+): Promise<StepResult<DatabaseTemplateModel>> {
     if (templates.length === 0) {
         return undefined;
     }
 
-    const selected = await vscode.window.showQuickPick(getTemplateQuickPickItems(templates), {
+    const selected = await pickStep(getTemplateQuickPickItems(templates), {
+        title: 'Clone From Template',
         placeHolder,
-        ignoreFocusOut: true
+        canGoBack
     });
-    return selected?.template;
+    if (selected === undefined || isBack(selected)) {
+        return selected;
+    }
+    return selected.template;
 }
 
 function collectProjectDatabaseNames(data: DebuggerData): string[] {
