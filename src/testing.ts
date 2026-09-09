@@ -10,6 +10,7 @@ import { ModuleModel } from './models/module';
 import { InstalledModuleInfo } from './models/module';
 import { showError, showInfo, showAutoInfo, stripSettings, createInfoTreeItem } from './utils';
 import { updateTestingContext } from './context';
+import { readUpgradeConfig, refuseDuringUpgrade } from './upgrade';
 import { setupDebugger } from './debugger';
 import { getInstalledModules } from './services/database';
 import { logger } from './services/logger';
@@ -242,6 +243,12 @@ export async function toggleTesting(event: any): Promise<void> {
         const db = project.dbs.find(db => db.isSelected === true);
         if (!db) {
             void showError('Select a database before running this action.');
+            return;
+        }
+
+        // Both modes rewrite the launch arguments, so they cannot both be on:
+        // --test-enable against a database mid-upgrade tests neither version.
+        if (!isEnabled && refuseDuringUpgrade(readUpgradeConfig(project), 'Testing mode cannot be turned on')) {
             return;
         }
 

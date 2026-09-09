@@ -196,6 +196,30 @@ export async function ensureWorktree(
 }
 
 /**
+ * Whether `destPath` is already a worktree of `repoPath` holding a branch that
+ * satisfies `branch`.
+ *
+ * Lets a caller skip arbitration that has nothing left to arbitrate: git allows
+ * one checkout of a branch, so a worktree that already holds it is proof the
+ * source does not.
+ */
+export async function worktreeAlreadySatisfies(
+    repoPath: string,
+    branch: string,
+    destPath: string
+): Promise<boolean> {
+    try {
+        const atDestination = (await listWorktrees(repoPath))
+            .find(entry => samePath(entry.path, destPath));
+        return !!atDestination && branchSatisfiesTarget(atDestination.branch, branch);
+    } catch (error) {
+        // Not a repository, or git is unavailable: let the normal path report it.
+        logger.debug(`[worktree] could not inspect ${repoPath}`, error);
+        return false;
+    }
+}
+
+/**
  * A worktree checked out on `branch` itself, not on a managed `odt/` alias.
  *
  * Custom repositories are committed to and pushed from, so their worktrees

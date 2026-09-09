@@ -29,6 +29,7 @@ import { describeModeChange, resolveRepoPath, resolveProjectRepos } from '../ser
 import { parsePorcelainStatus } from '../services/sourceConflict';
 import { normalizeBranchMode, RepoBranchMode, RepoModel } from '../models/repo';
 import { sanitizeProjectRepoBranchAssignments } from '../services/environment';
+import { readUpgradeConfig, refuseDuringUpgrade } from '../upgrade';
 
 /** Registers the checkout/worktree mode toggle for a project repository. */
 export function registerRepoBranchModeCommand(deps: CommandDeps): void {
@@ -56,6 +57,14 @@ export function registerRepoBranchModeCommand(deps: CommandDeps): void {
                 if (choice === 'Select Repositories') {
                     await vscode.commands.executeCommand('repoSelector.selectRepo');
                 }
+                return;
+            }
+
+            // Removing the copies of a repository the upgrade runs on takes
+            // the branches away from the versions that need them.
+            const upgradeConfig = readUpgradeConfig(project);
+            if (upgradeConfig.involvesRepo(repo.name)
+                && refuseDuringUpgrade(upgradeConfig, `"${repo.name}" cannot change how it keeps branches`)) {
                 return;
             }
 

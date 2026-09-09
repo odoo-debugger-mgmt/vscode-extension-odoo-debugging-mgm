@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { DatabaseModel, ProjectRepoBranchAssignment } from '../models/db';
-import { RepoModel } from '../models/repo';
+import { RepoModel, normalizeBranchMode } from '../models/repo';
 import { SettingsModel } from '../models/settings';
 import { VersionModel } from '../models/version';
 import { VersionsService } from '../versionsService';
@@ -111,12 +111,37 @@ export function resolveProjectRepoBranchAssignments(database: DatabaseModel | an
     return resolved;
 }
 
+/**
+ * The assignments a `git checkout` may satisfy: repositories in `checkout`
+ * mode only.
+ *
+ * A worktree-mode repository already holds its branch in its own directory.
+ * Checking that branch out in the source would move a directory the user owns,
+ * take the branch away from the worktree that needs it - git allows one
+ * checkout of a branch - and leave the source conflicting with its own copy,
+ * which is what raised "using the source checkout" after every switch.
+ *
+ * Deliberately separate from `resolveProjectRepoBranchAssignments`: that one
+ * answers "where does this repository's code live", which the debugger, module
+ * discovery and the repos explorer all need answered for worktrees too.
+ */
+export function resolveProjectRepoCheckouts(database: DatabaseModel | any, projectRepos: RepoModel[]): ProjectRepoBranchAssignment[] {
+    return resolveProjectRepoBranchAssignments(
+        database,
+        projectRepos.filter(repo => normalizeBranchMode(repo.branchMode) === 'checkout')
+    );
+}
+
 export interface EnvironmentTarget {
     /** Version profile to activate. */
     versionId?: string;
     /** Branch for the core repos; defaults to the target version's branch. */
     coreBranch?: string;
-    /** Per-project-repo branches to check out. */
+    /**
+     * Per-project-repo branches to check out. Build these with
+     * `resolveProjectRepoCheckouts`: worktree-mode repositories must not appear
+     * here, because nothing is checked out for them.
+     */
     repoAssignments?: ProjectRepoBranchAssignment[];
 }
 
@@ -133,7 +158,7 @@ export function buildDatabaseEnvironmentTarget(database: DatabaseModel | any, pr
     return {
         versionId: database?.versionId || undefined,
         coreBranch: database?.versionId ? undefined : legacyBranch,
-        repoAssignments: resolveProjectRepoBranchAssignments(database, projectRepos)
+        repoAssignments: resolveProjectRepoCheckouts(database, projectRepos)
     };
 }
 

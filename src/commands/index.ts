@@ -4,6 +4,7 @@ import type { RepoTreeProvider } from '../repos';
 import type { DbsTreeProvider } from '../views/dbsView';
 import type { ModuleTreeProvider } from '../module';
 import type { TestingTreeProvider } from '../testing';
+import type { UpgradeTreeProvider } from '../upgrade';
 import type { VersionsTreeProvider } from '../versionsTreeProvider';
 import type { ProjectReposExplorerProvider } from '../projectReposExplorer';
 import type { VersionsService } from '../versionsService';
@@ -30,6 +31,7 @@ export interface Providers {
     db: DbsTreeProvider;
     module: ModuleTreeProvider;
     testing: TestingTreeProvider;
+    upgrade: UpgradeTreeProvider;
     versions: VersionsTreeProvider;
     projectReposExplorer: ProjectReposExplorerProvider;
 }

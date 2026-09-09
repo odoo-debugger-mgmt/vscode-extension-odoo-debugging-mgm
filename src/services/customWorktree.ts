@@ -8,7 +8,8 @@ import { runCommand, tryRunCommand } from './process';
 import { logger, errorMessage } from './logger';
 import { showModalWarning, showWarning } from './notifications';
 import { getRepoBranch } from './branches';
-import { ensureRealBranchWorktree } from './worktree';
+import { ensureRealBranchWorktree, worktreeAlreadySatisfies } from './worktree';
+import { invalidateGitBranchCache } from './runtimeCache';
 import { listAllBranches } from './gitService';
 import { classifySourceConflict, describeSourceConflict, parsePorcelainStatus } from './sourceConflict';
 import type { ResolvedRepo } from './repoPaths';
@@ -80,6 +81,10 @@ async function freeBranch(
             return false;
         }
         await runCommand('git', ['switch', target], { cwd: sourcePath });
+        // The branch reader caches for a few seconds; without this the next
+        // entry for the same source still sees the branch just moved off, and
+        // re-raises a conflict that no longer exists.
+        invalidateGitBranchCache(sourcePath);
         logger.info(`[worktree] moved ${sourcePath} to ${target} to free ${branch}`);
         return true;
     }
@@ -89,6 +94,7 @@ async function freeBranch(
     }
 
     await runCommand('git', ['checkout', '--detach'], { cwd: sourcePath });
+    invalidateGitBranchCache(sourcePath);
     logger.info(`[worktree] detached ${sourcePath} to free ${branch}`);
     return true;
 }
@@ -117,7 +123,13 @@ export async function ensureCustomWorktrees(
 
         const sourcePath = entry.repo.path;
         try {
-            if (!(await freeBranch(sourcePath, entry.repo.name, entry.branch, interactive))) {
+            // Nothing to free when the copy already holds the branch: git allows
+            // one checkout of it, so the source cannot also be on it. Asking
+            // anyway is how a correctly built set of copies kept raising the
+            // "using the source checkout" modal on every refresh.
+            const satisfied = await worktreeAlreadySatisfies(sourcePath, entry.branch, entry.path);
+
+            if (!satisfied && !(await freeBranch(sourcePath, entry.repo.name, entry.branch, interactive))) {
                 problems.push(`${entry.repo.name}: could not free "${entry.branch}" from its source checkout`);
                 needsResolution.push(entry.repo.name);
                 ready.push({ ...entry, path: sourcePath, isWorktree: false });

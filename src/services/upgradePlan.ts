@@ -1,11 +1,18 @@
 /**
- * "I am upgrading this repository from 17.0 to 19.0" is one sentence. It maps
- * onto three things that already exist: two versions, a per-branch copy of
- * the repository, and a branch mapping per database. This module does the
- * mapping; the command applies it.
+ * "I am upgrading this database to that one" is one sentence. It maps onto
+ * things that already exist: two versions, a per-branch copy of each custom
+ * repository, and a branch mapping per database. This module does the mapping;
+ * the command applies it.
+ *
+ * The two databases are named by the caller rather than discovered from their
+ * version links. Deriving them was a correctness bug: on a first upgrade the
+ * target series has no version yet, so nothing matched it and the target side
+ * of the mapping was silently never written.
  *
  * Pure: nothing here touches git, settings or the filesystem.
  */
+import { worktreeDirName } from './repoPaths';
+import * as path from 'node:path';
 
 export interface UpgradeRepo {
     name: string;
@@ -18,16 +25,24 @@ export interface UpgradeInput {
     repos: UpgradeRepo[];
     fromSeries: string;
     toSeries: string;
+    /** The database being upgraded from. */
+    fromDbId: string;
+    /** The database it is upgraded into. */
+    toDbId: string;
     existingVersions: string[];
-    dbs: Array<{ id: string; versionId?: string }>;
-    /** Version id per series, for the series that already have one. */
-    versionIdBySeries: Record<string, string | undefined>;
+    /** Repositories already keeping one copy per branch. */
+    worktreeRepos?: string[];
+    /** Where per-branch copies are built, for naming them in the confirmation. */
+    root?: string;
 }
 
 export interface UpgradePlan {
     versionsToCreate: string[];
+    /** Repositories that must switch to one copy per branch. */
     reposToWorktree: string[];
     assignments: Array<{ dbId: string; repoName: string; repoPath: string; branch: string }>;
+    /** Absolute directories the copies will occupy, in assignment order. */
+    worktreeDirs: string[];
 }
 
 export function buildUpgradePlan(input: UpgradeInput): UpgradePlan {
@@ -35,40 +50,43 @@ export function buildUpgradePlan(input: UpgradeInput): UpgradePlan {
     const versionsToCreate = [input.fromSeries, input.toSeries]
         .filter(series => series.trim() && !existing.has(series.trim()));
 
-    const branchForSeries = (series: string, repo: UpgradeRepo): string | undefined => {
-        if (series === input.fromSeries) {
-            return repo.fromBranch;
-        }
-        return series === input.toSeries ? repo.toBranch : undefined;
-    };
+    const alreadyWorktree = new Set((input.worktreeRepos ?? []).map(name => name.toLowerCase()));
 
     const assignments: UpgradePlan['assignments'] = [];
-    for (const db of input.dbs) {
-        if (!db.versionId) {
-            continue;
-        }
-        // Only the two series in the upgrade are touched: a database on some
-        // other version has nothing to do with this.
-        const series = [input.fromSeries, input.toSeries]
-            .find(candidate => input.versionIdBySeries[candidate] === db.versionId);
-        if (!series) {
-            continue;
-        }
-        for (const repo of input.repos) {
-            const branch = branchForSeries(series, repo);
-            if (branch) {
-                assignments.push({ dbId: db.id, repoName: repo.name, repoPath: repo.path, branch });
-            }
+    const worktreeDirs: string[] = [];
+    for (const repo of input.repos) {
+        // Each side gets its own branch on its own database. Neither depends on
+        // a version existing yet, which is the whole point of naming the
+        // databases up front.
+        assignments.push(
+            { dbId: input.fromDbId, repoName: repo.name, repoPath: repo.path, branch: repo.fromBranch },
+            { dbId: input.toDbId, repoName: repo.name, repoPath: repo.path, branch: repo.toBranch }
+        );
+        if (input.root) {
+            worktreeDirs.push(
+                path.join(input.root, worktreeDirName(repo.name, repo.fromBranch)),
+                path.join(input.root, worktreeDirName(repo.name, repo.toBranch))
+            );
         }
     }
 
     return {
         versionsToCreate,
-        reposToWorktree: input.repos.map(repo => repo.name),
-        assignments
+        reposToWorktree: input.repos
+            .filter(repo => !alreadyWorktree.has(repo.name.toLowerCase()))
+            .map(repo => repo.name),
+        assignments,
+        worktreeDirs
     };
 }
 
+/**
+ * The whole plan, for the one confirmation the flow shows.
+ *
+ * It names the copy directories itself because it replaced a second modal per
+ * repository that existed only to say where they would go - three dialogs for
+ * one decision, two of them repeating the first.
+ */
 export function describeUpgradePlan(plan: UpgradePlan, input: UpgradeInput): string {
     const versionRow = [input.fromSeries, input.toSeries]
         .map(series => plan.versionsToCreate.includes(series)
@@ -76,16 +94,32 @@ export function describeUpgradePlan(plan: UpgradePlan, input: UpgradeInput): str
             : `Odoo ${series} (exists)`)
         .join(', ');
 
-    // One line per repository: a single joined line was unreadable past two
-    // repositories, and this is shown in a modal that can hold the lines.
-    const mapping = input.repos
-        .map(repo => `    ${repo.name}: ${repo.fromBranch} → Odoo ${input.fromSeries}, ${repo.toBranch} → Odoo ${input.toSeries}`)
-        .join('\n');
+    const lines = [
+        `Databases     ${input.fromDbId} (Odoo ${input.fromSeries}) → ${input.toDbId} (Odoo ${input.toSeries})`,
+        `Versions      ${versionRow}`
+    ];
 
-    return [
-        `Versions      ${versionRow}`,
-        `Custom code   ${plan.reposToWorktree.join(', ')} — one copy per branch`,
-        'Branches',
-        mapping
-    ].join('\n');
+    if (input.repos.length > 0) {
+        // One line per repository: a single joined line was unreadable past two
+        // repositories, and this is shown in a modal that can hold the lines.
+        lines.push(
+            'Branches',
+            ...input.repos.map(repo =>
+                `    ${repo.name}: ${repo.fromBranch} → Odoo ${input.fromSeries}, ${repo.toBranch} → Odoo ${input.toSeries}`)
+        );
+    }
+
+    if (plan.reposToWorktree.length > 0 && plan.worktreeDirs.length > 0) {
+        lines.push(
+            '',
+            `${plan.reposToWorktree.join(', ')} will keep one copy per branch. These directories`,
+            'will be created, and this is where you will edit that branch\'s code:',
+            ...plan.worktreeDirs.map(dir => `    ${dir}`),
+            '',
+            'The original checkouts become sources only: they stay yours to switch',
+            'freely, and nothing that happens to them changes what a version runs.'
+        );
+    }
+
+    return lines.join('\n');
 }

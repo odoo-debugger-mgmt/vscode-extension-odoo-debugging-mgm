@@ -7,7 +7,8 @@ import { VersionsService } from '../versionsService';
 import { SortPreferences } from '../sortPreferences';
 import { getDefaultSortOption } from '../sortOptions';
 import { getDatabaseLabel } from '../utils';
-import { activeIcon } from './icons';
+import { activeIcon, selectedIcon } from './icons';
+import { readUpgradeConfig } from '../upgrade';
 import { sanitizeProjectRepoBranchAssignments } from '../services/environment';
 import { getEffectiveOdooVersion } from '../dbs';
 import { getRunningInstances, runningDescriptionPart, RunningInstance } from '../services/runningState';
@@ -44,10 +45,16 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             (await getRunningInstances()).map(instance => [instance.dbName, instance])
         );
 
-        return sortedDbs.map(db => this.buildDatabaseItem(db, running.get(db.id)));
+        const upgradeConfig = readUpgradeConfig(project);
+        return sortedDbs.map(db =>
+            this.buildDatabaseItem(db, running.get(db.id), upgradeConfig.sideForDb(db.id)));
     }
 
-    private buildDatabaseItem(db: DatabaseModel, running?: RunningInstance): vscode.TreeItem {
+    private buildDatabaseItem(
+        db: DatabaseModel,
+        running?: RunningInstance,
+        upgradeSide?: 'from' | 'to'
+    ): vscode.TreeItem {
         // Handle date parsing defensively
         let editedDate = new Date(db.createdAt);
         if (isNaN(editedDate.getTime())) {
@@ -60,9 +67,25 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
         const treeItem = new vscode.TreeItem(dbLabel, vscode.TreeItemCollapsibleState.None);
         treeItem.id = db.id;
-        treeItem.iconPath = db.isSelected ? activeIcon : new vscode.ThemeIcon('database');
-        treeItem.description = this.buildDescription(db, running);
+        // Both databases of an upgrade read as checked, but the selected one
+        // still has to stand out: during an upgrade, selecting a side is how
+        // you choose whose modules the Modules view edits, so "which one am I
+        // looking at" is the question the icon has to keep answering.
+        let icon: vscode.ThemeIcon = new vscode.ThemeIcon('database');
+        if (db.isSelected) {
+            icon = activeIcon;
+        } else if (upgradeSide) {
+            icon = selectedIcon;
+        }
+        treeItem.iconPath = icon;
+
+        const descriptionParts = [this.buildDescription(db, running)];
+        if (upgradeSide) {
+            descriptionParts.push(upgradeSide === 'from' ? 'upgrading from' : 'upgrading to');
+        }
+        treeItem.description = descriptionParts.filter(Boolean).join(' \u2022 ');
         treeItem.tooltip = new vscode.MarkdownString(this.buildTooltip(db, dbLabel, formattedDate, running));
+        // Unchanged for a pair member: the menus are keyed to `database`.
         treeItem.contextValue = 'database';
 
         // Store the database object for commands that need it

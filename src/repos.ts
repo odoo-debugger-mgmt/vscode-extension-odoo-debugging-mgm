@@ -6,6 +6,7 @@ import { RepoModel, normalizeBranchMode } from "./models/repo";
 import * as vscode from "vscode";
 import { findRepositories, getWorkspacePath, normalizePath, stripSettings } from './utils';
 import { SettingsStore } from './settingsStore';
+import { readUpgradeConfig, refuseDuringUpgrade } from './upgrade';
 import { VersionsService } from './versionsService';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -193,6 +194,13 @@ export async function selectRepo(event: any) {
     if (!repoInProject) {
         project.repos.push(new RepoModel(selectedRepo.name, selectedRepo.path, selectedRepo.isSelected));
     } else {
+        // Dropping a repository the upgrade runs on orphans its per-branch
+        // copies and the branch mapping on both databases. Adding one is fine.
+        const upgradeConfig = readUpgradeConfig(project);
+        if (upgradeConfig.involvesRepo(selectedRepo.name)
+            && refuseDuringUpgrade(upgradeConfig, `"${selectedRepo.name}" cannot be removed from the project`)) {
+            return;
+        }
         project.repos = project.repos.filter((repo: RepoModel) => repo.name !== selectedRepo.name);
     }
 

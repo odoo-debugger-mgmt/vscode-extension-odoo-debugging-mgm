@@ -249,6 +249,38 @@ suite('A sync never blocks the developer', function () {
         assert.deepStrictEqual(last.needsResolution.sort(), ['acme', 'other']);
     });
 
+    test('the upgrade steady state is quiet: both copies built, source never moved', async () => {
+        // What an upgrade looks like once it is set up: one repository, two
+        // branches, one copy each, and a source checkout the developer left on
+        // their own branch. The switch pipeline used to check the assigned
+        // branch out *here* on every database switch, which took the branch
+        // away from its copy and re-armed the modal every time.
+        const acme = buildRepo(root, 'acme');
+        const entries = [
+            resolved(acme, 'acme', '17.0-acme', path.join(root, 'acme@17.0-acme')),
+            resolved(acme, 'acme', '19.0-acme', path.join(root, 'acme@19.0-acme'))
+        ];
+
+        const { modals, warnings, result } = await withStubbedDialogs({ modal: 'Detach It' }, async () => {
+            let last = await ensureCustomWorktrees(entries, undefined, { interactive: true });
+            // Interactive passes too: this is what "Resolve" and every command
+            // that syncs afterwards run, and neither may find anything to ask.
+            for (let pass = 0; pass < 2; pass++) {
+                last = await ensureCustomWorktrees(entries, undefined, { interactive: true });
+            }
+            return last;
+        });
+
+        assert.strictEqual(modals.length, 0, `a settled upgrade raised ${modals.length} modal(s)`);
+        assert.strictEqual(warnings.length, 0, warnings.join('; '));
+        assert.strictEqual(result.problems.length, 0, result.problems.join('; '));
+        assert.deepStrictEqual(result.needsResolution, []);
+
+        assert.strictEqual(head(acme), 'main', 'the source checkout was moved');
+        assert.strictEqual(head(path.join(root, 'acme@17.0-acme')), '17.0-acme');
+        assert.strictEqual(head(path.join(root, 'acme@19.0-acme')), '19.0-acme');
+    });
+
     test('item 5 — a repeated sync is idempotent once the copies exist', async () => {
         const acme = buildRepo(root, 'acme');
         const dest = path.join(root, 'acme@17.0-acme');

@@ -138,20 +138,96 @@ not.
 What is still worth a human: whether the **Resolve** offer arrives at a sensible
 moment during ordinary work, rather than whether it blocks.
 
-## 6 · Set Up an Upgrade — with two differently-named repos
+## 6 · Upgrade mode — rebuilt around the two databases
 
-Run **Set Up an Upgrade** and select **both** custom repositories.
+The flow no longer asks which repositories are upgrading, nor two questions per
+repository. It asks for two **databases** and deduces the rest.
 
-It should ask *per repository* — you should see the repo's name in each picker
-title. Confirm the second repository's pickers are seeded with your first
-answers but still list **its own** branches.
+### 6.1 Both databases already exist
 
-1. Give repo A `17.0-acme` → `19.0-acme` and repo B `17.0-other` → `19.0-other`.
-2. Read the plan modal. Is it legible with two repositories? Does each line name
-   the right branches for the right repo?
-3. Accept, then verify each repo's copies use **its own** branch names.
-4. Separately, try giving two repos branches on *different* series (`17.0-acme`
-   and `18.0-other`). It should refuse and name the mismatch.
+Have a 17.0 database and a 19.0 database in the project.
+
+1. Run **Set Up an Upgrade**. Expect: a *from* database pick, a *to* database
+   pick, then — if your repo has exactly one branch per series — straight to the
+   review screen. Count the dialogs: it should be about four, not ten.
+2. On the review screen, select a branch line and change it. You should come
+   back to the review with the new value shown.
+3. Accept. Exactly **one** modal should appear, and only because copies are
+   about to be created. It must name the directories.
+4. A progress notification must appear **while the copies are created** — this
+   is the thing that used to happen silently, minutes later.
+5. At the end, a notification offers **Start Both Servers**.
+
+### 6.2 Creating the target database
+
+Run it again choosing **Create a new database…** for the target.
+
+1. It asks the target series and the branch — and must **not** ask either of
+   them again later in the flow.
+2. An empty database is created and linked to the target version.
+3. `Start Both Servers` should build the source's module set into it. Check the
+   Upgrade view's Modules row for the count, and the launch args for `-i`.
+
+### 6.3 The Upgrade view and the pair
+
+- With the mode off, the **Upgrade** view shows exactly **one** row -
+  `Upgrade Disabled` - the way the Testing view shows `Testing Disabled`. There
+  is no second button and no title-bar icon; `ctrl+alt+o shift+u` is the
+  shortcut.
+- With it on: the toggle, a From and a To section (each expanding to version,
+  database and a branch per repo), the module count, and Start Both Servers.
+- **Versions** and **Databases** should each show **two** checked rows, marked
+  `upgrading from` / `upgrading to` - and the *selected* one must still be
+  distinguishable (filled circle vs plain check), because selecting a side is
+  how you choose whose modules you are editing.
+
+### 6.4 What the mode blocks, and what it must not
+
+Blocked - these disappear from the menus and refuse from the palette with an
+**Exit Upgrade Mode** action:
+
+- turning **testing mode** on
+- **rename / restore / change version / configure repo branches / delete** on
+  either paired database
+- **change branch / delete / set-all-settings** on either paired version, and
+  editing any individual version setting
+- **activating a version** that is not part of the pair
+- **selecting a database** that is not part of the pair
+- **Use One Copy Per Branch** on a repo in the upgrade, and **removing** such a
+  repo from the project
+
+Still available, and worth checking explicitly - hiding these was a real
+regression once, when the pair rows were given their own `contextValue` and
+emptied the whole right-click menu:
+
+- **Open in Browser**, **Open psql Shell**, **Copy Database Name**,
+  **Clone Database**
+- **Open Version in Browser**, **Clone Version**
+
+### 6.5 Editing each side's modules
+
+1. Click the *from* database. The Modules view now shows that database, and
+   marking a module install/upgrade writes to it.
+2. Click the *to* database and confirm the same module reads **unmarked** - the
+   marks are per database, not shared.
+3. Selecting a side must **not** realign the workspace: your source checkouts
+   stay on whatever branch you left them on. That is the difference between
+   selecting a side and switching databases normally.
+
+### 6.6 Leaving
+
+Toggle the mode off. It should confirm, restore the target database's previous
+modules, and say plainly that the copies and versions are kept.
+
+### 6.7 The bug this release fixes
+
+With the copies built, switch databases back and forth several times, and
+activate each version in turn.
+
+**The "using the source checkout" warning and its modal must never appear**, and
+your source checkout must stay on whatever branch you left it on. That path used
+to check the assigned branch out *in the source repository* on every switch,
+which took the branch away from the copy that needed it.
 
 ## 7 · Change Branch
 
@@ -237,5 +313,9 @@ Things I could not verify and am genuinely unsure about:
   upgrade hint, and the wrong-copy guard's *Don't warn again*. All are by design
   and none re-arms. Do not press any of them until you have finished the item
   they belong to; clearing global state is the only way back.
-- Whether **`Set Up an Upgrade`** on the Repos context menu is confusing: it
-  ignores which repository you right-clicked and asks for all of them.
+- **Repositories are now included in an upgrade by deduction**: one with no
+  branch on either series drops out silently. If a repository you expected is
+  missing from the review screen, that is why — and it is worth telling me,
+  because there is currently no way to add it back from inside the flow.
+- The **`Set Up an Upgrade`** entry on the Repos context menu has been removed;
+  it ignored which repository you right-clicked and asked about all of them.

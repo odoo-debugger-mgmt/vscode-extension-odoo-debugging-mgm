@@ -500,57 +500,92 @@ export async function stopDebugServer(): Promise<void> {
     await vscode.debug.stopDebugging(session);
 }
 
-export async function startDebugServer(options: { noDebug?: boolean } = {}): Promise<void> {
+/**
+ * Starts one named version's server.
+ *
+ * Separate from `startDebugServer` because "the active version" is the wrong
+ * answer whenever two servers run side by side: an upgrade starts both, and
+ * only one of them can be active. launch.json already carries an entry per
+ * provisioned version, so any of them can be started by name.
+ *
+ * `quiet` suppresses the prompts that only make sense for a command the user
+ * invoked directly; a batch reports its own failures.
+ */
+export async function startServerForVersion(
+    versionId: string | undefined,
+    options: { noDebug?: boolean; quiet?: boolean } = {}
+): Promise<{ ok: boolean; message?: string }> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
-        void showError("Open a workspace to use this command.");
-        return undefined;
+        if (!options.quiet) {
+            void showError('Open a workspace to use this command.');
+        }
+        return { ok: false, message: 'No workspace is open.' };
     }
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
-        return;
+        return { ok: false, message: 'No project is selected.' };
     }
-    // Get settings from active version instead of legacy settings
+
     const versionsService = VersionsService.getInstance();
-    const workspaceSettings = await versionsService.getActiveVersionSettings();
-    const activeVersion = versionsService.getActiveVersion();
+    await versionsService.initialize();
+    const version = versionId ? versionsService.getVersion(versionId) : versionsService.getActiveVersion();
+    if (!version) {
+        if (!options.quiet) {
+            void showError('No version to run. Create or select one first.');
+        }
+        return { ok: false, message: 'No version to run.' };
+    }
+    const settings = new SettingsModel(version.settings);
 
     // Handing an unprovisioned version to vscode.debug produces its generic
     // "configuration not found" error, which says nothing about the cause.
-    if (!isVersionProvisioned(resolveOptionalPath(workspaceSettings.pythonPath))) {
-        const choice = await showError(
-            `"${activeVersion?.name ?? 'This version'}" has no environment to run.`,
-            'Provision'
-        );
-        if (choice === 'Provision' && activeVersion) {
-            await provisionExistingVersion(activeVersion.id);
+    if (!isVersionProvisioned(resolveOptionalPath(settings.pythonPath))) {
+        const message = `"${version.name}" has no environment to run.`;
+        if (options.quiet) {
+            return { ok: false, message };
         }
-        return;
+        const choice = await showError(message, 'Provision');
+        if (choice === 'Provision') {
+            await provisionExistingVersion(version.id);
+        }
+        return { ok: false, message };
     }
 
-    const db = activeVersion
-        ? resolveDbForVersion(result.project.dbs, result.project.selectedDbByVersion, activeVersion.id)
-        : undefined;
+    const db = resolveDbForVersion(result.project.dbs, result.project.selectedDbByVersion, version.id);
     if (!db) {
-        const choice = await showError('No database is selected for this version.', 'Select Database');
+        const message = `No database is selected for "${version.name}".`;
+        if (options.quiet) {
+            return { ok: false, message };
+        }
+        const choice = await showError(message, 'Select Database');
         if (choice === 'Select Database') {
             await vscode.commands.executeCommand('dbSelector.quickSearch');
         }
-        return;
+        return { ok: false, message };
     }
 
     // Restarting this version stops only this version's session; other
     // versions running side by side must survive.
-    const existingSession = getSessionByName(workspaceSettings.debuggerName);
+    const existingSession = getSessionByName(settings.debuggerName);
     if (existingSession) {
         await vscode.debug.stopDebugging(existingSession);
     }
     const started = await vscode.debug.startDebugging(
         workspaceFolders[0],
-        workspaceSettings.debuggerName,
+        settings.debuggerName,
         { noDebug: options.noDebug === true }
     );
     if (!started) {
-        void showError(`Could not start "${workspaceSettings.debuggerName}". Its launch entry may not be written yet.`);
+        const message = `Could not start "${settings.debuggerName}". Its launch entry may not be written yet.`;
+        if (!options.quiet) {
+            void showError(message);
+        }
+        return { ok: false, message };
     }
+    return { ok: true };
+}
+
+export async function startDebugServer(options: { noDebug?: boolean } = {}): Promise<void> {
+    await startServerForVersion(undefined, options);
 }

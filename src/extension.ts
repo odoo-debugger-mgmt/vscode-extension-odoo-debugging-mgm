@@ -8,6 +8,7 @@ import { ProjectTreeProvider } from './project';
 import { RepoTreeProvider } from './repos';
 import { ModuleTreeProvider } from './module';
 import { TestingTreeProvider } from './testing';
+import { UpgradeTreeProvider, initializeUpgradeContext, readUpgradeConfig } from './upgrade';
 import { setupDebugger } from './debugger';
 import {
     drainProvisionQueue,
@@ -84,6 +85,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }));
 
     await initializeTestingContext();
+    await initializeUpgradeContext();
 
     const providers = {
         project: new ProjectTreeProvider(context, sortPreferences),
@@ -91,6 +93,7 @@ export async function activate(context: vscode.ExtensionContext) {
         db: new DbsTreeProvider(sortPreferences),
         module: new ModuleTreeProvider(context, sortPreferences),
         testing: new TestingTreeProvider(context),
+        upgrade: new UpgradeTreeProvider(context),
         versions: new VersionsTreeProvider(sortPreferences),
         projectReposExplorer: new ProjectReposExplorerProvider(sortPreferences)
     };
@@ -139,6 +142,7 @@ export async function activate(context: vscode.ExtensionContext) {
     });
     context.subscriptions.push(moduleTreeView);
     context.subscriptions.push(vscode.window.registerTreeDataProvider('testingSelector', providers.testing));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('upgradeSelector', providers.upgrade));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('versionsManager', providers.versions));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('odt.projectReposExplorer', providers.projectReposExplorer));
 
@@ -149,6 +153,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     const refreshViews = async () => {
         await initializeTestingContext();
+        await initializeUpgradeContext();
         Object.values(providers).forEach(provider => provider.refresh());
         await statusBar.update();
     };
@@ -366,6 +371,11 @@ async function promptUpgradeSetup(context: vscode.ExtensionContext): Promise<voi
 
     const result = await SettingsStore.peekSelectedProject();
     if (!result) {
+        return;
+    }
+
+    // An upgrade already set up is the thing this offers to set up.
+    if (readUpgradeConfig(result.project).isActive()) {
         return;
     }
 

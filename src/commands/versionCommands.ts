@@ -21,6 +21,7 @@ import { resolveDbForVersion } from '../services/dbResolution';
 import { SettingsStore } from '../settingsStore';
 import { readSetupState } from '../services/setupState';
 import { diagnoseVersion, needsAttention } from '../services/versionMigration';
+import { currentUpgradeConfig, refuseDuringUpgrade } from '../upgrade';
 
 export function registerVersionCommands(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
@@ -280,6 +281,16 @@ export function registerVersionCommands(deps: CommandDeps): void {
                 versionId = selected.versionId;
             }
 
+            // Switching to a version outside the pair points the workbench at
+            // an environment the upgrade is not about, and alignEnvironment
+            // would then move the branches both sides depend on.
+            const upgradeConfig = await currentUpgradeConfig();
+            if (upgradeConfig.isActive() && !upgradeConfig.sideForVersion(versionId)) {
+                const name = versionsService.getVersion(versionId)?.name ?? 'That version';
+                refuseDuringUpgrade(upgradeConfig, `"${name}" is not part of this upgrade, so it cannot be activated`);
+                return;
+            }
+
             const success = await versionsService.setActiveVersion(versionId);
             if (success) {
                 const version = versionsService.getVersion(versionId);
@@ -382,6 +393,16 @@ export function registerVersionCommands(deps: CommandDeps): void {
                 return;
             }
             const { versionId, key, value } = ref;
+
+            // Paths, ports and interpreters are what a side of the upgrade
+            // actually runs; editing them mid-upgrade changes it underneath.
+            const settingUpgrade = await currentUpgradeConfig();
+            if (settingUpgrade.sideForVersion(versionId)
+                && refuseDuringUpgrade(
+                    settingUpgrade,
+                    `"${getSettingDisplayName(key)}" cannot be changed on a version in this upgrade`)) {
+                return;
+            }
 
             if (isDerivedSetting(key)) {
                 void showInfo(
@@ -502,6 +523,13 @@ export function registerVersionCommands(deps: CommandDeps): void {
             const version = versionsService.getVersion(versionId);
             if (!version) {
                 void showError('The selected version could not be found.');
+                return;
+            }
+
+            // One side of an upgrade cannot be deleted out from under it.
+            const upgradeConfig = await currentUpgradeConfig();
+            if (upgradeConfig.sideForVersion(version.id)
+                && refuseDuringUpgrade(upgradeConfig, `"${version.name}" cannot be deleted`)) {
                 return;
             }
 

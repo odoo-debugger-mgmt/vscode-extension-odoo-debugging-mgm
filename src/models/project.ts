@@ -5,6 +5,7 @@
 import { DatabaseModel } from "./db";
 import { RepoModel } from "./repo";
 import { TestingConfigModel } from "./testing";
+import { UpgradeConfigModel } from "./upgrade";
 import { randomUUID } from "crypto";
 
 export interface ProjectTicketModel {
@@ -21,6 +22,12 @@ export class ProjectModel {
     uid: string; // unique identifier for the project
     includedPsaeInternalPaths: string[] = []; // Manually included psae-internal paths
     testingConfig: TestingConfigModel; // Testing configuration
+    /**
+     * The upgrade being run, if any. Not a constructor parameter: like
+     * selectedDbByVersion it is written by the flow that sets it up, and every
+     * read site normalizes it with ensureUpgradeConfigModel.
+     */
+    upgradeConfig: UpgradeConfigModel = new UpgradeConfigModel();
     tickets: ProjectTicketModel[] = [];
     /** versionId -> dbId: which database each version last launched against. */
     selectedDbByVersion: Record<string, string> = {};

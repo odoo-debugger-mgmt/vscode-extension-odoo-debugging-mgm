@@ -1,22 +1,27 @@
 /**
- * `odoo.setUpUpgrade`: configures the versions, per-branch repository copies
- * and database branch mapping for one upgrade, from a single reviewable plan.
+ * `odoo.setUpUpgrade`: configures one upgrade from the two databases it runs
+ * between.
  *
- * Nothing is written before the confirmation, and the repository mode change
- * keeps its own modal: creating per-branch copies moves where the user edits
- * that repository's code, which a wizard is not a reason to do silently.
+ * Naming the databases is the whole input. Each one says which Odoo series it
+ * runs, each series picks a version, and branch names usually say which side
+ * they belong to - so the flow asks two questions and deduces the rest, where
+ * it used to ask two per repository plus two more and never ask about
+ * databases at all.
+ *
+ * One dialog blocks, and only when something is about to be created on disk.
+ * The plan is reviewed and edited in a quick pick before that, which is a
+ * screen you change things on rather than a warning you dismiss.
  */
 import * as vscode from 'vscode';
 import type { CommandDeps } from './index';
 import { SettingsStore } from '../settingsStore';
 import { stripSettings, normalizePath } from '../utils';
-import { showError, showInfo, showModalWarning } from '../services/notifications';
+import { showError, showInfo, showModalInfo } from '../services/notifications';
 import { errorMessage, logger } from '../services/logger';
-import { getRepoBranch } from '../services/branches';
 import { pickRepoBranch } from './branchPick';
-import { branchToSeries, statesSeries } from '../services/versionProposal';
-import { buildUpgradePlan, describeUpgradePlan, UpgradeInput, UpgradeRepo } from '../services/upgradePlan';
-import { describeModeChange } from '../services/repoPaths';
+import { buildUpgradePlan, describeUpgradePlan, UpgradeInput } from '../services/upgradePlan';
+import { applyUpgradeSetup, UpgradeSetup } from '../services/upgradeApply';
+import { proposeBranchForSeries, resolveDatabaseSeries } from '../services/upgradeSetup';
 import {
     drainProvisionQueue,
     enqueue,
@@ -24,77 +29,72 @@ import {
     setQueueSnapshot,
     writeQueue
 } from '../services/provisionQueue';
-import { sanitizeProjectRepoBranchAssignments } from '../services/environment';
 import { readSetupState } from '../services/setupState';
-import { listSeriesBranches } from '../services/gitService';
-import { BACK, isBack, multiPickStep, pickStep, inputStep, runWizard, step, StepResult, WizardStep } from '../services/wizard';
-import { RepoModel } from '../models/repo';
+import { listAllBranches, listSeriesBranches } from '../services/gitService';
+import { generateDatabaseIdentifiers } from '../services/dbNaming';
+import { takenDatabaseNames } from '../dbs';
+import { updateUpgradeContext } from '../context';
+import { currentUpgradeConfig, exitUpgradeMode } from '../upgrade';
+import { isBack, pickStep, inputStep, runWizard, step, StepResult, WizardStep } from '../services/wizard';
+import { RepoModel, normalizeBranchMode } from '../models/repo';
+import type { DatabaseModel } from '../models/db';
+import type { VersionsService } from '../versionsService';
 
-/** The branch the previous repository answered for this side, as a seed. */
-function previousAnswer(
-    answers: Map<string, { from?: string; to?: string }>,
-    repoName: string,
-    side: 'from' | 'to'
-): string | undefined {
-    let seed: string | undefined;
-    for (const [name, answer] of answers) {
-        if (name === repoName) {
-            break;
-        }
-        seed = answer[side] ?? seed;
-    }
-    return seed;
+/** Everything the wizard collects, filled in as it goes. */
+interface SetupDraft {
+    fromDb?: DatabaseModel;
+    /** The chosen existing target, or undefined when a new one is being made. */
+    toDb?: DatabaseModel;
+    /** Name for the database to create, when the target is new. */
+    newTargetName?: string;
+    fromSeries?: string;
+    toSeries?: string;
+    /** Per repository name, the branch on each side. */
+    branches: Map<string, { from?: string; to?: string }>;
 }
 
-/**
- * The Odoo series one side of the upgrade runs.
- *
- * Parsed from the branch names when they state it, asked when they do not:
- * refusing "dev/upgrade-client" as "not an Odoo series" was rejecting a
- * perfectly ordinary branch name after five answers had already been given.
- * Repositories must agree, because one pair of versions serves them all.
- */
-async function resolveSeries(
-    repos: UpgradeRepo[],
-    side: 'from' | 'to',
-    knownSeries: string[]
-): Promise<StepResult<string>> {
-    const branches = repos.map(repo => (side === 'from' ? repo.fromBranch : repo.toBranch));
-    const stated = Array.from(new Set(
-        branches.filter(statesSeries).map(branch => branchToSeries(branch) as string)
-    ));
+type DbRow = vscode.QuickPickItem & { db?: DatabaseModel; create?: boolean };
+type SeriesRow = vscode.QuickPickItem & { series?: string; custom?: boolean };
 
-    if (stated.length > 1) {
-        void showError(
-            `The "upgrading ${side}" branches name different Odoo series (${stated.join(', ')}). `
-            + 'One upgrade runs between two series.');
+/** How a database is described in the picker, without probing every one. */
+function describeDatabase(db: DatabaseModel, versionsService: VersionsService): string {
+    const version = db.versionId ? versionsService.getVersion(db.versionId) : undefined;
+    if (version) {
+        return version.name;
+    }
+    const legacy = typeof db.odooVersion === 'string' ? db.odooVersion.trim() : '';
+    return legacy ? `Odoo ${legacy}` : 'no version linked';
+}
+
+/** The series a database is linked to, as a fallback when probing fails. */
+function linkedSeries(db: DatabaseModel | undefined, versionsService: VersionsService): string | undefined {
+    if (!db) {
         return undefined;
     }
-    if (stated.length === 1 && branches.every(statesSeries)) {
-        return stated[0];
-    }
+    const version = db.versionId ? versionsService.getVersion(db.versionId) : undefined;
+    return version?.odooVersion?.trim() || (typeof db.odooVersion === 'string' ? db.odooVersion.trim() : undefined);
+}
 
-    const unnamed = branches.filter(branch => !statesSeries(branch));
-    const label = side === 'from' ? 'upgrading from' : 'upgrading to';
-    const rows: Array<vscode.QuickPickItem & { series?: string; custom?: boolean }> = [
-        ...knownSeries.map(series => ({
-            label: series,
-            description: series === stated[0] ? 'named by the other branches' : undefined,
-            series
-        })),
+/** Asks which Odoo series a side runs, when it could not be deduced. */
+async function askSeries(
+    label: string,
+    reason: string,
+    knownSeries: string[],
+    canGoBack: boolean
+): Promise<StepResult<string>> {
+    const rows: SeriesRow[] = [
+        ...knownSeries.map(series => ({ label: series, series })),
         { label: '$(pencil) Enter a series...', description: 'e.g. "17.0", "saas-18.4", "master"', custom: true }
     ];
 
     const picked = await pickStep(rows, {
         title: `Which Odoo version is "${label}"?`,
-        placeHolder: `${unnamed.join(', ')} ${unnamed.length === 1 ? 'does' : 'do'} not say, so it has to be told`,
-        canGoBack: true,
-        matchOnDescription: true,
-        activeItem: item => (item as { series?: string }).series === stated[0]
+        placeHolder: reason,
+        canGoBack,
+        matchOnDescription: true
     });
-
     if (picked === undefined || isBack(picked)) {
-        return picked;
+        return picked as StepResult<string>;
     }
     if (!picked.custom) {
         return picked.series;
@@ -102,20 +102,99 @@ async function resolveSeries(
 
     const entered = await inputStep({
         title: `Which Odoo version is "${label}"?`,
-        prompt: 'The Odoo series these branches run',
+        prompt: 'The Odoo series this side runs',
         placeHolder: '17.0',
-        value: stated[0] ?? '',
         canGoBack: true,
         validateInput: value => value.trim() ? undefined : 'A series is required.'
     });
     if (entered === undefined) {
         return undefined;
     }
-    return isBack(entered) ? BACK : entered.trim();
+    return isBack(entered) ? entered : entered.trim();
+}
+
+/** Branch lists are read once per repository, not once per question. */
+const branchCache = new Map<string, string[]>();
+
+async function branchesOf(repoPath: string): Promise<string[]> {
+    const cached = branchCache.get(repoPath);
+    if (cached) {
+        return cached;
+    }
+    const branches = await listAllBranches(repoPath).catch(() => [] as string[]);
+    branchCache.set(repoPath, branches);
+    return branches;
+}
+
+/**
+ * Whether a repository is part of this upgrade at all.
+ *
+ * A project holds repositories that have nothing to do with the two series
+ * being run - a shared library on `main`, a tooling repo. Asking two questions
+ * about each of those is how a two-question flow turns back into a ten-question
+ * one, so a repository with no branch on either side simply drops out.
+ */
+async function repoIsInvolved(repo: RepoModel, fromSeries: string, toSeries: string): Promise<boolean> {
+    const branches = await branchesOf(normalizePath(repo.path));
+    return proposeBranchForSeries(branches, fromSeries).candidates.length > 0
+        || proposeBranchForSeries(branches, toSeries).candidates.length > 0;
+}
+
+/**
+ * The branch a repository uses on one side.
+ *
+ * Deduced when the repository has exactly one branch on that series, asked
+ * otherwise - two branches on 17.0 is a question only the developer can answer.
+ */
+async function resolveRepoBranch(
+    repo: RepoModel,
+    series: string,
+    side: 'from' | 'to',
+    exclude: string | undefined,
+    canGoBack: boolean
+): Promise<StepResult<string>> {
+    const repoPath = normalizePath(repo.path);
+    const proposal = proposeBranchForSeries(await branchesOf(repoPath), series);
+
+    if (proposal.branch && proposal.branch !== exclude) {
+        return proposal.branch;
+    }
+
+    return pickRepoBranch(
+        repoPath,
+        `Upgrading ${side} — ${repo.name}`,
+        `Which branch of ${repo.name} runs Odoo ${series}?`,
+        proposal.candidates.find(candidate => candidate !== exclude),
+        exclude,
+        canGoBack
+    );
+}
+
+/** A row in the review screen. */
+interface ReviewRow extends vscode.QuickPickItem {
+    edit?: 'from-branch' | 'to-branch';
+    repoName?: string;
+    confirm?: boolean;
 }
 
 export function registerUpgradeCommand(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
+
+    // Receives the current state and inverts it, the way the testing toggle
+    // does, so the tree row needs no knowledge of what happens next.
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'upgradeSelector.toggleUpgrade',
+        async (payload?: { isEnabled?: boolean }) => {
+            const enabled = payload?.isEnabled ?? (await currentUpgradeConfig()).isActive();
+            if (enabled) {
+                if (await exitUpgradeMode()) {
+                    await refreshAll();
+                }
+                return;
+            }
+            await vscode.commands.executeCommand('odoo.setUpUpgrade');
+        }
+    ));
 
     context.subscriptions.push(vscode.commands.registerCommand('odoo.setUpUpgrade', async () => {
         try {
@@ -125,155 +204,342 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
             }
             const { data, project } = result;
 
-            const repos: RepoModel[] = project.repos ?? [];
-            if (repos.length === 0) {
-                void showError('This project has no repositories to upgrade.');
+            const dbs: DatabaseModel[] = project.dbs ?? [];
+            if (dbs.length === 0) {
+                const choice = await showError(
+                    'An upgrade runs between two databases, and this project has none.',
+                    'Create Database');
+                if (choice === 'Create Database') {
+                    await vscode.commands.executeCommand('dbSelector.create');
+                }
                 return;
             }
 
-            // Every question is backable, and the branch pickers no longer
-            // refuse a branch whose name does not state its Odoo series -
-            // plenty of real branches are called "dev/upgrade-client". The
-            // series is asked for instead, right after the branch it belongs
-            // to, so a flow six answers deep never dies on the last one.
+            const repos: RepoModel[] = project.repos ?? [];
+            const setupState = readSetupState();
+            const root = setupState.provisioningRoot;
             const knownSeries = Array.from(new Set([
                 ...versionsService.getVersions().map(version => version.odooVersion),
-                ...(readSetupState().sourceRepo
-                    ? await listSeriesBranches(readSetupState().sourceRepo as string).catch(() => [])
+                ...(setupState.sourceRepo
+                    ? await listSeriesBranches(setupState.sourceRepo).catch(() => [])
                     : [])
             ].map(entry => entry.trim()).filter(Boolean)));
 
-            let upgradeRepos: UpgradeRepo[] = [];
-            let fromSeries: string | undefined;
-            let toSeries: string | undefined;
+            // Cached for this run only: a re-run must see branches pushed since.
+            branchCache.clear();
+            const draft: SetupDraft = { branches: new Map() };
 
-            // Looped so backing out of the first branch question returns to the
-            // repository selection rather than closing the flow.
-            for (;;) {
-                const pickedRepos = await multiPickStep(
-                    repos.map(repo => ({ label: repo.name, description: repo.path, repo })),
+            // ---- The questions -------------------------------------------------
+            const steps: WizardStep[] = [];
+
+            steps.push(step<DbRow>(
+                canGoBack => pickStep<DbRow>(
+                    dbs.map(db => ({
+                        label: db.id,
+                        description: describeDatabase(db, versionsService),
+                        db
+                    })),
                     {
                         title: 'Set Up an Upgrade',
-                        placeHolder: 'Which repositories are being upgraded?',
-                        selected: () => true,
-                        canGoBack: false
+                        placeHolder: 'Which database are you upgrading from?',
+                        canGoBack,
+                        matchOnDescription: true
                     }
-                );
-                if (!pickedRepos || isBack(pickedRepos) || pickedRepos.length === 0) {
-                    return;
-                }
+                ),
+                picked => { draft.fromDb = picked.db; }
+            ));
 
-                upgradeRepos = [];
-                const answers = new Map<string, { from?: string; to?: string }>();
-                const steps: WizardStep[] = [];
-
-                for (const pick of pickedRepos) {
-                    const repoPath = normalizePath(pick.repo.path);
-                    const repoName = pick.repo.name;
-                    answers.set(repoName, {});
-
-                    steps.push(step<string>(
-                        async canGoBack => {
-                            const onDisk = await getRepoBranch(repoPath);
-                            const seed = previousAnswer(answers, repoName, 'from') ?? onDisk ?? undefined;
-                            return pickRepoBranch(
-                                repoPath,
-                                `Upgrading from \u2014 ${repoName}`,
-                                'The branch this repository is on today',
-                                seed,
-                                undefined,
-                                canGoBack
-                            );
-                        },
-                        branch => { answers.get(repoName)!.from = branch; }
-                    ));
-
-                    steps.push(step<string>(
-                        async canGoBack => pickRepoBranch(
-                            repoPath,
-                            `Upgrading to \u2014 ${repoName}`,
-                            'The branch this repository is upgraded on',
-                            previousAnswer(answers, repoName, 'to'),
-                            answers.get(repoName)!.from,
-                            canGoBack
-                        ),
-                        branch => { answers.get(repoName)!.to = branch; }
-                    ));
+            steps.push(step<DbRow>(
+                canGoBack => pickStep<DbRow>(
+                    [
+                        ...dbs
+                            .filter(db => db.id !== draft.fromDb?.id)
+                            .map(db => ({
+                                label: db.id,
+                                description: describeDatabase(db, versionsService),
+                                db
+                            })),
+                        {
+                            label: '$(add) Create a new database...',
+                            description: 'empty, on the version you are upgrading to',
+                            detail: 'Its modules are installed from the set the source database runs.',
+                            create: true
+                        }
+                    ],
+                    {
+                        title: 'Set Up an Upgrade',
+                        placeHolder: 'Which database are you upgrading to?',
+                        canGoBack,
+                        matchOnDescription: true
+                    }
+                ),
+                picked => {
+                    draft.toDb = picked.db;
+                    // A new database is defined by the series rather than
+                    // probed for one, so clear any answer from a previous pass.
+                    draft.newTargetName = picked.create ? draft.newTargetName : undefined;
+                    if (!picked.create) {
+                        draft.toSeries = undefined;
+                    }
                 }
+            ));
 
-                const outcome = await runWizard(steps);
-                if (outcome === 'cancelled') {
-                    return;
-                }
-                if (outcome === 'back') {
-                    continue; // Back to the repository selection.
-                }
+            // The source's series: probed, because a version link is whatever
+            // was assigned when the database was made and may never have been
+            // revisited. Only asked when the probe and the link both fail.
+            steps.push(step<string>(
+                async canGoBack => {
+                    const detected = await resolveDatabaseSeries(
+                        draft.fromDb!.id,
+                        linkedSeries(draft.fromDb, versionsService));
+                    return detected ?? await askSeries(
+                        draft.fromDb!.id,
+                        `"${draft.fromDb!.id}" does not say which Odoo series it runs, so it has to be told`,
+                        knownSeries,
+                        canGoBack);
+                },
+                series => { draft.fromSeries = series.trim(); }
+            ));
 
-                upgradeRepos = pickedRepos.map(pick => ({
-                    name: pick.repo.name,
-                    path: pick.repo.path,
-                    fromBranch: answers.get(pick.repo.name)!.from!.trim(),
-                    toBranch: answers.get(pick.repo.name)!.to!.trim()
-                }));
+            steps.push(step<string>(
+                async canGoBack => {
+                    if (draft.toDb) {
+                        const detected = await resolveDatabaseSeries(
+                            draft.toDb.id,
+                            linkedSeries(draft.toDb, versionsService));
+                        if (detected) {
+                            return detected;
+                        }
+                    }
+                    // A database about to be created is empty, so there is
+                    // nothing to probe: the series defines it instead.
+                    return askSeries(
+                        draft.toDb ? draft.toDb.id : 'the new database',
+                        draft.toDb
+                            ? `"${draft.toDb.id}" does not say which Odoo series it runs, so it has to be told`
+                            : 'The Odoo series the new database will run',
+                        knownSeries.filter(series => series !== draft.fromSeries),
+                        canGoBack);
+                },
+                series => { draft.toSeries = series.trim(); }
+            ));
 
-                // The series each side runs, asked only when a branch name does
-                // not state one. Agreement across repositories still matters:
-                // one pair of versions serves them all.
-                const resolvedFrom = await resolveSeries(upgradeRepos, 'from', knownSeries);
-                if (resolvedFrom === undefined) {
-                    return;
-                }
-                const resolvedTo = await resolveSeries(upgradeRepos, 'to', knownSeries);
-                if (resolvedTo === undefined) {
-                    return;
-                }
-                if (isBack(resolvedFrom) || isBack(resolvedTo)) {
-                    continue;
-                }
+            // One branch question per repository per side, asked only for the
+            // repositories this upgrade actually involves and only where their
+            // branches do not already answer it. An empty answer means "not
+            // part of this upgrade" and records nothing.
+            for (const repo of repos) {
+                const record = (side: 'from' | 'to') => (branch: string) => {
+                    if (!branch.trim()) {
+                        draft.branches.delete(repo.name);
+                        return;
+                    }
+                    const entry = draft.branches.get(repo.name) ?? {};
+                    entry[side] = branch.trim();
+                    draft.branches.set(repo.name, entry);
+                };
 
-                if (resolvedFrom === resolvedTo) {
-                    void showError(
-                        `Both sides are on Odoo ${resolvedFrom}, so there is nothing to run side by side.`);
-                    return;
-                }
-                fromSeries = resolvedFrom;
-                toSeries = resolvedTo;
-                break;
+                steps.push(step<string>(
+                    async canGoBack => (await repoIsInvolved(repo, draft.fromSeries!, draft.toSeries!))
+                        ? resolveRepoBranch(repo, draft.fromSeries!, 'from', undefined, canGoBack)
+                        : '',
+                    record('from')
+                ));
+                steps.push(step<string>(
+                    async canGoBack => draft.branches.get(repo.name)?.from
+                        ? resolveRepoBranch(
+                            repo, draft.toSeries!, 'to', draft.branches.get(repo.name)?.from, canGoBack)
+                        : '',
+                    record('to')
+                ));
             }
 
-            const versionIdBySeries: Record<string, string | undefined> = {};
-            for (const version of versionsService.getVersions()) {
-                versionIdBySeries[version.odooVersion] = version.id;
-            }
-
-            const input: UpgradeInput = {
-                repos: upgradeRepos,
-                fromSeries,
-                toSeries,
-                existingVersions: versionsService.getVersions().map(version => version.odooVersion),
-                dbs: (project.dbs ?? []).map((db: { id: string; versionId?: string }) => ({
-                    id: db.id,
-                    versionId: db.versionId
-                })),
-                versionIdBySeries
-            };
-            const plan = buildUpgradePlan(input);
-
-            // A modal, not a quick pick: the plan is several lines and a quick
-            // pick's detail is one truncated line. Nothing is written until
-            // this is accepted, so the interruption buys something.
-            const confirmed = await showModalWarning(
-                `Upgrade ${upgradeRepos.map(repo => repo.name).join(', ')}: ${fromSeries} → ${toSeries}\n\n`
-                + `${describeUpgradePlan(plan, input)}\n\n`
-                + 'Nothing has been written yet.',
-                'Use These'
-            );
-            if (confirmed !== 'Use These') {
+            const outcome = await runWizard(steps);
+            if (outcome !== 'completed') {
                 return;
             }
 
-            // Versions first: the repo worktrees and assignments describe an
-            // environment those versions run.
+            if (draft.fromSeries === draft.toSeries) {
+                void showError(
+                    `Both databases are on Odoo ${draft.fromSeries}, so there is nothing to run side by side.`);
+                return;
+            }
+
+            // A new target database gets its name now, so the review and the
+            // confirmation can both name it. It is created when they are
+            // accepted, not before.
+            if (!draft.toDb && !draft.newTargetName) {
+                draft.newTargetName = generateDatabaseIdentifiers({
+                    projectName: project.name,
+                    kind: `upgrade-${draft.toSeries}`,
+                    existingInternalNames: await takenDatabaseNames()
+                }).internalName;
+            }
+
+            const toDbId = draft.toDb?.id ?? draft.newTargetName!;
+
+            // ---- Review ---------------------------------------------------------
+            const buildInput = (): UpgradeInput => ({
+                repos: repos.map(repo => ({
+                    name: repo.name,
+                    path: normalizePath(repo.path),
+                    fromBranch: draft.branches.get(repo.name)?.from ?? '',
+                    toBranch: draft.branches.get(repo.name)?.to ?? ''
+                })).filter(entry => entry.fromBranch && entry.toBranch),
+                fromSeries: draft.fromSeries!,
+                toSeries: draft.toSeries!,
+                fromDbId: draft.fromDb!.id,
+                toDbId,
+                existingVersions: versionsService.getVersions().map(version => version.odooVersion),
+                worktreeRepos: repos
+                    .filter(repo => normalizeBranchMode(repo.branchMode) === 'worktree')
+                    .map(repo => repo.name),
+                root
+            });
+
+            for (;;) {
+                const input = buildInput();
+                const plan = buildUpgradePlan(input);
+
+                const rows: ReviewRow[] = [
+                    {
+                        label: '$(check) Set up this upgrade',
+                        description: `${draft.fromSeries} → ${draft.toSeries}`,
+                        confirm: true
+                    },
+                    {
+                        label: 'Databases',
+                        description: `${draft.fromDb!.id} → ${toDbId}${draft.toDb ? '' : ' (will be created)'}`
+                    },
+                    {
+                        label: 'Versions',
+                        description: [input.fromSeries, input.toSeries]
+                            .map(series => plan.versionsToCreate.includes(series)
+                                ? `Odoo ${series} (will be built)`
+                                : `Odoo ${series}`)
+                            .join(', ')
+                    },
+                    ...input.repos.flatMap(repo => ([
+                        {
+                            label: `    ${repo.name} — from`,
+                            description: repo.fromBranch,
+                            detail: 'Select to change',
+                            edit: 'from-branch' as const,
+                            repoName: repo.name
+                        },
+                        {
+                            label: `    ${repo.name} — to`,
+                            description: repo.toBranch,
+                            detail: 'Select to change',
+                            edit: 'to-branch' as const,
+                            repoName: repo.name
+                        }
+                    ]))
+                ];
+
+                const picked = await pickStep(rows, {
+                    title: 'Set Up an Upgrade',
+                    placeHolder: 'Review the plan, or select a line to change it',
+                    matchOnDescription: true
+                });
+                if (!picked || isBack(picked)) {
+                    return;
+                }
+                if (picked.confirm) {
+                    break;
+                }
+
+                const repo = repos.find(entry => entry.name === picked.repoName);
+                if (!repo) {
+                    continue;
+                }
+                const entry = draft.branches.get(repo.name) ?? {};
+                const side = picked.edit === 'from-branch' ? 'from' : 'to';
+                const changed = await pickRepoBranch(
+                    normalizePath(repo.path),
+                    `Upgrading ${side} — ${repo.name}`,
+                    `Which branch of ${repo.name} runs Odoo ${side === 'from' ? draft.fromSeries : draft.toSeries}?`,
+                    side === 'from' ? entry.from : entry.to,
+                    side === 'from' ? entry.to : entry.from,
+                    false
+                );
+                if (changed && !isBack(changed)) {
+                    entry[side] = changed.trim();
+                    draft.branches.set(repo.name, entry);
+                }
+            }
+
+            const input = buildInput();
+            const plan = buildUpgradePlan(input);
+
+            // ---- The one blocking dialog, and only when disk is touched --------
+            const createsSomething = plan.reposToWorktree.length > 0
+                || plan.versionsToCreate.length > 0
+                || !draft.toDb;
+            if (createsSomething) {
+                const confirmed = await showModalInfo(
+                    describeUpgradePlan(plan, input),
+                    'Set It Up'
+                );
+                if (confirmed !== 'Set It Up') {
+                    return;
+                }
+            }
+
+            // ---- Apply ----------------------------------------------------------
+            const versionIdFor = (series: string): string | undefined =>
+                versionsService.getVersions().find(version => version.odooVersion.trim() === series)?.id;
+
+            const setup: UpgradeSetup = {
+                fromDbId: input.fromDbId,
+                toDbId: input.toDbId,
+                fromSeries: input.fromSeries,
+                toSeries: input.toSeries,
+                fromVersionId: versionIdFor(input.fromSeries),
+                toVersionId: versionIdFor(input.toSeries),
+                repos: input.repos.map(repo => ({
+                    repoName: repo.name,
+                    repoPath: repo.path,
+                    fromBranch: repo.fromBranch,
+                    toBranch: repo.toBranch
+                })),
+                createTarget: !draft.toDb,
+                root,
+                plan
+            };
+
+            const applied = await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: `Setting up the ${input.fromSeries} → ${input.toSeries} upgrade`,
+                cancellable: true
+            }, async (progress, token) => {
+                try {
+                    if (setup.createTarget) {
+                        progress.report({ message: `Creating ${setup.toDbId}`, increment: 20 });
+                    }
+                    progress.report({ message: 'Creating per-branch copies', increment: 40 });
+                    const outcome = await applyUpgradeSetup(
+                        project,
+                        setup,
+                        versionId => versionsService.getVersion(versionId ?? '')?.settings,
+                        token
+                    );
+                    progress.report({ message: 'Saving', increment: 40 });
+                    await SettingsStore.saveWithoutComments(stripSettings(data));
+                    return outcome;
+                } catch (error) {
+                    logger.error('[upgrade] applying the setup failed:', error);
+                    void showError(`Could not set up the upgrade: ${errorMessage(error)}`);
+                    return undefined;
+                }
+            });
+
+            if (!applied) {
+                return;
+            }
+
+            // Versions last: building them takes minutes, and the upgrade is
+            // already configured and visible by the time they finish.
             if (plan.versionsToCreate.length > 0) {
                 const queued = enqueue(
                     readQueue(context),
@@ -284,53 +550,35 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
                 void drainProvisionQueue(context, () => void refreshAll({ reason: 'ui' }));
             }
 
-            const root = readSetupState().provisioningRoot;
-            const skipped: string[] = [];
-
-            for (const repo of repos.filter(entry => plan.reposToWorktree.includes(entry.name))) {
-                if (repo.branchMode === 'worktree') {
-                    continue;
-                }
-                // Each repository's own pair: the modal names the directories
-                // that will be created, and those follow this repo's branches.
-                const planned = upgradeRepos.find(entry => entry.name === repo.name);
-                const confirm = await showModalWarning(
-                    describeModeChange(
-                        repo.name,
-                        'worktree',
-                        root,
-                        planned ? [planned.fromBranch, planned.toBranch] : [],
-                        normalizePath(repo.path)
-                    ),
-                    'Create Copies'
-                );
-                if (confirm !== 'Create Copies') {
-                    skipped.push(repo.name);
-                    continue;
-                }
-                repo.branchMode = 'worktree';
-            }
-
-            for (const assignment of plan.assignments) {
-                const db = (project.dbs ?? []).find((entry: { id: string }) => entry.id === assignment.dbId);
-                if (!db) {
-                    continue;
-                }
-                const existing = sanitizeProjectRepoBranchAssignments(db.projectRepoBranches)
-                    .filter(entry => entry.repoName !== assignment.repoName);
-                db.projectRepoBranches = [
-                    ...existing,
-                    { repoName: assignment.repoName, repoPath: assignment.repoPath, branch: assignment.branch }
-                ];
-            }
-
-            await SettingsStore.saveWithoutComments(stripSettings(data));
-
-            const note = skipped.length > 0
-                ? ` ${skipped.join(', ')} kept a single checkout.`
-                : '';
-            void showInfo(`Configured the ${fromSeries} → ${toSeries} upgrade.${note}`);
+            updateUpgradeContext(true);
             await refreshAll();
+
+            const notes: string[] = [];
+            if (applied.staged.length > 0) {
+                notes.push(`${applied.staged.length} module(s) staged onto ${setup.toDbId}`);
+            }
+            if (applied.unavailable.length > 0) {
+                notes.push(`${applied.unavailable.length} left out, missing from Odoo ${input.toSeries}`);
+            }
+            if (applied.problems.length > 0) {
+                notes.push(applied.problems.join('; '));
+            }
+            const summary = notes.length > 0 ? ` ${notes.join('. ')}.` : '';
+
+            // Both versions have to exist before anything can run.
+            if (plan.versionsToCreate.length > 0) {
+                void showInfo(
+                    `Upgrade set up: ${input.fromSeries} → ${input.toSeries}.${summary}`
+                    + ' The servers can start once the versions finish building.');
+                return;
+            }
+
+            const action = await showInfo(
+                `Upgrade set up: ${input.fromSeries} → ${input.toSeries}.${summary}`,
+                'Start Both Servers');
+            if (action === 'Start Both Servers') {
+                await vscode.commands.executeCommand('odoo.startBothServers');
+            }
         } catch (error) {
             logger.error('Set Up an Upgrade failed:', error);
             void showError(`Could not set up the upgrade: ${errorMessage(error)}`);

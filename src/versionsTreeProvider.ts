@@ -7,13 +7,14 @@ import { VersionsService } from './versionsService';
 import { getSettingDisplayName, getSettingDisplayValue, resolveOptionalPath } from './utils';
 import { isVersionProvisioned } from './services/provisioning';
 import { getRunningInstances, RunningInstance } from './services/runningState';
-import { activeIcon } from './views/icons';
+import { activeIcon, selectedIcon } from './views/icons';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { logger } from './services/logger';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 import { isDerivedSetting } from './services/versionIdentity';
 import { currentQueueSnapshot, queueLabel } from './services/provisionQueue';
+import { currentUpgradeConfig } from './upgrade';
 
 /** Provisioned state for the tree description, from the shared predicate. */
 function provisioningLabel(version: VersionModel): string {
@@ -32,7 +33,9 @@ export class VersionTreeItem extends vscode.TreeItem {
     constructor(
         public readonly version: VersionModel,
         public override readonly collapsibleState: vscode.TreeItemCollapsibleState,
-        public readonly running?: RunningInstance
+        public readonly running?: RunningInstance,
+        /** Which side of a running upgrade this version is, if either. */
+        public readonly upgradeSide?: 'from' | 'to'
     ) {
         super(version.name, collapsibleState);
 
@@ -45,9 +48,29 @@ export class VersionTreeItem extends vscode.TreeItem {
             parts.push(`:${version.settings.portNumber}`);
         }
         parts.push(running ? 'running' : provisioningLabel(version));
+        if (upgradeSide) {
+            parts.push(upgradeSide === 'from' ? 'upgrading from' : 'upgrading to');
+        }
         this.description = parts.join(' \u2022 ');
+
+        // Both sides of an upgrade read as checked. The active version is still
+        // exactly one - a pair is two things being run, not two things active -
+        // so the pair uses the selection icon rather than the active one.
+        //
+        // contextValue is deliberately NOT changed for a pair member: every
+        // menu entry is keyed to `version`/`activeVersion`, so a third value
+        // silently emptied the whole right-click menu. What the mode should
+        // hide is gated on the upgrade_enabled context key instead.
         this.contextValue = version.isActive ? 'activeVersion' : 'version';
-        this.iconPath = version.isActive ? activeIcon : new vscode.ThemeIcon('versions');
+        // Active wins over "in the pair" for the same reason as the databases:
+        // both sides read as checked, but which one is active must stay visible.
+        let icon: vscode.ThemeIcon = new vscode.ThemeIcon('versions');
+        if (version.isActive) {
+            icon = activeIcon;
+        } else if (upgradeSide) {
+            icon = selectedIcon;
+        }
+        this.iconPath = icon;
 
         // Add command to switch to this version when clicked
         this.command = {
@@ -163,8 +186,13 @@ export class VersionsTreeProvider extends BaseTreeProvider<VersionTreeItem | Ver
                         .filter(instance => !!instance.versionId)
                         .map(instance => [instance.versionId!, instance])
                 );
+                const upgradeConfig = await currentUpgradeConfig();
                 return versions.map(version =>
-                    new VersionTreeItem(version, vscode.TreeItemCollapsibleState.Collapsed, running.get(version.id))
+                    new VersionTreeItem(
+                        version,
+                        vscode.TreeItemCollapsibleState.Collapsed,
+                        running.get(version.id),
+                        upgradeConfig.sideForVersion(version.id))
                 );
             }).catch(error => {
                 logger.error('Failed to load versions for tree view:', error);

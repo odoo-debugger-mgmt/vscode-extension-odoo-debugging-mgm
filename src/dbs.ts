@@ -18,6 +18,7 @@ import { VersionsService } from './versionsService';
 import { rememberDbForVersion } from './services/dbResolution';
 import { generateDatabaseIdentifiers, DatabaseKind } from './services/dbNaming';
 import { detectOdooSeries } from './services/database';
+import { readUpgradeConfig, refuseDuringUpgrade } from './upgrade';
 import {
     RESERVED_DATABASE_NAMES,
     listPostgresDatabases,
@@ -47,7 +48,7 @@ import { findStaleReferences } from './services/reconcile';
 import {
     alignEnvironment,
     buildDatabaseEnvironmentTarget,
-    resolveProjectRepoBranchAssignments,
+    resolveProjectRepoCheckouts,
     sanitizeProjectRepoBranchAssignments
 } from './services/environment';
 
@@ -952,6 +953,20 @@ export async function selectDatabase(event: unknown) {
         return;
     }
 
+    // During an upgrade the two databases are fixed, and selecting one is a
+    // question of which side you are looking at rather than a switch: the
+    // Modules view follows the selection, so clicking a side is how you edit
+    // that side's install/upgrade marks. Aligning the environment is what is
+    // skipped - it would move the branches the other side is running on.
+    const upgradeConfig = readUpgradeConfig(project);
+    const upgradeSide = upgradeConfig.sideForDb(database.id);
+    if (upgradeConfig.isActive() && !upgradeSide) {
+        refuseDuringUpgrade(
+            upgradeConfig,
+            `"${databaseLabel}" is not part of this upgrade, so it cannot be selected`);
+        return;
+    }
+
     // Update database selection
     const oldSelectedDbIndex = project.dbs.findIndex((db: DatabaseModel) => db.isSelected);
     if (oldSelectedDbIndex !== -1) {
@@ -976,6 +991,15 @@ export async function selectDatabase(event: unknown) {
     );
 
     await SettingsStore.saveWithoutComments(stripSettings(data));
+
+    if (upgradeSide) {
+        // Both sides are already built and running their own copies; there is
+        // nothing to align, and doing so would take a branch from the other.
+        showBriefStatus(
+            `Showing the ${upgradeSide === 'from' ? 'upgrading from' : 'upgrading to'} side: ${databaseLabel}`,
+            2000);
+        return;
+    }
 
     // Align the workbench (active version, core branches, project repo
     // branches) to the database through the single switch pipeline.
@@ -1049,6 +1073,11 @@ export async function deleteDb(event: unknown) {
  * Clones an existing linked database into a new one (createdb -T) and adds
  * the clone to the current project with the same version/branch metadata.
  */
+/** Database names already taken, so a generated one never collides. */
+export async function takenDatabaseNames(): Promise<Set<string>> {
+    return collectExistingDatabaseIdentifiers();
+}
+
 export async function cloneDatabaseFlow(event: unknown): Promise<void> {
     const db = extractDatabaseFromEvent(event);
     if (!db) {
@@ -1209,6 +1238,14 @@ export async function changeDatabaseVersion(event: unknown) {
         }
         const { data, project } = result;
 
+        // Re-pointing one side of a pair at a third version leaves an upgrade
+        // that describes something nobody is running.
+        const upgradeConfig = readUpgradeConfig(project);
+        if (upgradeConfig.sideForDb(db.id)
+            && refuseDuringUpgrade(upgradeConfig, `"${dbLabel}" cannot change version`)) {
+            return;
+        }
+
         // Find the project index in the projects array
         const projectIndex = data.projects.findIndex(p => p.uid === project.uid);
         if (projectIndex === -1) {
@@ -1356,7 +1393,7 @@ export async function changeDatabaseProjectRepoBranches(event: unknown): Promise
         if (project.dbs[dbIndex].isSelected && updatedAssignments.length > 0) {
             // The user explicitly configured this mapping; apply it right away.
             await alignEnvironment(
-                { repoAssignments: resolveProjectRepoBranchAssignments(project.dbs[dbIndex], project.repos ?? []) },
+                { repoAssignments: resolveProjectRepoCheckouts(project.dbs[dbIndex], project.repos ?? []) },
                 { label: `Database "${dbLabel}"`, behavior: 'auto' }
             );
         }

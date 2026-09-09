@@ -82,6 +82,10 @@
           "name": "Testing"
         },
         {
+          "id": "upgradeSelector",
+          "name": "Upgrade"
+        },
+        {
           "id": "versionsManager",
           "name": "Versions",
           "icon": "$(versions)"
@@ -640,6 +644,18 @@
         "icon": "$(checklist)"
       },
       {
+        "command": "upgradeSelector.toggleUpgrade",
+        "title": "Toggle Upgrade Mode",
+        "category": "Odoo DevTools",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "odoo.startBothServers",
+        "title": "Start Both Upgrade Servers",
+        "category": "Odoo DevTools",
+        "icon": "$(run-all)"
+      },
+      {
         "command": "odoo.setUpUpgrade",
         "title": "Set Up an Upgrade",
         "category": "Odoo DevTools",
@@ -891,9 +907,14 @@
           "group": "navigation@9"
         },
         {
-          "command": "odoo.setUpUpgrade",
-          "when": "view == versionsManager",
-          "group": "navigation@8"
+          "command": "odoo.startBothServers",
+          "when": "view == upgradeSelector && odoo-debugger.upgrade_enabled",
+          "group": "navigation@2"
+        },
+        {
+          "command": "upgradeSelector.toggleUpgrade",
+          "when": "view == upgradeSelector && odoo-debugger.upgrade_enabled",
+          "group": "1_upgrade@1"
         }
       ],
       "view/item/context": [
@@ -928,27 +949,27 @@
           "group": "9_danger@1"
         },
         {
-          "when": "view == dbSelector && viewItem == database",
+          "when": "view == dbSelector && viewItem == database && !odoo-debugger.upgrade_enabled",
           "command": "dbSelector.rename",
           "group": "1_database@1"
         },
         {
-          "when": "view == dbSelector && viewItem == database",
+          "when": "view == dbSelector && viewItem == database && !odoo-debugger.upgrade_enabled",
           "command": "dbSelector.restore",
           "group": "1_database@4"
         },
         {
-          "when": "view == dbSelector && viewItem == database",
+          "when": "view == dbSelector && viewItem == database && !odoo-debugger.upgrade_enabled",
           "command": "dbSelector.changeVersion",
           "group": "3_config@1"
         },
         {
-          "when": "view == dbSelector && viewItem == database",
+          "when": "view == dbSelector && viewItem == database && !odoo-debugger.upgrade_enabled",
           "command": "dbSelector.configureRepoBranches",
           "group": "inline@2"
         },
         {
-          "when": "view == dbSelector && viewItem == database",
+          "when": "view == dbSelector && viewItem == database && !odoo-debugger.upgrade_enabled",
           "command": "dbSelector.delete",
           "group": "9_danger@1"
         },
@@ -989,7 +1010,7 @@
         },
         {
           "command": "odoo.changeBranch",
-          "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
+          "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/ && !odoo-debugger.upgrade_enabled",
           "group": "1_version@1"
         },
         {
@@ -1001,16 +1022,6 @@
           "command": "odt.repo.toggleBranchMode",
           "when": "view == repoSelector && viewItem == repo",
           "group": "1_repo@1"
-        },
-        {
-          "command": "odt.repo.useSingleCheckout",
-          "when": "view == repoSelector && viewItem == repoPerBranch",
-          "group": "1_repo@1"
-        },
-        {
-          "command": "odoo.setUpUpgrade",
-          "when": "view == repoSelector && viewItem == repo",
-          "group": "1_repo@2"
         },
         {
           "command": "odooDebugger.revealInExplorer",
@@ -1079,27 +1090,27 @@
         },
         {
           "command": "odoo.deleteVersion",
-          "when": "view == versionsManager && viewItem == version",
+          "when": "view == versionsManager && viewItem == version && !odoo-debugger.upgrade_enabled",
           "group": "9_danger@1"
         },
         {
           "command": "odoo.setSettingToDefault",
-          "when": "view == versionsManager && viewItem == versionSetting",
+          "when": "view == versionsManager && viewItem == versionSetting && !odoo-debugger.upgrade_enabled",
           "group": "versionSetting@1"
         },
         {
           "command": "odoo.setSettingAsDefault",
-          "when": "view == versionsManager && viewItem == versionSetting",
+          "when": "view == versionsManager && viewItem == versionSetting && !odoo-debugger.upgrade_enabled",
           "group": "versionSetting@2"
         },
         {
           "command": "odoo.setAllSettingsToDefault",
-          "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
+          "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/ && !odoo-debugger.upgrade_enabled",
           "group": "2_defaults@1"
         },
         {
           "command": "odoo.setAllSettingsAsDefault",
-          "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
+          "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/ && !odoo-debugger.upgrade_enabled",
           "group": "2_defaults@2"
         },
         {
@@ -1150,11 +1161,6 @@
         {
           "command": "odt.repo.toggleBranchMode",
           "when": "view == odt.projectReposExplorer && viewItem == projectRepoRoot",
-          "group": "1_repo@1"
-        },
-        {
-          "command": "odt.repo.useSingleCheckout",
-          "when": "view == odt.projectReposExplorer && viewItem == projectRepoRootPerBranch",
           "group": "1_repo@1"
         }
       ],
@@ -1405,6 +1411,16 @@
         "contents": "Select a project and a database to see and manage their modules.\n[Switch Database](command:dbSelector.quickSearch)"
       },
       {
+        "view": "upgradeSelector",
+        "when": "odoo-debugger.is_active && odoo-debugger.is_configured",
+        "contents": "Select a project to run two versions side by side against their own databases.\n[Select Project](command:projectSelector.selectProject)"
+      },
+      {
+        "view": "upgradeSelector",
+        "when": "odoo-debugger.is_active && !odoo-debugger.is_configured",
+        "contents": "Odoo DevTools isn't set up yet. Point it at your Odoo repository first.\n[Set Up Odoo DevTools](command:odoo.setup)"
+      },
+      {
         "view": "testingSelector",
         "when": "odoo-debugger.is_active",
         "contents": "Select a project and a database to configure test runs.\n[Switch Database](command:dbSelector.quickSearch)"
@@ -1537,6 +1553,12 @@
         "command": "odoo.toggleTestingMode",
         "key": "ctrl+alt+o t",
         "mac": "cmd+alt+o t",
+        "when": "odoo-debugger.is_active"
+      },
+      {
+        "command": "upgradeSelector.toggleUpgrade",
+        "key": "ctrl+alt+o shift+u",
+        "mac": "cmd+alt+o shift+u",
         "when": "odoo-debugger.is_active"
       },
       {
