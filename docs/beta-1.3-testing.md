@@ -4,9 +4,11 @@ Thanks for testing. This release rewrites how environments are created and how
 custom code is laid out, so the parts most likely to break are the ones you hit
 in the first ten minutes.
 
-**Install:** `code --install-extension odoo-devtools-vscode-1.3.0.vsix`, then
-reload. Your existing projects and databases are migrated in place — see
-*Coming from 1.2* at the bottom before you start.
+**Install:** `code --install-extension --force odoo-devtools-vscode-1.3.0.vsix`,
+then reload. `--force` matters: this build carries the same version number as the
+previous beta, so without it VS Code reports the extension as already installed
+and keeps the old one. Your existing projects and databases are migrated in
+place — see *Coming from 1.2* at the bottom before you start.
 
 **Report anything odd** on [Discord](https://discord.gg/5DMzx3nr9z). Include what
 you clicked and what the notification said. "It felt confusing" is a valid and
@@ -14,7 +16,7 @@ useful report.
 
 ---
 
-## The three big changes
+## The four big changes
 
 ### 1. Versions build themselves
 
@@ -57,10 +59,58 @@ It is still one git repository. Commits made in a copy land on the real branch
 and push normally. Each copy has its own uncommitted changes, so unfinished work
 in one version does not follow you into another.
 
+To go back to a single checkout, use the same entry on the repository in the
+**Project Repos** explorer, or **Odoo DevTools: Use a Single Checkout** from the
+Command Palette. The **Repos** view no longer carries it.
+
 **Look at:** turn it on, switch versions, and check you are editing the file you
 think you are. Then turn it back off and confirm your repo is intact. If the
 branch you need is checked out in your main copy, you should be *asked* what to
 do — never surprised.
+
+### 4. Upgrade mode
+
+This is new since the first beta build, and it is the other thing we want
+hammered.
+
+An upgrade is two servers, on two databases, on two versions, running at the
+same time. It is now a **mode** with its own **Upgrade** view rather than a
+wizard you run once — `Ctrl+Alt+O Shift+U`, or click the row in that view.
+
+Setup asks for **the two databases** and deduces the rest: each side's Odoo
+series from the database itself, each side's version by matching that series,
+and each repository's branch from its name. It only asks about what it could not
+work out. If the database you want to upgrade *into* does not exist yet, pick
+**Create a new database** — it asks the target version and branch and creates an
+empty one.
+
+Then you get **one confirmation**, **one progress notification** while the
+per-branch copies are created, and one notification at the end offering to
+**start both servers**.
+
+The new database is built by installing the module set the old one has —
+staged as `install`, not `-u all`. Modules that do not exist in the target
+version are left out and named in the Upgrade view. Leaving the mode puts the
+target database's module list back the way it was; the copies, the versions and
+both databases are kept, because setting the same upgrade up again should cost
+nothing.
+
+While the mode is on, clicking **either** database switches which one the
+Modules view is editing — that is how you mark modules per side — without
+dragging the environment onto the other side's branches.
+
+**Look at:**
+
+- The count of questions. Two database picks, at most a branch question or two,
+  one review you can edit, one dialog, done. If you are asked something the two
+  databases already answer, that is a bug worth reporting.
+- Whether anything you legitimately need is blocked. The mode deliberately
+  refuses actions that would break the pair (changing either side's version or
+  branches, deleting a paired version, testing mode, and so on) and offers
+  *Exit Upgrade Mode*. **Open in Browser, psql, Clone and Copy Database Name
+  must keep working** — if a right-click menu looks empty, tell us.
+- **Start Both Servers**: two servers, two ports, each on its own database.
+- Whether the Upgrade view is honest about a version that is still building.
 
 ---
 
@@ -71,6 +121,10 @@ do — never surprised.
 - **Switch notifications say what actually happens** — reusing a worktree,
   checking out a branch, or a missing environment — instead of always claiming a
   checkout.
+- **Switching databases no longer drags your own checkout onto a branch one of
+  its copies owns.** This was the *source is still checking out one of these
+  branches* dialog that kept coming back even when the copies were correct. If
+  you can still make it appear when nothing is wrong, that is a regression.
 - **Opening a file that belongs to another version warns you**, so edits do not
   land in the wrong copy.
 - **Checkout hooks** are now `odooDebugger.postSwitchCommands` and also run when
@@ -96,5 +150,11 @@ live.
   faster.
 - The screen recordings were removed from the README because they showed the old
   flow. New ones are coming; the written steps are current.
+- **Start Both Servers has not been run against real Odoo servers by us** — the
+  command and the pairing are covered by tests, but nothing has watched two real
+  servers come up side by side. Assume it is the least proven thing here.
+- Upgrade mode blocks by hiding menu entries and by refusing the command. If you
+  find a route that gets past both and breaks the pair, that is exactly the
+  report we want.
 - Every UI path described above passes its unit tests but has had limited use on
   real machines. That is what this beta is.
