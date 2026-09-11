@@ -374,8 +374,9 @@ async function promptUpgradeSetup(context: vscode.ExtensionContext): Promise<voi
         return;
     }
 
-    // An upgrade already set up is the thing this offers to set up.
-    if (readUpgradeConfig(result.project).isActive()) {
+    // An upgrade already set up - on, or off and remembered - is the thing
+    // this offers to set up.
+    if (readUpgradeConfig(result.project).isComplete()) {
         return;
     }
 

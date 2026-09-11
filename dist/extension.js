@@ -356,8 +356,9 @@ async function promptUpgradeSetup(context) {
     if (!result) {
         return;
     }
-    // An upgrade already set up is the thing this offers to set up.
-    if ((0, upgrade_1.readUpgradeConfig)(result.project).isActive()) {
+    // An upgrade already set up - on, or off and remembered - is the thing
+    // this offers to set up.
+    if ((0, upgrade_1.readUpgradeConfig)(result.project).isComplete()) {
         return;
     }
     const existing = new Set(versionsService_1.VersionsService.getInstance().getVersions().map(version => version.odooVersion));
@@ -5627,8 +5628,10 @@ exports.readUpgradeConfig = readUpgradeConfig;
 exports.refuseDuringUpgrade = refuseDuringUpgrade;
 exports.currentUpgradeConfig = currentUpgradeConfig;
 exports.healUpgradePairVersions = healUpgradePairVersions;
+exports.syncUpgradeContext = syncUpgradeContext;
 exports.initializeUpgradeContext = initializeUpgradeContext;
-exports.exitUpgradeMode = exitUpgradeMode;
+exports.disableUpgradeMode = disableUpgradeMode;
+exports.toggleSourceModules = toggleSourceModules;
 /**
  * Upgrade view and upgrade mode.
  *
@@ -5722,12 +5725,17 @@ function healUpgradePairVersions(project) {
     }
     return changed;
 }
-/** Keeps the context key in step with what is stored, and heals the pair. */
+/** Both upgrade context keys, from one config so they cannot disagree. */
+function syncUpgradeContext(config) {
+    (0, context_1.updateUpgradeContext)(config.isActive());
+    (0, context_1.updateUpgradeRememberedContext)(config.isComplete());
+}
+/** Keeps the context keys in step with what is stored, and heals the pair. */
 async function initializeUpgradeContext() {
     try {
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         const config = readUpgradeConfig(result?.project);
-        (0, context_1.updateUpgradeContext)(config.isActive());
+        syncUpgradeContext(config);
         if (result && healUpgradePairVersions(result.project)) {
             await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(result.data));
         }
@@ -5735,6 +5743,7 @@ async function initializeUpgradeContext() {
     catch (error) {
         logger_1.logger.warn('Failed to initialize upgrade context:', error);
         (0, context_1.updateUpgradeContext)(false);
+        (0, context_1.updateUpgradeRememberedContext)(false);
     }
 }
 class UpgradeTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
@@ -5804,20 +5813,35 @@ class UpgradeTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
             title: 'Toggle Upgrade Mode',
             arguments: [{ isEnabled: config.isActive() }]
         };
-        toggle.tooltip = config.isActive()
-            ? 'Click to leave upgrade mode. The copies and versions are kept.'
-            : 'Click to set up an upgrade between two databases.';
+        if (config.isActive()) {
+            toggle.tooltip = 'Click to turn upgrade mode off. The upgrade is remembered, so turning it back on resumes it.';
+        }
+        else if (config.isRemembered()) {
+            toggle.tooltip = `Click to resume the ${config.from?.series} → ${config.to?.series} upgrade `
+                + `(${config.from?.dbId} → ${config.to?.dbId}).`;
+        }
+        else {
+            toggle.tooltip = 'Click to set up an upgrade between two databases.';
+        }
         toggle.contextValue = 'upgradeToggle';
         items.push(toggle);
-        if (!config.isActive()) {
+        if (!config.isComplete()) {
             return items;
         }
         const versionsService = versionsService_1.VersionsService.getInstance();
         const describeSide = (side) => {
             const entry = side === 'from' ? config.from : config.to;
             const version = entry?.versionId ? versionsService.getVersion(entry.versionId) : undefined;
-            const item = new vscode.TreeItem(`${side === 'from' ? 'From' : 'To'}  Odoo ${entry?.series ?? '?'}`, vscode.TreeItemCollapsibleState.Expanded);
-            item.iconPath = icons_1.selectedIcon;
+            // A remembered pair is shown so it can be checked before resuming,
+            // folded because none of it is running.
+            const item = new vscode.TreeItem(`${side === 'from' ? 'From' : 'To'}  Odoo ${entry?.series ?? '?'}`, config.isActive()
+                ? vscode.TreeItemCollapsibleState.Expanded
+                : vscode.TreeItemCollapsibleState.Collapsed);
+            item.iconPath = config.isActive() ? icons_1.selectedIcon : new vscode.ThemeIcon('history');
+            // Its own id per state: VS Code keeps a row's expansion keyed by
+            // id (or label), so without it the folded default never applies
+            // to a side that was expanded while the mode was on.
+            item.id = `upgrade-${side}-${config.isActive() ? 'active' : 'remembered'}`;
             item.description = version
                 ? `${entry?.dbId} • port ${version.settings.portNumber}`
                 : `${entry?.dbId} • version still building`;
@@ -5825,14 +5849,32 @@ class UpgradeTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
             return item;
         };
         items.push(describeSide('from'), describeSide('to'));
-        const modules = new vscode.TreeItem(`Modules: ${config.stagedModules.length} staged for install`, vscode.TreeItemCollapsibleState.None);
-        modules.iconPath = new vscode.ThemeIcon('package');
-        modules.description = config.unavailableModules.length > 0
-            ? `${config.unavailableModules.length} not in Odoo ${config.to?.series}`
-            : `from ${config.from?.dbId}`;
-        modules.tooltip = config.unavailableModules.length > 0
-            ? `Left out, missing from Odoo ${config.to?.series}: ${config.unavailableModules.join(', ')}`
-            : `The module set installed in ${config.from?.dbId}, staged onto ${config.to?.dbId}.`;
+        if (!config.isActive()) {
+            return items;
+        }
+        // A toggle row, the shape of testing's "Stop After Init".
+        const count = config.stagedModules.length;
+        const modules = new vscode.TreeItem(`Install ${count} module${count === 1 ? '' : 's'} from ${config.from?.dbId}`, vscode.TreeItemCollapsibleState.None);
+        modules.iconPath = config.installSourceModules ? icons_1.selectedIcon : icons_1.unselectedIcon;
+        modules.description = [
+            config.installSourceModules ? 'on' : 'off',
+            config.unavailableModules.length > 0
+                ? `${config.unavailableModules.length} not in Odoo ${config.to?.series}`
+                : ''
+        ].filter(Boolean).join(' • ');
+        modules.command = {
+            command: 'upgradeSelector.toggleSourceModules',
+            title: 'Toggle Installing the Source Modules'
+        };
+        modules.tooltip = [
+            config.installSourceModules
+                ? `Marked to install on ${config.to?.dbId}. Click to leave ${config.to?.dbId} with its own modules instead.`
+                : `${config.to?.dbId} keeps its own modules. Click to install the set ${config.from?.dbId} runs.`,
+            config.unavailableModules.length > 0
+                ? `Left out, missing from Odoo ${config.to?.series}: ${config.unavailableModules.join(', ')}`
+                : ''
+        ].filter(Boolean).join('\n\n');
+        modules.contextValue = 'upgradeModules';
         items.push(modules);
         const start = new vscode.TreeItem('Start Both Servers', vscode.TreeItemCollapsibleState.None);
         start.iconPath = new vscode.ThemeIcon('run-all');
@@ -5844,13 +5886,14 @@ class UpgradeTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
 }
 exports.UpgradeTreeProvider = UpgradeTreeProvider;
 /**
- * Leaves upgrade mode.
+ * Turns upgrade mode off, keeping the upgrade.
  *
- * The copies and the versions stay: they cost minutes to rebuild, nothing to
- * keep, and the next round of the same upgrade wants them. Only what the mode
- * changed in the project's own data is undone.
+ * Only the target's modules change: they go back to its own, and the staged
+ * set is kept so turning the mode back on restores it as it was left. The
+ * pair, the branches, the copies and the versions all stay, so nothing here
+ * needs confirming - turning the mode back on undoes it.
  */
-async function exitUpgradeMode() {
+async function disableUpgradeMode() {
     const result = await settingsStore_1.SettingsStore.getSelectedProject();
     if (!result) {
         return false;
@@ -5860,17 +5903,43 @@ async function exitUpgradeMode() {
     if (!config.isActive()) {
         return false;
     }
-    const confirmed = await (0, notifications_1.showModalWarning)(`Leave the Odoo ${config.from?.series} → ${config.to?.series} upgrade?\n\n`
-        + `"${config.to?.dbId}" goes back to the modules it had before.\n\n`
-        + 'The per-branch copies, the versions and both databases are kept, so '
-        + 'setting the same upgrade up again costs nothing.', 'Leave Upgrade Mode');
-    if (confirmed !== 'Leave Upgrade Mode') {
+    (0, upgradeApply_1.unstageTargetModules)(project, config);
+    config.isEnabled = false;
+    project.upgradeConfig = config;
+    await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+    syncUpgradeContext(config);
+    (0, notifications_1.showBriefStatus)(`Upgrade off. ${config.from?.series} → ${config.to?.series} is remembered; turn it on to resume.`, 3000);
+    return true;
+}
+/**
+ * Flips whether the source's module set is installed on the target.
+ *
+ * Off gives the target its own modules back; on puts the set back as it was
+ * left, per-module changes included.
+ */
+async function toggleSourceModules() {
+    const result = await settingsStore_1.SettingsStore.getSelectedProject();
+    if (!result) {
         return false;
     }
-    (0, upgradeApply_1.revertUpgradeStaging)(project);
-    project.upgradeConfig = new upgrade_1.UpgradeConfigModel();
+    const { data, project } = result;
+    const config = readUpgradeConfig(project);
+    if (!config.isActive()) {
+        void (0, notifications_1.showError)('Upgrade mode is off, so there is no module set to install.');
+        return false;
+    }
+    config.installSourceModules = !config.installSourceModules;
+    if (config.installSourceModules) {
+        (0, upgradeApply_1.stageTargetModules)(project, config);
+    }
+    else {
+        (0, upgradeApply_1.unstageTargetModules)(project, config);
+    }
+    project.upgradeConfig = config;
     await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-    (0, context_1.updateUpgradeContext)(false);
+    (0, notifications_1.showBriefStatus)(config.installSourceModules
+        ? `Installing the modules from ${config.from?.dbId} on ${config.to?.dbId}.`
+        : `${config.to?.dbId} is back to its own modules.`, 3000);
     return true;
 }
 
@@ -5888,6 +5957,9 @@ exports.ensureUpgradeConfigModel = ensureUpgradeConfigModel;
  * database and a branch per repository on each - plus the module states
  * stashed on the target database while upgrade mode is on.
  *
+ * Turning the mode off keeps all of it, the way testing mode keeps its
+ * targets: the pair is remembered and turning the mode back on resumes it.
+ *
  * The pair lives here rather than as a second "active version" because
  * launch.json already carries one entry per provisioned version and the
  * running state already models several servers at once. Two servers therefore
@@ -5903,7 +5975,9 @@ class UpgradeConfigModel {
     savedTargetModuleStates;
     stagedModules;
     unavailableModules;
-    constructor(isEnabled = false, from, to, repos = [], savedTargetModuleStates, stagedModules = [], unavailableModules = []) {
+    installSourceModules;
+    upgradeTargetModuleStates;
+    constructor(isEnabled = false, from, to, repos = [], savedTargetModuleStates, stagedModules = [], unavailableModules = [], installSourceModules = true, upgradeTargetModuleStates) {
         this.isEnabled = isEnabled;
         this.from = from;
         this.to = to;
@@ -5911,6 +5985,8 @@ class UpgradeConfigModel {
         this.savedTargetModuleStates = savedTargetModuleStates;
         this.stagedModules = stagedModules;
         this.unavailableModules = unavailableModules;
+        this.installSourceModules = installSourceModules;
+        this.upgradeTargetModuleStates = upgradeTargetModuleStates;
     }
     /**
      * Whether both sides are named. `isEnabled` alone is not enough to render
@@ -5922,6 +5998,14 @@ class UpgradeConfigModel {
     /** True when the mode is on and both sides are known. */
     isActive() {
         return this.isEnabled && this.isComplete();
+    }
+    /** A complete pair kept while the mode is off, ready to be resumed. */
+    isRemembered() {
+        return !this.isEnabled && this.isComplete();
+    }
+    /** Whether the source's module set is currently staged onto the target. */
+    isTargetStaged() {
+        return this.savedTargetModuleStates !== undefined;
     }
     /** Which side of the upgrade a version is, if either. */
     sideForVersion(versionId) {
@@ -5989,6 +6073,9 @@ function normalizeRepos(raw) {
         toBranch: entry.toBranch.trim()
     }));
 }
+function normalizeStates(raw) {
+    return Array.isArray(raw) ? raw : undefined;
+}
 function normalizeNames(raw) {
     return Array.isArray(raw)
         ? raw.filter((entry) => typeof entry === 'string' && entry.trim() !== '')
@@ -6013,9 +6100,10 @@ function ensureUpgradeConfigModel(upgradeConfig) {
         const to = normalizeSide(upgradeConfig.to);
         return new UpgradeConfigModel(
         // A mode that cannot name both sides is off, whatever the flag says.
-        Boolean(upgradeConfig.isEnabled) && !!from && !!to, from, to, normalizeRepos(upgradeConfig.repos), Array.isArray(upgradeConfig.savedTargetModuleStates)
-            ? upgradeConfig.savedTargetModuleStates
-            : undefined, normalizeNames(upgradeConfig.stagedModules), normalizeNames(upgradeConfig.unavailableModules));
+        Boolean(upgradeConfig.isEnabled) && !!from && !!to, from, to, normalizeRepos(upgradeConfig.repos), normalizeStates(upgradeConfig.savedTargetModuleStates), normalizeNames(upgradeConfig.stagedModules), normalizeNames(upgradeConfig.unavailableModules), 
+        // Absent on configs written before the toggle existed, all of
+        // which installed the set: absence reads as on.
+        upgradeConfig.installSourceModules !== false, normalizeStates(upgradeConfig.upgradeTargetModuleStates));
     }
     catch (error) {
         logger_1.logger.warn('Error converting upgrade config, creating new instance:', error);
@@ -6068,9 +6156,11 @@ exports.updateActiveContext = updateActiveContext;
 exports.updateServerRunningContext = updateServerRunningContext;
 exports.updateConfiguredContext = updateConfiguredContext;
 exports.updateUpgradeContext = updateUpgradeContext;
+exports.updateUpgradeRememberedContext = updateUpgradeRememberedContext;
 /**
  * VS Code context keys ('odoo-debugger.is_active', 'odoo-debugger.testing_enabled',
- * 'odoo-debugger.upgrade_enabled') used by when-clauses.
+ * 'odoo-debugger.upgrade_enabled', 'odoo-debugger.upgrade_remembered') used by
+ * when-clauses.
  */
 const vscode = __importStar(__webpack_require__(1));
 /**
@@ -6092,6 +6182,10 @@ function updateConfiguredContext(isConfigured) {
 function updateUpgradeContext(isUpgradeEnabled) {
     void vscode.commands.executeCommand('setContext', 'odoo-debugger.upgrade_enabled', isUpgradeEnabled);
 }
+/** A complete upgrade is stored, on or off, so it can be changed or resumed. */
+function updateUpgradeRememberedContext(isRemembered) {
+    void vscode.commands.executeCommand('setContext', 'odoo-debugger.upgrade_remembered', isRemembered);
+}
 
 
 /***/ }),
@@ -6101,6 +6195,8 @@ function updateUpgradeContext(isUpgradeEnabled) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.applyUpgradeSetup = applyUpgradeSetup;
+exports.stageTargetModules = stageTargetModules;
+exports.unstageTargetModules = unstageTargetModules;
 exports.revertUpgradeStaging = revertUpgradeStaging;
 const db_1 = __webpack_require__(35);
 const module_1 = __webpack_require__(36);
@@ -6215,34 +6311,44 @@ async function applyUpgradeSetup(project, setup, versionSettingsFor, token) {
         }
     }
     // 5. The module set: what the source runs, rebuilt on the target.
+    const previous = setup.previous;
+    // Whatever an earlier upgrade staged goes back first, so what gets stashed
+    // below is always the target's own modules and never an old staged set.
+    if (previous) {
+        unstageTargetModules(project, previous);
+    }
     let staged = [];
     let unavailable = [];
-    /**
-     * What the target had before staging, so leaving the mode can put it back.
-     * Undefined means staging never ran; an empty array means it ran and the
-     * target genuinely had nothing - the exit path must tell those apart.
-     */
-    let savedTargetModuleStates;
-    if (sourceDb && targetDb) {
+    let perModuleEdits;
+    // Staging an empty set because the source could not be read would wipe
+    // the target's modules for nothing, so staging waits on a real answer.
+    let stagingKnown = false;
+    if (setup.resume && previous) {
+        // The set was read when the upgrade was set up, and the changes made
+        // to it were kept when the mode was turned off.
+        staged = previous.stagedModules;
+        unavailable = previous.unavailableModules;
+        perModuleEdits = previous.upgradeTargetModuleStates;
+        stagingKnown = true;
+    }
+    else if (sourceDb && targetDb) {
         try {
             const installed = await (0, database_1.getInstalledModuleNames)(sourceDb.id);
             const staging = (0, upgradeSetup_1.splitStagedModules)(installed, availableModulesFor(versionSettingsFor(setup.toVersionId)));
             staged = staging.staged;
             unavailable = staging.unavailable;
-            savedTargetModuleStates = (targetDb.modules ?? []).map(module => ({
-                name: module.name,
-                state: module.state
-            }));
-            targetDb.modules = [
-                ...staged.map(name => new module_1.ModuleModel(name, 'install', false)),
-                ...unavailable.map(name => new module_1.ModuleModel(name, 'none', false))
-            ];
+            stagingKnown = true;
         }
         catch (error) {
             logger_1.logger.warn('[upgrade] could not read the source module set:', error);
             problems.push(`Could not read the modules installed in "${sourceDb.id}": ${(0, logger_1.errorMessage)(error)}`);
         }
     }
+    // A choice about this target, so it survives setting the same target up
+    // again, and starts on for a different one.
+    const installSourceModules = previous && previous.to?.dbId === setup.toDbId
+        ? previous.installSourceModules
+        : true;
     // 6. Each side's server remembers its own database, so nothing has to be
     //    selected by hand before starting them.
     project.selectedDbByVersion = { ...(project.selectedDbByVersion ?? {}) };
@@ -6257,8 +6363,58 @@ async function applyUpgradeSetup(project, setup, versionSettingsFor, token) {
     // loaded from settings is a plain object, so that field is undefined until
     // this assignment - reading through it threw, and the throw was swallowed
     // by the staging try/catch as a bogus "could not read the modules" report.
-    project.upgradeConfig = new upgrade_1.UpgradeConfigModel(true, { versionId: setup.fromVersionId, dbId: setup.fromDbId, series: setup.fromSeries }, { versionId: setup.toVersionId, dbId: setup.toDbId, series: setup.toSeries }, setup.repos, savedTargetModuleStates, staged, unavailable);
-    return { problems, staged, unavailable };
+    const config = new upgrade_1.UpgradeConfigModel(true, { versionId: setup.fromVersionId, dbId: setup.fromDbId, series: setup.fromSeries }, { versionId: setup.toVersionId, dbId: setup.toDbId, series: setup.toSeries }, setup.repos, undefined, staged, unavailable, installSourceModules, perModuleEdits);
+    if (installSourceModules && stagingKnown) {
+        stageTargetModules(project, config);
+    }
+    project.upgradeConfig = config;
+    return { problems, staged: config.isTargetStaged() ? staged : [], unavailable };
+}
+function snapshotModules(modules) {
+    return (modules ?? []).map(module => ({ name: module.name, state: module.state }));
+}
+function restoreModules(states) {
+    return states.map(entry => new module_1.ModuleModel(entry.name, entry.state, false));
+}
+/**
+ * Puts the source's module set onto the target, stashing the target's own.
+ *
+ * Changes made to the set during an earlier stretch of the upgrade come back
+ * instead of the set as first read, so turning the mode off and on again - or
+ * the module toggle off and on - loses nothing.
+ */
+function stageTargetModules(project, config) {
+    if (config.isTargetStaged()) {
+        return;
+    }
+    const targetDb = (project.dbs ?? []).find(entry => entry.id === config.to?.dbId);
+    if (!targetDb) {
+        return;
+    }
+    config.savedTargetModuleStates = snapshotModules(targetDb.modules);
+    targetDb.modules = config.upgradeTargetModuleStates
+        ? restoreModules(config.upgradeTargetModuleStates)
+        : [
+            ...config.stagedModules.map(name => new module_1.ModuleModel(name, 'install', false)),
+            ...config.unavailableModules.map(name => new module_1.ModuleModel(name, 'none', false))
+        ];
+    config.upgradeTargetModuleStates = undefined;
+}
+/**
+ * Gives the target back its own modules, keeping the staged set as it now
+ * stands so staging it again restores it. The inverse of stageTargetModules.
+ */
+function unstageTargetModules(project, config) {
+    const saved = config.savedTargetModuleStates;
+    if (saved === undefined) {
+        return;
+    }
+    const targetDb = (project.dbs ?? []).find(entry => entry.id === config.to?.dbId);
+    if (targetDb) {
+        config.upgradeTargetModuleStates = snapshotModules(targetDb.modules);
+        targetDb.modules = restoreModules(saved);
+    }
+    config.savedTargetModuleStates = undefined;
 }
 /**
  * Undoes what turning the mode on changed in the project's data: the target
@@ -6270,16 +6426,8 @@ async function applyUpgradeSetup(project, setup, versionSettingsFor, token) {
  */
 function revertUpgradeStaging(project) {
     const config = (0, upgrade_1.ensureUpgradeConfigModel)(project.upgradeConfig);
-    const targetDbId = config.to?.dbId;
-    const saved = config.savedTargetModuleStates;
-    if (!targetDbId || !saved) {
-        return;
-    }
-    const targetDb = (project.dbs ?? []).find(entry => entry.id === targetDbId);
-    if (!targetDb) {
-        return;
-    }
-    targetDb.modules = saved.map(entry => new module_1.ModuleModel(entry.name, entry.state, false));
+    unstageTargetModules(project, config);
+    project.upgradeConfig = config;
 }
 
 
@@ -17655,6 +17803,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectReposExplorerProvider = void 0;
+exports.resolveUpgradePairCopies = resolveUpgradePairCopies;
 exports.createNewFile = createNewFile;
 exports.createNewFolder = createNewFolder;
 exports.renameEntry = renameEntry;
@@ -17677,6 +17826,36 @@ const repoPaths_1 = __webpack_require__(46);
 const environment_1 = __webpack_require__(41);
 const setupState_1 = __webpack_require__(59);
 const dumpImport_1 = __webpack_require__(63);
+const upgrade_1 = __webpack_require__(32);
+/**
+ * Both copies of every repository an active upgrade runs on.
+ *
+ * Outside an upgrade the view shows the selected database's copy, so a file
+ * opened from it belongs to what is being run. During one, both sides are run
+ * at once, and hiding one of them behind the selection made the side you
+ * were not looking at impossible to reach. A repository whose copies are not
+ * both per-branch is left out and rendered the usual way.
+ */
+function resolveUpgradePairCopies(project, config, root) {
+    const copies = new Map();
+    if (!config.isActive()) {
+        return copies;
+    }
+    const repos = (project.repos ?? []);
+    const sideCopies = (dbId) => {
+        const db = project.dbs?.find(entry => entry.id === dbId);
+        return (0, repoPaths_1.resolveProjectRepos)(repos, db ? (0, environment_1.resolveProjectRepoBranchAssignments)(db, repos) : [], root);
+    };
+    // resolveProjectRepos answers in the order it was given the repos.
+    const from = sideCopies(config.from?.dbId);
+    const to = sideCopies(config.to?.dbId);
+    repos.forEach((repo, index) => {
+        if (config.involvesRepo(repo.name) && from[index]?.isWorktree && to[index]?.isWorktree) {
+            copies.set(repo, { from: from[index], to: to[index] });
+        }
+    });
+    return copies;
+}
 class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
     sortPreferences;
     watchers = [];
@@ -17737,8 +17916,17 @@ class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
                 }
                 const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.Collapsed);
                 item.resourceUri = element.uri;
-                item.description = element.branch ?? undefined;
-                item.tooltip = element.branch ? `${element.repo.path}\nBranch: ${element.branch}` : element.repo.path;
+                if (element.side) {
+                    // The label already names the branch; what is worth the
+                    // space is the side, and a copy that has drifted off it.
+                    const sideLabel = element.side === 'from' ? 'upgrading from' : 'upgrading to';
+                    const drifted = element.branch && element.expectedBranch && element.branch !== element.expectedBranch;
+                    item.description = drifted ? `${sideLabel} • on ${element.branch}` : sideLabel;
+                }
+                else {
+                    item.description = element.branch ?? undefined;
+                }
+                item.tooltip = element.branch ? `${element.uri.fsPath}\nBranch: ${element.branch}` : element.uri.fsPath;
                 // The mode is in the contextValue so the menu entry can name
                 // what it will do: one label for both directions meant the
                 // entry that removes the copies read "Use One Copy Per Branch".
@@ -17782,13 +17970,23 @@ class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
             // Resolved once per refresh: the explorer must show the active
             // version's worktrees, so a file opened from it - and every command
             // that acts on the row's uri - belongs to the version being run.
+            // An upgrade runs two versions, so it gets both of their copies.
             const resolved = this.resolveRepos(project);
             const resolvedByRepo = new Map(resolved.map(entry => [entry.repo, entry]));
-            this.resetWatchers(resolved.map(entry => entry.path));
+            const pairCopies = resolveUpgradePairCopies(project, (0, upgrade_1.ensureUpgradeConfigModel)(project.upgradeConfig), (0, setupState_1.readSetupState)().provisioningRoot);
+            this.resetWatchers([
+                ...resolved.map(entry => entry.path),
+                ...Array.from(pairCopies.values()).flatMap(pair => [pair.from.path, pair.to.path])
+            ]);
             const sortId = this.sortPreferences.get('projectRepos', (0, sortOptions_1.getDefaultSortOption)('projectRepos'));
             const sortedRepos = [...repos].sort((a, b) => this.compareRepos(a, b, sortId));
-            return Promise.all(sortedRepos.map(async (repo) => {
-                const entry = resolvedByRepo.get(repo);
+            const roots = sortedRepos.flatMap(repo => {
+                const pair = pairCopies.get(repo);
+                return pair
+                    ? [{ repo, entry: pair.from, side: 'from' }, { repo, entry: pair.to, side: 'to' }]
+                    : [{ repo, entry: resolvedByRepo.get(repo) }];
+            });
+            return Promise.all(roots.map(async ({ repo, entry, side }) => {
                 const repoPath = entry?.path ?? (0, utils_1.normalizePath)(repo.path);
                 const missing = !(await (0, dumpImport_1.pathExists)(repoPath));
                 return {
@@ -17797,7 +17995,9 @@ class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
                     repo,
                     uri: vscode.Uri.file(repoPath),
                     branch: missing ? null : await (0, branches_1.getRepoBranch)(repoPath),
-                    missing
+                    missing,
+                    side,
+                    expectedBranch: entry?.branch
                 };
             }));
         }
@@ -18174,6 +18374,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.parseWorktreeDirName = parseWorktreeDirName;
+exports.isUpgradePairCopy = isUpgradePairCopy;
 exports.registerWrongCopyGuard = registerWrongCopyGuard;
 /**
  * Warns when a file being opened belongs to a version other than the active
@@ -18190,6 +18391,7 @@ const notifications_1 = __webpack_require__(16);
 const setupState_1 = __webpack_require__(59);
 const repoPaths_1 = __webpack_require__(46);
 const environment_1 = __webpack_require__(41);
+const upgrade_1 = __webpack_require__(32);
 const SUPPRESSED_KEY = 'odooDevtools.wrongCopyWarningSuppressed';
 /**
  * The repo and branch a path under the provisioning root belongs to, derived
@@ -18202,6 +18404,19 @@ function parseWorktreeDirName(dirName) {
         return undefined;
     }
     return { repo: dirName.slice(0, at), branch: dirName.slice(at + 1) };
+}
+/**
+ * Whether a copy is one of the two an upgrade runs on.
+ *
+ * Both are live by design while the mode is on - the Project Repos view lists
+ * them side by side - so opening a file from the side that is not selected is
+ * the point of the mode, not a slip worth a warning.
+ */
+function isUpgradePairCopy(config, dirName) {
+    if (!config.isActive()) {
+        return false;
+    }
+    return config.repos.some(entry => [entry.fromBranch, entry.toBranch].some(branch => (0, repoPaths_1.worktreeDirName)(entry.repoName, branch) === dirName));
 }
 function registerWrongCopyGuard(context) {
     context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(async (document) => {
@@ -18217,13 +18432,17 @@ function registerWrongCopyGuard(context) {
             if (relative.startsWith('..') || path.isAbsolute(relative)) {
                 return;
             }
-            const owner = parseWorktreeDirName(relative.split(path.sep)[0]);
+            const dirName = relative.split(path.sep)[0];
+            const owner = parseWorktreeDirName(dirName);
             if (!owner) {
                 return;
             }
             const result = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json').catch(() => undefined);
             const project = result?.projects?.find(entry => entry.isSelected);
             if (!project) {
+                return;
+            }
+            if (isUpgradePairCopy((0, upgrade_1.ensureUpgradeConfigModel)(project.upgradeConfig), dirName)) {
                 return;
             }
             const db = project.dbs?.find(entry => entry.isSelected);
@@ -22045,7 +22264,6 @@ const setupState_1 = __webpack_require__(59);
 const gitService_1 = __webpack_require__(11);
 const dbNaming_1 = __webpack_require__(62);
 const dbs_1 = __webpack_require__(51);
-const context_1 = __webpack_require__(33);
 const upgrade_1 = __webpack_require__(31);
 const wizard_1 = __webpack_require__(60);
 const repo_1 = __webpack_require__(37);
@@ -22136,18 +22354,186 @@ async function resolveRepoBranch(repo, series, side, exclude, canGoBack) {
 }
 function registerUpgradeCommand(deps) {
     const { context, versionsService, refreshAll } = deps;
-    // Receives the current state and inverts it, the way the testing toggle
-    // does, so the tree row needs no knowledge of what happens next.
-    context.subscriptions.push(vscode.commands.registerCommand('upgradeSelector.toggleUpgrade', async (payload) => {
-        const enabled = payload?.isEnabled ?? (await (0, upgrade_1.currentUpgradeConfig)()).isActive();
-        if (enabled) {
-            if (await (0, upgrade_1.exitUpgradeMode)()) {
-                await refreshAll();
+    /** The resolved setup, with each side's version looked up by series. */
+    const buildSetup = (input, plan, root, extra) => {
+        const versionIdFor = (series) => versionsService.getVersions().find(version => version.odooVersion.trim() === series)?.id;
+        return {
+            fromDbId: input.fromDbId,
+            toDbId: input.toDbId,
+            fromSeries: input.fromSeries,
+            toSeries: input.toSeries,
+            fromVersionId: versionIdFor(input.fromSeries),
+            toVersionId: versionIdFor(input.toSeries),
+            repos: input.repos.map(repo => ({
+                repoName: repo.name,
+                repoPath: repo.path,
+                fromBranch: repo.fromBranch,
+                toBranch: repo.toBranch
+            })),
+            createTarget: extra.createTarget,
+            root,
+            plan,
+            previous: extra.previous,
+            resume: extra.resume
+        };
+    };
+    /**
+     * Writes a setup under one progress notification, queues any version
+     * that is missing, and offers to start both servers. Shared by setting an
+     * upgrade up and by resuming one, which differ only in where the answers
+     * came from.
+     */
+    const applyAndFinish = async (data, project, input, plan, setup, verb) => {
+        const applied = await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: `${verb === 'resumed' ? 'Resuming' : 'Setting up'} the ${input.fromSeries} → ${input.toSeries} upgrade`,
+            cancellable: true
+        }, async (progress, token) => {
+            try {
+                if (setup.createTarget) {
+                    progress.report({ message: `Creating ${setup.toDbId}`, increment: 20 });
+                }
+                progress.report({ message: 'Creating per-branch copies', increment: 40 });
+                const outcome = await (0, upgradeApply_1.applyUpgradeSetup)(project, setup, versionId => versionsService.getVersion(versionId ?? '')?.settings, token);
+                progress.report({ message: 'Saving', increment: 40 });
+                await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+                return outcome;
+            }
+            catch (error) {
+                logger_1.logger.error('[upgrade] applying the setup failed:', error);
+                void (0, notifications_1.showError)(`Could not ${verb === 'resumed' ? 'resume' : 'set up'} the upgrade: ${(0, logger_1.errorMessage)(error)}`);
+                return undefined;
+            }
+        });
+        if (!applied) {
+            return;
+        }
+        // Versions last: building them takes minutes, and the upgrade is
+        // already configured and visible by the time they finish.
+        if (plan.versionsToCreate.length > 0) {
+            const queued = (0, provisionQueue_1.enqueue)((0, provisionQueue_1.readQueue)(context), plan.versionsToCreate.map(branch => ({ branch, name: `Odoo ${branch}` })));
+            (0, provisionQueue_1.setQueueSnapshot)(queued);
+            await (0, provisionQueue_1.writeQueue)(context, queued);
+            void (0, provisionQueue_1.drainProvisionQueue)(context, () => void refreshAll({ reason: 'ui' }));
+        }
+        (0, upgrade_1.syncUpgradeContext)((0, upgrade_1.readUpgradeConfig)(project));
+        await refreshAll();
+        const notes = [];
+        if (applied.staged.length > 0) {
+            notes.push(`${applied.staged.length} module(s) staged onto ${setup.toDbId}`);
+        }
+        if (applied.unavailable.length > 0) {
+            notes.push(`${applied.unavailable.length} left out, missing from Odoo ${input.toSeries}`);
+        }
+        if (applied.problems.length > 0) {
+            notes.push(applied.problems.join('; '));
+        }
+        const summary = notes.length > 0 ? ` ${notes.join('. ')}.` : '';
+        const headline = `Upgrade ${verb}: ${input.fromSeries} → ${input.toSeries}.${summary}`;
+        // Both versions have to exist before anything can run.
+        if (plan.versionsToCreate.length > 0) {
+            void (0, notifications_1.showInfo)(`${headline} The servers can start once the versions finish building.`);
+            return;
+        }
+        const action = await (0, notifications_1.showInfo)(headline, 'Start Both Servers');
+        if (action === 'Start Both Servers') {
+            await vscode.commands.executeCommand('odoo.startBothServers');
+        }
+    };
+    /**
+     * Turns a remembered upgrade back on, as it was left.
+     *
+     * Runs through the same apply as setting one up, because the mode was off
+     * and nothing guarded the pair meanwhile: a copy switched back to a single
+     * checkout, a version deleted or a branch remapped is put back rather
+     * than resumed around. Only disk work that has to be redone is confirmed.
+     */
+    const resumeUpgrade = async () => {
+        const result = await settingsStore_1.SettingsStore.getSelectedProject();
+        if (!result) {
+            return;
+        }
+        const { data, project } = result;
+        const remembered = (0, upgrade_1.readUpgradeConfig)(project);
+        if (!remembered.isRemembered()) {
+            return;
+        }
+        const existingDbs = new Set((project.dbs ?? []).map(db => db.id));
+        const missing = remembered.pairedDbIds().filter(id => !existingDbs.has(id));
+        if (missing.length > 0) {
+            const choice = await (0, notifications_1.showError)(`The remembered upgrade runs on "${missing.join('" and "')}", which `
+                + `${missing.length === 1 ? 'no longer exists' : 'no longer exist'}.`, 'Set Up an Upgrade');
+            if (choice === 'Set Up an Upgrade') {
+                await vscode.commands.executeCommand('odoo.setUpUpgrade');
             }
             return;
         }
-        await vscode.commands.executeCommand('odoo.setUpUpgrade');
+        const repos = project.repos ?? [];
+        const root = (0, setupState_1.readSetupState)().provisioningRoot;
+        const inProject = (name) => repos.some(repo => repo.name.toLowerCase() === name.toLowerCase());
+        const input = {
+            // A repository removed from the project while the mode was off
+            // drops out of the upgrade rather than being mapped onto nothing.
+            repos: remembered.repos
+                .filter(entry => inProject(entry.repoName))
+                .map(entry => ({
+                name: entry.repoName,
+                path: entry.repoPath,
+                fromBranch: entry.fromBranch,
+                toBranch: entry.toBranch
+            })),
+            fromSeries: remembered.from.series,
+            toSeries: remembered.to.series,
+            fromDbId: remembered.from.dbId,
+            toDbId: remembered.to.dbId,
+            existingVersions: versionsService.getVersions().map(version => version.odooVersion),
+            worktreeRepos: repos
+                .filter(repo => (0, repo_1.normalizeBranchMode)(repo.branchMode) === 'worktree')
+                .map(repo => repo.name),
+            root
+        };
+        const plan = (0, upgradePlan_1.buildUpgradePlan)(input);
+        if (plan.reposToWorktree.length > 0 || plan.versionsToCreate.length > 0) {
+            const confirmed = await (0, notifications_1.showModalInfo)((0, upgradePlan_1.describeUpgradePlan)(plan, input), 'Resume');
+            if (confirmed !== 'Resume') {
+                return;
+            }
+        }
+        await applyAndFinish(data, project, input, plan, buildSetup(input, plan, root, { createTarget: false, previous: remembered, resume: true }), 'resumed');
+    };
+    // Receives the current state and inverts it, the way the testing toggle
+    // does, so the tree row needs no knowledge of what happens next. Off keeps
+    // the upgrade; on resumes a kept one, and sets one up only when there is
+    // nothing to resume.
+    context.subscriptions.push(vscode.commands.registerCommand('upgradeSelector.toggleUpgrade', async (payload) => {
+        try {
+            const config = await (0, upgrade_1.currentUpgradeConfig)();
+            const enabled = payload?.isEnabled ?? config.isActive();
+            if (enabled) {
+                if (await (0, upgrade_1.disableUpgradeMode)()) {
+                    await refreshAll();
+                }
+                return;
+            }
+            if (config.isRemembered()) {
+                await resumeUpgrade();
+                return;
+            }
+            await vscode.commands.executeCommand('odoo.setUpUpgrade');
+        }
+        catch (error) {
+            logger_1.logger.error('Toggling upgrade mode failed:', error);
+            void (0, notifications_1.showError)(`Could not toggle upgrade mode: ${(0, logger_1.errorMessage)(error)}`);
+        }
     }));
+    context.subscriptions.push(vscode.commands.registerCommand('upgradeSelector.toggleSourceModules', async () => {
+        if (await (0, upgrade_1.toggleSourceModules)()) {
+            await refreshAll();
+        }
+    }));
+    // Changing an upgrade is setting one up with the current one preselected:
+    // the review step is where any single answer is changed.
+    context.subscriptions.push(vscode.commands.registerCommand('upgradeSelector.changeUpgrade', () => vscode.commands.executeCommand('odoo.setUpUpgrade')));
     context.subscriptions.push(vscode.commands.registerCommand('odoo.setUpUpgrade', async () => {
         try {
             const result = await settingsStore_1.SettingsStore.getSelectedProject();
@@ -22155,6 +22541,9 @@ function registerUpgradeCommand(deps) {
                 return;
             }
             const { data, project } = result;
+            // Changing an upgrade starts from the one already stored.
+            const remembered = (0, upgrade_1.readUpgradeConfig)(project);
+            const previous = remembered.isComplete() ? remembered : undefined;
             const dbs = project.dbs ?? [];
             if (dbs.length === 0) {
                 const choice = await (0, notifications_1.showError)('An upgrade runs between two databases, and this project has none.', 'Create Database');
@@ -22185,7 +22574,8 @@ function registerUpgradeCommand(deps) {
                 title: 'Set Up an Upgrade',
                 placeHolder: 'Which database are you upgrading from?',
                 canGoBack,
-                matchOnDescription: true
+                matchOnDescription: true,
+                activeItem: row => !!previous && row.db?.id === previous.from?.dbId
             }), picked => { draft.fromDb = picked.db; }));
             steps.push((0, wizard_1.step)(canGoBack => (0, wizard_1.pickStep)([
                 ...dbs
@@ -22205,7 +22595,8 @@ function registerUpgradeCommand(deps) {
                 title: 'Set Up an Upgrade',
                 placeHolder: 'Which database are you upgrading to?',
                 canGoBack,
-                matchOnDescription: true
+                matchOnDescription: true,
+                activeItem: row => !!previous && row.db?.id === previous.to?.dbId
             }), picked => {
                 draft.toDb = picked.db;
                 // A new database is defined by the series rather than
@@ -22367,79 +22758,7 @@ function registerUpgradeCommand(deps) {
                 }
             }
             // ---- Apply ----------------------------------------------------------
-            const versionIdFor = (series) => versionsService.getVersions().find(version => version.odooVersion.trim() === series)?.id;
-            const setup = {
-                fromDbId: input.fromDbId,
-                toDbId: input.toDbId,
-                fromSeries: input.fromSeries,
-                toSeries: input.toSeries,
-                fromVersionId: versionIdFor(input.fromSeries),
-                toVersionId: versionIdFor(input.toSeries),
-                repos: input.repos.map(repo => ({
-                    repoName: repo.name,
-                    repoPath: repo.path,
-                    fromBranch: repo.fromBranch,
-                    toBranch: repo.toBranch
-                })),
-                createTarget: !draft.toDb,
-                root,
-                plan
-            };
-            const applied = await vscode.window.withProgress({
-                location: vscode.ProgressLocation.Notification,
-                title: `Setting up the ${input.fromSeries} → ${input.toSeries} upgrade`,
-                cancellable: true
-            }, async (progress, token) => {
-                try {
-                    if (setup.createTarget) {
-                        progress.report({ message: `Creating ${setup.toDbId}`, increment: 20 });
-                    }
-                    progress.report({ message: 'Creating per-branch copies', increment: 40 });
-                    const outcome = await (0, upgradeApply_1.applyUpgradeSetup)(project, setup, versionId => versionsService.getVersion(versionId ?? '')?.settings, token);
-                    progress.report({ message: 'Saving', increment: 40 });
-                    await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-                    return outcome;
-                }
-                catch (error) {
-                    logger_1.logger.error('[upgrade] applying the setup failed:', error);
-                    void (0, notifications_1.showError)(`Could not set up the upgrade: ${(0, logger_1.errorMessage)(error)}`);
-                    return undefined;
-                }
-            });
-            if (!applied) {
-                return;
-            }
-            // Versions last: building them takes minutes, and the upgrade is
-            // already configured and visible by the time they finish.
-            if (plan.versionsToCreate.length > 0) {
-                const queued = (0, provisionQueue_1.enqueue)((0, provisionQueue_1.readQueue)(context), plan.versionsToCreate.map(branch => ({ branch, name: `Odoo ${branch}` })));
-                (0, provisionQueue_1.setQueueSnapshot)(queued);
-                await (0, provisionQueue_1.writeQueue)(context, queued);
-                void (0, provisionQueue_1.drainProvisionQueue)(context, () => void refreshAll({ reason: 'ui' }));
-            }
-            (0, context_1.updateUpgradeContext)(true);
-            await refreshAll();
-            const notes = [];
-            if (applied.staged.length > 0) {
-                notes.push(`${applied.staged.length} module(s) staged onto ${setup.toDbId}`);
-            }
-            if (applied.unavailable.length > 0) {
-                notes.push(`${applied.unavailable.length} left out, missing from Odoo ${input.toSeries}`);
-            }
-            if (applied.problems.length > 0) {
-                notes.push(applied.problems.join('; '));
-            }
-            const summary = notes.length > 0 ? ` ${notes.join('. ')}.` : '';
-            // Both versions have to exist before anything can run.
-            if (plan.versionsToCreate.length > 0) {
-                void (0, notifications_1.showInfo)(`Upgrade set up: ${input.fromSeries} → ${input.toSeries}.${summary}`
-                    + ' The servers can start once the versions finish building.');
-                return;
-            }
-            const action = await (0, notifications_1.showInfo)(`Upgrade set up: ${input.fromSeries} → ${input.toSeries}.${summary}`, 'Start Both Servers');
-            if (action === 'Start Both Servers') {
-                await vscode.commands.executeCommand('odoo.startBothServers');
-            }
+            await applyAndFinish(data, project, input, plan, buildSetup(input, plan, root, { createTarget: !draft.toDb, previous }), 'set up');
         }
         catch (error) {
             logger_1.logger.error('Set Up an Upgrade failed:', error);
@@ -22517,7 +22836,7 @@ function buildUpgradePlan(input) {
         // a version existing yet, which is the whole point of naming the
         // databases up front.
         assignments.push({ dbId: input.fromDbId, repoName: repo.name, repoPath: repo.path, branch: repo.fromBranch }, { dbId: input.toDbId, repoName: repo.name, repoPath: repo.path, branch: repo.toBranch });
-        if (input.root) {
+        if (input.root && !alreadyWorktree.has(repo.name.toLowerCase())) {
             worktreeDirs.push(path.join(input.root, (0, repoPaths_1.worktreeDirName)(repo.name, repo.fromBranch)), path.join(input.root, (0, repoPaths_1.worktreeDirName)(repo.name, repo.toBranch)));
         }
     }

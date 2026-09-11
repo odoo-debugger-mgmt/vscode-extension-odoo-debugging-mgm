@@ -10,6 +10,11 @@ previous beta, so without it VS Code reports the extension as already installed
 and keeps the old one. Your existing projects and databases are migrated in
 place — see *Coming from 1.2* at the bottom before you start.
 
+**New since the last drop**, from your feedback: upgrade mode can be turned off
+and back on without losing its setup, Project Repos shows both of the upgrade's
+copies, and installing the source modules on the target is a toggle. See
+section 4.
+
 **Report anything odd** on [Discord](https://discord.gg/5DMzx3nr9z). Include what
 you clicked and what the notification said. "It felt confusing" is a valid and
 useful report.
@@ -59,9 +64,8 @@ It is still one git repository. Commits made in a copy land on the real branch
 and push normally. Each copy has its own uncommitted changes, so unfinished work
 in one version does not follow you into another.
 
-To go back to a single checkout, use the same entry on the repository in the
-**Project Repos** explorer, or **Odoo DevTools: Use a Single Checkout** from the
-Command Palette. The **Repos** view no longer carries it.
+To go back to a single checkout, run **Odoo DevTools: Use a Single Checkout**
+from the Command Palette. Neither repository tree offers it any more.
 
 **Look at:** turn it on, switch versions, and check you are editing the file you
 think you are. Then turn it back off and confirm your repo is intact. If the
@@ -90,14 +94,22 @@ per-branch copies are created, and one notification at the end offering to
 
 The new database is built by installing the module set the old one has —
 staged as `install`, not `-u all`. Modules that do not exist in the target
-version are left out and named in the Upgrade view. Leaving the mode puts the
-target database's module list back the way it was; the copies, the versions and
-both databases are kept, because setting the same upgrade up again should cost
-nothing.
+version are left out and named in the Upgrade view. **Install N modules from …**
+in the Upgrade view is a toggle: off, the target keeps its own modules; on, the
+set comes back as you left it.
+
+**Turning the mode off keeps the upgrade**, the way testing mode keeps its
+targets. The target's modules go back to its own, and nothing else changes —
+turn it back on and it resumes, with the same databases, branches and module
+marks, no questions asked. To change it instead, use **Change the Upgrade**
+(the pencil in the Upgrade view's title bar): setup opens with your current
+databases already selected.
 
 While the mode is on, clicking **either** database switches which one the
 Modules view is editing — that is how you mark modules per side — without
-dragging the environment onto the other side's branches.
+dragging the environment onto the other side's branches. **Project Repos**
+shows both copies of each repository in the upgrade, marked *upgrading from* and
+*upgrading to*, so you can open files from either side.
 
 **Look at:**
 
@@ -109,6 +121,12 @@ dragging the environment onto the other side's branches.
   branches, deleting a paired version, testing mode, and so on) and offers
   *Exit Upgrade Mode*. **Open in Browser, psql, Clone and Copy Database Name
   must keep working** — if a right-click menu looks empty, tell us.
+- **Turn it off and on.** Nothing you set should be lost — including a module
+  you marked or unmarked by hand on either side. If turning it back on asks you
+  anything when nothing changed in between, that is a bug.
+- **Project Repos**: both copies listed, right-click works on both, and opening
+  a file from the side you did not select does not warn you about the wrong
+  copy.
 - **Start Both Servers**: two servers, two ports, each on its own database.
 - Whether the Upgrade view is honest about a version that is still building.
 

@@ -16,14 +16,14 @@ import * as vscode from 'vscode';
 import { SettingsStore } from './settingsStore';
 import { ProjectModel } from './models/project';
 import { UpgradeConfigModel, ensureUpgradeConfigModel } from './models/upgrade';
-import { updateUpgradeContext } from './context';
-import { revertUpgradeStaging } from './services/upgradeApply';
-import { showError, showModalWarning } from './services/notifications';
+import { updateUpgradeContext, updateUpgradeRememberedContext } from './context';
+import { stageTargetModules, unstageTargetModules } from './services/upgradeApply';
+import { showBriefStatus, showError } from './services/notifications';
 import { logger } from './services/logger';
 import { stripSettings } from './utils';
 import { VersionsService } from './versionsService';
 import { BaseTreeProvider } from './views/baseTreeProvider';
-import { selectedIcon } from './views/icons';
+import { selectedIcon, unselectedIcon } from './views/icons';
 
 /**
  * The project's upgrade configuration, normalized.
@@ -100,12 +100,18 @@ export function healUpgradePairVersions(project: ProjectModel): boolean {
     return changed;
 }
 
-/** Keeps the context key in step with what is stored, and heals the pair. */
+/** Both upgrade context keys, from one config so they cannot disagree. */
+export function syncUpgradeContext(config: UpgradeConfigModel): void {
+    updateUpgradeContext(config.isActive());
+    updateUpgradeRememberedContext(config.isComplete());
+}
+
+/** Keeps the context keys in step with what is stored, and heals the pair. */
 export async function initializeUpgradeContext(): Promise<void> {
     try {
         const result = await SettingsStore.getSelectedProject();
         const config = readUpgradeConfig(result?.project);
-        updateUpgradeContext(config.isActive());
+        syncUpgradeContext(config);
 
         if (result && healUpgradePairVersions(result.project)) {
             await SettingsStore.saveWithoutComments(stripSettings(result.data));
@@ -113,6 +119,7 @@ export async function initializeUpgradeContext(): Promise<void> {
     } catch (error) {
         logger.warn('Failed to initialize upgrade context:', error);
         updateUpgradeContext(false);
+        updateUpgradeRememberedContext(false);
     }
 }
 
@@ -201,13 +208,18 @@ export class UpgradeTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             title: 'Toggle Upgrade Mode',
             arguments: [{ isEnabled: config.isActive() }]
         };
-        toggle.tooltip = config.isActive()
-            ? 'Click to leave upgrade mode. The copies and versions are kept.'
-            : 'Click to set up an upgrade between two databases.';
+        if (config.isActive()) {
+            toggle.tooltip = 'Click to turn upgrade mode off. The upgrade is remembered, so turning it back on resumes it.';
+        } else if (config.isRemembered()) {
+            toggle.tooltip = `Click to resume the ${config.from?.series} → ${config.to?.series} upgrade `
+                + `(${config.from?.dbId} → ${config.to?.dbId}).`;
+        } else {
+            toggle.tooltip = 'Click to set up an upgrade between two databases.';
+        }
         toggle.contextValue = 'upgradeToggle';
         items.push(toggle);
 
-        if (!config.isActive()) {
+        if (!config.isComplete()) {
             return items;
         }
 
@@ -215,11 +227,19 @@ export class UpgradeTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         const describeSide = (side: 'from' | 'to'): vscode.TreeItem => {
             const entry = side === 'from' ? config.from : config.to;
             const version = entry?.versionId ? versionsService.getVersion(entry.versionId) : undefined;
+            // A remembered pair is shown so it can be checked before resuming,
+            // folded because none of it is running.
             const item = new vscode.TreeItem(
                 `${side === 'from' ? 'From' : 'To'}  Odoo ${entry?.series ?? '?'}`,
-                vscode.TreeItemCollapsibleState.Expanded
+                config.isActive()
+                    ? vscode.TreeItemCollapsibleState.Expanded
+                    : vscode.TreeItemCollapsibleState.Collapsed
             );
-            item.iconPath = selectedIcon;
+            item.iconPath = config.isActive() ? selectedIcon : new vscode.ThemeIcon('history');
+            // Its own id per state: VS Code keeps a row's expansion keyed by
+            // id (or label), so without it the folded default never applies
+            // to a side that was expanded while the mode was on.
+            item.id = `upgrade-${side}-${config.isActive() ? 'active' : 'remembered'}`;
             item.description = version
                 ? `${entry?.dbId} • port ${version.settings.portNumber}`
                 : `${entry?.dbId} • version still building`;
@@ -229,17 +249,36 @@ export class UpgradeTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
         items.push(describeSide('from'), describeSide('to'));
 
+        if (!config.isActive()) {
+            return items;
+        }
+
+        // A toggle row, the shape of testing's "Stop After Init".
+        const count = config.stagedModules.length;
         const modules = new vscode.TreeItem(
-            `Modules: ${config.stagedModules.length} staged for install`,
+            `Install ${count} module${count === 1 ? '' : 's'} from ${config.from?.dbId}`,
             vscode.TreeItemCollapsibleState.None
         );
-        modules.iconPath = new vscode.ThemeIcon('package');
-        modules.description = config.unavailableModules.length > 0
-            ? `${config.unavailableModules.length} not in Odoo ${config.to?.series}`
-            : `from ${config.from?.dbId}`;
-        modules.tooltip = config.unavailableModules.length > 0
-            ? `Left out, missing from Odoo ${config.to?.series}: ${config.unavailableModules.join(', ')}`
-            : `The module set installed in ${config.from?.dbId}, staged onto ${config.to?.dbId}.`;
+        modules.iconPath = config.installSourceModules ? selectedIcon : unselectedIcon;
+        modules.description = [
+            config.installSourceModules ? 'on' : 'off',
+            config.unavailableModules.length > 0
+                ? `${config.unavailableModules.length} not in Odoo ${config.to?.series}`
+                : ''
+        ].filter(Boolean).join(' • ');
+        modules.command = {
+            command: 'upgradeSelector.toggleSourceModules',
+            title: 'Toggle Installing the Source Modules'
+        };
+        modules.tooltip = [
+            config.installSourceModules
+                ? `Marked to install on ${config.to?.dbId}. Click to leave ${config.to?.dbId} with its own modules instead.`
+                : `${config.to?.dbId} keeps its own modules. Click to install the set ${config.from?.dbId} runs.`,
+            config.unavailableModules.length > 0
+                ? `Left out, missing from Odoo ${config.to?.series}: ${config.unavailableModules.join(', ')}`
+                : ''
+        ].filter(Boolean).join('\n\n');
+        modules.contextValue = 'upgradeModules';
         items.push(modules);
 
         const start = new vscode.TreeItem('Start Both Servers', vscode.TreeItemCollapsibleState.None);
@@ -253,13 +292,14 @@ export class UpgradeTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 }
 
 /**
- * Leaves upgrade mode.
+ * Turns upgrade mode off, keeping the upgrade.
  *
- * The copies and the versions stay: they cost minutes to rebuild, nothing to
- * keep, and the next round of the same upgrade wants them. Only what the mode
- * changed in the project's own data is undone.
+ * Only the target's modules change: they go back to its own, and the staged
+ * set is kept so turning the mode back on restores it as it was left. The
+ * pair, the branches, the copies and the versions all stay, so nothing here
+ * needs confirming - turning the mode back on undoes it.
  */
-export async function exitUpgradeMode(): Promise<boolean> {
+export async function disableUpgradeMode(): Promise<boolean> {
     const result = await SettingsStore.getSelectedProject();
     if (!result) {
         return false;
@@ -270,20 +310,43 @@ export async function exitUpgradeMode(): Promise<boolean> {
         return false;
     }
 
-    const confirmed = await showModalWarning(
-        `Leave the Odoo ${config.from?.series} → ${config.to?.series} upgrade?\n\n`
-        + `"${config.to?.dbId}" goes back to the modules it had before.\n\n`
-        + 'The per-branch copies, the versions and both databases are kept, so '
-        + 'setting the same upgrade up again costs nothing.',
-        'Leave Upgrade Mode'
-    );
-    if (confirmed !== 'Leave Upgrade Mode') {
+    unstageTargetModules(project, config);
+    config.isEnabled = false;
+    project.upgradeConfig = config;
+    await SettingsStore.saveWithoutComments(stripSettings(data));
+    syncUpgradeContext(config);
+    showBriefStatus(`Upgrade off. ${config.from?.series} → ${config.to?.series} is remembered; turn it on to resume.`, 3000);
+    return true;
+}
+
+/**
+ * Flips whether the source's module set is installed on the target.
+ *
+ * Off gives the target its own modules back; on puts the set back as it was
+ * left, per-module changes included.
+ */
+export async function toggleSourceModules(): Promise<boolean> {
+    const result = await SettingsStore.getSelectedProject();
+    if (!result) {
+        return false;
+    }
+    const { data, project } = result;
+    const config = readUpgradeConfig(project);
+    if (!config.isActive()) {
+        void showError('Upgrade mode is off, so there is no module set to install.');
         return false;
     }
 
-    revertUpgradeStaging(project);
-    project.upgradeConfig = new UpgradeConfigModel();
+    config.installSourceModules = !config.installSourceModules;
+    if (config.installSourceModules) {
+        stageTargetModules(project, config);
+    } else {
+        unstageTargetModules(project, config);
+    }
+    project.upgradeConfig = config;
     await SettingsStore.saveWithoutComments(stripSettings(data));
-    updateUpgradeContext(false);
+    showBriefStatus(config.installSourceModules
+        ? `Installing the modules from ${config.from?.dbId} on ${config.to?.dbId}.`
+        : `${config.to?.dbId} is back to its own modules.`, 3000);
     return true;
 }

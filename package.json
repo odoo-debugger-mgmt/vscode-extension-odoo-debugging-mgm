@@ -656,6 +656,17 @@
         "icon": "$(run-all)"
       },
       {
+        "command": "upgradeSelector.toggleSourceModules",
+        "title": "Toggle Installing the Source Modules",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "upgradeSelector.changeUpgrade",
+        "title": "Change the Upgrade",
+        "category": "Odoo DevTools",
+        "icon": "$(edit)"
+      },
+      {
         "command": "odoo.setUpUpgrade",
         "title": "Set Up an Upgrade",
         "category": "Odoo DevTools",
@@ -912,6 +923,11 @@
           "group": "navigation@2"
         },
         {
+          "command": "upgradeSelector.changeUpgrade",
+          "when": "view == upgradeSelector && odoo-debugger.upgrade_remembered",
+          "group": "navigation@1"
+        },
+        {
           "command": "upgradeSelector.toggleUpgrade",
           "when": "view == upgradeSelector && odoo-debugger.upgrade_enabled",
           "group": "1_upgrade@1"
@@ -1045,37 +1061,37 @@
         },
         {
           "command": "odooDebugger.revealInExplorer",
-          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder|projectRepoFile)$/",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoRootPerBranch|projectRepoFolder|projectRepoFile)$/",
           "group": "navigation@1"
         },
         {
           "command": "odooDebugger.revealFileInOS",
-          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder|projectRepoFile)$/",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoRootPerBranch|projectRepoFolder|projectRepoFile)$/",
           "group": "navigation@2"
         },
         {
           "command": "odooDebugger.openInIntegratedTerminal",
-          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoRootPerBranch|projectRepoFolder)$/",
           "group": "navigation@3"
         },
         {
           "command": "odt.projectReposExplorer.newFile",
-          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoRootPerBranch|projectRepoFolder)$/",
           "group": "2_workspace@1"
         },
         {
           "command": "odt.projectReposExplorer.newFolder",
-          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder)$/",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoRootPerBranch|projectRepoFolder)$/",
           "group": "2_workspace@2"
         },
         {
           "command": "odooDebugger.copyFilePath",
-          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder|projectRepoFile)$/",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoRootPerBranch|projectRepoFolder|projectRepoFile)$/",
           "group": "5_cutcopypaste@1"
         },
         {
           "command": "odooDebugger.copyRelativePath",
-          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoFolder|projectRepoFile)$/",
+          "when": "view == odt.projectReposExplorer && viewItem =~ /^(projectRepoRoot|projectRepoRootPerBranch|projectRepoFolder|projectRepoFile)$/",
           "group": "5_cutcopypaste@2"
         },
         {
@@ -1165,6 +1181,14 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "upgradeSelector.toggleSourceModules",
+          "when": "odoo-debugger.upgrade_enabled"
+        },
+        {
+          "command": "upgradeSelector.changeUpgrade",
+          "when": "odoo-debugger.upgrade_remembered"
+        },
         {
           "command": "projectSelector.selectProject",
           "when": "false"

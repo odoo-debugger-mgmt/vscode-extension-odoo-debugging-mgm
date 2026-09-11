@@ -19,7 +19,7 @@ import { stripSettings, normalizePath } from '../utils';
 import { showError, showInfo, showModalInfo } from '../services/notifications';
 import { errorMessage, logger } from '../services/logger';
 import { pickRepoBranch } from './branchPick';
-import { buildUpgradePlan, describeUpgradePlan, UpgradeInput } from '../services/upgradePlan';
+import { buildUpgradePlan, describeUpgradePlan, UpgradeInput, UpgradePlan } from '../services/upgradePlan';
 import { applyUpgradeSetup, UpgradeSetup } from '../services/upgradeApply';
 import { proposeBranchForSeries, resolveDatabaseSeries } from '../services/upgradeSetup';
 import {
@@ -33,11 +33,18 @@ import { readSetupState } from '../services/setupState';
 import { listAllBranches, listSeriesBranches } from '../services/gitService';
 import { generateDatabaseIdentifiers } from '../services/dbNaming';
 import { takenDatabaseNames } from '../dbs';
-import { updateUpgradeContext } from '../context';
-import { currentUpgradeConfig, exitUpgradeMode } from '../upgrade';
+import {
+    currentUpgradeConfig,
+    disableUpgradeMode,
+    readUpgradeConfig,
+    syncUpgradeContext,
+    toggleSourceModules
+} from '../upgrade';
 import { isBack, pickStep, inputStep, runWizard, step, StepResult, WizardStep } from '../services/wizard';
 import { RepoModel, normalizeBranchMode } from '../models/repo';
 import type { DatabaseModel } from '../models/db';
+import type { ProjectModel } from '../models/project';
+import type { UpgradeConfigModel } from '../models/upgrade';
 import type { VersionsService } from '../versionsService';
 
 /** Everything the wizard collects, filled in as it goes. */
@@ -180,20 +187,233 @@ interface ReviewRow extends vscode.QuickPickItem {
 export function registerUpgradeCommand(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
 
+    /** The resolved setup, with each side's version looked up by series. */
+    const buildSetup = (
+        input: UpgradeInput,
+        plan: UpgradePlan,
+        root: string,
+        extra: { createTarget: boolean; previous?: UpgradeConfigModel; resume?: boolean }
+    ): UpgradeSetup => {
+        const versionIdFor = (series: string): string | undefined =>
+            versionsService.getVersions().find(version => version.odooVersion.trim() === series)?.id;
+        return {
+            fromDbId: input.fromDbId,
+            toDbId: input.toDbId,
+            fromSeries: input.fromSeries,
+            toSeries: input.toSeries,
+            fromVersionId: versionIdFor(input.fromSeries),
+            toVersionId: versionIdFor(input.toSeries),
+            repos: input.repos.map(repo => ({
+                repoName: repo.name,
+                repoPath: repo.path,
+                fromBranch: repo.fromBranch,
+                toBranch: repo.toBranch
+            })),
+            createTarget: extra.createTarget,
+            root,
+            plan,
+            previous: extra.previous,
+            resume: extra.resume
+        };
+    };
+
+    /**
+     * Writes a setup under one progress notification, queues any version
+     * that is missing, and offers to start both servers. Shared by setting an
+     * upgrade up and by resuming one, which differ only in where the answers
+     * came from.
+     */
+    const applyAndFinish = async (
+        data: any,
+        project: ProjectModel,
+        input: UpgradeInput,
+        plan: UpgradePlan,
+        setup: UpgradeSetup,
+        verb: 'set up' | 'resumed'
+    ): Promise<void> => {
+        const applied = await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: `${verb === 'resumed' ? 'Resuming' : 'Setting up'} the ${input.fromSeries} → ${input.toSeries} upgrade`,
+            cancellable: true
+        }, async (progress, token) => {
+            try {
+                if (setup.createTarget) {
+                    progress.report({ message: `Creating ${setup.toDbId}`, increment: 20 });
+                }
+                progress.report({ message: 'Creating per-branch copies', increment: 40 });
+                const outcome = await applyUpgradeSetup(
+                    project,
+                    setup,
+                    versionId => versionsService.getVersion(versionId ?? '')?.settings,
+                    token
+                );
+                progress.report({ message: 'Saving', increment: 40 });
+                await SettingsStore.saveWithoutComments(stripSettings(data));
+                return outcome;
+            } catch (error) {
+                logger.error('[upgrade] applying the setup failed:', error);
+                void showError(`Could not ${verb === 'resumed' ? 'resume' : 'set up'} the upgrade: ${errorMessage(error)}`);
+                return undefined;
+            }
+        });
+
+        if (!applied) {
+            return;
+        }
+
+        // Versions last: building them takes minutes, and the upgrade is
+        // already configured and visible by the time they finish.
+        if (plan.versionsToCreate.length > 0) {
+            const queued = enqueue(
+                readQueue(context),
+                plan.versionsToCreate.map(branch => ({ branch, name: `Odoo ${branch}` }))
+            );
+            setQueueSnapshot(queued);
+            await writeQueue(context, queued);
+            void drainProvisionQueue(context, () => void refreshAll({ reason: 'ui' }));
+        }
+
+        syncUpgradeContext(readUpgradeConfig(project));
+        await refreshAll();
+
+        const notes: string[] = [];
+        if (applied.staged.length > 0) {
+            notes.push(`${applied.staged.length} module(s) staged onto ${setup.toDbId}`);
+        }
+        if (applied.unavailable.length > 0) {
+            notes.push(`${applied.unavailable.length} left out, missing from Odoo ${input.toSeries}`);
+        }
+        if (applied.problems.length > 0) {
+            notes.push(applied.problems.join('; '));
+        }
+        const summary = notes.length > 0 ? ` ${notes.join('. ')}.` : '';
+        const headline = `Upgrade ${verb}: ${input.fromSeries} → ${input.toSeries}.${summary}`;
+
+        // Both versions have to exist before anything can run.
+        if (plan.versionsToCreate.length > 0) {
+            void showInfo(`${headline} The servers can start once the versions finish building.`);
+            return;
+        }
+
+        const action = await showInfo(headline, 'Start Both Servers');
+        if (action === 'Start Both Servers') {
+            await vscode.commands.executeCommand('odoo.startBothServers');
+        }
+    };
+
+    /**
+     * Turns a remembered upgrade back on, as it was left.
+     *
+     * Runs through the same apply as setting one up, because the mode was off
+     * and nothing guarded the pair meanwhile: a copy switched back to a single
+     * checkout, a version deleted or a branch remapped is put back rather
+     * than resumed around. Only disk work that has to be redone is confirmed.
+     */
+    const resumeUpgrade = async (): Promise<void> => {
+        const result = await SettingsStore.getSelectedProject();
+        if (!result) {
+            return;
+        }
+        const { data, project } = result;
+        const remembered = readUpgradeConfig(project);
+        if (!remembered.isRemembered()) {
+            return;
+        }
+
+        const existingDbs = new Set((project.dbs ?? []).map(db => db.id));
+        const missing = remembered.pairedDbIds().filter(id => !existingDbs.has(id));
+        if (missing.length > 0) {
+            const choice = await showError(
+                `The remembered upgrade runs on "${missing.join('" and "')}", which `
+                + `${missing.length === 1 ? 'no longer exists' : 'no longer exist'}.`,
+                'Set Up an Upgrade');
+            if (choice === 'Set Up an Upgrade') {
+                await vscode.commands.executeCommand('odoo.setUpUpgrade');
+            }
+            return;
+        }
+
+        const repos: RepoModel[] = project.repos ?? [];
+        const root = readSetupState().provisioningRoot;
+        const inProject = (name: string) => repos.some(repo => repo.name.toLowerCase() === name.toLowerCase());
+        const input: UpgradeInput = {
+            // A repository removed from the project while the mode was off
+            // drops out of the upgrade rather than being mapped onto nothing.
+            repos: remembered.repos
+                .filter(entry => inProject(entry.repoName))
+                .map(entry => ({
+                    name: entry.repoName,
+                    path: entry.repoPath,
+                    fromBranch: entry.fromBranch,
+                    toBranch: entry.toBranch
+                })),
+            fromSeries: remembered.from!.series,
+            toSeries: remembered.to!.series,
+            fromDbId: remembered.from!.dbId,
+            toDbId: remembered.to!.dbId,
+            existingVersions: versionsService.getVersions().map(version => version.odooVersion),
+            worktreeRepos: repos
+                .filter(repo => normalizeBranchMode(repo.branchMode) === 'worktree')
+                .map(repo => repo.name),
+            root
+        };
+        const plan = buildUpgradePlan(input);
+
+        if (plan.reposToWorktree.length > 0 || plan.versionsToCreate.length > 0) {
+            const confirmed = await showModalInfo(describeUpgradePlan(plan, input), 'Resume');
+            if (confirmed !== 'Resume') {
+                return;
+            }
+        }
+
+        await applyAndFinish(
+            data, project, input, plan,
+            buildSetup(input, plan, root, { createTarget: false, previous: remembered, resume: true }),
+            'resumed');
+    };
+
     // Receives the current state and inverts it, the way the testing toggle
-    // does, so the tree row needs no knowledge of what happens next.
+    // does, so the tree row needs no knowledge of what happens next. Off keeps
+    // the upgrade; on resumes a kept one, and sets one up only when there is
+    // nothing to resume.
     context.subscriptions.push(vscode.commands.registerCommand(
         'upgradeSelector.toggleUpgrade',
         async (payload?: { isEnabled?: boolean }) => {
-            const enabled = payload?.isEnabled ?? (await currentUpgradeConfig()).isActive();
-            if (enabled) {
-                if (await exitUpgradeMode()) {
-                    await refreshAll();
+            try {
+                const config = await currentUpgradeConfig();
+                const enabled = payload?.isEnabled ?? config.isActive();
+                if (enabled) {
+                    if (await disableUpgradeMode()) {
+                        await refreshAll();
+                    }
+                    return;
                 }
-                return;
+                if (config.isRemembered()) {
+                    await resumeUpgrade();
+                    return;
+                }
+                await vscode.commands.executeCommand('odoo.setUpUpgrade');
+            } catch (error) {
+                logger.error('Toggling upgrade mode failed:', error);
+                void showError(`Could not toggle upgrade mode: ${errorMessage(error)}`);
             }
-            await vscode.commands.executeCommand('odoo.setUpUpgrade');
         }
+    ));
+
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'upgradeSelector.toggleSourceModules',
+        async () => {
+            if (await toggleSourceModules()) {
+                await refreshAll();
+            }
+        }
+    ));
+
+    // Changing an upgrade is setting one up with the current one preselected:
+    // the review step is where any single answer is changed.
+    context.subscriptions.push(vscode.commands.registerCommand(
+        'upgradeSelector.changeUpgrade',
+        () => vscode.commands.executeCommand('odoo.setUpUpgrade')
     ));
 
     context.subscriptions.push(vscode.commands.registerCommand('odoo.setUpUpgrade', async () => {
@@ -203,6 +423,9 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
                 return;
             }
             const { data, project } = result;
+            // Changing an upgrade starts from the one already stored.
+            const remembered = readUpgradeConfig(project);
+            const previous = remembered.isComplete() ? remembered : undefined;
 
             const dbs: DatabaseModel[] = project.dbs ?? [];
             if (dbs.length === 0) {
@@ -243,7 +466,8 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
                         title: 'Set Up an Upgrade',
                         placeHolder: 'Which database are you upgrading from?',
                         canGoBack,
-                        matchOnDescription: true
+                        matchOnDescription: true,
+                        activeItem: row => !!previous && (row as DbRow).db?.id === previous.from?.dbId
                     }
                 ),
                 picked => { draft.fromDb = picked.db; }
@@ -270,7 +494,8 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
                         title: 'Set Up an Upgrade',
                         placeHolder: 'Which database are you upgrading to?',
                         canGoBack,
-                        matchOnDescription: true
+                        matchOnDescription: true,
+                        activeItem: row => !!previous && (row as DbRow).db?.id === previous.to?.dbId
                     }
                 ),
                 picked => {
@@ -487,98 +712,10 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
             }
 
             // ---- Apply ----------------------------------------------------------
-            const versionIdFor = (series: string): string | undefined =>
-                versionsService.getVersions().find(version => version.odooVersion.trim() === series)?.id;
-
-            const setup: UpgradeSetup = {
-                fromDbId: input.fromDbId,
-                toDbId: input.toDbId,
-                fromSeries: input.fromSeries,
-                toSeries: input.toSeries,
-                fromVersionId: versionIdFor(input.fromSeries),
-                toVersionId: versionIdFor(input.toSeries),
-                repos: input.repos.map(repo => ({
-                    repoName: repo.name,
-                    repoPath: repo.path,
-                    fromBranch: repo.fromBranch,
-                    toBranch: repo.toBranch
-                })),
-                createTarget: !draft.toDb,
-                root,
-                plan
-            };
-
-            const applied = await vscode.window.withProgress({
-                location: vscode.ProgressLocation.Notification,
-                title: `Setting up the ${input.fromSeries} → ${input.toSeries} upgrade`,
-                cancellable: true
-            }, async (progress, token) => {
-                try {
-                    if (setup.createTarget) {
-                        progress.report({ message: `Creating ${setup.toDbId}`, increment: 20 });
-                    }
-                    progress.report({ message: 'Creating per-branch copies', increment: 40 });
-                    const outcome = await applyUpgradeSetup(
-                        project,
-                        setup,
-                        versionId => versionsService.getVersion(versionId ?? '')?.settings,
-                        token
-                    );
-                    progress.report({ message: 'Saving', increment: 40 });
-                    await SettingsStore.saveWithoutComments(stripSettings(data));
-                    return outcome;
-                } catch (error) {
-                    logger.error('[upgrade] applying the setup failed:', error);
-                    void showError(`Could not set up the upgrade: ${errorMessage(error)}`);
-                    return undefined;
-                }
-            });
-
-            if (!applied) {
-                return;
-            }
-
-            // Versions last: building them takes minutes, and the upgrade is
-            // already configured and visible by the time they finish.
-            if (plan.versionsToCreate.length > 0) {
-                const queued = enqueue(
-                    readQueue(context),
-                    plan.versionsToCreate.map(branch => ({ branch, name: `Odoo ${branch}` }))
-                );
-                setQueueSnapshot(queued);
-                await writeQueue(context, queued);
-                void drainProvisionQueue(context, () => void refreshAll({ reason: 'ui' }));
-            }
-
-            updateUpgradeContext(true);
-            await refreshAll();
-
-            const notes: string[] = [];
-            if (applied.staged.length > 0) {
-                notes.push(`${applied.staged.length} module(s) staged onto ${setup.toDbId}`);
-            }
-            if (applied.unavailable.length > 0) {
-                notes.push(`${applied.unavailable.length} left out, missing from Odoo ${input.toSeries}`);
-            }
-            if (applied.problems.length > 0) {
-                notes.push(applied.problems.join('; '));
-            }
-            const summary = notes.length > 0 ? ` ${notes.join('. ')}.` : '';
-
-            // Both versions have to exist before anything can run.
-            if (plan.versionsToCreate.length > 0) {
-                void showInfo(
-                    `Upgrade set up: ${input.fromSeries} → ${input.toSeries}.${summary}`
-                    + ' The servers can start once the versions finish building.');
-                return;
-            }
-
-            const action = await showInfo(
-                `Upgrade set up: ${input.fromSeries} → ${input.toSeries}.${summary}`,
-                'Start Both Servers');
-            if (action === 'Start Both Servers') {
-                await vscode.commands.executeCommand('odoo.startBothServers');
-            }
+            await applyAndFinish(
+                data, project, input, plan,
+                buildSetup(input, plan, root, { createTarget: !draft.toDb, previous }),
+                'set up');
         } catch (error) {
             logger.error('Set Up an Upgrade failed:', error);
             void showError(`Could not set up the upgrade: ${errorMessage(error)}`);

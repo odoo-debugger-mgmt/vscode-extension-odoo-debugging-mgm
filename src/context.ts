@@ -1,6 +1,7 @@
 /**
  * VS Code context keys ('odoo-debugger.is_active', 'odoo-debugger.testing_enabled',
- * 'odoo-debugger.upgrade_enabled') used by when-clauses.
+ * 'odoo-debugger.upgrade_enabled', 'odoo-debugger.upgrade_remembered') used by
+ * when-clauses.
  */
 import * as vscode from 'vscode';
 
@@ -26,4 +27,9 @@ export function updateConfiguredContext(isConfigured: boolean): void {
 
 export function updateUpgradeContext(isUpgradeEnabled: boolean): void {
     void vscode.commands.executeCommand('setContext', 'odoo-debugger.upgrade_enabled', isUpgradeEnabled);
+}
+
+/** A complete upgrade is stored, on or off, so it can be changed or resumed. */
+export function updateUpgradeRememberedContext(isRemembered: boolean): void {
+    void vscode.commands.executeCommand('setContext', 'odoo-debugger.upgrade_remembered', isRemembered);
 }

@@ -12,7 +12,7 @@ import { DatabaseModel, ProjectRepoBranchAssignment } from '../models/db';
 import { ModuleModel, ModuleState } from '../models/module';
 import { ProjectModel } from '../models/project';
 import { RepoModel, normalizeBranchMode } from '../models/repo';
-import { UpgradeConfigModel, UpgradeRepoPair, ensureUpgradeConfigModel } from '../models/upgrade';
+import { StashedModuleStates, UpgradeConfigModel, UpgradeRepoPair, ensureUpgradeConfigModel } from '../models/upgrade';
 import { createDatabase } from './postgres';
 import { getInstalledModuleNames } from './database';
 import { sanitizeProjectRepoBranchAssignments } from './environment';
@@ -37,6 +37,14 @@ export interface UpgradeSetup {
     /** Where per-branch copies live. */
     root: string;
     plan: UpgradePlan;
+    /**
+     * The upgrade stored before this one, on or off. Passed in rather than
+     * read here: a project loaded from settings is plain JSON, and this
+     * function must never read the config it is about to write.
+     */
+    previous?: UpgradeConfigModel;
+    /** Turning a remembered upgrade back on: its module set is reused, not re-read. */
+    resume?: boolean;
 }
 
 export interface UpgradeApplyResult {
@@ -175,34 +183,44 @@ export async function applyUpgradeSetup(
     }
 
     // 5. The module set: what the source runs, rebuilt on the target.
+    const previous = setup.previous;
+    // Whatever an earlier upgrade staged goes back first, so what gets stashed
+    // below is always the target's own modules and never an old staged set.
+    if (previous) {
+        unstageTargetModules(project, previous);
+    }
+
     let staged: string[] = [];
     let unavailable: string[] = [];
-    /**
-     * What the target had before staging, so leaving the mode can put it back.
-     * Undefined means staging never ran; an empty array means it ran and the
-     * target genuinely had nothing - the exit path must tell those apart.
-     */
-    let savedTargetModuleStates: Array<{ name: string; state: ModuleState }> | undefined;
-    if (sourceDb && targetDb) {
+    let perModuleEdits: StashedModuleStates | undefined;
+    // Staging an empty set because the source could not be read would wipe
+    // the target's modules for nothing, so staging waits on a real answer.
+    let stagingKnown = false;
+    if (setup.resume && previous) {
+        // The set was read when the upgrade was set up, and the changes made
+        // to it were kept when the mode was turned off.
+        staged = previous.stagedModules;
+        unavailable = previous.unavailableModules;
+        perModuleEdits = previous.upgradeTargetModuleStates;
+        stagingKnown = true;
+    } else if (sourceDb && targetDb) {
         try {
             const installed = await getInstalledModuleNames(sourceDb.id);
             const staging = splitStagedModules(installed, availableModulesFor(versionSettingsFor(setup.toVersionId)));
             staged = staging.staged;
             unavailable = staging.unavailable;
-
-            savedTargetModuleStates = (targetDb.modules ?? []).map(module => ({
-                name: module.name,
-                state: module.state as ModuleState
-            }));
-            targetDb.modules = [
-                ...staged.map(name => new ModuleModel(name, 'install', false)),
-                ...unavailable.map(name => new ModuleModel(name, 'none', false))
-            ];
+            stagingKnown = true;
         } catch (error) {
             logger.warn('[upgrade] could not read the source module set:', error);
             problems.push(`Could not read the modules installed in "${sourceDb.id}": ${errorMessage(error)}`);
         }
     }
+
+    // A choice about this target, so it survives setting the same target up
+    // again, and starts on for a different one.
+    const installSourceModules = previous && previous.to?.dbId === setup.toDbId
+        ? previous.installSourceModules
+        : true;
 
     // 6. Each side's server remembers its own database, so nothing has to be
     //    selected by hand before starting them.
@@ -219,17 +237,73 @@ export async function applyUpgradeSetup(
     // loaded from settings is a plain object, so that field is undefined until
     // this assignment - reading through it threw, and the throw was swallowed
     // by the staging try/catch as a bogus "could not read the modules" report.
-    project.upgradeConfig = new UpgradeConfigModel(
+    const config = new UpgradeConfigModel(
         true,
         { versionId: setup.fromVersionId, dbId: setup.fromDbId, series: setup.fromSeries },
         { versionId: setup.toVersionId, dbId: setup.toDbId, series: setup.toSeries },
         setup.repos,
-        savedTargetModuleStates,
+        undefined,
         staged,
-        unavailable
+        unavailable,
+        installSourceModules,
+        perModuleEdits
     );
+    if (installSourceModules && stagingKnown) {
+        stageTargetModules(project, config);
+    }
+    project.upgradeConfig = config;
 
-    return { problems, staged, unavailable };
+    return { problems, staged: config.isTargetStaged() ? staged : [], unavailable };
+}
+
+function snapshotModules(modules: ModuleModel[] | undefined): StashedModuleStates {
+    return (modules ?? []).map(module => ({ name: module.name, state: module.state as ModuleState }));
+}
+
+function restoreModules(states: StashedModuleStates): ModuleModel[] {
+    return states.map(entry => new ModuleModel(entry.name, entry.state, false));
+}
+
+/**
+ * Puts the source's module set onto the target, stashing the target's own.
+ *
+ * Changes made to the set during an earlier stretch of the upgrade come back
+ * instead of the set as first read, so turning the mode off and on again - or
+ * the module toggle off and on - loses nothing.
+ */
+export function stageTargetModules(project: ProjectModel, config: UpgradeConfigModel): void {
+    if (config.isTargetStaged()) {
+        return;
+    }
+    const targetDb = (project.dbs ?? []).find(entry => entry.id === config.to?.dbId);
+    if (!targetDb) {
+        return;
+    }
+    config.savedTargetModuleStates = snapshotModules(targetDb.modules);
+    targetDb.modules = config.upgradeTargetModuleStates
+        ? restoreModules(config.upgradeTargetModuleStates)
+        : [
+            ...config.stagedModules.map(name => new ModuleModel(name, 'install', false)),
+            ...config.unavailableModules.map(name => new ModuleModel(name, 'none', false))
+        ];
+    config.upgradeTargetModuleStates = undefined;
+}
+
+/**
+ * Gives the target back its own modules, keeping the staged set as it now
+ * stands so staging it again restores it. The inverse of stageTargetModules.
+ */
+export function unstageTargetModules(project: ProjectModel, config: UpgradeConfigModel): void {
+    const saved = config.savedTargetModuleStates;
+    if (saved === undefined) {
+        return;
+    }
+    const targetDb = (project.dbs ?? []).find(entry => entry.id === config.to?.dbId);
+    if (targetDb) {
+        config.upgradeTargetModuleStates = snapshotModules(targetDb.modules);
+        targetDb.modules = restoreModules(saved);
+    }
+    config.savedTargetModuleStates = undefined;
 }
 
 /**
@@ -242,14 +316,6 @@ export async function applyUpgradeSetup(
  */
 export function revertUpgradeStaging(project: ProjectModel): void {
     const config = ensureUpgradeConfigModel(project.upgradeConfig);
-    const targetDbId = config.to?.dbId;
-    const saved = config.savedTargetModuleStates;
-    if (!targetDbId || !saved) {
-        return;
-    }
-    const targetDb = (project.dbs ?? []).find(entry => entry.id === targetDbId);
-    if (!targetDb) {
-        return;
-    }
-    targetDb.modules = saved.map(entry => new ModuleModel(entry.name, entry.state, false));
+    unstageTargetModules(project, config);
+    project.upgradeConfig = config;
 }

@@ -170,16 +170,26 @@ Run it again choosing **Create a new database…** for the target.
 
 ### 6.3 The Upgrade view and the pair
 
-- With the mode off, the **Upgrade** view shows exactly **one** row -
-  `Upgrade Disabled` - the way the Testing view shows `Testing Disabled`. There
-  is no second button and no title-bar icon; `ctrl+alt+o shift+u` is the
-  shortcut.
-- With it on: the toggle, a From and a To section (each expanding to version,
-  database and a branch per repo), the module count, and Start Both Servers.
+- With **nothing set up**, the **Upgrade** view shows exactly **one** row -
+  `Upgrade Disabled` - the way the Testing view shows `Testing Disabled`. No
+  second button and no title-bar icon; `ctrl+alt+o shift+u` is the shortcut.
+- With it **on**: the toggle, a From and a To section (each expanding to
+  version, database and a branch per repo), an **Install N modules from …**
+  toggle row, and Start Both Servers. The title bar carries Start Both Servers
+  and **Change the Upgrade** (pencil).
+- With it **off but remembered**: the toggle, and From / To folded with a
+  history icon. The title bar carries only Change the Upgrade.
 - **Versions** and **Databases** should each show **two** checked rows, marked
   `upgrading from` / `upgrading to` - and the *selected* one must still be
   distinguishable (filled circle vs plain check), because selecting a side is
   how you choose whose modules you are editing.
+- **Project Repos** (Explorer) shows **both copies** of every repository in the
+  upgrade - `acme (17.0-acme)` marked `upgrading from` and `acme (19.0-acme)`
+  marked `upgrading to` - whichever database is selected. Right-click either
+  root: New File, New Folder, Reveal, Copy Path and Open in Terminal must all be
+  there (per-branch roots used to get none of them). Opening a file from the
+  side that is *not* selected must **not** raise the "belongs to … but … is
+  active" warning.
 
 ### 6.4 What the mode blocks, and what it must not
 
@@ -214,10 +224,33 @@ emptied the whole right-click menu:
    stay on whatever branch you left them on. That is the difference between
    selecting a side and switching databases normally.
 
-### 6.6 Leaving
+### 6.6 Turning it off, and back on
 
-Toggle the mode off. It should confirm, restore the target database's previous
-modules, and say plainly that the copies and versions are kept.
+The mode now toggles the way testing mode does: off keeps the upgrade.
+
+1. Toggle it off. **No dialog.** The target database's modules go back to its
+   own, a status-bar message says the upgrade is remembered, and the Upgrade
+   view keeps From / To, folded.
+2. Toggle it on. **No wizard** - it resumes: the same pair, the same branches,
+   the same module marks, *including* any single module you changed in 6.5.
+3. While it is off, remove one of the copies (**Use a Single Checkout** from the
+   palette on an upgrade repo). Toggle on: exactly one dialog naming what will
+   be rebuilt, then the progress notification.
+4. While it is off, delete the target database. Toggle on: it must say the
+   database no longer exists and offer **Set Up an Upgrade**, not fail halfway.
+5. **Change the Upgrade** (pencil): setup opens with the current databases
+   preselected, so changing one branch is Enter, Enter, then the edit on the
+   review screen.
+6. **Exit Upgrade Mode** on any refusal from 6.4 now turns the mode off
+   directly, the same as step 1.
+
+### 6.6b The module toggle
+
+1. Click **Install N modules from …** so it reads `off`. Select the target
+   database: the Modules view shows the target's **own** modules again.
+2. Click it back `on`: the marks return as they were, per-module changes
+   included.
+3. With it off, the target server's launch must carry no `-i` of the source set.
 
 ### 6.7 The bug this release fixes
 

@@ -13,6 +13,7 @@ import { showWarning } from './notifications';
 import { readSetupState } from './setupState';
 import { resolveProjectRepos, worktreeDirName } from './repoPaths';
 import { resolveProjectRepoBranchAssignments } from './environment';
+import { ensureUpgradeConfigModel, UpgradeConfigModel } from '../models/upgrade';
 
 const SUPPRESSED_KEY = 'odooDevtools.wrongCopyWarningSuppressed';
 
@@ -27,6 +28,21 @@ export function parseWorktreeDirName(dirName: string): { repo: string; branch: s
         return undefined;
     }
     return { repo: dirName.slice(0, at), branch: dirName.slice(at + 1) };
+}
+
+/**
+ * Whether a copy is one of the two an upgrade runs on.
+ *
+ * Both are live by design while the mode is on - the Project Repos view lists
+ * them side by side - so opening a file from the side that is not selected is
+ * the point of the mode, not a slip worth a warning.
+ */
+export function isUpgradePairCopy(config: UpgradeConfigModel, dirName: string): boolean {
+    if (!config.isActive()) {
+        return false;
+    }
+    return config.repos.some(entry =>
+        [entry.fromBranch, entry.toBranch].some(branch => worktreeDirName(entry.repoName, branch) === dirName));
 }
 
 export function registerWrongCopyGuard(context: vscode.ExtensionContext): void {
@@ -45,7 +61,8 @@ export function registerWrongCopyGuard(context: vscode.ExtensionContext): void {
                 return;
             }
 
-            const owner = parseWorktreeDirName(relative.split(path.sep)[0]);
+            const dirName = relative.split(path.sep)[0];
+            const owner = parseWorktreeDirName(dirName);
             if (!owner) {
                 return;
             }
@@ -53,6 +70,9 @@ export function registerWrongCopyGuard(context: vscode.ExtensionContext): void {
             const result = await SettingsStore.get('odoo-debugger-data.json').catch(() => undefined);
             const project = result?.projects?.find(entry => entry.isSelected);
             if (!project) {
+                return;
+            }
+            if (isUpgradePairCopy(ensureUpgradeConfigModel(project.upgradeConfig), dirName)) {
                 return;
             }
             const db = project.dbs?.find(entry => entry.isSelected);

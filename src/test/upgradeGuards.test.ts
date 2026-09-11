@@ -90,6 +90,21 @@ suite('What upgrade mode hides', () => {
         }
     });
 
+    test('a per-branch repository root gets the same file actions as a plain one', () => {
+        // Upgrade repositories are always per-branch, and their roots matched
+        // none of the root menus: no New File, Reveal or Copy Path on either copy.
+        const rootMenus = menus.filter(entry =>
+            (entry.when ?? '').includes('view == odt.projectReposExplorer')
+            && /projectRepoRoot[|)]/.test(entry.when ?? ''));
+        assert.ok(rootMenus.length > 0);
+        for (const entry of rootMenus.filter(item => item.command !== 'odt.repo.toggleBranchMode')) {
+            assert.ok(
+                (entry.when ?? '').includes('projectRepoRootPerBranch'),
+                `${entry.command} is offered on plain roots only: ${entry.when}`
+            );
+        }
+    });
+
     test('"Use a Single Checkout" is no longer offered from a tree', () => {
         assert.deepStrictEqual(
             menus.filter(entry => entry.command === 'odt.repo.useSingleCheckout'),

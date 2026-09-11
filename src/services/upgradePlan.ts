@@ -41,7 +41,11 @@ export interface UpgradePlan {
     /** Repositories that must switch to one copy per branch. */
     reposToWorktree: string[];
     assignments: Array<{ dbId: string; repoName: string; repoPath: string; branch: string }>;
-    /** Absolute directories the copies will occupy, in assignment order. */
+    /**
+     * Absolute directories the copies of the repositories switching to one
+     * copy per branch will occupy. Only those: the confirmation says these
+     * will be created, and a repository already keeping copies has them.
+     */
     worktreeDirs: string[];
 }
 
@@ -62,7 +66,7 @@ export function buildUpgradePlan(input: UpgradeInput): UpgradePlan {
             { dbId: input.fromDbId, repoName: repo.name, repoPath: repo.path, branch: repo.fromBranch },
             { dbId: input.toDbId, repoName: repo.name, repoPath: repo.path, branch: repo.toBranch }
         );
-        if (input.root) {
+        if (input.root && !alreadyWorktree.has(repo.name.toLowerCase())) {
             worktreeDirs.push(
                 path.join(input.root, worktreeDirName(repo.name, repo.fromBranch)),
                 path.join(input.root, worktreeDirName(repo.name, repo.toBranch))

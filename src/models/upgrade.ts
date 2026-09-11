@@ -3,6 +3,9 @@
  * database and a branch per repository on each - plus the module states
  * stashed on the target database while upgrade mode is on.
  *
+ * Turning the mode off keeps all of it, the way testing mode keeps its
+ * targets: the pair is remembered and turning the mode back on resumes it.
+ *
  * The pair lives here rather than as a second "active version" because
  * launch.json already carries one entry per provisioned version and the
  * running state already models several servers at once. Two servers therefore
@@ -30,17 +33,31 @@ export interface UpgradeRepoPair {
     toBranch: string;
 }
 
+export type StashedModuleStates = Array<{ name: string; state: ModuleState }>;
+
 export interface UpgradeConfig {
     isEnabled: boolean;
     from?: UpgradePairSide;
     to?: UpgradePairSide;
     repos: UpgradeRepoPair[];
-    /** Target-database module states before staging, restored when the mode ends. */
-    savedTargetModuleStates?: Array<{ name: string; state: ModuleState }>;
+    /**
+     * The target database's own module states, stashed while the source's
+     * set is staged onto it. Defined exactly when the target is staged, so
+     * it doubles as that flag.
+     */
+    savedTargetModuleStates?: StashedModuleStates;
     /** Modules staged as `install` on the target database. */
     stagedModules: string[];
     /** Source modules with no counterpart in the target version. */
     unavailableModules: string[];
+    /** Whether the source's module set is installed on the target at all. */
+    installSourceModules: boolean;
+    /**
+     * The target's module states as they were while staged, kept when the
+     * staging is lifted, so per-module changes made during the upgrade come
+     * back with it instead of being rebuilt from the source.
+     */
+    upgradeTargetModuleStates?: StashedModuleStates;
 }
 
 export class UpgradeConfigModel implements UpgradeConfig {
@@ -48,18 +65,22 @@ export class UpgradeConfigModel implements UpgradeConfig {
     public from?: UpgradePairSide;
     public to?: UpgradePairSide;
     public repos: UpgradeRepoPair[];
-    public savedTargetModuleStates?: Array<{ name: string; state: ModuleState }>;
+    public savedTargetModuleStates?: StashedModuleStates;
     public stagedModules: string[];
     public unavailableModules: string[];
+    public installSourceModules: boolean;
+    public upgradeTargetModuleStates?: StashedModuleStates;
 
     constructor(
         isEnabled: boolean = false,
         from?: UpgradePairSide,
         to?: UpgradePairSide,
         repos: UpgradeRepoPair[] = [],
-        savedTargetModuleStates?: Array<{ name: string; state: ModuleState }>,
+        savedTargetModuleStates?: StashedModuleStates,
         stagedModules: string[] = [],
-        unavailableModules: string[] = []
+        unavailableModules: string[] = [],
+        installSourceModules: boolean = true,
+        upgradeTargetModuleStates?: StashedModuleStates
     ) {
         this.isEnabled = isEnabled;
         this.from = from;
@@ -68,6 +89,8 @@ export class UpgradeConfigModel implements UpgradeConfig {
         this.savedTargetModuleStates = savedTargetModuleStates;
         this.stagedModules = stagedModules;
         this.unavailableModules = unavailableModules;
+        this.installSourceModules = installSourceModules;
+        this.upgradeTargetModuleStates = upgradeTargetModuleStates;
     }
 
     /**
@@ -81,6 +104,16 @@ export class UpgradeConfigModel implements UpgradeConfig {
     /** True when the mode is on and both sides are known. */
     isActive(): boolean {
         return this.isEnabled && this.isComplete();
+    }
+
+    /** A complete pair kept while the mode is off, ready to be resumed. */
+    isRemembered(): boolean {
+        return !this.isEnabled && this.isComplete();
+    }
+
+    /** Whether the source's module set is currently staged onto the target. */
+    isTargetStaged(): boolean {
+        return this.savedTargetModuleStates !== undefined;
     }
 
     /** Which side of the upgrade a version is, if either. */
@@ -155,6 +188,10 @@ function normalizeRepos(raw: any): UpgradeRepoPair[] {
         }));
 }
 
+function normalizeStates(raw: any): StashedModuleStates | undefined {
+    return Array.isArray(raw) ? raw : undefined;
+}
+
 function normalizeNames(raw: any): string[] {
     return Array.isArray(raw)
         ? raw.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '')
@@ -185,11 +222,13 @@ export function ensureUpgradeConfigModel(upgradeConfig: any): UpgradeConfigModel
             from,
             to,
             normalizeRepos(upgradeConfig.repos),
-            Array.isArray(upgradeConfig.savedTargetModuleStates)
-                ? upgradeConfig.savedTargetModuleStates
-                : undefined,
+            normalizeStates(upgradeConfig.savedTargetModuleStates),
             normalizeNames(upgradeConfig.stagedModules),
-            normalizeNames(upgradeConfig.unavailableModules)
+            normalizeNames(upgradeConfig.unavailableModules),
+            // Absent on configs written before the toggle existed, all of
+            // which installed the set: absence reads as on.
+            upgradeConfig.installSourceModules !== false,
+            normalizeStates(upgradeConfig.upgradeTargetModuleStates)
         );
     } catch (error) {
         logger.warn('Error converting upgrade config, creating new instance:', error);

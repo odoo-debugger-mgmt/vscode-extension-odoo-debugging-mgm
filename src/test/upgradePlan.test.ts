@@ -66,6 +66,15 @@ suite('Upgrade plan', () => {
         ]);
     });
 
+    test('a repository already keeping copies is not listed as about to get them', () => {
+        // The confirmation says these directories "will be created"; listing a
+        // repository's existing copies there was simply untrue.
+        const plan = buildUpgradePlan(input({ root: '/home/dev/odoo-dev', worktreeRepos: ['psae-internal'] }));
+
+        assert.deepStrictEqual(plan.reposToWorktree, []);
+        assert.deepStrictEqual(plan.worktreeDirs, []);
+    });
+
     test('an upgrade with no custom repositories still maps its databases', () => {
         const plan = buildUpgradePlan(input({ repos: [] }));
 

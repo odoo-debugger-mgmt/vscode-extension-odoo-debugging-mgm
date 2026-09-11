@@ -7,6 +7,7 @@
  */
 import * as assert from 'assert';
 import { ensureUpgradeConfigModel, UpgradeConfigModel } from '../models/upgrade';
+import { isUpgradePairCopy } from '../services/wrongCopyGuard';
 
 const pair = {
     isEnabled: true,
@@ -86,5 +87,57 @@ suite('Upgrade config normalization', () => {
         assert.strictEqual(config.sideForVersion('v17'), undefined);
         assert.strictEqual(config.sideForDb('crm-17'), undefined);
         assert.strictEqual(config.involvesRepo('acme'), false);
+    });
+});
+
+suite('A remembered upgrade', () => {
+    test('turning the mode off keeps both sides, and nothing is live', () => {
+        const config = ensureUpgradeConfigModel({ ...pair, isEnabled: false });
+        assert.ok(config.isRemembered(), 'a switched-off pair was forgotten');
+        assert.strictEqual(config.isActive(), false);
+        assert.strictEqual(config.from?.dbId, 'crm-17');
+        assert.strictEqual(config.to?.dbId, 'crm-19');
+        assert.deepStrictEqual(config.repos.map(entry => entry.repoName), ['acme']);
+    });
+
+    test('an active pair is not also remembered', () => {
+        assert.strictEqual(ensureUpgradeConfigModel(pair).isRemembered(), false);
+    });
+
+    test('half a pair is neither active nor remembered', () => {
+        const config = ensureUpgradeConfigModel({ ...pair, isEnabled: false, to: undefined });
+        assert.strictEqual(config.isRemembered(), false);
+    });
+
+    test('configs written before the module toggle install the set', () => {
+        assert.strictEqual(ensureUpgradeConfigModel(pair).installSourceModules, true);
+    });
+
+    test('a module toggle turned off stays off', () => {
+        const config = ensureUpgradeConfigModel({ ...pair, installSourceModules: false });
+        assert.strictEqual(config.installSourceModules, false);
+    });
+
+    test('the per-module stash survives a round trip through JSON', () => {
+        const stash = [{ name: 'crm', state: 'none' }];
+        const config = ensureUpgradeConfigModel(JSON.parse(JSON.stringify({ ...pair, upgradeTargetModuleStates: stash })));
+        assert.deepStrictEqual(config.upgradeTargetModuleStates, stash);
+    });
+});
+
+suite('The copies an upgrade runs on', () => {
+    test('either side\'s copy is one of the pair while the mode is on', () => {
+        const config = ensureUpgradeConfigModel(pair);
+        assert.ok(isUpgradePairCopy(config, 'acme@17.0-acme'));
+        assert.ok(isUpgradePairCopy(config, 'acme@19.0-acme'));
+    });
+
+    test('a third branch of the same repository is not', () => {
+        assert.strictEqual(isUpgradePairCopy(ensureUpgradeConfigModel(pair), 'acme@18.0-acme'), false);
+    });
+
+    test('nothing is one of the pair while the mode is off', () => {
+        const config = ensureUpgradeConfigModel({ ...pair, isEnabled: false });
+        assert.strictEqual(isUpgradePairCopy(config, 'acme@17.0-acme'), false);
     });
 });

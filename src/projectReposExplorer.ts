@@ -18,6 +18,7 @@ import { resolveProjectRepos, ResolvedRepo } from './services/repoPaths';
 import { resolveProjectRepoBranchAssignments } from './services/environment';
 import { readSetupState } from './services/setupState';
 import { pathExists as fsPathExists } from './services/dumpImport';
+import { ensureUpgradeConfigModel, UpgradeConfigModel } from './models/upgrade';
 
 type NodeKind = 'repo' | 'folder' | 'file';
 
@@ -32,6 +33,51 @@ interface RepoNode extends BaseNode {
     uri: vscode.Uri;
     branch: string | null;
     missing: boolean;
+    /** Which side of the upgrade this copy runs, when it is one of the pair. */
+    side?: 'from' | 'to';
+    /** The branch the copy is meant to be on, to flag one that is not. */
+    expectedBranch?: string;
+}
+
+/** A repository row to render: which directory, and for an upgrade which side. */
+interface RepoRoot {
+    repo: RepoModel;
+    entry?: ResolvedRepo;
+    side?: 'from' | 'to';
+}
+
+/**
+ * Both copies of every repository an active upgrade runs on.
+ *
+ * Outside an upgrade the view shows the selected database's copy, so a file
+ * opened from it belongs to what is being run. During one, both sides are run
+ * at once, and hiding one of them behind the selection made the side you
+ * were not looking at impossible to reach. A repository whose copies are not
+ * both per-branch is left out and rendered the usual way.
+ */
+export function resolveUpgradePairCopies(
+    project: ProjectModel,
+    config: UpgradeConfigModel,
+    root: string
+): Map<RepoModel, { from: ResolvedRepo; to: ResolvedRepo }> {
+    const copies = new Map<RepoModel, { from: ResolvedRepo; to: ResolvedRepo }>();
+    if (!config.isActive()) {
+        return copies;
+    }
+    const repos = (project.repos ?? []) as RepoModel[];
+    const sideCopies = (dbId: string | undefined): ResolvedRepo[] => {
+        const db = project.dbs?.find(entry => entry.id === dbId);
+        return resolveProjectRepos(repos, db ? resolveProjectRepoBranchAssignments(db, repos) : [], root);
+    };
+    // resolveProjectRepos answers in the order it was given the repos.
+    const from = sideCopies(config.from?.dbId);
+    const to = sideCopies(config.to?.dbId);
+    repos.forEach((repo, index) => {
+        if (config.involvesRepo(repo.name) && from[index]?.isWorktree && to[index]?.isWorktree) {
+            copies.set(repo, { from: from[index], to: to[index] });
+        }
+    });
+    return copies;
 }
 
 interface FolderNode extends BaseNode {
@@ -111,8 +157,16 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
                 }
                 const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.Collapsed);
                 item.resourceUri = element.uri;
-                item.description = element.branch ?? undefined;
-                item.tooltip = element.branch ? `${element.repo.path}\nBranch: ${element.branch}` : element.repo.path;
+                if (element.side) {
+                    // The label already names the branch; what is worth the
+                    // space is the side, and a copy that has drifted off it.
+                    const sideLabel = element.side === 'from' ? 'upgrading from' : 'upgrading to';
+                    const drifted = element.branch && element.expectedBranch && element.branch !== element.expectedBranch;
+                    item.description = drifted ? `${sideLabel} • on ${element.branch}` : sideLabel;
+                } else {
+                    item.description = element.branch ?? undefined;
+                }
+                item.tooltip = element.branch ? `${element.uri.fsPath}\nBranch: ${element.branch}` : element.uri.fsPath;
                 // The mode is in the contextValue so the menu entry can name
                 // what it will do: one label for both directions meant the
                 // entry that removes the copies read "Use One Copy Per Branch".
@@ -159,15 +213,29 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
             // Resolved once per refresh: the explorer must show the active
             // version's worktrees, so a file opened from it - and every command
             // that acts on the row's uri - belongs to the version being run.
+            // An upgrade runs two versions, so it gets both of their copies.
             const resolved = this.resolveRepos(project);
             const resolvedByRepo = new Map(resolved.map(entry => [entry.repo, entry]));
+            const pairCopies = resolveUpgradePairCopies(
+                project,
+                ensureUpgradeConfigModel(project.upgradeConfig),
+                readSetupState().provisioningRoot
+            );
 
-            this.resetWatchers(resolved.map(entry => entry.path));
+            this.resetWatchers([
+                ...resolved.map(entry => entry.path),
+                ...Array.from(pairCopies.values()).flatMap(pair => [pair.from.path, pair.to.path])
+            ]);
 
             const sortId = this.sortPreferences.get('projectRepos', getDefaultSortOption('projectRepos'));
             const sortedRepos = [...repos].sort((a, b) => this.compareRepos(a, b, sortId));
-            return Promise.all(sortedRepos.map(async repo => {
-                const entry = resolvedByRepo.get(repo);
+            const roots: RepoRoot[] = sortedRepos.flatMap(repo => {
+                const pair = pairCopies.get(repo);
+                return pair
+                    ? [{ repo, entry: pair.from, side: 'from' as const }, { repo, entry: pair.to, side: 'to' as const }]
+                    : [{ repo, entry: resolvedByRepo.get(repo) }];
+            });
+            return Promise.all(roots.map(async ({ repo, entry, side }) => {
                 const repoPath = entry?.path ?? normalizePath(repo.path);
                 const missing = !(await fsPathExists(repoPath));
                 return {
@@ -176,7 +244,9 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
                     repo,
                     uri: vscode.Uri.file(repoPath),
                     branch: missing ? null : await getRepoBranch(repoPath),
-                    missing
+                    missing,
+                    side,
+                    expectedBranch: entry?.branch
                 };
             }));
         }
