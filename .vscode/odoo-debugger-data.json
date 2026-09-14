@@ -24,13 +24,14 @@
                 "subModulesPaths": "",
                 "installApps": "",
                 "upgradeApps": "",
-                "preCheckoutCommands": [],
-                "postCheckoutCommands": []
+                "postSwitchCommands": [],
+                "managedPaths": []
             },
             "isActive": true,
             "createdAt": "2025-12-22T15:23:05.418Z",
             "updatedAt": "2025-12-22T15:23:05.418Z"
         }
     },
-    "activeVersion": "5d22a2fc-4883-42f9-b01e-ef82d5732844"
+    "activeVersion": "5d22a2fc-4883-42f9-b01e-ef82d5732844",
+    "dbTemplates": []
 }

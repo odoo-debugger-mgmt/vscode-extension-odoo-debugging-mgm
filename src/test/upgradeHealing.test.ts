@@ -8,7 +8,7 @@
  */
 import * as assert from 'assert';
 import { UpgradeConfigModel } from '../models/upgrade';
-import { healUpgradePairVersions } from '../upgrade';
+import { healUpgradePairVersions, healUpgradeSelection } from '../upgrade';
 import { VersionsService } from '../versionsService';
 import type { ProjectModel } from '../models/project';
 
@@ -93,5 +93,62 @@ suite('Healing an upgrade pair once its version is built', () => {
             withVersions([{ id: 'v19', odooVersion: '19.0' }], () => healUpgradePairVersions(proj)),
             false
         );
+    });
+});
+
+suite('Keeping the selection on the upgrade pair', () => {
+    const linked = (active = true) => new UpgradeConfigModel(
+        active,
+        { versionId: 'v17', dbId: 'crm-17', series: '17.0' },
+        { versionId: 'v19', dbId: 'crm-19', series: '19.0' },
+        []
+    );
+
+    function withDbs(config: UpgradeConfigModel, selected?: string, ids = ['crm-17', 'crm-19', 'scratch']): ProjectModel {
+        return {
+            name: 'acme',
+            dbs: ids.map(id => ({ id, isSelected: id === selected })),
+            upgradeConfig: config
+        } as unknown as ProjectModel;
+    }
+
+    const selectedIds = (proj: ProjectModel) => proj.dbs.filter(db => db.isSelected).map(db => db.id);
+
+    test('a database outside the pair gives the selection to the side upgraded from', () => {
+        // It kept its selected icon next to the two pair members, and could
+        // not be moved off because selecting outside the pair is refused.
+        const proj = withDbs(linked(), 'scratch');
+
+        assert.strictEqual(healUpgradeSelection(proj), true);
+        assert.deepStrictEqual(selectedIds(proj), ['crm-17']);
+    });
+
+    test('nothing selected at all also lands on the side upgraded from', () => {
+        const proj = withDbs(linked());
+
+        assert.strictEqual(healUpgradeSelection(proj), true);
+        assert.deepStrictEqual(selectedIds(proj), ['crm-17']);
+    });
+
+    test('either side already selected is left alone', () => {
+        // Selecting a side is how you choose whose modules you are editing.
+        const proj = withDbs(linked(), 'crm-19');
+
+        assert.strictEqual(healUpgradeSelection(proj), false);
+        assert.deepStrictEqual(selectedIds(proj), ['crm-19']);
+    });
+
+    test('a side whose database is gone falls back to the other side', () => {
+        const proj = withDbs(linked(), 'scratch', ['crm-19', 'scratch']);
+
+        assert.strictEqual(healUpgradeSelection(proj), true);
+        assert.deepStrictEqual(selectedIds(proj), ['crm-19']);
+    });
+
+    test('with the mode off, any database may stay selected', () => {
+        const proj = withDbs(linked(false), 'scratch');
+
+        assert.strictEqual(healUpgradeSelection(proj), false);
+        assert.deepStrictEqual(selectedIds(proj), ['scratch']);
     });
 });

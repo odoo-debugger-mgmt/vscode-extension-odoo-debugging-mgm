@@ -25,7 +25,7 @@ import { getDatabaseLabel, stripSettings } from '../utils';
 import type { DatabaseModel } from '../models/db';
 
 export function registerDbCommands(deps: CommandDeps): void {
-    const { context, versionsService, refreshAll } = deps;
+    const { context, versionsService, providers, dbTreeView, refreshAll } = deps;
 
     context.subscriptions.push(vscode.commands.registerCommand('dbSelector.create', async () => {
         try {
@@ -56,6 +56,26 @@ export function registerDbCommands(deps: CommandDeps): void {
         }
     }));
 
+    // Clicking a row highlights it before the handler runs, and the highlight
+    // survives refreshes (the row id is stable). When the selection is refused
+    // - a database outside a running upgrade - or fails, that highlight sat on
+    // the clicked row next to the "selected" icon on another: two databases
+    // that both looked selected, for as long as nothing else was clicked.
+    const highlightSelectedDb = async () => {
+        const result = await SettingsStore.getSelectedProject();
+        const selected = (result?.project.dbs as DatabaseModel[] | undefined)?.find(db => db.isSelected);
+        const row = selected ? providers.db.rowFor(selected.id) : undefined;
+        if (!row || !dbTreeView.visible) {
+            return;
+        }
+        try {
+            await dbTreeView.reveal(row, { select: true, focus: false });
+        } catch (err) {
+            // Cosmetic only; the selection itself is already right.
+            logger.warn('Could not move the Databases view highlight:', err);
+        }
+    };
+
     context.subscriptions.push(vscode.commands.registerCommand('dbSelector.selectDb', async (event) => {
         try {
             await selectDatabase(event);
@@ -64,6 +84,7 @@ export function registerDbCommands(deps: CommandDeps): void {
             void showError(`Failed to select database: ${errorMessage(err)}`);
             logger.error('Error in database selection:', err);
         }
+        await highlightSelectedDb();
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand('dbSelector.delete', async (event) => {

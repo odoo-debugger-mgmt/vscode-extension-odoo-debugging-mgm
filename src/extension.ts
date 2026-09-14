@@ -132,7 +132,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(vscode.window.registerTreeDataProvider('projectSelector', providers.project));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('repoSelector', providers.repo));
-    context.subscriptions.push(vscode.window.registerTreeDataProvider('dbSelector', providers.db));
+    // A TreeView handle so a refused selection can move the row highlight
+    // back to the database that is actually selected.
+    const dbTreeView = vscode.window.createTreeView('dbSelector', { treeDataProvider: providers.db });
+    context.subscriptions.push(dbTreeView);
     // The Modules view needs a TreeView handle: reveal() for the editor
     // "Reveal Module" command and canSelectMany for bulk state changes.
     const moduleTreeView = vscode.window.createTreeView('moduleSelector', {
@@ -229,7 +232,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     };
 
-    registerAllCommands({ context, providers, versionsService, sortPreferences, moduleTreeView, refreshAll });
+    registerAllCommands({ context, providers, versionsService, sortPreferences, moduleTreeView, dbTreeView, refreshAll });
     registerWrongCopyGuard(context);
 
     void statusBar.update();

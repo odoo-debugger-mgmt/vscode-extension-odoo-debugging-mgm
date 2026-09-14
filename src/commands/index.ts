@@ -48,6 +48,8 @@ export interface CommandDeps {
     sortPreferences: SortPreferences;
     /** TreeView handle for the Modules view (needed for reveal + multi-select). */
     moduleTreeView: vscode.TreeView<vscode.TreeItem>;
+    /** TreeView handle for the Databases view (reveal keeps its highlight honest). */
+    dbTreeView: vscode.TreeView<vscode.TreeItem>;
     refreshAll(options?: { reason?: RefreshReason; debounceMs?: number }): Promise<void>;
 }
 

@@ -2,6 +2,46 @@
     "version": "0.2.0",
     "configurations": [
         {
+            // "Run Extension" hangs on VS Code 1.139: its js-debug probes localhost
+            // as 127.0.0.1 and [::1] in parallel, and under Node 24.20 the refused
+            // [::1] probe aborts the 127.0.0.1 one (microsoft/vscode-js-debug#2416).
+            // Attaching to an explicit 127.0.0.1 skips that probe. Close the dev
+            // host window before relaunching, since it holds the port. Drop this
+            // once a VS Code release ships the js-debug fix.
+            "name": "Run Extension (sandbox, 1.139 workaround)",
+            "type": "node",
+            "request": "attach",
+            "address": "127.0.0.1",
+            "port": 9339,
+            "continueOnAttach": true,
+            "timeout": 30000,
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ],
+            "preLaunchTask": "tasks: open dev host for attach"
+        },
+        {
+            // Day-to-day development: a throwaway workspace next to the repo and
+            // its own profile, so the dev build never touches real projects and
+            // keeps its own globalState (provision queue, dismissed prompts) and
+            // extensions, apart from the installed copy (`npm run install:local`).
+            "name": "Run Extension (sandbox)",
+            "type": "extensionHost",
+            "request": "launch",
+            "runtimeExecutable": "${execPath}",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}",
+                "--profile=odoo-devtools-dev",
+                "${workspaceFolder}/../odoo-devtools-sandbox"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ],
+            "preLaunchTask": "tasks: sandbox"
+        },
+        {
+            // Your default profile and last-opened folder: for checking the dev
+            // build against a real project on purpose.
             "name": "Run Extension",
             "type": "extensionHost",
             "request": "launch",

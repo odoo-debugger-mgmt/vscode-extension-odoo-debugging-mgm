@@ -15,6 +15,13 @@ import { getRunningInstances, runningDescriptionPart, RunningInstance } from '..
 
 /** Tree provider for the Databases view of the selected project. */
 export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
+    /**
+     * The row object per database, reused across refreshes. `TreeView.reveal`
+     * finds a row by object identity, so a row rebuilt from scratch on every
+     * refresh could never be revealed - and reveal is the only way to move the
+     * view's own highlight.
+     */
+    private readonly rows = new Map<string, vscode.TreeItem>();
 
     constructor(private readonly sortPreferences: SortPreferences) {
         super();
@@ -22,6 +29,16 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
     getTreeItem(item: vscode.TreeItem): vscode.TreeItem {
         return item;
+    }
+
+    /** A flat list: required by `reveal`, and every row is top-level. */
+    getParent(_item: vscode.TreeItem): undefined {
+        return undefined;
+    }
+
+    /** The row currently shown for a database, when the view has drawn one. */
+    rowFor(dbId: string): vscode.TreeItem | undefined {
+        return this.rows.get(dbId);
     }
 
     async getChildren(_element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
@@ -46,8 +63,16 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         );
 
         const upgradeConfig = readUpgradeConfig(project);
-        return sortedDbs.map(db =>
-            this.buildDatabaseItem(db, running.get(db.id), upgradeConfig.sideForDb(db.id)));
+        const previous = new Map(this.rows);
+        this.rows.clear();
+        return sortedDbs.map(db => {
+            const fresh = this.buildDatabaseItem(db, running.get(db.id), upgradeConfig.sideForDb(db.id));
+            // Every field is set on each build, so copying over the old object
+            // leaves nothing stale behind.
+            const row = Object.assign(previous.get(db.id) ?? fresh, fresh);
+            this.rows.set(db.id, row);
+            return row;
+        });
     }
 
     private buildDatabaseItem(

@@ -100,6 +100,36 @@ export function healUpgradePairVersions(project: ProjectModel): boolean {
     return changed;
 }
 
+/**
+ * Keeps the selected database on a side of the pair while the mode is on.
+ *
+ * Setting an upgrade up (or resuming one) never moved the selection, so a
+ * database picked before the mode kept its "selected" icon beside the two
+ * checked pair members - and could not be moved off, since selecting anything
+ * outside the pair is refused. The Modules view and every module action follow
+ * the selection too, so it pointed them at a database the upgrade is not using.
+ *
+ * Returns true when something changed and the caller should save.
+ */
+export function healUpgradeSelection(project: ProjectModel): boolean {
+    const config = readUpgradeConfig(project);
+    const dbs = project.dbs ?? [];
+    if (!config.isActive() || dbs.length === 0) {
+        return false;
+    }
+    if (config.sideForDb(dbs.find(db => db.isSelected)?.id)) {
+        return false;
+    }
+
+    const target = [config.from?.dbId, config.to?.dbId]
+        .find(id => id && dbs.some(db => db.id === id));
+    if (!target) {
+        return false;
+    }
+    dbs.forEach(db => (db.isSelected = db.id === target));
+    return true;
+}
+
 /** Both upgrade context keys, from one config so they cannot disagree. */
 export function syncUpgradeContext(config: UpgradeConfigModel): void {
     updateUpgradeContext(config.isActive());
@@ -113,7 +143,10 @@ export async function initializeUpgradeContext(): Promise<void> {
         const config = readUpgradeConfig(result?.project);
         syncUpgradeContext(config);
 
-        if (result && healUpgradePairVersions(result.project)) {
+        // Both run: `||` would skip the second whenever the first healed.
+        const healedVersions = !!result && healUpgradePairVersions(result.project);
+        const healedSelection = !!result && healUpgradeSelection(result.project);
+        if (result && (healedVersions || healedSelection)) {
             await SettingsStore.saveWithoutComments(stripSettings(result.data));
         }
     } catch (error) {

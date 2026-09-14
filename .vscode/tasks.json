@@ -29,6 +29,50 @@
 			"group": "build"
 		},
 		{
+			// The sandbox workspace lives next to the repo, not inside it, so git
+			// in the dev host doesn't pick this repo up as a parent repository.
+			"label": "tasks: create sandbox folder",
+			"type": "process",
+			"command": "node",
+			"args": [
+				"-e",
+				"require('fs').mkdirSync(process.argv[1], { recursive: true })",
+				"${workspaceFolder}/../odoo-devtools-sandbox"
+			],
+			"presentation": {
+				"reveal": "never"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "tasks: sandbox",
+			"dependsOn": [
+				"npm: watch",
+				"tasks: create sandbox folder"
+			],
+			"problemMatcher": []
+		},
+		{
+			// Opens the sandbox dev host paused on 127.0.0.1:9339 for
+			// "Run Extension (sandbox, 1.139 workaround)" to pick up. See launch.json.
+			"label": "tasks: open dev host for attach",
+			"type": "process",
+			"command": "${execPath}",
+			"args": [
+				"--extensionDevelopmentPath=${workspaceFolder}",
+				"--inspect-brk-extensions=9339",
+				"--profile=odoo-devtools-dev",
+				"${workspaceFolder}/../odoo-devtools-sandbox"
+			],
+			"dependsOn": [
+				"tasks: sandbox"
+			],
+			"presentation": {
+				"reveal": "never"
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "tasks: watch-tests",
 			"dependsOn": [
 				"npm: watch",
