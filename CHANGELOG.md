@@ -64,6 +64,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Fixed
 
+- **Restart Server's command id is now `odt.server.restart`.** It was `odoo.restartServer`, which the official Odoo extension also registers, so whichever loaded second failed to register it. The keybinding (`Ctrl+Alt+O R`) and title are unchanged; a custom keybinding bound to the old id needs updating.
 - **Repositories keeping one copy per branch have their file actions back in Project Repos.** Their root rows matched none of the root menus, so New File, New Folder, Reveal, Copy Path and Open in Terminal were missing on every such repository — which, during an upgrade, is all of them.
 - **Switching databases no longer drags a repository's own checkout onto a branch one of its copies owns.** Environment alignment checked out the assigned branch into the source repository whatever mode the repository was in, so every switch re-armed the *source is still checking out one of these branches* dialog even when the copies were correct. Alignment now only touches repositories that are in single-checkout mode.
 - **The per-branch copy that already holds the branch is no longer arbitrated.** The check that a copy already satisfies its branch ran after the conflict gate rather than before it, and the branch cache was not invalidated after a switch or detach, so a conflict just resolved was reported again for three seconds.

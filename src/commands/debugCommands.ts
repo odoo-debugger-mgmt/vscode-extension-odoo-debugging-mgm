@@ -25,7 +25,7 @@ export function registerDebugCommands(deps: CommandDeps): void {
     // startDebugServer already stops the extension's own session first, so a
     // restart is a plain start; the separate command exists for
     // discoverability (palette + keybinding).
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.restartServer', async () => {
+    context.subscriptions.push(vscode.commands.registerCommand('odt.server.restart', async () => {
         await startDebugServer();
     }));
 

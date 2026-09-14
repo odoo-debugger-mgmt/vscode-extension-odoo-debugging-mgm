@@ -527,7 +527,7 @@
         "icon": "$(run)"
       },
       {
-        "command": "odoo.restartServer",
+        "command": "odt.server.restart",
         "title": "Restart Server",
         "category": "Odoo DevTools",
         "icon": "$(debug-restart)"
@@ -1490,7 +1490,7 @@
         "when": "odoo-debugger.is_active"
       },
       {
-        "command": "odoo.restartServer",
+        "command": "odt.server.restart",
         "key": "ctrl+alt+o r",
         "mac": "cmd+alt+o r",
         "when": "odoo-debugger.is_active"
