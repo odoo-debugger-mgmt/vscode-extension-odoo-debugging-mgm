@@ -6,10 +6,11 @@ A **Get Started with Odoo DevTools** walkthrough is available from VS Code's Wel
 
 ## Requirements
 
-- Python + an Odoo environment (virtualenv recommended), with `debugpy` available for debugging
-- PostgreSQL client tools in `PATH` (`psql`, `createdb`, `dropdb`) for the database features
-- Git checkouts of Odoo / your addons (for branch switching)
-- `unzip` / `gunzip` for restoring `.zip` / `.sql.gz` dumps
+- `git`, and a clone of the Odoo repository (Set Up offers to clone one). Enterprise and design-themes clones are optional.
+- The **Python Debugger** extension (`ms-python.debugpy`): the generated launch configurations use its `debugpy` type.
+- A Python interpreter the branch supports, or [uv](https://docs.astral.sh/uv/) so provisioning can install one. Without uv, provisioning falls back to the standard library `venv` and `pip`. You do not build virtualenvs yourself: each version gets its own.
+- PostgreSQL running locally, with its client tools in `PATH` (`psql`, `createdb`, `dropdb`).
+- `unzip` / `gunzip` for restoring `.zip` / `.sql.gz` dumps.
 
 ## Quick Start
 
@@ -53,8 +54,9 @@ The source repository is never run directly: every version gets its own worktree
 ## Core Concepts
 
 - **Project**: a grouping of repositories + databases (+ tickets and a testing configuration).
-- **Version**: a named settings profile (paths/ports/params) bound to a target git branch; one version is *active* at a time.
-- **Database**: a PostgreSQL DB that carries its full environment — a linked version profile and per-repo branch assignments. Selecting a database aligns your workspace to it.
+- **Version**: a built environment for one Odoo branch: its own worktree of the Odoo source, virtualenv and runtime settings. Its debugger name and ports are derived from the branch. One version is *active* at a time, but several can run at once.
+- **Database**: a PostgreSQL DB that carries its full environment — a linked version and per-repo branch assignments. Selecting a database aligns your workspace to it.
+- **Upgrade**: a pair of databases on two versions, run side by side. See [Upgrade mode](#upgrade-mode).
 
 ## Database-Driven Switching
 
@@ -68,7 +70,7 @@ The status bar shows the active project, database and version — click any of t
 
 ## Views
 
-Activity Bar (**Odoo DevTools**): Projects, Repos, Databases, Modules, Testing, Versions.
+Activity Bar (**Odoo DevTools**): Projects, Repos, Databases, Modules, Testing, Upgrade, Versions.
 Explorer sidebar: **Project Repos** (project-scoped file tree).
 
 ### Projects
@@ -115,7 +117,7 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 ### Versions
 
 - **Setup offers to build several versions at once.** The list comes from your repositories' branches and the source repository's branches, not a fixed table. The first is built while you wait; the rest queue up and build one at a time, surviving a window reload — the rows read `building…` and `queued` while they wait.
-- **Set Up an Upgrade** (Versions view title bar) configures both versions, per-branch copies of the repositories being upgraded, and each database's branch mapping — from one plan you confirm before anything is written.
+- **Upgrades** have their own view; see [Upgrade mode](#upgrade-mode).
 - **Create a version and its environment in one step.** Pick a branch, confirm the name, and the extension provisions a git **worktree** for that branch, picks a Python interpreter the branch actually supports, builds a **virtualenv** and installs `requirements.txt` — with live progress and cancellation. Choose *Profile only* to create the version without building anything.
 - Because each version owns its worktree, **several versions can be checked out at once** — useful for comparing a database before and after an upgrade — and activating a version no longer checks anything out, so it can't fail on a dirty working tree.
 - Your configured `odooPath` is used **only as a source** to cut worktrees from; a version never runs out of it, even when it happens to be on the matching branch. That directory stays yours to switch freely. Each worktree gets its own `odt/<branch>` branch tracking `origin/<branch>`, so `git pull` works inside it.
@@ -127,10 +129,46 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 - Clone, delete, activate; edit any setting inline from the tree.
 - Reset settings to the configured defaults, or save a version's settings as the new defaults.
 
-### One copy per branch (upgrades)
+### Upgrade mode
+
+An upgrade is two servers, on two databases, on two versions, running at the
+same time. It is a mode with its own **Upgrade** view, toggled from that view or
+with `Ctrl+Alt+O Shift+U` — the same shape as testing mode.
+
+**Setting it up** asks for the two databases: the one you are upgrading from and
+the one you are upgrading to (or *Create a new database*, which asks the target
+series and creates an empty one). Everything else is deduced where it can be:
+each side's Odoo series from the database itself, each side's version by
+matching that series, and each repository's branch from its branch list. Only
+what cannot be deduced is asked. A review screen lets you change any branch, and
+one confirmation names what will be created on disk.
+
+Applying the plan:
+
+- gives each repository in the upgrade [one copy per branch](#one-copy-per-branch), so both sides run their own code;
+- records each database's branch mapping and remembers which database each version launches against;
+- queues any version that does not exist yet for provisioning;
+- stages the source database's installed modules onto the target as `install` (not `-u all`). Modules with no counterpart in the target version are left out and named in the view.
+
+**While the mode is on:**
+
+- The Upgrade view shows both sides — version, database, port and each repository's branch — and **Start Both Servers** starts each side on its own database and port.
+- **Install N modules from …** is a toggle: off gives the target database back its own modules, on restores the staged set as you left it.
+- Selecting either database of the pair chooses whose modules the Modules view edits, without realigning the workspace. Databases outside the pair cannot be selected.
+- Project Repos shows both copies of each repository, marked *upgrading from* / *upgrading to*.
+- Actions that would break the pair are refused with an **Exit Upgrade Mode** offer: testing mode, changing either database's version or branches, renaming, restoring or deleting a paired database, changing or deleting a paired version, activating a version outside the pair, and changing a paired repository's branch mode. Open in Browser, psql, Clone and Copy Database Name stay available.
+
+**Turning it off keeps the upgrade.** Only the target's modules go back to its
+own; the pair, the branches, the copies and the versions stay, so turning it on
+again resumes without a question. Anything removed while it was off is rebuilt
+on the way back in. **Change the Upgrade** (pencil in the view title) reopens
+setup with the current databases preselected.
+
+### One copy per branch
 
 During an upgrade you need two versions running against **their own** custom
-code. Right-click a repository in Repos or Project Repos and choose **Use One Copy Per
+code. Upgrade mode sets this up for the repositories it involves; to do it by
+hand, right-click a repository in Repos or Project Repos and choose **Use One Copy Per
 Branch**: each branch that repository is mapped to gets its own working
 directory under your environments folder, so 17.0 and 19.0 stop competing for
 one checkout.
@@ -155,8 +193,9 @@ Two safeguards keep you out of the wrong copy: the repo views, Modules view and
 generated workspace show only the active version's copies, and opening a file
 belonging to another version offers to reopen the same file in the active one.
 
-Turning the mode back off removes the worktrees the extension created, keeping
-any with uncommitted changes and telling you which.
+Turning the mode back off (**Use a Single Checkout**, from the Command Palette)
+removes the copies the extension created, keeping any with uncommitted changes
+and telling you which.
 
 ### Project Repos (Explorer)
 
@@ -227,11 +266,12 @@ Installing Python requirements no longer belongs here — provisioning owns that
 | `Ctrl+Alt+O U` | Upgrade Current Module |
 | `Ctrl+Alt+O F` | Run Odoo Tests for Current File |
 | `Ctrl+Alt+O T` | Toggle Testing Mode |
+| `Ctrl+Alt+O Shift+U` | Toggle Upgrade Mode |
 | `Ctrl+Alt+O L` | Manage (Link) Project Tickets |
 | `Ctrl+Alt+O O` | Open Project Ticket |
 | `Ctrl+Alt+O K` | Keyboard Shortcuts cheat sheet |
 
-The scheme: plain letters act, `Shift` variants create the matching thing (`D` switches databases, `Shift+D` creates one). Forgot a chord? `Ctrl+Alt+O K` (or **Odoo DevTools: Keyboard Shortcuts** in the palette / the Projects view `…` menu) lists every shortcut — picking one runs its command.
+The scheme: plain letters act, `Shift` variants create the matching thing (`D` switches databases, `Shift+D` creates one). `Shift+U` is the exception: it toggles upgrade mode, next to `U` for upgrading the current module. Forgot a chord? `Ctrl+Alt+O K` (or **Odoo DevTools: Keyboard Shortcuts** in the palette / the Projects view `…` menu) lists every shortcut — picking one runs its command.
 
 Every view also has search (`$(search)`) and sort (`$(sort-precedence)`) actions in its title bar. All palette commands live under the **Odoo DevTools** category.
 

@@ -102,6 +102,7 @@
       {
         "command": "projectSelector.create",
         "title": "Create Project",
+        "category": "Odoo DevTools",
         "icon": "$(add)"
       },
       {
@@ -113,56 +114,67 @@
       {
         "command": "projectSelector.sort",
         "title": "Sort Projects",
+        "category": "Odoo DevTools",
         "icon": "$(sort-precedence)"
       },
       {
         "command": "repoSelector.sort",
         "title": "Sort Repositories",
+        "category": "Odoo DevTools",
         "icon": "$(sort-precedence)"
       },
       {
         "command": "repoSelector.quickSearch",
         "title": "Search Repositories",
+        "category": "Odoo DevTools",
         "icon": "$(search)"
       },
       {
         "command": "dbSelector.sort",
         "title": "Sort Databases",
+        "category": "Odoo DevTools",
         "icon": "$(sort-precedence)"
       },
       {
         "command": "dbSelector.quickSearch",
         "title": "Search Databases",
+        "category": "Odoo DevTools",
         "icon": "$(search)"
       },
       {
         "command": "moduleSelector.sort",
         "title": "Sort Modules",
+        "category": "Odoo DevTools",
         "icon": "$(sort-precedence)"
       },
       {
         "command": "moduleSelector.quickSearch",
         "title": "Search Modules",
+        "category": "Odoo DevTools",
         "icon": "$(search)"
       },
       {
         "command": "versionsManager.sort",
         "title": "Sort Versions",
+        "category": "Odoo DevTools",
         "icon": "$(sort-precedence)"
       },
       {
         "command": "versionsManager.quickSearch",
         "title": "Search Versions",
+        "category": "Odoo DevTools",
         "icon": "$(search)"
       },
       {
         "command": "projectRepos.sort",
         "title": "Sort Project Repos",
+        "category": "Odoo DevTools",
         "icon": "$(sort-precedence)"
       },
       {
         "command": "projectRepos.quickSearch",
         "title": "Search Project Repos",
+        "category": "Odoo DevTools",
         "icon": "$(search)"
       },
       {
@@ -184,59 +196,71 @@
       {
         "command": "odt.projectReposExplorer.newFile",
         "title": "New File (Project Repos)",
+        "category": "Odoo DevTools",
         "icon": "$(new-file)"
       },
       {
         "command": "odt.projectReposExplorer.newFolder",
         "title": "New Folder (Project Repos)",
+        "category": "Odoo DevTools",
         "icon": "$(new-folder)"
       },
       {
         "command": "odt.projectReposExplorer.rename",
-        "title": "Rename (Project Repos)"
+        "title": "Rename (Project Repos)",
+        "category": "Odoo DevTools"
       },
       {
         "command": "odt.projectReposExplorer.selectProject",
-        "title": "Select Project (Project Repos)"
+        "title": "Select Project (Project Repos)",
+        "category": "Odoo DevTools"
       },
       {
         "command": "projectSelector.delete",
         "title": "Delete Project",
+        "category": "Odoo DevTools",
         "icon": "resources/icons/delete.svg"
       },
       {
         "command": "projectSelector.editSettings",
         "title": "Project Settings",
+        "category": "Odoo DevTools",
         "icon": "$(gear)"
       },
       {
         "command": "projectSelector.manageTickets",
         "title": "Manage Project Tickets",
+        "category": "Odoo DevTools",
         "icon": "$(tag)"
       },
       {
         "command": "projectSelector.openTicket",
         "title": "Open Project Ticket",
+        "category": "Odoo DevTools",
         "icon": "$(link-external)"
       },
       {
         "command": "projectSelector.duplicateProject",
         "title": "Duplicate Project",
+        "category": "Odoo DevTools",
         "icon": "resources/icons/create.svg"
       },
       {
         "command": "projectSelector.exportProject",
         "title": "Export Project",
+        "category": "Odoo DevTools",
         "icon": "resources/icons/download.svg"
       },
       {
         "command": "projectSelector.importProject",
         "title": "Import Project",
+        "category": "Odoo DevTools",
         "icon": "resources/icons/restore.svg"
       },
       {
         "command": "projectSelector.selectProject",
-        "title": "Select Project"
+        "title": "Select Project",
+        "category": "Odoo DevTools"
       },
       {
         "command": "odoo-debugger.quickProjectSearch",
@@ -247,170 +271,205 @@
       {
         "command": "projectSelector.refresh",
         "title": "Refresh",
+        "category": "Odoo DevTools",
         "icon": "resources/icons/refresh.svg"
       },
       {
         "command": "repoSelector.selectRepo",
-        "title": "Select Repo"
+        "title": "Select Repo",
+        "category": "Odoo DevTools"
       },
       {
         "command": "repoSelector.refresh",
         "title": "Refresh",
+        "category": "Odoo DevTools",
         "icon": "resources/icons/refresh.svg"
       },
       {
         "command": "dbSelector.selectDb",
-        "title": "Select Database"
+        "title": "Select Database",
+        "category": "Odoo DevTools"
       },
       {
         "command": "dbSelector.create",
         "title": "Create Database",
+        "category": "Odoo DevTools",
         "icon": "$(add)"
       },
       {
         "command": "dbSelector.manageTemplates",
         "title": "Manage Database Templates",
+        "category": "Odoo DevTools",
         "icon": "$(database)"
       },
       {
         "command": "dbSelector.restore",
         "title": "Restore Database",
+        "category": "Odoo DevTools",
         "icon": "resources/icons/restore.svg"
       },
       {
         "command": "dbSelector.delete",
         "title": "Delete Database",
+        "category": "Odoo DevTools",
         "icon": "resources/icons/delete.svg"
       },
       {
         "command": "dbSelector.changeVersion",
         "title": "Change Version",
+        "category": "Odoo DevTools",
         "icon": "$(versions)"
       },
       {
         "command": "dbSelector.configureRepoBranches",
         "title": "Configure Project Repo Branches",
+        "category": "Odoo DevTools",
         "icon": "$(git-branch)"
       },
       {
         "command": "dbSelector.refresh",
         "title": "Refresh Databases",
+        "category": "Odoo DevTools",
         "icon": "resources/icons/refresh.svg"
       },
       {
         "command": "moduleSelector.refresh",
         "title": "Refresh",
+        "category": "Odoo DevTools",
         "icon": "resources/icons/refresh.svg"
       },
       {
         "command": "moduleSelector.create",
         "title": "Create Module",
+        "category": "Odoo DevTools",
         "icon": "$(add)"
       },
       {
         "command": "moduleSelector.select",
-        "title": "Toggle Module"
+        "title": "Toggle Module",
+        "category": "Odoo DevTools"
       },
       {
         "command": "moduleSelector.togglePsaeInternalModule",
         "title": "Toggle Addons-Path Inclusion",
+        "category": "Odoo DevTools",
         "icon": "$(arrow-swap)"
       },
       {
         "command": "moduleSelector.setToInstall",
-        "title": "Set to Install"
+        "title": "Set to Install",
+        "category": "Odoo DevTools"
       },
       {
         "command": "moduleSelector.setToUpgrade",
-        "title": "Set to Upgrade"
+        "title": "Set to Upgrade",
+        "category": "Odoo DevTools"
       },
       {
         "command": "moduleSelector.clearState",
-        "title": "Clear State"
+        "title": "Clear State",
+        "category": "Odoo DevTools"
       },
       {
         "command": "moduleSelector.installAll",
         "title": "Install All Modules",
+        "category": "Odoo DevTools",
         "icon": "$(checklist)"
       },
       {
         "command": "moduleSelector.updateInstalled",
         "title": "Update Installed Modules",
+        "category": "Odoo DevTools",
         "icon": "$(arrow-circle-up)"
       },
       {
         "command": "moduleSelector.updateAll",
         "title": "Update All Modules",
+        "category": "Odoo DevTools",
         "icon": "$(list-unordered)"
       },
       {
         "command": "moduleSelector.clearAll",
         "title": "Clear All Selections",
+        "category": "Odoo DevTools",
         "icon": "$(clear-all)"
       },
       {
         "command": "moduleSelector.viewInstalled",
         "title": "View Installed Modules",
+        "category": "Odoo DevTools",
         "icon": "$(database)"
       },
       {
         "command": "testingSelector.refresh",
         "title": "Refresh",
+        "category": "Odoo DevTools",
         "icon": "resources/icons/refresh.svg"
       },
       {
         "command": "testingSelector.toggleTesting",
         "title": "Toggle Testing",
+        "category": "Odoo DevTools",
         "icon": "$(testing)"
       },
       {
         "command": "testingSelector.addTestTag",
         "title": "Add Test Target",
+        "category": "Odoo DevTools",
         "icon": "$(add)"
       },
       {
         "command": "testingSelector.setTestFile",
         "title": "Set Test File",
+        "category": "Odoo DevTools",
         "icon": "$(file)"
       },
       {
         "command": "testingSelector.toggleStopAfterInit",
         "title": "Toggle Stop After Init",
+        "category": "Odoo DevTools",
         "icon": "$(stop)"
       },
       {
         "command": "testingSelector.removeTestTag",
         "title": "Remove Test Target",
+        "category": "Odoo DevTools",
         "icon": "$(remove)"
       },
       {
         "command": "testingSelector.cycleTestTagState",
         "title": "Cycle Test Target State",
+        "category": "Odoo DevTools",
         "icon": "$(sync)"
       },
       {
         "command": "testingSelector.toggleLogLevel",
         "title": "Toggle Log Level",
+        "category": "Odoo DevTools",
         "icon": "$(symbol-parameter)"
       },
       {
         "command": "testingSelector.setSpecificLogLevel",
         "title": "Set Specific Log Level",
+        "category": "Odoo DevTools",
         "icon": "$(list-selection)"
       },
       {
         "command": "odoo.createVersion",
         "title": "Create Version",
+        "category": "Odoo DevTools",
         "icon": "$(add)"
       },
       {
         "command": "odoo.changeBranch",
         "title": "Change Branch",
+        "category": "Odoo DevTools",
         "icon": "$(git-branch)"
       },
       {
         "command": "odoo.cloneVersion",
         "title": "Clone Version",
+        "category": "Odoo DevTools",
         "icon": "$(copy)"
       },
       {
@@ -422,51 +481,60 @@
       {
         "command": "odoo.deleteVersion",
         "title": "Delete Version",
+        "category": "Odoo DevTools",
         "icon": "$(trash)"
       },
       {
         "command": "odoo.refreshVersions",
-        "title": "Refresh",
+        "title": "Refresh Versions",
+        "category": "Odoo DevTools",
         "icon": "resources/icons/refresh.svg"
       },
       {
         "command": "odoo.openVersionDefaults",
         "title": "Configure Version Defaults",
+        "category": "Odoo DevTools",
         "icon": "$(gear)"
       },
       {
         "command": "odoo.setSettingToDefault",
         "title": "Set to Default Value",
+        "category": "Odoo DevTools",
         "icon": "$(refresh)"
       },
       {
         "command": "odoo.setSettingAsDefault",
         "title": "Set as Default",
+        "category": "Odoo DevTools",
         "icon": "$(pin)"
       },
       {
         "command": "odoo.setAllSettingsToDefault",
         "title": "Set All to Default Values",
+        "category": "Odoo DevTools",
         "icon": "$(refresh)"
       },
       {
         "command": "odoo.setAllSettingsAsDefault",
         "title": "Set All as Default",
+        "category": "Odoo DevTools",
         "icon": "$(pin)"
       },
       {
         "command": "odoo.manageVersions",
         "title": "Manage Versions",
-        "category": "Odoo"
+        "category": "Odoo DevTools"
       },
       {
         "command": "odoo.startServer",
         "title": "Start Server",
+        "category": "Odoo DevTools",
         "icon": "resources/icons/debug.svg"
       },
       {
         "command": "odoo.startShell",
         "title": "Start Shell",
+        "category": "Odoo DevTools",
         "icon": "resources/icons/shell.svg"
       },
       {
@@ -497,22 +565,25 @@
       {
         "command": "dbSelector.copyName",
         "title": "Copy Database Name",
+        "category": "Odoo DevTools",
         "icon": "$(copy)"
       },
       {
         "command": "dbSelector.clone",
         "title": "Clone Database",
+        "category": "Odoo DevTools",
         "icon": "$(copy)"
       },
       {
         "command": "dbSelector.reconcile",
         "title": "Reconcile Databases",
-        "icon": "$(checklist)",
-        "category": "Odoo DevTools"
+        "category": "Odoo DevTools",
+        "icon": "$(checklist)"
       },
       {
         "command": "odooDebugger.relocateRepo",
-        "title": "Relocate Repository…"
+        "title": "Relocate Repository…",
+        "category": "Odoo DevTools"
       },
       {
         "command": "odoo.stopServer",
@@ -547,16 +618,19 @@
       {
         "command": "dbSelector.openInBrowser",
         "title": "Open in Browser",
+        "category": "Odoo DevTools",
         "icon": "$(globe)"
       },
       {
         "command": "dbSelector.openPsqlShell",
         "title": "Open psql Shell",
+        "category": "Odoo DevTools",
         "icon": "$(terminal)"
       },
       {
         "command": "dbSelector.rename",
         "title": "Rename Display Name",
+        "category": "Odoo DevTools",
         "icon": "$(edit)"
       },
       {
@@ -591,11 +665,13 @@
       },
       {
         "command": "moduleSelector.revealInExplorer",
-        "title": "Reveal in Explorer"
+        "title": "Reveal in Explorer",
+        "category": "Odoo DevTools"
       },
       {
         "command": "moduleSelector.revealInOS",
-        "title": "Reveal in OS"
+        "title": "Reveal in OS",
+        "category": "Odoo DevTools"
       },
       {
         "command": "odoo.toggleTestingMode",
@@ -1457,7 +1533,7 @@
       {
         "view": "versionsManager",
         "when": "odoo-debugger.is_active && odoo-debugger.is_configured",
-        "contents": "No versions yet. A version stores the paths, port and defaults for one Odoo setup.\n[Create Version](command:odoo.createVersion)"
+        "contents": "No versions yet. A version is a built environment for one Odoo branch: its worktree, virtualenv and settings.\n[Create Version](command:odoo.createVersion)"
       },
       {
         "view": "odt.projectReposExplorer",
@@ -1829,8 +1905,8 @@
           },
           {
             "id": "createVersion",
-            "title": "Create a version profile",
-            "description": "Pick an Odoo branch and name the profile - two prompts, done.\n[Create Version](command:odoo.createVersion)",
+            "title": "Create a version",
+            "description": "Pick an Odoo branch and a name; the extension builds its worktree, interpreter and virtualenv.\n[Create Version](command:odoo.createVersion)",
             "media": {
               "markdown": "media/walkthrough/create-version.md"
             },
@@ -1852,12 +1928,14 @@
           {
             "id": "perVersionCode",
             "title": "Work on several versions at once",
-            "description": "Give a repository one copy per branch when you need two versions of your custom code live.\n[Open Repos](command:repoSelector.focus)",
+            "description": "Run two versions side by side for an upgrade, each on its own copy of your custom code.\n[Open Upgrade View](command:upgradeSelector.focus)",
             "media": {
               "markdown": "media/walkthrough/per-version-code.md"
             },
             "completionEvents": [
-              "onCommand:odt.repo.toggleBranchMode"
+              "onCommand:odt.repo.toggleBranchMode",
+              "onCommand:upgradeSelector.toggleUpgrade",
+              "onCommand:odoo.setUpUpgrade"
             ]
           },
           {
@@ -1873,8 +1951,8 @@
           },
           {
             "id": "exploreMore",
-            "title": "Testing mode, templates & shortcuts",
-            "description": "Database switching, testing mode, DB templates, the status bar and keybindings.",
+            "title": "Upgrade & testing modes, templates & shortcuts",
+            "description": "Database switching, upgrade and testing modes, DB templates, the status bar and keybindings.",
             "media": {
               "markdown": "media/walkthrough/explore-more.md"
             }

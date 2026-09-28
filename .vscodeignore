@@ -9,7 +9,6 @@ out/**
 node_modules/**
 docs/**
 image/**
-VERSION_MANAGEMENT.md
 webpack.config.js
 tsconfig.json
 eslint.config.mjs

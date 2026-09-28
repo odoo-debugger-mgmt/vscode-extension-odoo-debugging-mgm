@@ -1,12 +1,12 @@
 # Manual test brief — v1.3.0 beta
 
 **For:** an agent or person who can drive a VS Code window and see it.
-**Branch:** `v-1.3` (currently `e0571f8`). **Build:** `npm run build:vsix`, or press <kbd>F5</kbd> in this repo to open an Extension Development Host.
+**Branch:** `v-1.3` (the current head). **Build:** `npm run build:vsix`, or press <kbd>F5</kbd> in this repo to open an Extension Development Host.
 
 ## Read this first: what is already covered
 
-Do **not** spend time re-checking these. The repo has 243 passing tests
-(`npm test`), and they run inside a real Extension Host, not a mock:
+Do **not** spend time re-checking these. The repo's tests (`npm test`) run inside a
+real Extension Host, not a mock, and already cover:
 
 - Every pure decision — branch→series parsing, the provisioning queue's state
   transitions, version health diagnosis, switch-summary wording, upgrade-plan
