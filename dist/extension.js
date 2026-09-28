@@ -13927,7 +13927,7 @@ async function exportProject(event) {
         else if (action === 'Import Instructions') {
             const instructions = `To import this project:
 1. Copy the exported file to the target machine
-2. Use Command Palette > "Import Odoo Project"
+2. Use Command Palette > "Odoo DevTools: Import Project"
 3. Select the exported JSON file
 4. Adjust repository paths as needed
 
