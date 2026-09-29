@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import { branchesToMoveTo } from '../services/customWorktree';
 import { parseWorktreeList, findWorktreeForBranch, managedBranchName, branchSatisfiesTarget ,
     classifyBranchConflict,
     WorktreeEntry
@@ -100,5 +101,36 @@ suite('Worktree listing', () => {
         assert.strictEqual(managedBranchName('19.0'), 'odt/19.0');
         assert.strictEqual(branchSatisfiesTarget('19.0', '19.0'), true);
         assert.strictEqual(branchSatisfiesTarget('odt/19.0', '19.0'), true);
+    });
+});
+
+suite('Branches a source checkout can move to', () => {
+    const none = new Set<string>();
+
+    test('a branch another worktree holds is not offered', () => {
+        // The test run: "main" was offered while acme@main had it checked out,
+        // so choosing it could only fail.
+        assert.deepStrictEqual(
+            branchesToMoveTo(['17.0-dev', 'main', 'staging'], '17.0-dev', new Set(['main']), none),
+            ['staging']
+        );
+    });
+
+    test('nor one this run is about to give its own worktree', () => {
+        assert.deepStrictEqual(
+            branchesToMoveTo(['17.0-dev', 'main', 'staging'], '17.0-dev', none, new Set(['17.0-dev', 'main'])),
+            ['staging']
+        );
+    });
+
+    test('a remote branch is offered once, by its short name, and only when there is no local one', () => {
+        assert.deepStrictEqual(
+            branchesToMoveTo(['17.0-dev', 'main', 'origin/HEAD', 'origin/main', 'origin/18.0'], '17.0-dev', none, none),
+            ['main', '18.0']
+        );
+    });
+
+    test('nothing left is an empty list, for the caller to explain', () => {
+        assert.deepStrictEqual(branchesToMoveTo(['17.0-dev', 'main'], '17.0-dev', new Set(['main']), none), []);
     });
 });
