@@ -56,9 +56,13 @@ export function refuseDuringUpgrade(config: UpgradeConfigModel, what: string): b
     return true;
 }
 
-/** Reads the selected project's upgrade config without a full project load. */
+/**
+ * Reads the selected project's upgrade config without a full project load.
+ * Silent: no project selected just means no upgrade, and the Versions view
+ * reads this on every refresh.
+ */
 export async function currentUpgradeConfig(): Promise<UpgradeConfigModel> {
-    const result = await SettingsStore.getSelectedProject();
+    const result = await SettingsStore.peekSelectedProject();
     return readUpgradeConfig(result?.project);
 }
 

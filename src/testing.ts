@@ -31,8 +31,9 @@ export class TestingTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
     async getChildren(element?: any): Promise<vscode.TreeItem[] | undefined> {
         // Empty lists fall through to the view's welcome content, which
-        // explains that a project and database must be selected first.
-        const result = await SettingsStore.getSelectedProject();
+        // explains that a project and database must be selected first. Silent:
+        // a view has no business raising an error before anyone asked.
+        const result = await SettingsStore.peekSelectedProject();
         if (!result) {
             return [];
         }

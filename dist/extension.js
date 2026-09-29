@@ -6897,9 +6897,13 @@ function refuseDuringUpgrade(config, what) {
     });
     return true;
 }
-/** Reads the selected project's upgrade config without a full project load. */
+/**
+ * Reads the selected project's upgrade config without a full project load.
+ * Silent: no project selected just means no upgrade, and the Versions view
+ * reads this on every refresh.
+ */
 async function currentUpgradeConfig() {
-    const result = await settingsStore_1.SettingsStore.getSelectedProject();
+    const result = await settingsStore_1.SettingsStore.peekSelectedProject();
     return readUpgradeConfig(result?.project);
 }
 /**
@@ -17063,8 +17067,9 @@ class TestingTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     }
     async getChildren(element) {
         // Empty lists fall through to the view's welcome content, which
-        // explains that a project and database must be selected first.
-        const result = await settingsStore_1.SettingsStore.getSelectedProject();
+        // explains that a project and database must be selected first. Silent:
+        // a view has no business raising an error before anyone asked.
+        const result = await settingsStore_1.SettingsStore.peekSelectedProject();
         if (!result) {
             return [];
         }
