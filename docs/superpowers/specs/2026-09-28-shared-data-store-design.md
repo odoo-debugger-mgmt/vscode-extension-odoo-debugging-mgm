@@ -92,7 +92,7 @@ store.
 | Databases: version link, per-repo branch mapping, kind, dump path | main | |
 | Module install/upgrade marks | main | They belong to a database, and a database belongs to one version, so in practice one window edits them. Upgrade mode stages the source database's marks onto the target, which needs both sides from either window. |
 | Upgrade configuration | main | It pairs two versions and two databases: cross-workspace by definition. |
-| `selectedDbByVersion` | workspace | *Revised after testing.* It was main, for Start Both Servers - which made one window's database choice decide what every window launched. It is per window; an active upgrade pins its two databases instead (`dbForVersion` in `services/dbResolution.ts`), so either window still starts both sides. |
+| `selectedDbByVersion` | workspace | *Revised after testing.* It was main, for Start Both Servers - which made one window's database choice decide what every window launched. It is per window; an active upgrade pins its two databases instead (`dbForVersion` in `services/dbResolution.ts`), so either window still starts both sides. The order is: the pin, then the window's selected database when it belongs to that version, then the memory - so a window always launches what it shows as selected. |
 | DB templates | main | |
 | Workspace registry (§3) | main | Discovery only. |
 | Projects attached to this workspace | workspace | Each workspace shows its own subset. |
@@ -543,6 +543,12 @@ Each step ships on its own and leaves the extension working.
      findings were fixed the same day - most importantly, `selectedDbByVersion`
      moved to the window (see §1), and the workspace's own JSON file keeps a
      copy of the selection.
+     A second run confirmed those fixes and found four more, also fixed: a
+     window could show one database and launch another after an upgrade was
+     toggled from another window (the selection now comes before the memory);
+     a refused save read as a command crash; two views still raised "No
+     project is selected."; and the move-off picker offered a branch another
+     worktree held.
 3. **Per-version repo locations**, workspace binding and the registry.
 4. **The upgrade plan** only copies shared directories; Start This Side; Open
    the Other Side.

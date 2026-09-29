@@ -70,6 +70,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ### Fixed
 
 - **In a shared store, a window launched the database another window had selected.** The database each version last ran against was shared, and preferred over the window's own selection, so F5 and Copy Odoo Command followed whichever window picked last. It is per window now; only an active upgrade's two databases are the same everywhere.
+- **After another window turned an upgrade on and off, a window showed one database and launched another.** The selection moved onto the upgrade pair and the window's per-version memory stayed behind. The selected database now decides what its own version launches; the memory only decides the versions beside it.
+- **A change a read-only or locked data store refuses is a warning**, not VS Code's "Error running command … likely caused by the extension".
+- **A new window with nothing selected no longer opens with the error "No project is selected."** The Testing and Versions views still raised it on their first refresh.
+- **Moving a checkout off a branch offers only branches it can move to.** It offered branches another worktree had checked out, which git refuses.
 - **Import's preview claimed to change what it left alone**: re-importing an export announced projects "completed" and changed nothing. It now says when there is nothing to add, and does not write. A cloned version no longer collapses onto the first version of its branch on import.
 - **Selecting a database in a read-only store said it failed and then selected it anyway.** Selection is per window, so it now simply works there; a save that is refused no longer changes the selection.
 - **Turning testing mode off after switching databases restored the wrong database's modules.** The stash was the project's, and went back onto whichever database was selected by then. Each database now gets its own marks back.

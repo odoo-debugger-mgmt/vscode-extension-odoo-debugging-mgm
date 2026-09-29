@@ -2,7 +2,7 @@
 
 **For:** an agent or person who can run VS Code windows on a real machine and
 see them.
-**Branch:** `v-1.3`, at or after `83ab1ae`.
+**Branch:** `v-1.3`, at or after `872733d`.
 **Build:** `npm ci && npm run compile`, then run an Extension Development Host
 (<kbd>F5</kbd> in this repo, or `code --extensionDevelopmentPath=<repo>`). For
 the Cursor/VSCodium items, `npm run build:vsix` and install the `.vsix`.
@@ -168,7 +168,8 @@ make sense without reading the README?
 1. Open `B` (no data file of its own) in a second Extension Development Host
    window. The user-level setting from item 4 applies there too.
 2. **Expect:** `B` shows `A`'s projects. Nothing is selected yet, or only what
-   you select. `B`'s selection is its own.
+   you select. `B`'s selection is its own. **No** "No project is selected."
+   error appears before you have done anything.
 3. In `B`, select a different project, database and version from `A`'s.
    **Expect:** `A` keeps its own selection. Its views may refresh, but nothing
    changes.
@@ -214,6 +215,10 @@ Both windows on the same project, on one shared store.
    not `B`'s. (This was finding 1 of the first run.)
 4. With an upgrade active whose sides include that version, **expect** its
    database instead, in both windows.
+5. With the upgrade off, select database 1 in `A`. In **`B`**, turn the upgrade
+   on, then off again. **Expect** `A`'s status bar, Databases view and
+   `launch.json` to name the **same** database, whichever it is. (Finding 9 of
+   the second run: they disagreed.)
 
 ## 8 · Testing mode is per window, and its stash is per database
 
@@ -281,9 +286,10 @@ For each editor available:
 1. With every window closed, open `/tmp/odt-brief/shared.db` in the `sqlite3`
    CLI.
 2. Run `UPDATE meta SET value = '99' WHERE key = 'schema_version';`.
-3. Open `A` again. **Expect:** the data still shows, and saving anything fails
-   with an error saying the store was written by a newer Odoo DevTools and is
-   read-only. Quote it.
+3. Open `A` again. **Expect:** the data still shows, with a warning on open
+   that the store is read-only. Selecting a database works. Marking a module is
+   refused with a **warning** naming the store, not VS Code's "Error running
+   command …". Quote both.
 4. Set the value back to `1` afterwards.
 
 If `sqlite3` is not installed, skip this item and say so.
