@@ -140,8 +140,10 @@ not with nothing selected.
 2. **Expect** in the new window: all of `A`'s projects, with the same project
    selected.
 3. Check the first repository's folder on disk. **There must be no new
-   `.vscode/odoo-debugger-data.json` in it.** A `launch.json` there is a known,
-   separate issue: note it, and do not count it as a failure.
+   `.vscode/odoo-debugger-data.json` in it**, and, once you have switched a
+   database in the new window, no `.vscode/launch.json` either. The launch
+   entries are in the generated `.code-workspace` file, under `launch`, and F5
+   and Start Server work from that window.
 4. In the generated window, select a different database. Back in `A`, **expect**
    `A`'s selection unchanged. Selection is per window.
 

@@ -515,9 +515,12 @@ Each step ships on its own and leaves the extension working.
    - `odooDebugger.dataStore.path` is honoured **only at workspace level, and
      only for `.json` files**. A user-level value would make every workspace
      share one JSON file before step 2's concurrency safety exists.
-   - Still open: in a generated multi-root window, `launch.json` and
-     `startDebugging` still target `folders[0]/.vscode`, which is the first
-     repository. That belongs in the workspace file's own `launch` section.
+   - A saved multi-root window keeps its launch configurations in the
+     `launch` section of its `.code-workspace` file, and starts them with no
+     folder (`launchTarget` in `services/launchConfig.ts`). `folders[0]` is
+     the first repository in a generated window, and writing there shared one
+     `launch.json` between every workspace listing it first. Entries earlier
+     builds left there are removed on the first sync.
 2. **The shared store — implemented.** `SqliteMainStore`
    (`services/sqliteMainStore.ts`), the three-way merge
    (`services/mergeDocuments.ts`), Choose Data Store / Export Data / Import
