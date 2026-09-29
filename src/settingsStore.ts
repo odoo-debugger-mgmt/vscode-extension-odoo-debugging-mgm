@@ -40,6 +40,11 @@ interface PendingWrite {
     data: DebuggerData;
     /** What the caller read, so a shared store can tell its changes from another window's. */
     base?: StoreRead;
+    /**
+     * The window's selection as of this save. Recorded only once the write
+     * succeeds: a save the store refuses must not change what is selected.
+     */
+    selection?: { memento: vscode.Memento; value: WorkspaceSelection };
     timer?: NodeJS.Timeout;
     waiters: Array<{ resolve: () => void; reject: (error: unknown) => void }>;
 }
@@ -192,11 +197,19 @@ export class SettingsStore {
             // Compared as it will be stored: a Date and its ISO string are
             // the same value once written.
             const next = JSON.parse(JSON.stringify(pending.data)) as DebuggerData;
-            if (!pending.base || !jsonEqual(next, pending.base.data)) {
+            // A shared store is compared without the per-window fields on
+            // either side: one written before they were stripped still has them.
+            const baseData = pending.base && pending.store.kind === 'sqlite'
+                ? stripSelection(pending.base.data)
+                : pending.base?.data;
+            if (!baseData || !jsonEqual(next, baseData)) {
                 await pending.store.commit(pending.base, next);
                 // Re-read next time: after a merge the store holds more than
                 // this window wrote.
                 this.cache.delete(location);
+            }
+            if (pending.selection) {
+                await writeSelection(pending.selection.memento, pending.selection.value);
             }
             pending.waiters.forEach(waiter => waiter.resolve());
         } catch (error) {
@@ -247,7 +260,13 @@ export class SettingsStore {
 
     /**
      * Saves the entire data object. The selection it carries goes to this
-     * window's workspaceState; the store receives the data without it.
+     * window's workspaceState once the write succeeds.
+     *
+     * A shared store receives the data without it: there, one window's
+     * selection would become every window's. The workspace's own JSON file
+     * keeps it, as it always did - the window's workspaceState still decides
+     * for that window, and the file's copy is what another profile, another
+     * editor or an older build starts from.
      */
     static async saveWithoutComments(data: DebuggerData, _fileName?: string): Promise<void> {
         const store = this.resolveStore();
@@ -259,8 +278,10 @@ export class SettingsStore {
             ?? this.cache.get(store.location)?.read;
         let payload = this.cloneData(data);
         const memento = this.selectionState;
-        if (memento) {
-            await writeSelection(memento, extractSelection(payload, readSelection(memento)));
+        const selection = memento
+            ? { memento, value: extractSelection(payload, readSelection(memento)) }
+            : undefined;
+        if (memento && store.kind === 'sqlite') {
             payload = stripSelection(payload);
         }
 
@@ -270,6 +291,7 @@ export class SettingsStore {
             if (existing) {
                 existing.data = payload;
                 existing.base = base;
+                existing.selection = selection;
                 existing.waiters.push({ resolve, reject });
                 if (existing.timer) {
                     clearTimeout(existing.timer);
@@ -286,6 +308,7 @@ export class SettingsStore {
                 store,
                 data: payload,
                 base,
+                selection,
                 waiters: [{ resolve, reject }]
             };
 

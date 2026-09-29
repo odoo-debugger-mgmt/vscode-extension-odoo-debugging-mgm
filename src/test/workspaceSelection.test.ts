@@ -203,7 +203,7 @@ suite('Workspace selection', () => {
 
             assert.deepStrictEqual(selection.rememberedDbByProject, { p1: { v17: 'acme-17', v19: 'acme-19' } });
             const stored = stripSelection(withMemory());
-            assert.deepStrictEqual(memoryOf(stored), {});
+            assert.strictEqual(memoryOf(stored), undefined);
             assert.deepStrictEqual(memoryOf(applySelection(stored, selection)), { v17: 'acme-17', v19: 'acme-19' });
         });
 

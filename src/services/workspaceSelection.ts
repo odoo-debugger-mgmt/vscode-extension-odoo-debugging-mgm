@@ -180,30 +180,32 @@ export function extractSelection(
 }
 
 /**
- * A copy of `data` with every selection flag cleared, ready for the store.
- * The flags are kept as `false` rather than deleted so the stored shape is the
- * one the models construct.
+ * A copy of `data` with every per-window field removed, ready for a shared
+ * store. Removed rather than set to `false`, so a save that only changed the
+ * selection leaves the shared documents exactly as they were - whether they
+ * were written with the flags or without them. Every reader treats a missing
+ * flag as false.
  */
 export function stripSelection<T extends Partial<DebuggerData>>(data: T): T {
     const copy = structuredClone(data);
     for (const project of projectsOf(copy)) {
-        project.isSelected = false;
+        delete project.isSelected;
         for (const db of project.dbs ?? []) {
             if (db) {
-                db.isSelected = false;
+                delete db.isSelected;
             }
         }
         if (project.testingConfig) {
             setTesting(project.testingConfig, DEFAULT_TESTING);
         }
-        if (project.selectedDbByVersion) {
-            project.selectedDbByVersion = {};
-        }
+        // Removed rather than emptied, so a save that only changed the
+        // selection leaves the shared document exactly as it was.
+        delete project.selectedDbByVersion;
     }
     delete copy.activeVersion;
     for (const version of Object.values(copy.versions ?? {})) {
         if (version && typeof version === 'object') {
-            (version as { isActive?: boolean }).isActive = false;
+            delete (version as { isActive?: boolean }).isActive;
         }
     }
     return copy;

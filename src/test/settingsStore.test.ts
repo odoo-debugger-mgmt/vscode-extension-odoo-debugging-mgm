@@ -9,7 +9,9 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type * as vscode from 'vscode';
 import { SettingsStore } from '../settingsStore';
-import { SqliteMainStore, loadSqlite } from '../services/sqliteMainStore';
+import { SqliteMainStore, StoreReadOnlyError, loadSqlite } from '../services/sqliteMainStore';
+import { JsonFileMainStore } from '../services/mainStore';
+import { readSelection } from '../services/workspaceSelection';
 import { rememberDbForVersion, dbForVersion } from '../services/dbResolution';
 import type { DebuggerData } from '../utils';
 
@@ -93,8 +95,79 @@ async function launchedDb(): Promise<string | undefined> {
         await selectDb('acme-db2');
 
         const stored = (await store.read()).data.projects[0] as any;
-        assert.strictEqual(stored.isSelected, false);
-        assert.ok(stored.dbs.every((db: any) => !db.isSelected));
-        assert.deepStrictEqual(stored.selectedDbByVersion ?? {}, {});
+        assert.ok(!('isSelected' in stored));
+        assert.ok(stored.dbs.every((db: any) => !('isSelected' in db)));
+        assert.ok(!('selectedDbByVersion' in stored));
+    });
+
+    test('on a read-only store, selecting still works: it changes nothing shared', async () => {
+        const raw = new sqlite!.DatabaseSync(path.join(dir, 'shared.db'));
+        raw.prepare('UPDATE meta SET value = ? WHERE key = ?').run('99', 'schema_version');
+        raw.close();
+        const readOnly = new SqliteMainStore(path.join(dir, 'shared.db'), dir, sqlite!);
+        try {
+            SettingsStore.useForTesting(readOnly, memento());
+            await selectDb('acme-db2');
+
+            assert.strictEqual(await launchedDb(), 'acme-db2');
+        } finally {
+            readOnly.dispose();
+        }
+    });
+
+    test('a save the store refuses leaves the selection as it was', async () => {
+        const window = memento();
+        SettingsStore.useForTesting(store, window);
+        await selectDb('acme-db1');
+
+        const raw = new sqlite!.DatabaseSync(path.join(dir, 'shared.db'));
+        raw.prepare('UPDATE meta SET value = ? WHERE key = ?').run('99', 'schema_version');
+        raw.close();
+        const readOnly = new SqliteMainStore(path.join(dir, 'shared.db'), dir, sqlite!);
+        try {
+            SettingsStore.useForTesting(readOnly, window);
+            // A real change to shared data, together with a new selection.
+            const data = await SettingsStore.get();
+            data.projects[0].name = 'Renamed';
+            data.projects[0].dbs.forEach(db => (db.isSelected = db.id === 'acme-db2'));
+            await assert.rejects(SettingsStore.saveWithoutComments(data), StoreReadOnlyError);
+
+            assert.strictEqual(readSelection(window)?.selectedDbByProject.p1, 'acme-db1');
+        } finally {
+            readOnly.dispose();
+        }
+    });
+});
+
+suite('SettingsStore over the workspace\'s own file', function () {
+    this.timeout(20000);
+    let dir: string;
+
+    setup(async () => {
+        dir = await fs.mkdtemp(path.join(os.tmpdir(), 'odt-settings-json-'));
+    });
+
+    teardown(async () => {
+        SettingsStore.useForTesting(undefined);
+        await fs.rm(dir, { recursive: true, force: true });
+    });
+
+    test('keeps a copy of the selection in the file, for another profile or editor to start from', async () => {
+        const file = path.join(dir, '.vscode', 'odoo-debugger-data.json');
+        await fs.mkdir(path.dirname(file), { recursive: true });
+        await fs.writeFile(file, JSON.stringify(seed()));
+        const store = new JsonFileMainStore(file, dir);
+
+        SettingsStore.useForTesting(store, memento());
+        await selectDb('acme-db2');
+        const onDisk = JSON.parse(await fs.readFile(file, 'utf-8'));
+        assert.strictEqual(onDisk.projects[0].isSelected, true);
+        assert.strictEqual(onDisk.projects[0].dbs[1].isSelected, true);
+
+        // A fresh profile: nothing in its workspaceState, so it starts from the file.
+        SettingsStore.useForTesting(store, memento());
+        const seen = await SettingsStore.get();
+        assert.strictEqual(seen.projects[0].isSelected, true);
+        assert.strictEqual(await launchedDb(), 'acme-db2');
     });
 });

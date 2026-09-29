@@ -1009,11 +1009,19 @@ class SettingsStore {
             // Compared as it will be stored: a Date and its ISO string are
             // the same value once written.
             const next = JSON.parse(JSON.stringify(pending.data));
-            if (!pending.base || !(0, mergeDocuments_1.jsonEqual)(next, pending.base.data)) {
+            // A shared store is compared without the per-window fields on
+            // either side: one written before they were stripped still has them.
+            const baseData = pending.base && pending.store.kind === 'sqlite'
+                ? (0, workspaceSelection_1.stripSelection)(pending.base.data)
+                : pending.base?.data;
+            if (!baseData || !(0, mergeDocuments_1.jsonEqual)(next, baseData)) {
                 await pending.store.commit(pending.base, next);
                 // Re-read next time: after a merge the store holds more than
                 // this window wrote.
                 this.cache.delete(location);
+            }
+            if (pending.selection) {
+                await (0, workspaceSelection_1.writeSelection)(pending.selection.memento, pending.selection.value);
             }
             pending.waiters.forEach(waiter => waiter.resolve());
         }
@@ -1060,7 +1068,13 @@ class SettingsStore {
     }
     /**
      * Saves the entire data object. The selection it carries goes to this
-     * window's workspaceState; the store receives the data without it.
+     * window's workspaceState once the write succeeds.
+     *
+     * A shared store receives the data without it: there, one window's
+     * selection would become every window's. The workspace's own JSON file
+     * keeps it, as it always did - the window's workspaceState still decides
+     * for that window, and the file's copy is what another profile, another
+     * editor or an older build starts from.
      */
     static async saveWithoutComments(data, _fileName) {
         const store = this.resolveStore();
@@ -1071,8 +1085,10 @@ class SettingsStore {
             ?? this.cache.get(store.location)?.read;
         let payload = this.cloneData(data);
         const memento = this.selectionState;
-        if (memento) {
-            await (0, workspaceSelection_1.writeSelection)(memento, (0, workspaceSelection_1.extractSelection)(payload, (0, workspaceSelection_1.readSelection)(memento)));
+        const selection = memento
+            ? { memento, value: (0, workspaceSelection_1.extractSelection)(payload, (0, workspaceSelection_1.readSelection)(memento)) }
+            : undefined;
+        if (memento && store.kind === 'sqlite') {
             payload = (0, workspaceSelection_1.stripSelection)(payload);
         }
         const location = store.location;
@@ -1081,6 +1097,7 @@ class SettingsStore {
             if (existing) {
                 existing.data = payload;
                 existing.base = base;
+                existing.selection = selection;
                 existing.waiters.push({ resolve, reject });
                 if (existing.timer) {
                     clearTimeout(existing.timer);
@@ -1096,6 +1113,7 @@ class SettingsStore {
                 store,
                 data: payload,
                 base,
+                selection,
                 waiters: [{ resolve, reject }]
             };
             pending.timer = setTimeout(() => {
@@ -5423,30 +5441,32 @@ function extractSelection(data, previous = exports.EMPTY_SELECTION) {
     };
 }
 /**
- * A copy of `data` with every selection flag cleared, ready for the store.
- * The flags are kept as `false` rather than deleted so the stored shape is the
- * one the models construct.
+ * A copy of `data` with every per-window field removed, ready for a shared
+ * store. Removed rather than set to `false`, so a save that only changed the
+ * selection leaves the shared documents exactly as they were - whether they
+ * were written with the flags or without them. Every reader treats a missing
+ * flag as false.
  */
 function stripSelection(data) {
     const copy = structuredClone(data);
     for (const project of projectsOf(copy)) {
-        project.isSelected = false;
+        delete project.isSelected;
         for (const db of project.dbs ?? []) {
             if (db) {
-                db.isSelected = false;
+                delete db.isSelected;
             }
         }
         if (project.testingConfig) {
             setTesting(project.testingConfig, DEFAULT_TESTING);
         }
-        if (project.selectedDbByVersion) {
-            project.selectedDbByVersion = {};
-        }
+        // Removed rather than emptied, so a save that only changed the
+        // selection leaves the shared document exactly as it was.
+        delete project.selectedDbByVersion;
     }
     delete copy.activeVersion;
     for (const version of Object.values(copy.versions ?? {})) {
         if (version && typeof version === 'object') {
-            version.isActive = false;
+            delete version.isActive;
         }
     }
     return copy;
