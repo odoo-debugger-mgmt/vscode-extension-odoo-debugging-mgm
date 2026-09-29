@@ -45,7 +45,8 @@ suite('Workspace selection', () => {
             selectedProjectUid: 'p1',
             selectedDbByProject: { p1: 'acme-19', p2: 'other-17' },
             activeVersionId: 'v19',
-            testingByProject: {}
+            testingByProject: {},
+            rememberedDbByProject: {}
         });
     });
 
@@ -133,7 +134,7 @@ suite('Workspace selection', () => {
         assert.strictEqual(normalizeSelection('nonsense'), undefined);
         assert.deepStrictEqual(
             normalizeSelection({ selectedProjectUid: 7, selectedDbByProject: { p1: 3, p2: 'db' } }),
-            { selectedProjectUid: undefined, selectedDbByProject: { p2: 'db' }, activeVersionId: undefined, testingByProject: undefined }
+            { selectedProjectUid: undefined, selectedDbByProject: { p2: 'db' }, activeVersionId: undefined, testingByProject: undefined, rememberedDbByProject: undefined }
         );
     });
 
@@ -186,6 +187,36 @@ suite('Workspace selection', () => {
             const applied = applySelection(stripSelection(sample()), extractSelection(sample()));
 
             assert.strictEqual(testingOf(applied), undefined);
+        });
+    });
+
+    suite('remembered databases', () => {
+        function withMemory(): DebuggerData {
+            const data = sample();
+            (data.projects[0] as any).selectedDbByVersion = { v17: 'acme-17', v19: 'acme-19' };
+            return data;
+        }
+        const memoryOf = (data: DebuggerData) => (data.projects[0] as any).selectedDbByVersion;
+
+        test('are per window: extracted, cleared in what is shared, applied back', () => {
+            const selection = extractSelection(withMemory());
+
+            assert.deepStrictEqual(selection.rememberedDbByProject, { p1: { v17: 'acme-17', v19: 'acme-19' } });
+            const stored = stripSelection(withMemory());
+            assert.deepStrictEqual(memoryOf(stored), {});
+            assert.deepStrictEqual(memoryOf(applySelection(stored, selection)), { v17: 'acme-17', v19: 'acme-19' });
+        });
+
+        test('another window\'s memory never reaches this one', () => {
+            // What another window left in the data is replaced by this
+            // window's own - the cause of one window launching another's database.
+            const applied = applySelection(withMemory(), { ...EMPTY_SELECTION, rememberedDbByProject: { p1: { v17: 'acme-17b' } } });
+
+            assert.deepStrictEqual(memoryOf(applied), { v17: 'acme-17b' });
+        });
+
+        test('a selection stored before this moved leaves the data\'s memory alone', () => {
+            assert.deepStrictEqual(memoryOf(applySelection(withMemory(), { ...EMPTY_SELECTION })), { v17: 'acme-17', v19: 'acme-19' });
         });
     });
 });

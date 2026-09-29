@@ -28,7 +28,18 @@ export interface WorkspaceSelection {
      * off for anyone who had it on.
      */
     testingByProject?: Record<string, TestingState>;
+    /**
+     * Project key -> version id -> the database that version last launched
+     * against in this window (`project.selectedDbByVersion`). Per window for
+     * the same reason the selection is: shared, the last window to pick a
+     * database for a version decided what every window launched. Undefined
+     * until recorded, and then seeded from the data, like `testingByProject`.
+     */
+    rememberedDbByProject?: Record<string, Record<string, string>>;
 }
+
+/** The fields a selection stored by an older build may lack, and that are then seeded from the data. */
+export const SEEDED_FIELDS = ['testingByProject', 'rememberedDbByProject'] as const;
 
 /**
  * Testing mode as one window runs it. The module stash is not here: it
@@ -57,6 +68,19 @@ interface ProjectLike {
     isSelected?: boolean;
     dbs?: Array<{ id?: string; isSelected?: boolean }>;
     testingConfig?: Partial<TestingState> & { savedModuleStates?: unknown };
+    selectedDbByVersion?: Record<string, string>;
+}
+
+function stringRecord(raw: unknown): Record<string, string> {
+    const result: Record<string, string> = {};
+    if (raw && typeof raw === 'object') {
+        for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+            if (typeof value === 'string' && value) {
+                result[key] = value;
+            }
+        }
+    }
+    return result;
 }
 
 function testingStateOf(config: Partial<TestingState>): TestingState {
@@ -124,9 +148,14 @@ export function extractSelection(
     }
 
     const testingByProject: Record<string, TestingState> = {};
+    const rememberedDbByProject: Record<string, Record<string, string>> = {};
     for (const project of projects) {
         if (project?.testingConfig) {
             testingByProject[projectKey(project)] = testingStateOf(project.testingConfig);
+        }
+        const remembered = stringRecord(project?.selectedDbByVersion);
+        if (Object.keys(remembered).length > 0) {
+            rememberedDbByProject[projectKey(project)] = remembered;
         }
     }
 
@@ -143,7 +172,10 @@ export function extractSelection(
             : (activeVersion || undefined),
         testingByProject: hasProjects
             ? testingByProject
-            : (previous.testingByProject ? { ...previous.testingByProject } : undefined)
+            : (previous.testingByProject ? { ...previous.testingByProject } : undefined),
+        rememberedDbByProject: hasProjects
+            ? rememberedDbByProject
+            : (previous.rememberedDbByProject ? structuredClone(previous.rememberedDbByProject) : undefined)
     };
 }
 
@@ -163,6 +195,9 @@ export function stripSelection<T extends Partial<DebuggerData>>(data: T): T {
         }
         if (project.testingConfig) {
             setTesting(project.testingConfig, DEFAULT_TESTING);
+        }
+        if (project.selectedDbByVersion) {
+            project.selectedDbByVersion = {};
         }
     }
     delete copy.activeVersion;
@@ -196,6 +231,12 @@ export function applySelection<T extends Partial<DebuggerData>>(data: T, selecti
                 setTesting(project.testingConfig, testing);
             } else if (project.testingConfig) {
                 setTesting(project.testingConfig, DEFAULT_TESTING);
+            }
+        }
+        if (selection.rememberedDbByProject) {
+            const remembered = selection.rememberedDbByProject[key];
+            if (remembered || project.selectedDbByVersion) {
+                project.selectedDbByVersion = { ...(remembered ?? {}) };
             }
         }
     }
@@ -246,8 +287,20 @@ export function normalizeSelection(raw: unknown): WorkspaceSelection | undefined
         activeVersionId: typeof value.activeVersionId === 'string' && value.activeVersionId
             ? value.activeVersionId
             : undefined,
-        testingByProject: normalizeTesting(value.testingByProject)
+        testingByProject: normalizeTesting(value.testingByProject),
+        rememberedDbByProject: normalizeRemembered(value.rememberedDbByProject)
     };
+}
+
+function normalizeRemembered(raw: unknown): Record<string, Record<string, string>> | undefined {
+    if (!raw || typeof raw !== 'object') {
+        return undefined;
+    }
+    const result: Record<string, Record<string, string>> = {};
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+        result[key] = stringRecord(value);
+    }
+    return result;
 }
 
 function normalizeTesting(raw: unknown): Record<string, TestingState> | undefined {

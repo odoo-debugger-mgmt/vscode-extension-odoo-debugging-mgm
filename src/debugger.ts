@@ -16,7 +16,7 @@ import { getInstalledModuleNames, databaseHasModuleTable } from './services/data
 import { logger, errorMessage } from './services/logger';
 import { updateManagedLaunchConfig } from './services/launchConfig';
 import { getSessionByName, runningDebuggerNames, resolveStopTarget } from './services/debugSessions';
-import { resolveDbForVersion } from './services/dbResolution';
+import { dbForVersion } from './services/dbResolution';
 import { isVersionProvisioned } from './services/provisioning';
 import { resolveProjectRepos } from './services/repoPaths';
 import { ensureCustomWorktrees } from './services/customWorktree';
@@ -100,7 +100,7 @@ export async function setupDebugger(): Promise<any> {
         const normalizedOdooPath = normalizePath(settings.odooPath);
         const normalizedPythonPath = normalizePath(settings.pythonPath);
 
-        const versionDb = resolveDbForVersion(project.dbs, project.selectedDbByVersion, version.id);
+        const versionDb = dbForVersion(project, version.id);
         if (versionDb) {
             // Non-interactive on purpose: this sync runs on a debounce after
             // almost every command, so it creates the worktrees that need no
@@ -224,7 +224,7 @@ async function prepareArgs(
         addAddonPath(`${settings.odooPath}/addons`);
     }
 
-    const db = resolveDbForVersion(project.dbs, project.selectedDbByVersion, options.versionId);
+    const db = dbForVersion(project, options.versionId);
     if (!db) {
         throw new Error('Select a database before running this action.');
     }
@@ -552,7 +552,7 @@ export async function startServerForVersion(
         return { ok: false, message };
     }
 
-    const db = resolveDbForVersion(result.project.dbs, result.project.selectedDbByVersion, version.id);
+    const db = dbForVersion(result.project, version.id);
     if (!db) {
         const message = `No database is selected for "${version.name}".`;
         if (options.quiet) {

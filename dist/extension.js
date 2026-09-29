@@ -939,7 +939,21 @@ class SettingsStore {
         }
         return JSON.parse(JSON.stringify(value));
     }
+    /** Set only by tests, which cannot point VS Code's settings at a temp file. */
+    static storeOverride;
+    /**
+     * Test hook: use `store` instead of the configured one, and `workspaceState`
+     * as this "window's" state. Passing undefined restores normal resolution.
+     */
+    static useForTesting(store, workspaceState) {
+        this.storeOverride = store;
+        this.selectionState = workspaceState;
+        this.cache.clear();
+    }
     static resolveStore() {
+        if (this.storeOverride) {
+            return this.storeOverride;
+        }
         const store = (0, mainStore_1.currentMainStore)();
         if (!store) {
             // Kept for its notification: every command that needs data in a
@@ -959,15 +973,20 @@ class SettingsStore {
             return undefined;
         }
         const stored = (0, workspaceSelection_1.readSelection)(memento);
-        if (stored?.testingByProject) {
+        const missing = stored ? workspaceSelection_1.SEEDED_FIELDS.filter(field => stored[field] === undefined) : [];
+        if (stored && missing.length === 0) {
             return stored;
         }
         if (stored) {
-            // Stored before testing mode moved to the window: keep the
-            // selection, and take testing from the data this once.
-            const seededTesting = { ...stored, testingByProject: (0, workspaceSelection_1.extractSelection)(data).testingByProject };
-            await (0, workspaceSelection_1.writeSelection)(memento, seededTesting);
-            return seededTesting;
+            // Stored by a build before these fields moved to the window: keep
+            // the selection, and take the missing ones from the data this once.
+            const fromData = (0, workspaceSelection_1.extractSelection)(data);
+            const completed = { ...stored };
+            for (const field of missing) {
+                completed[field] = fromData[field];
+            }
+            await (0, workspaceSelection_1.writeSelection)(memento, completed);
+            return completed;
         }
         const seeded = (0, workspaceSelection_1.extractSelection)(data);
         await (0, workspaceSelection_1.writeSelection)(memento, seeded);
@@ -5291,7 +5310,7 @@ function merge3(base, mine, theirs) {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.HANDOFF_STATE_PREFIX = exports.SELECTION_STATE_KEY = exports.EMPTY_SELECTION = void 0;
+exports.HANDOFF_STATE_PREFIX = exports.SELECTION_STATE_KEY = exports.EMPTY_SELECTION = exports.SEEDED_FIELDS = void 0;
 exports.projectKey = projectKey;
 exports.extractSelection = extractSelection;
 exports.stripSelection = stripSelection;
@@ -5300,11 +5319,24 @@ exports.isEmptySelection = isEmptySelection;
 exports.normalizeSelection = normalizeSelection;
 exports.readSelection = readSelection;
 exports.writeSelection = writeSelection;
+/** The fields a selection stored by an older build may lack, and that are then seeded from the data. */
+exports.SEEDED_FIELDS = ['testingByProject', 'rememberedDbByProject'];
 const DEFAULT_TESTING = { isEnabled: false, testTags: [], stopAfterInit: false, logLevel: 'disabled' };
 exports.EMPTY_SELECTION = { selectedDbByProject: {} };
 exports.SELECTION_STATE_KEY = 'odt.workspaceSelection';
 /** Prefix of the globalState key a generated workspace's selection is handed over under. */
 exports.HANDOFF_STATE_PREFIX = 'odt.workspaceHandoff:';
+function stringRecord(raw) {
+    const result = {};
+    if (raw && typeof raw === 'object') {
+        for (const [key, value] of Object.entries(raw)) {
+            if (typeof value === 'string' && value) {
+                result[key] = value;
+            }
+        }
+    }
+    return result;
+}
 function testingStateOf(config) {
     const state = {
         isEnabled: !!config.isEnabled,
@@ -5362,9 +5394,14 @@ function extractSelection(data, previous = exports.EMPTY_SELECTION) {
         }
     }
     const testingByProject = {};
+    const rememberedDbByProject = {};
     for (const project of projects) {
         if (project?.testingConfig) {
             testingByProject[projectKey(project)] = testingStateOf(project.testingConfig);
+        }
+        const remembered = stringRecord(project?.selectedDbByVersion);
+        if (Object.keys(remembered).length > 0) {
+            rememberedDbByProject[projectKey(project)] = remembered;
         }
     }
     const selectedProject = projects.find(project => project?.isSelected);
@@ -5379,7 +5416,10 @@ function extractSelection(data, previous = exports.EMPTY_SELECTION) {
             : (activeVersion || undefined),
         testingByProject: hasProjects
             ? testingByProject
-            : (previous.testingByProject ? { ...previous.testingByProject } : undefined)
+            : (previous.testingByProject ? { ...previous.testingByProject } : undefined),
+        rememberedDbByProject: hasProjects
+            ? rememberedDbByProject
+            : (previous.rememberedDbByProject ? structuredClone(previous.rememberedDbByProject) : undefined)
     };
 }
 /**
@@ -5398,6 +5438,9 @@ function stripSelection(data) {
         }
         if (project.testingConfig) {
             setTesting(project.testingConfig, DEFAULT_TESTING);
+        }
+        if (project.selectedDbByVersion) {
+            project.selectedDbByVersion = {};
         }
     }
     delete copy.activeVersion;
@@ -5431,6 +5474,12 @@ function applySelection(data, selection) {
             }
             else if (project.testingConfig) {
                 setTesting(project.testingConfig, DEFAULT_TESTING);
+            }
+        }
+        if (selection.rememberedDbByProject) {
+            const remembered = selection.rememberedDbByProject[key];
+            if (remembered || project.selectedDbByVersion) {
+                project.selectedDbByVersion = { ...(remembered ?? {}) };
             }
         }
     }
@@ -5479,8 +5528,19 @@ function normalizeSelection(raw) {
         activeVersionId: typeof value.activeVersionId === 'string' && value.activeVersionId
             ? value.activeVersionId
             : undefined,
-        testingByProject: normalizeTesting(value.testingByProject)
+        testingByProject: normalizeTesting(value.testingByProject),
+        rememberedDbByProject: normalizeRemembered(value.rememberedDbByProject)
     };
+}
+function normalizeRemembered(raw) {
+    if (!raw || typeof raw !== 'object') {
+        return undefined;
+    }
+    const result = {};
+    for (const [key, value] of Object.entries(raw)) {
+        result[key] = stringRecord(value);
+    }
+    return result;
 }
 function normalizeTesting(raw) {
     if (!raw || typeof raw !== 'object') {
@@ -12932,25 +12992,39 @@ function step(run, accept, options = {}) {
 
 /***/ }),
 /* 67 */
-/***/ ((__unused_webpack_module, exports) => {
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.resolveDbForVersion = resolveDbForVersion;
+exports.rememberDbForVersion = rememberDbForVersion;
+exports.upgradePins = upgradePins;
+exports.dbForVersion = dbForVersion;
 /**
  * Which database a version launches against. Selection used to be one flag
  * per project, so two versions running at once shared a single `-d`; each
  * version now remembers its own, falling back to the project selection.
+ *
+ * What a version remembers is this window's (see workspaceSelection.ts): with
+ * a shared store, one window's choice must never decide what another
+ * launches. The active upgrade is the exception, and wins over both, because
+ * its pair is shared on purpose - either window can start both sides.
  */
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.resolveDbForVersion = resolveDbForVersion;
-exports.rememberDbForVersion = rememberDbForVersion;
+const upgrade_1 = __webpack_require__(39);
 /**
- * Resolution order: the database remembered for this version, then the
- * selected database when it belongs to this version, then the selected
- * database regardless - which is the behaviour that existed before.
+ * Resolution order: the database the active upgrade pins to this version,
+ * then the database remembered for this version, then the selected database
+ * when it belongs to this version, then the selected database regardless -
+ * which is the behaviour that existed before.
  */
-function resolveDbForVersion(dbs, selectedDbByVersion, versionId) {
+function resolveDbForVersion(dbs, selectedDbByVersion, versionId, pinned) {
     const selected = dbs.find(db => db.isSelected);
     if (versionId) {
+        const pinnedId = pinned?.[versionId];
+        const pinnedDb = pinnedId ? dbs.find(db => db.id === pinnedId) : undefined;
+        if (pinnedDb) {
+            return pinnedDb;
+        }
         const rememberedId = selectedDbByVersion?.[versionId];
         const remembered = rememberedId ? dbs.find(db => db.id === rememberedId) : undefined;
         if (remembered) {
@@ -12970,6 +13044,24 @@ function rememberDbForVersion(existing, versionId, dbId) {
     }
     base[versionId] = dbId;
     return base;
+}
+/** The active upgrade's version -> database, or nothing when no upgrade is on. */
+function upgradePins(upgradeConfig) {
+    const config = (0, upgrade_1.ensureUpgradeConfigModel)(upgradeConfig);
+    const pins = {};
+    if (!config.isActive()) {
+        return pins;
+    }
+    for (const side of [config.from, config.to]) {
+        if (side?.versionId) {
+            pins[side.versionId] = side.dbId;
+        }
+    }
+    return pins;
+}
+/** The database `versionId` launches against in this window, for a project as SettingsStore returns it. */
+function dbForVersion(project, versionId) {
+    return resolveDbForVersion(project?.dbs ?? [], project?.selectedDbByVersion, versionId, upgradePins(project?.upgradeConfig));
 }
 
 
@@ -13672,15 +13764,13 @@ async function collectManaged() {
     // that helper toasts when no project is selected.
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json').catch(() => undefined);
     const project = data?.projects?.find(entry => entry.isSelected);
-    const dbs = project?.dbs ?? [];
-    const selectedDbByVersion = project?.selectedDbByVersion;
     const instances = [];
     for (const version of versionsService_1.VersionsService.getInstance().getVersions()) {
         const debuggerName = version.settings?.debuggerName;
         if (!debuggerName || !names.has(debuggerName)) {
             continue;
         }
-        const db = (0, dbResolution_1.resolveDbForVersion)(dbs, selectedDbByVersion, version.id);
+        const db = (0, dbResolution_1.dbForVersion)(project, version.id);
         if (!db) {
             continue;
         }
@@ -17709,7 +17799,7 @@ async function setupDebugger() {
         const settings = version.settings;
         const normalizedOdooPath = (0, utils_1.normalizePath)(settings.odooPath);
         const normalizedPythonPath = (0, utils_1.normalizePath)(settings.pythonPath);
-        const versionDb = (0, dbResolution_1.resolveDbForVersion)(project.dbs, project.selectedDbByVersion, version.id);
+        const versionDb = (0, dbResolution_1.dbForVersion)(project, version.id);
         if (versionDb) {
             // Non-interactive on purpose: this sync runs on a debounce after
             // almost every command, so it creates the worktrees that need no
@@ -17811,7 +17901,7 @@ async function prepareArgs(project, settings, options = {}) {
         addAddonPath(`${settings.odooPath}/odoo/addons`);
         addAddonPath(`${settings.odooPath}/addons`);
     }
-    const db = (0, dbResolution_1.resolveDbForVersion)(project.dbs, project.selectedDbByVersion, options.versionId);
+    const db = (0, dbResolution_1.dbForVersion)(project, options.versionId);
     if (!db) {
         throw new Error('Select a database before running this action.');
     }
@@ -18096,7 +18186,7 @@ async function startServerForVersion(versionId, options = {}) {
         }
         return { ok: false, message };
     }
-    const db = (0, dbResolution_1.resolveDbForVersion)(result.project.dbs, result.project.selectedDbByVersion, version.id);
+    const db = (0, dbResolution_1.dbForVersion)(result.project, version.id);
     if (!db) {
         const message = `No database is selected for "${version.name}".`;
         if (options.quiet) {
@@ -21931,7 +22021,7 @@ function registerVersionCommands(deps) {
             // with several versions up they are usually different.
             const result = await settingsStore_1.SettingsStore.getSelectedProject();
             const db = result
-                ? (0, dbResolution_1.resolveDbForVersion)(result.project.dbs, result.project.selectedDbByVersion, version.id)
+                ? (0, dbResolution_1.dbForVersion)(result.project, version.id)
                 : undefined;
             const url = (0, server_1.buildServerUrl)(port, db?.id);
             if (await (0, server_1.waitForPort)(port, 400)) {
@@ -24547,7 +24637,7 @@ function mergeData(target, incoming) {
         summary.databasesAdded += addMissing(existing.dbs, project.dbs, db => db?.id);
         addMissing(existing.repos, project.repos, repo => String(repo?.name ?? '').toLowerCase());
         addMissing(existing.tickets, project.tickets, ticket => ticket?.id);
-        existing.selectedDbByVersion = { ...(project.selectedDbByVersion ?? {}), ...(existing.selectedDbByVersion ?? {}) };
+        // selectedDbByVersion is not merged: it is a per-window choice.
     }
     // 4. Templates, by name.
     summary.templatesAdded = addMissing(templates, source.dbTemplates, template => template?.name);

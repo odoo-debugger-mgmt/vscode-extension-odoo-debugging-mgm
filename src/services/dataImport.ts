@@ -213,7 +213,7 @@ export function mergeData(target: DebuggerData, incoming: DebuggerData): { data:
         summary.databasesAdded += addMissing(existing.dbs, project.dbs, db => db?.id);
         addMissing(existing.repos, project.repos, repo => String(repo?.name ?? '').toLowerCase());
         addMissing(existing.tickets, project.tickets, ticket => ticket?.id);
-        existing.selectedDbByVersion = { ...(project.selectedDbByVersion ?? {}), ...(existing.selectedDbByVersion ?? {}) };
+        // selectedDbByVersion is not merged: it is a per-window choice.
     }
 
     // 4. Templates, by name.

@@ -78,8 +78,8 @@ suite('Data import', () => {
         assert.strictEqual(Object.keys(data.versions ?? {}).length, 2, 'the 17.0 version is not duplicated');
         assert.strictEqual(acme.dbs.find((db: any) => db.id === 'acme-19').versionId, v19.id);
         assert.strictEqual(other.dbs[0].versionId, v19.id);
-        assert.strictEqual(acme.selectedDbByVersion['v17-here'], 'acme-17');
-        assert.strictEqual(acme.selectedDbByVersion[v19.id], 'acme-19');
+        // A per-window choice: the target's stays as it was, nothing is added.
+        assert.deepStrictEqual(acme.selectedDbByVersion, { 'v17-here': 'acme-17' });
     });
 
     test('an upgrade in a new project points at this store\'s versions', () => {

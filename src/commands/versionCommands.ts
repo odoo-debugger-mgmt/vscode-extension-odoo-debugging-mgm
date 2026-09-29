@@ -17,7 +17,7 @@ import { isVersionProvisioned } from '../services/provisioning';
 import { inputStep, runWizard, step } from '../services/wizard';
 import { removeWorktree, removeManagedBranch, resolveSourceRepo } from '../services/worktree';
 import { buildServerUrl, waitForPort } from '../services/server';
-import { resolveDbForVersion } from '../services/dbResolution';
+import { dbForVersion } from '../services/dbResolution';
 import { SettingsStore } from '../settingsStore';
 import { readSetupState } from '../services/setupState';
 import { diagnoseVersion, needsAttention } from '../services/versionMigration';
@@ -102,7 +102,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
             // with several versions up they are usually different.
             const result = await SettingsStore.getSelectedProject();
             const db = result
-                ? resolveDbForVersion(result.project.dbs, result.project.selectedDbByVersion, version.id)
+                ? dbForVersion(result.project, version.id)
                 : undefined;
             const url = buildServerUrl(port, db?.id);
 

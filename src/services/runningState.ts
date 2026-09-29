@@ -9,7 +9,7 @@ import { SettingsStore } from '../settingsStore';
 import { VersionsService } from '../versionsService';
 import { getActiveDatabaseNames } from './database';
 import { runningDebuggerNames } from './debugSessions';
-import { resolveDbForVersion } from './dbResolution';
+import { dbForVersion } from './dbResolution';
 import { invalidateActiveDatabasesCache } from './runtimeCache';
 import { logger } from './logger';
 
@@ -49,8 +49,6 @@ async function collectManaged(): Promise<RunningInstance[]> {
     // that helper toasts when no project is selected.
     const data = await SettingsStore.get('odoo-debugger-data.json').catch(() => undefined);
     const project = data?.projects?.find(entry => entry.isSelected);
-    const dbs = project?.dbs ?? [];
-    const selectedDbByVersion = project?.selectedDbByVersion;
 
     const instances: RunningInstance[] = [];
     for (const version of VersionsService.getInstance().getVersions()) {
@@ -58,7 +56,7 @@ async function collectManaged(): Promise<RunningInstance[]> {
         if (!debuggerName || !names.has(debuggerName)) {
             continue;
         }
-        const db = resolveDbForVersion(dbs, selectedDbByVersion, version.id);
+        const db = dbForVersion(project, version.id);
         if (!db) {
             continue;
         }

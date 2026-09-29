@@ -19,6 +19,7 @@ import { MainStore, StoreRead, currentMainStore } from './services/mainStore';
 import { jsonEqual } from './services/mergeDocuments';
 import {
     HANDOFF_STATE_PREFIX,
+    SEEDED_FIELDS,
     WorkspaceSelection,
     applySelection,
     extractSelection,
@@ -115,7 +116,23 @@ export class SettingsStore {
         return JSON.parse(JSON.stringify(value)) as T;
     }
 
+    /** Set only by tests, which cannot point VS Code's settings at a temp file. */
+    private static storeOverride: MainStore | undefined;
+
+    /**
+     * Test hook: use `store` instead of the configured one, and `workspaceState`
+     * as this "window's" state. Passing undefined restores normal resolution.
+     */
+    static useForTesting(store: MainStore | undefined, workspaceState?: vscode.Memento): void {
+        this.storeOverride = store;
+        this.selectionState = workspaceState;
+        this.cache.clear();
+    }
+
     private static resolveStore(): MainStore | undefined {
+        if (this.storeOverride) {
+            return this.storeOverride;
+        }
         const store = currentMainStore();
         if (!store) {
             // Kept for its notification: every command that needs data in a
@@ -136,15 +153,20 @@ export class SettingsStore {
             return undefined;
         }
         const stored = readSelection(memento);
-        if (stored?.testingByProject) {
+        const missing = stored ? SEEDED_FIELDS.filter(field => stored[field] === undefined) : [];
+        if (stored && missing.length === 0) {
             return stored;
         }
         if (stored) {
-            // Stored before testing mode moved to the window: keep the
-            // selection, and take testing from the data this once.
-            const seededTesting = { ...stored, testingByProject: extractSelection(data).testingByProject };
-            await writeSelection(memento, seededTesting);
-            return seededTesting;
+            // Stored by a build before these fields moved to the window: keep
+            // the selection, and take the missing ones from the data this once.
+            const fromData = extractSelection(data);
+            const completed: WorkspaceSelection = { ...stored };
+            for (const field of missing) {
+                (completed as unknown as Record<string, unknown>)[field] = fromData[field];
+            }
+            await writeSelection(memento, completed);
+            return completed;
         }
         const seeded = extractSelection(data);
         await writeSelection(memento, seeded);
