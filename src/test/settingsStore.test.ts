@@ -14,6 +14,8 @@ import { JsonFileMainStore } from '../services/mainStore';
 import { readSelection } from '../services/workspaceSelection';
 import { rememberDbForVersion, dbForVersion } from '../services/dbResolution';
 import type { DebuggerData } from '../utils';
+import { UpgradeConfigModel } from '../models/upgrade';
+import { healUpgradeSelection } from '../upgrade';
 
 const sqlite = loadSqlite();
 
@@ -88,6 +90,41 @@ async function launchedDb(): Promise<string | undefined> {
         assert.strictEqual(await launchedDb(), 'acme-db1');
         SettingsStore.useForTesting(store, windowB);
         assert.strictEqual(await launchedDb(), 'acme-db2');
+    });
+
+    test('after another window turns an upgrade on and off, a window launches what it shows', async () => {
+        const windowA = memento();
+        const windowB = memento();
+        const setUpgrade = async (on: boolean) => {
+            const data = await SettingsStore.get();
+            data.projects[0].upgradeConfig = new UpgradeConfigModel(
+                on,
+                { versionId: 'v17', dbId: 'acme-db2', series: '17.0' },
+                { dbId: 'acme-db19', series: '19.0' },
+                []
+            );
+            await SettingsStore.saveWithoutComments(data);
+        };
+        const shownDb = async () => (await SettingsStore.get()).projects[0].dbs.find(db => db.isSelected)?.id;
+
+        SettingsStore.useForTesting(store, windowA);
+        await selectDb('acme-db1');
+
+        SettingsStore.useForTesting(store, windowB);
+        await setUpgrade(true);
+
+        // What initializeUpgradeContext does in A on the refresh that follows.
+        SettingsStore.useForTesting(store, windowA);
+        const healed = await SettingsStore.get();
+        assert.strictEqual(healUpgradeSelection(healed.projects[0]), true);
+        await SettingsStore.saveWithoutComments(healed);
+
+        SettingsStore.useForTesting(store, windowB);
+        await setUpgrade(false);
+
+        SettingsStore.useForTesting(store, windowA);
+        assert.strictEqual(await shownDb(), 'acme-db2');
+        assert.strictEqual(await launchedDb(), await shownDb());
     });
 
     test('the shared store holds no selection and no remembered database', async () => {

@@ -54,7 +54,7 @@ const testing_1 = __webpack_require__(86);
 const upgrade_1 = __webpack_require__(38);
 const debugger_1 = __webpack_require__(87);
 const provisionQueue_1 = __webpack_require__(89);
-const odooInstaller_1 = __webpack_require__(60);
+const odooInstaller_1 = __webpack_require__(61);
 const settingsStore_1 = __webpack_require__(6);
 const mainStore_1 = __webpack_require__(19);
 const versionsTreeProvider_1 = __webpack_require__(90);
@@ -71,7 +71,7 @@ const versionMigration_1 = __webpack_require__(96);
 const versionProposal_1 = __webpack_require__(57);
 const environment_2 = __webpack_require__(48);
 const branches_1 = __webpack_require__(49);
-const setupState_1 = __webpack_require__(65);
+const setupState_1 = __webpack_require__(66);
 const notifications_1 = __webpack_require__(16);
 const utils_1 = __webpack_require__(8);
 const statusBar_1 = __webpack_require__(97);
@@ -522,7 +522,7 @@ const utils_1 = __webpack_require__(8);
 const icons_1 = __webpack_require__(37);
 const upgrade_1 = __webpack_require__(38);
 const environment_1 = __webpack_require__(48);
-const dbs_1 = __webpack_require__(58);
+const dbs_1 = __webpack_require__(59);
 const runningState_1 = __webpack_require__(74);
 /** Tree provider for the Databases view of the selected project. */
 class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
@@ -6865,6 +6865,7 @@ const upgradeApply_1 = __webpack_require__(41);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const utils_1 = __webpack_require__(8);
+const dbResolution_1 = __webpack_require__(58);
 const versionsService_1 = __webpack_require__(31);
 const baseTreeProvider_1 = __webpack_require__(5);
 const icons_1 = __webpack_require__(37);
@@ -6962,6 +6963,10 @@ function healUpgradeSelection(project) {
         return false;
     }
     dbs.forEach(db => (db.isSelected = db.id === target));
+    // The memory follows, so the version launches what is now shown.
+    const side = config.from?.dbId === target ? config.from : config.to;
+    const versionId = side?.versionId ?? dbs.find(db => db.id === target)?.versionId;
+    project.selectedDbByVersion = (0, dbResolution_1.rememberDbForVersion)(project.selectedDbByVersion, versionId, target);
     return true;
 }
 /** Both upgrade context keys, from one config so they cannot disagree. */
@@ -9916,6 +9921,85 @@ function proposeVersions(repoBranches, seriesBranches, existing) {
 
 /***/ }),
 /* 58 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.resolveDbForVersion = resolveDbForVersion;
+exports.rememberDbForVersion = rememberDbForVersion;
+exports.upgradePins = upgradePins;
+exports.dbForVersion = dbForVersion;
+/**
+ * Which database a version launches against. Selection used to be one flag
+ * per project, so two versions running at once shared a single `-d`; each
+ * version now remembers its own, falling back to the project selection.
+ *
+ * What a version remembers is this window's (see workspaceSelection.ts): with
+ * a shared store, one window's choice must never decide what another
+ * launches. The active upgrade is the exception, and wins over both, because
+ * its pair is shared on purpose - either window can start both sides.
+ */
+const upgrade_1 = __webpack_require__(39);
+/**
+ * Resolution order: the database the active upgrade pins to this version,
+ * then the selected database when it belongs to this version, then the
+ * database remembered for this version, then the selected database
+ * regardless - which is the behaviour that existed before.
+ *
+ * The selection comes before the memory so a window always launches the
+ * database it shows as selected. The memory is for the other versions: the
+ * ones running beside it on a database that is not the selected one.
+ */
+function resolveDbForVersion(dbs, selectedDbByVersion, versionId, pinned) {
+    const selected = dbs.find(db => db.isSelected);
+    if (versionId) {
+        const pinnedId = pinned?.[versionId];
+        const pinnedDb = pinnedId ? dbs.find(db => db.id === pinnedId) : undefined;
+        if (pinnedDb) {
+            return pinnedDb;
+        }
+        if (selected?.versionId === versionId) {
+            return selected;
+        }
+        const rememberedId = selectedDbByVersion?.[versionId];
+        const remembered = rememberedId ? dbs.find(db => db.id === rememberedId) : undefined;
+        if (remembered) {
+            return remembered;
+        }
+    }
+    return selected;
+}
+/** Records `dbId` against `versionId`, leaving other versions' memory intact. */
+function rememberDbForVersion(existing, versionId, dbId) {
+    const base = { ...(existing ?? {}) };
+    if (!versionId) {
+        return base;
+    }
+    base[versionId] = dbId;
+    return base;
+}
+/** The active upgrade's version -> database, or nothing when no upgrade is on. */
+function upgradePins(upgradeConfig) {
+    const config = (0, upgrade_1.ensureUpgradeConfigModel)(upgradeConfig);
+    const pins = {};
+    if (!config.isActive()) {
+        return pins;
+    }
+    for (const side of [config.from, config.to]) {
+        if (side?.versionId) {
+            pins[side.versionId] = side.dbId;
+        }
+    }
+    return pins;
+}
+/** The database `versionId` launches against in this window, for a project as SettingsStore returns it. */
+function dbForVersion(project, versionId) {
+    return resolveDbForVersion(project?.dbs ?? [], project?.selectedDbByVersion, versionId, upgradePins(project?.upgradeConfig));
+}
+
+
+/***/ }),
+/* 59 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -9971,17 +10055,17 @@ exports.manageDatabaseTemplates = manageDatabaseTemplates;
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
 const os = __importStar(__webpack_require__(18));
-const node_crypto_1 = __webpack_require__(59);
+const node_crypto_1 = __webpack_require__(60);
 const db_1 = __webpack_require__(42);
 const utils_1 = __webpack_require__(8);
-const odooInstaller_1 = __webpack_require__(60);
-const wizard_1 = __webpack_require__(66);
+const odooInstaller_1 = __webpack_require__(61);
+const wizard_1 = __webpack_require__(67);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const branches_1 = __webpack_require__(49);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(31);
-const dbResolution_1 = __webpack_require__(67);
+const dbResolution_1 = __webpack_require__(58);
 const dbNaming_1 = __webpack_require__(68);
 const database_1 = __webpack_require__(46);
 const upgrade_1 = __webpack_require__(38);
@@ -11500,13 +11584,13 @@ async function manageDatabaseTemplates() {
 
 
 /***/ }),
-/* 59 */
+/* 60 */
 /***/ ((module) => {
 
 module.exports = require("node:crypto");
 
 /***/ }),
-/* 60 */
+/* 61 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11561,10 +11645,10 @@ const process_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
 const versionsService_1 = __webpack_require__(31);
-const provisioning_1 = __webpack_require__(61);
-const systemDeps_1 = __webpack_require__(64);
-const pythonToolchain_1 = __webpack_require__(63);
-const setupState_1 = __webpack_require__(65);
+const provisioning_1 = __webpack_require__(62);
+const systemDeps_1 = __webpack_require__(65);
+const pythonToolchain_1 = __webpack_require__(64);
+const setupState_1 = __webpack_require__(66);
 const CLONE_TARGETS = {
     odoo: {
         dirName: 'odoo',
@@ -11900,7 +11984,7 @@ async function cloneOdooRepositories(defaultBaseDir) {
 
 
 /***/ }),
-/* 61 */
+/* 62 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11952,10 +12036,10 @@ exports.executeProvision = executeProvision;
  */
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
-const odooRequirements_1 = __webpack_require__(62);
+const odooRequirements_1 = __webpack_require__(63);
 const worktree_1 = __webpack_require__(52);
-const pythonToolchain_1 = __webpack_require__(63);
-const systemDeps_1 = __webpack_require__(64);
+const pythonToolchain_1 = __webpack_require__(64);
+const systemDeps_1 = __webpack_require__(65);
 const logger_1 = __webpack_require__(12);
 function samePath(a, b) {
     return path.resolve(a) === path.resolve(b);
@@ -12140,7 +12224,7 @@ async function executeProvision(spec, progress, token) {
 
 
 /***/ }),
-/* 62 */
+/* 63 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12278,7 +12362,7 @@ async function readOdooPythonWindow(odooPath) {
 
 
 /***/ }),
-/* 63 */
+/* 64 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12526,7 +12610,7 @@ async function installRequirements(venvPath, requirementsPath, uvPath, onLine, t
 
 
 /***/ }),
-/* 64 */
+/* 65 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12575,7 +12659,7 @@ exports.checkSystemDeps = checkSystemDeps;
  */
 const fs = __importStar(__webpack_require__(2));
 const process_1 = __webpack_require__(13);
-const pythonToolchain_1 = __webpack_require__(63);
+const pythonToolchain_1 = __webpack_require__(64);
 const INSTALL_HINTS = {
     wkhtmltopdf: {
         apt: 'sudo apt install wkhtmltopdf',
@@ -12656,7 +12740,7 @@ async function checkSystemDeps(venvPath) {
 
 
 /***/ }),
-/* 65 */
+/* 66 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12802,7 +12886,7 @@ function shouldAdoptLegacySourceRepo(raw, legacyOdooPath, exists) {
 
 
 /***/ }),
-/* 66 */
+/* 67 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13038,81 +13122,6 @@ function step(run, accept, options = {}) {
             return 'next';
         }
     };
-}
-
-
-/***/ }),
-/* 67 */
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.resolveDbForVersion = resolveDbForVersion;
-exports.rememberDbForVersion = rememberDbForVersion;
-exports.upgradePins = upgradePins;
-exports.dbForVersion = dbForVersion;
-/**
- * Which database a version launches against. Selection used to be one flag
- * per project, so two versions running at once shared a single `-d`; each
- * version now remembers its own, falling back to the project selection.
- *
- * What a version remembers is this window's (see workspaceSelection.ts): with
- * a shared store, one window's choice must never decide what another
- * launches. The active upgrade is the exception, and wins over both, because
- * its pair is shared on purpose - either window can start both sides.
- */
-const upgrade_1 = __webpack_require__(39);
-/**
- * Resolution order: the database the active upgrade pins to this version,
- * then the database remembered for this version, then the selected database
- * when it belongs to this version, then the selected database regardless -
- * which is the behaviour that existed before.
- */
-function resolveDbForVersion(dbs, selectedDbByVersion, versionId, pinned) {
-    const selected = dbs.find(db => db.isSelected);
-    if (versionId) {
-        const pinnedId = pinned?.[versionId];
-        const pinnedDb = pinnedId ? dbs.find(db => db.id === pinnedId) : undefined;
-        if (pinnedDb) {
-            return pinnedDb;
-        }
-        const rememberedId = selectedDbByVersion?.[versionId];
-        const remembered = rememberedId ? dbs.find(db => db.id === rememberedId) : undefined;
-        if (remembered) {
-            return remembered;
-        }
-        if (selected?.versionId === versionId) {
-            return selected;
-        }
-    }
-    return selected;
-}
-/** Records `dbId` against `versionId`, leaving other versions' memory intact. */
-function rememberDbForVersion(existing, versionId, dbId) {
-    const base = { ...(existing ?? {}) };
-    if (!versionId) {
-        return base;
-    }
-    base[versionId] = dbId;
-    return base;
-}
-/** The active upgrade's version -> database, or nothing when no upgrade is on. */
-function upgradePins(upgradeConfig) {
-    const config = (0, upgrade_1.ensureUpgradeConfigModel)(upgradeConfig);
-    const pins = {};
-    if (!config.isActive()) {
-        return pins;
-    }
-    for (const side of [config.from, config.to]) {
-        if (side?.versionId) {
-            pins[side.versionId] = side.dbId;
-        }
-    }
-    return pins;
-}
-/** The database `versionId` launches against in this window, for a project as SettingsStore returns it. */
-function dbForVersion(project, versionId) {
-    return resolveDbForVersion(project?.dbs ?? [], project?.selectedDbByVersion, versionId, upgradePins(project?.upgradeConfig));
 }
 
 
@@ -13788,7 +13797,7 @@ const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(31);
 const database_1 = __webpack_require__(46);
 const debugSessions_1 = __webpack_require__(75);
-const dbResolution_1 = __webpack_require__(67);
+const dbResolution_1 = __webpack_require__(58);
 const runtimeCache_1 = __webpack_require__(15);
 const logger_1 = __webpack_require__(12);
 /**
@@ -14301,7 +14310,7 @@ const notifications_1 = __webpack_require__(16);
 const notifications_2 = __webpack_require__(16);
 const baseTreeProvider_1 = __webpack_require__(5);
 const customAddonsCommand_1 = __webpack_require__(81);
-const wizard_1 = __webpack_require__(66);
+const wizard_1 = __webpack_require__(67);
 const branches_1 = __webpack_require__(49);
 const manifest_1 = __webpack_require__(82);
 const psaeInternal_1 = __webpack_require__(83);
@@ -16113,7 +16122,7 @@ const sortOptions_1 = __webpack_require__(36);
 const versionsService_1 = __webpack_require__(31);
 const repoPaths_1 = __webpack_require__(53);
 const environment_1 = __webpack_require__(48);
-const setupState_1 = __webpack_require__(65);
+const setupState_1 = __webpack_require__(66);
 const notifications_1 = __webpack_require__(16);
 const baseTreeProvider_1 = __webpack_require__(5);
 const process_1 = __webpack_require__(13);
@@ -17779,13 +17788,13 @@ const database_1 = __webpack_require__(46);
 const logger_1 = __webpack_require__(12);
 const launchConfig_1 = __webpack_require__(88);
 const debugSessions_1 = __webpack_require__(75);
-const dbResolution_1 = __webpack_require__(67);
-const provisioning_1 = __webpack_require__(61);
+const dbResolution_1 = __webpack_require__(58);
+const provisioning_1 = __webpack_require__(62);
 const repoPaths_1 = __webpack_require__(53);
 const customWorktree_1 = __webpack_require__(54);
-const setupState_1 = __webpack_require__(65);
+const setupState_1 = __webpack_require__(66);
 const environment_1 = __webpack_require__(48);
-const odooInstaller_1 = __webpack_require__(60);
+const odooInstaller_1 = __webpack_require__(61);
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
 const baseInstallNotifiedDbs = new Set();
@@ -18597,7 +18606,7 @@ exports.VersionsTreeProvider = exports.VersionSettingTreeItem = exports.VersionT
 const vscode = __importStar(__webpack_require__(1));
 const versionsService_1 = __webpack_require__(31);
 const utils_1 = __webpack_require__(8);
-const provisioning_1 = __webpack_require__(61);
+const provisioning_1 = __webpack_require__(62);
 const runningState_1 = __webpack_require__(74);
 const icons_1 = __webpack_require__(37);
 const sortOptions_1 = __webpack_require__(36);
@@ -19139,7 +19148,7 @@ const sortOptions_1 = __webpack_require__(36);
 const branches_1 = __webpack_require__(49);
 const repoPaths_1 = __webpack_require__(53);
 const environment_1 = __webpack_require__(48);
-const setupState_1 = __webpack_require__(65);
+const setupState_1 = __webpack_require__(66);
 const dumpImport_1 = __webpack_require__(69);
 const upgrade_1 = __webpack_require__(39);
 /**
@@ -19703,7 +19712,7 @@ const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(6);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
-const setupState_1 = __webpack_require__(65);
+const setupState_1 = __webpack_require__(66);
 const repoPaths_1 = __webpack_require__(53);
 const environment_1 = __webpack_require__(48);
 const upgrade_1 = __webpack_require__(39);
@@ -20410,16 +20419,16 @@ exports.registerProjectCommands = registerProjectCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
-const wizard_1 = __webpack_require__(66);
+const wizard_1 = __webpack_require__(67);
 const utils_1 = __webpack_require__(8);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const project_1 = __webpack_require__(77);
-const dbs_1 = __webpack_require__(58);
-const odooInstaller_1 = __webpack_require__(60);
+const dbs_1 = __webpack_require__(59);
+const odooInstaller_1 = __webpack_require__(61);
 const projectWorkspace_1 = __webpack_require__(102);
 const setupFlow_1 = __webpack_require__(104);
-const setupState_1 = __webpack_require__(65);
+const setupState_1 = __webpack_require__(66);
 const context_1 = __webpack_require__(40);
 const versionProposal_1 = __webpack_require__(57);
 const versionPick_1 = __webpack_require__(106);
@@ -20638,7 +20647,7 @@ const versionsService_1 = __webpack_require__(31);
 const workspaceFolders_1 = __webpack_require__(103);
 const repoPaths_1 = __webpack_require__(53);
 const environment_1 = __webpack_require__(48);
-const setupState_1 = __webpack_require__(65);
+const setupState_1 = __webpack_require__(66);
 async function getActiveProjectOrPrompt() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
@@ -20870,7 +20879,7 @@ const logger_1 = __webpack_require__(12);
 const branches_1 = __webpack_require__(49);
 const customAddonsCommand_1 = __webpack_require__(81);
 const setupDetection_1 = __webpack_require__(105);
-const setupState_1 = __webpack_require__(65);
+const setupState_1 = __webpack_require__(66);
 /** The per-version key that every repository-discovery site already reads. */
 const CUSTOM_ADDONS_KEY = 'defaultVersion.customAddonsPath';
 function readConfiguredCustomAddons() {
@@ -21519,7 +21528,7 @@ const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(6);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const dbs_1 = __webpack_require__(58);
+const dbs_1 = __webpack_require__(59);
 const notifications_2 = __webpack_require__(16);
 const server_1 = __webpack_require__(91);
 const utils_1 = __webpack_require__(8);
@@ -22001,14 +22010,14 @@ const logger_1 = __webpack_require__(12);
 const branchPick_1 = __webpack_require__(113);
 const runtimeCache_1 = __webpack_require__(15);
 const environment_1 = __webpack_require__(48);
-const odooInstaller_1 = __webpack_require__(60);
-const provisioning_1 = __webpack_require__(61);
-const wizard_1 = __webpack_require__(66);
+const odooInstaller_1 = __webpack_require__(61);
+const provisioning_1 = __webpack_require__(62);
+const wizard_1 = __webpack_require__(67);
 const worktree_1 = __webpack_require__(52);
 const server_1 = __webpack_require__(91);
-const dbResolution_1 = __webpack_require__(67);
+const dbResolution_1 = __webpack_require__(58);
 const settingsStore_1 = __webpack_require__(6);
-const setupState_1 = __webpack_require__(65);
+const setupState_1 = __webpack_require__(66);
 const versionMigration_1 = __webpack_require__(96);
 const upgrade_1 = __webpack_require__(38);
 function registerVersionCommands(deps) {
@@ -22763,7 +22772,7 @@ exports.pickRepoBranch = pickRepoBranch;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
 const gitService_1 = __webpack_require__(11);
-const wizard_1 = __webpack_require__(66);
+const wizard_1 = __webpack_require__(67);
 const MANUAL_ITEM = {
     label: '$(pencil) Enter branch manually…',
     description: 'e.g. "19.0", "saas-18.4", "master"',
@@ -23119,7 +23128,7 @@ const notifications_3 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const process_1 = __webpack_require__(13);
 const worktree_1 = __webpack_require__(52);
-const setupState_1 = __webpack_require__(65);
+const setupState_1 = __webpack_require__(66);
 const repoPaths_1 = __webpack_require__(53);
 const sourceConflict_1 = __webpack_require__(55);
 const repo_1 = __webpack_require__(44);
@@ -23607,12 +23616,12 @@ const upgradePlan_1 = __webpack_require__(119);
 const upgradeApply_1 = __webpack_require__(41);
 const upgradeSetup_1 = __webpack_require__(56);
 const provisionQueue_1 = __webpack_require__(89);
-const setupState_1 = __webpack_require__(65);
+const setupState_1 = __webpack_require__(66);
 const gitService_1 = __webpack_require__(11);
 const dbNaming_1 = __webpack_require__(68);
-const dbs_1 = __webpack_require__(58);
+const dbs_1 = __webpack_require__(59);
 const upgrade_1 = __webpack_require__(38);
-const wizard_1 = __webpack_require__(66);
+const wizard_1 = __webpack_require__(67);
 const repo_1 = __webpack_require__(44);
 /** How a database is described in the picker, without probing every one. */
 function describeDatabase(db, versionsService) {
@@ -24283,7 +24292,7 @@ const jsonc_parser_1 = __webpack_require__(21);
 const settingsStore_1 = __webpack_require__(6);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
-const setupState_1 = __webpack_require__(65);
+const setupState_1 = __webpack_require__(66);
 const dataLocation_1 = __webpack_require__(17);
 const mainStore_1 = __webpack_require__(19);
 const workspaceSelection_1 = __webpack_require__(29);
@@ -24612,7 +24621,7 @@ exports.buildExport = buildExport;
  * commands/dataStoreCommands.ts.
  */
 const path = __importStar(__webpack_require__(3));
-const node_crypto_1 = __webpack_require__(59);
+const node_crypto_1 = __webpack_require__(60);
 const workspaceSelection_1 = __webpack_require__(29);
 const loose = (data) => structuredClone(data);
 /** Version settings that hold a single path. */

@@ -18,9 +18,13 @@ export interface VersionScopedDb {
 
 /**
  * Resolution order: the database the active upgrade pins to this version,
- * then the database remembered for this version, then the selected database
- * when it belongs to this version, then the selected database regardless -
- * which is the behaviour that existed before.
+ * then the selected database when it belongs to this version, then the
+ * database remembered for this version, then the selected database
+ * regardless - which is the behaviour that existed before.
+ *
+ * The selection comes before the memory so a window always launches the
+ * database it shows as selected. The memory is for the other versions: the
+ * ones running beside it on a database that is not the selected one.
  */
 export function resolveDbForVersion<T extends VersionScopedDb>(
     dbs: T[],
@@ -36,13 +40,13 @@ export function resolveDbForVersion<T extends VersionScopedDb>(
         if (pinnedDb) {
             return pinnedDb;
         }
+        if (selected?.versionId === versionId) {
+            return selected;
+        }
         const rememberedId = selectedDbByVersion?.[versionId];
         const remembered = rememberedId ? dbs.find(db => db.id === rememberedId) : undefined;
         if (remembered) {
             return remembered;
-        }
-        if (selected?.versionId === versionId) {
-            return selected;
         }
     }
 

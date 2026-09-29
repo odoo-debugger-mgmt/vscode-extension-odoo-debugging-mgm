@@ -48,6 +48,16 @@ suite('Per-version database resolution', () => {
         assert.strictEqual(resolved?.id, 'shop-17');
     });
 
+    test('the selected database of that version beats what it remembers', () => {
+        // Otherwise a window shows one database and launches another: the
+        // upgrade healing moved the selection, and the memory stayed behind.
+        const dbs: VersionScopedDb[] = [
+            { id: 'shop-17', versionId: 'v17', isSelected: true },
+            { id: 'old-17', versionId: 'v17' }
+        ];
+        assert.strictEqual(resolveDbForVersion(dbs, { v17: 'old-17' }, 'v17')?.id, 'shop-17');
+    });
+
     test('falls back to the selected database when it belongs to the version', () => {
         const resolved = resolveDbForVersion(DBS, {}, 'v18');
         assert.strictEqual(resolved?.id, 'shop-18');

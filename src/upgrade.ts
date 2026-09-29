@@ -21,6 +21,7 @@ import { stageTargetModules, unstageTargetModules } from './services/upgradeAppl
 import { showBriefStatus, showError } from './services/notifications';
 import { logger } from './services/logger';
 import { stripSettings } from './utils';
+import { rememberDbForVersion } from './services/dbResolution';
 import { VersionsService } from './versionsService';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 import { selectedIcon, unselectedIcon } from './views/icons';
@@ -127,6 +128,10 @@ export function healUpgradeSelection(project: ProjectModel): boolean {
         return false;
     }
     dbs.forEach(db => (db.isSelected = db.id === target));
+    // The memory follows, so the version launches what is now shown.
+    const side = config.from?.dbId === target ? config.from : config.to;
+    const versionId = side?.versionId ?? dbs.find(db => db.id === target)?.versionId;
+    project.selectedDbByVersion = rememberDbForVersion(project.selectedDbByVersion, versionId, target);
     return true;
 }
 

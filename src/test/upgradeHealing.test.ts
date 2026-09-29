@@ -123,6 +123,17 @@ suite('Keeping the selection on the upgrade pair', () => {
         assert.deepStrictEqual(selectedIds(proj), ['crm-17']);
     });
 
+    test('the side it lands on is also what that version remembers', () => {
+        // The memory left behind made the window launch the database it had
+        // before the upgrade once the upgrade was switched off again.
+        const proj = withDbs(linked(), 'scratch');
+        (proj as any).selectedDbByVersion = { v17: 'scratch', v19: 'crm-19' };
+
+        healUpgradeSelection(proj);
+
+        assert.deepStrictEqual(proj.selectedDbByVersion, { v17: 'crm-17', v19: 'crm-19' });
+    });
+
     test('nothing selected at all also lands on the side upgraded from', () => {
         const proj = withDbs(linked());
 
