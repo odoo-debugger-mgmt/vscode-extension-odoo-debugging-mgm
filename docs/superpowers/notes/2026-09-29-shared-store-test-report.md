@@ -5,8 +5,106 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds two runs. The **second run**, on the fixes, comes first. The
-first run follows it unchanged.
+This file holds three runs, newest first. The earlier runs are kept unchanged.
+
+# Third run: the second round of fixes (`e8741b9`)
+
+**Scope:** as asked:
+- the test suite;
+- item 5 (no error toast);
+- item 7b, including its new step 5;
+- item 12 (a warning, not "Error running command");
+- the "Move this checkout off" list during an upgrade setup.
+
+**Setup:** the same throwaway setup as the second run. The fixture was
+rebuilt from scratch, again with `acme-db19` on 19.0. The throwaway acme clone
+has a spare `parking` branch, so that there is something to move to. The store
+is `/tmp/odt-brief/shared.db`, reached through Create a new store…, All
+workspaces, then Bring It Along.
+
+## Verdict (third run)
+
+- **Fixed and confirmed:**
+  - finding 5: no "No project is selected." in a new window;
+  - finding 9: after another window turns an upgrade on and off, A's status
+    bar, Databases view, `launch.json` and Copy Odoo Command all name the same
+    database;
+  - finding 10: a refused change is a warning naming the store.
+- **Partly fixed, finding 11:** "Move this checkout off" now leaves out a
+  branch another worktree **already holds**. Tested on resume: only `parking`
+  was offered, not `main`. On a **first** setup, though, it still offers
+  `main`, the branch the same setup is about to give the 19.0 copy.
+
+## Test suite: matched
+
+- VS Code 1.139.1: **429 passing, 0 failing, 0 pending**.
+- `two processes committing at once lose no update …` ran and passed (203 ms).
+- The rebuilt `dist/` was identical to the committed one.
+
+## 5. A second window on the same store: matched
+
+- **B on open:** B showed `acme` and `beta` with nothing selected. No toast
+  appeared before or after opening the Odoo view.
+- **B's notification center** held only the older info "2 version(s) were
+  built before provisioning and can be migrated."
+- **Logs:** no window's **Odoo DevTools** log contains "No project is
+  selected".
+- **B's selection:** `beta · beta-db1 · 19.0`. A stayed on
+  `acme · acme-db1 · 17.0`.
+
+## 7b. Each window launches its own database: matched, all five steps
+
+1. **Steps 1 to 3.** A was on acme-db1 and B on acme-db2.
+   - A's Copy Odoo Command: `-d acme-db1 -i acme_sale`.
+   - A's `launch.json`, `odoo-debugger`: `-d acme-db1 -i acme_sale`.
+   - B's `launch.json`: `-d acme-db2 … -u acme_stock`.
+2. **Step 4.** I set up acme-db2 (17.0) → acme-db19 (19.0) from A. The toast
+   read "Upgrade set up: 17.0 → 19.0.". Both windows then had 17.0 →
+   `acme-db2` and 19.0 → `acme-db19`.
+3. **Step 5:**
+   1. B turned the upgrade off.
+   2. A selected acme-db1; its status bar showed `acme-db1`, and its
+      `launch.json` had `-d acme-db1 -i acme_sale`.
+   3. B turned it on ("Upgrade resumed: 17.0 → 19.0."). A's status bar, view
+      and `launch.json` moved to `acme-db2`.
+   4. B turned it off.
+
+   **A's status bar, Databases view (check mark), `launch.json` (17.0) and
+   Copy Odoo Command all named `acme-db2`.** They agree. A does not return to
+   its earlier `acme-db1`: the upgrade's source database stays selected. The
+   brief accepts either, as long as they agree.
+
+## 12. A store from the future: matched
+
+- **On open,** a warning toast was on screen within 3 s and stayed up:
+
+  > The data store /tmp/odt-brief/shared.db is read-only here: it was written by a newer Odoo DevTools (schema 99). Changes to projects, versions and databases cannot be saved; selecting still works in this window.
+
+- **Selecting acme-db1** worked.
+- **Marking `acme_crm` for install** gave a **warning** toast, not "Error
+  running command":
+
+  > The data store /tmp/odt-brief/shared.db is read-only here: a newer Odoo DevTools (schema 99) wrote it; the change was not saved.
+
+  The mark did not appear, and the store stayed byte-identical.
+- **Afterwards:** reset to `1`, and the user-level store setting cleared.
+
+## "Move this checkout off": partly fixed
+
+- **First setup.** At the prompt, `git worktree list` showed only the source,
+  on `17.0-dev`; no copy existed yet. The list offered **`main` and
+  `parking`**, although the same setup then created `…/acme@main`. Choosing
+  `main` would move the source onto the branch the 19.0 copy is about to
+  need.
+- **Cause, from reading the fix:** `reserved` is built from `resolved`, the
+  copies being made for the **current** version. The other side of the
+  upgrade (19.0 → `main`) is not in it.
+- **Resume, the case that failed in the second run.** I removed
+  `acme@17.0-dev`, put the source back on `17.0-dev` (with `acme@main`
+  holding `main`), and toggled the upgrade on. The list offered **only
+  `parking`**. This case is fixed.
+
+---
 
 # Second run: the fixes (`b714132`)
 
