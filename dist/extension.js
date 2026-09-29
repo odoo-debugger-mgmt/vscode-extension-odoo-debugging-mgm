@@ -19918,6 +19918,7 @@ const editorCommands_1 = __webpack_require__(116);
 const helpCommands_1 = __webpack_require__(117);
 const upgradeCommand_1 = __webpack_require__(118);
 const customAddonsCommand_1 = __webpack_require__(81);
+const dataStoreCommands_1 = __webpack_require__(120);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -19933,6 +19934,7 @@ function registerAllCommands(deps) {
     (0, helpCommands_1.registerHelpCommands)(deps);
     (0, upgradeCommand_1.registerUpgradeCommand)(deps);
     (0, customAddonsCommand_1.registerCustomAddonsCommand)(deps);
+    (0, dataStoreCommands_1.registerDataStoreCommands)(deps);
 }
 
 
@@ -24077,6 +24079,498 @@ function describeUpgradePlan(plan, input) {
         lines.push('', `${plan.reposToWorktree.join(', ')} will keep one copy per branch. These directories`, 'will be created, and this is where you will edit that branch\'s code:', ...plan.worktreeDirs.map(dir => `    ${dir}`), '', 'The original checkouts become sources only: they stay yours to switch', 'freely, and nothing that happens to them changes what a version runs.');
     }
     return lines.join('\n');
+}
+
+
+/***/ }),
+/* 120 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerDataStoreCommands = registerDataStoreCommands;
+/**
+ * Where this window's data lives, and moving data in and out of it:
+ *
+ * - `odoo.chooseDataStore`: this workspace's own file, or a shared store
+ *   several workspaces use - for everyone, or for this workspace only;
+ * - `odoo.exportData` / `odoo.importData`: a portable JSON copy.
+ *
+ * Changing the setting is all it takes to switch: the configuration listener
+ * in extension.ts reopens the store and refreshes every view.
+ */
+const vscode = __importStar(__webpack_require__(1));
+const fs = __importStar(__webpack_require__(20));
+const os = __importStar(__webpack_require__(18));
+const path = __importStar(__webpack_require__(4));
+const jsonc_parser_1 = __webpack_require__(21);
+const settingsStore_1 = __webpack_require__(6);
+const logger_1 = __webpack_require__(12);
+const notifications_1 = __webpack_require__(16);
+const setupState_1 = __webpack_require__(65);
+const dataLocation_1 = __webpack_require__(17);
+const mainStore_1 = __webpack_require__(19);
+const workspaceSelection_1 = __webpack_require__(29);
+const dataImport_1 = __webpack_require__(121);
+const SHARED_STORE_FILE = 'odoo-devtools.db';
+/** This window's data as the store holds it: no selection, absolute paths. */
+async function portableCurrentData() {
+    const location = (0, dataLocation_1.currentDataLocation)();
+    const data = (0, workspaceSelection_1.stripSelection)(await settingsStore_1.SettingsStore.get());
+    delete data.activeVersion;
+    return location ? (0, dataImport_1.absolutizePaths)(data, location.root) : data;
+}
+function describeLocation(location) {
+    if (!location) {
+        return 'none';
+    }
+    return location.kind === 'sqlite' ? `shared store ${location.file}` : `this workspace's file ${location.file}`;
+}
+function hasData(data) {
+    return (data.projects?.length ?? 0) > 0 || Object.keys(data.versions ?? {}).length > 0;
+}
+/**
+ * Copies this window's data into the store at `file`, filling gaps and never
+ * overwriting what it already holds. Returns false when the user backs out.
+ */
+async function offerToBringDataAlong(file) {
+    const current = (0, dataLocation_1.currentDataLocation)();
+    if (!current || path.resolve(current.file) === path.resolve(file)) {
+        return true;
+    }
+    const mine = await portableCurrentData();
+    if (!hasData(mine)) {
+        return true;
+    }
+    const kind = (0, dataLocation_1.storeKindOf)(file) ?? 'json';
+    const target = (0, mainStore_1.openMainStore)({ file, kind, root: (0, dataLocation_1.dataRootFor)(file), pinned: true });
+    if (!target) {
+        void (0, notifications_1.showError)(`${file} needs node:sqlite, which this editor's runtime (Node ${process.versions.node}) does not provide.`);
+        return false;
+    }
+    const targetRead = await target.read();
+    const { data, summary } = (0, dataImport_1.mergeData)(targetRead.data, mine);
+    const lines = (0, dataImport_1.describeMerge)(summary);
+    const choice = await (0, notifications_1.showModalInfo)(`Bring this workspace's data into ${file}?\n\n`
+        + (lines.length > 0 ? lines.map(line => `  ${line}`).join('\n') : '  Nothing is missing there.')
+        + '\n\nNothing already in that store is overwritten. This workspace\'s own file is left as it is.', 'Bring It Along', 'Use What Is There');
+    if (!choice) {
+        return false;
+    }
+    if (choice === 'Bring It Along' && lines.length > 0) {
+        await target.commit(targetRead, data);
+        logger_1.logger.info(`[store] merged this workspace's data into ${file}: ${lines.join('; ')}`);
+    }
+    return true;
+}
+async function chooseDataStore() {
+    const current = (0, dataLocation_1.currentDataLocation)();
+    const sharedDefault = path.join((0, setupState_1.readSetupState)().provisioningRoot, SHARED_STORE_FILE);
+    const picked = await vscode.window.showQuickPick([
+        {
+            label: '$(database) Shared store',
+            description: sharedDefault,
+            detail: 'One store several workspaces use at once - one per Odoo version, say. What is selected stays per window.',
+            action: 'shared'
+        },
+        {
+            label: '$(folder-opened) Choose a store file…',
+            detail: 'A .db file anywhere: a separate store for one client, for instance.',
+            action: 'pick'
+        },
+        {
+            label: '$(file) This workspace only',
+            description: `.vscode/${dataLocation_1.DATA_FILE_NAME}`,
+            detail: 'The data lives with this workspace, as it always did.',
+            action: 'workspace'
+        }
+    ], {
+        title: 'Choose Data Store',
+        placeHolder: `Now using ${describeLocation(current)}`
+    });
+    if (!picked) {
+        return;
+    }
+    const config = vscode.workspace.getConfiguration('odooDebugger');
+    const inspected = config.inspect(dataLocation_1.DATA_STORE_SETTING);
+    if (picked.action === 'workspace') {
+        // With a shared store set for everyone, clearing this workspace's
+        // value would fall through to it; naming the file keeps it here.
+        const sharedForEveryone = inspected?.globalValue && (0, dataLocation_1.storeKindOf)(inspected.globalValue) === 'sqlite';
+        await config.update(dataLocation_1.DATA_STORE_SETTING, sharedForEveryone ? `.vscode/${dataLocation_1.DATA_FILE_NAME}` : undefined, vscode.ConfigurationTarget.Workspace);
+        void (0, notifications_1.showInfo)('This workspace now uses its own data file.');
+        return;
+    }
+    let file = sharedDefault;
+    if (picked.action === 'pick') {
+        const uri = await vscode.window.showSaveDialog({
+            title: 'Choose or create a data store',
+            saveLabel: 'Use This Store',
+            defaultUri: vscode.Uri.file(sharedDefault),
+            filters: { 'Odoo DevTools data store': ['db'] }
+        });
+        if (!uri) {
+            return;
+        }
+        file = uri.fsPath.toLowerCase().endsWith('.db') ? uri.fsPath : `${uri.fsPath}.db`;
+    }
+    const scope = await vscode.window.showQuickPick([
+        { label: 'All workspaces', detail: 'Every workspace uses this store unless it chooses otherwise.', global: true },
+        { label: 'This workspace only', detail: 'Other workspaces keep whatever they use now.', global: false }
+    ], { title: 'Use it where?' });
+    if (!scope) {
+        return;
+    }
+    if (!(await offerToBringDataAlong(file))) {
+        return;
+    }
+    if (scope.global) {
+        await config.update(dataLocation_1.DATA_STORE_SETTING, file, vscode.ConfigurationTarget.Global);
+        if (inspected?.workspaceValue) {
+            const clear = await (0, notifications_1.showInfo)(`This workspace has its own data store set (${inspected.workspaceValue}), which still wins here.`, 'Use the Shared Store Here Too');
+            if (clear) {
+                await config.update(dataLocation_1.DATA_STORE_SETTING, undefined, vscode.ConfigurationTarget.Workspace);
+            }
+        }
+    }
+    else {
+        await config.update(dataLocation_1.DATA_STORE_SETTING, file, vscode.ConfigurationTarget.Workspace);
+    }
+    void (0, notifications_1.showInfo)(`Now using the shared store ${file}.`);
+}
+async function exportData() {
+    const uri = await vscode.window.showSaveDialog({
+        title: 'Export Odoo DevTools data',
+        saveLabel: 'Export',
+        defaultUri: vscode.Uri.file(path.join(os.homedir(), `odoo-devtools-export-${new Date().toISOString().slice(0, 10)}.json`)),
+        filters: { JSON: ['json'] }
+    });
+    if (!uri) {
+        return;
+    }
+    const data = await portableCurrentData();
+    await fs.writeFile(uri.fsPath, JSON.stringify((0, dataImport_1.buildExport)(data), null, 2), 'utf-8');
+    const choice = await (0, notifications_1.showInfo)(`Exported ${data.projects.length} project(s) to ${uri.fsPath}.`, 'Reveal');
+    if (choice === 'Reveal') {
+        await vscode.commands.executeCommand('revealFileInOS', uri);
+    }
+}
+async function importData(deps) {
+    const picked = await vscode.window.showOpenDialog({
+        title: 'Import Odoo DevTools data',
+        openLabel: 'Import',
+        canSelectMany: false,
+        filters: { JSON: ['json'] }
+    });
+    const file = picked?.[0]?.fsPath;
+    if (!file) {
+        return;
+    }
+    const parsed = (0, dataImport_1.readImportFile)((0, jsonc_parser_1.parse)(await fs.readFile(file, 'utf-8')));
+    if (!parsed) {
+        void (0, notifications_1.showError)(`${path.basename(file)} is not an Odoo DevTools export or data file.`);
+        return;
+    }
+    // Exports are already absolute; a raw data file is relative to its workspace.
+    const incoming = (0, dataImport_1.absolutizePaths)((0, workspaceSelection_1.stripSelection)(parsed), (0, dataLocation_1.dataRootFor)(file));
+    delete incoming.activeVersion;
+    const current = await settingsStore_1.SettingsStore.get();
+    const { data, summary } = (0, dataImport_1.mergeData)(current, incoming);
+    const lines = (0, dataImport_1.describeMerge)(summary);
+    const choice = await (0, notifications_1.showModalInfo)(`Import ${path.basename(file)} into ${describeLocation((0, dataLocation_1.currentDataLocation)())}?\n\n`
+        + (lines.length > 0 ? `Merging adds:\n${lines.map(line => `  ${line}`).join('\n')}\n\n` : 'Merging adds nothing: it is all here already.\n\n')
+        + 'Merge never overwrites what is here. Replace discards it.', 'Merge', 'Replace…');
+    if (!choice) {
+        return;
+    }
+    let result = data;
+    if (choice === 'Replace…') {
+        const confirmed = await (0, notifications_1.showModalWarning)(`Replace everything in ${describeLocation((0, dataLocation_1.currentDataLocation)())} with ${path.basename(file)}? `
+            + 'Every project, version and database record there now is discarded. Export first if you might want it back.', 'Replace Everything');
+        if (confirmed !== 'Replace Everything') {
+            return;
+        }
+        result = incoming;
+    }
+    await settingsStore_1.SettingsStore.saveWithoutComments(result);
+    await deps.versionsService.refresh();
+    await deps.refreshAll({ reason: 'all' });
+    void (0, notifications_1.showInfo)(choice === 'Merge'
+        ? `Imported ${path.basename(file)}${lines.length > 0 ? `: ${lines.join(', ')}` : ' (nothing was missing)'}.`
+        : `Replaced the data with ${path.basename(file)}.`);
+}
+function registerDataStoreCommands(deps) {
+    const guarded = (name, run) => async () => {
+        try {
+            await run();
+        }
+        catch (error) {
+            logger_1.logger.error(`${name} failed:`, error);
+            void (0, notifications_1.showError)(`${name} failed: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    };
+    deps.context.subscriptions.push(vscode.commands.registerCommand('odoo.chooseDataStore', guarded('Choose Data Store', chooseDataStore)), vscode.commands.registerCommand('odoo.exportData', guarded('Export Data', exportData)), vscode.commands.registerCommand('odoo.importData', guarded('Import Data', () => importData(deps))));
+}
+
+
+/***/ }),
+/* 121 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.EXPORT_SCHEMA_VERSION = void 0;
+exports.absolutizePaths = absolutizePaths;
+exports.describeMerge = describeMerge;
+exports.mergeData = mergeData;
+exports.readImportFile = readImportFile;
+exports.buildExport = buildExport;
+/**
+ * Moving data between stores: making paths absolute, and merging one set of
+ * data into another.
+ *
+ * Pure, and tested as data. The commands that use these live in
+ * commands/dataStoreCommands.ts.
+ */
+const path = __importStar(__webpack_require__(4));
+const node_crypto_1 = __webpack_require__(59);
+const workspaceSelection_1 = __webpack_require__(29);
+/** Version settings that hold a single path. */
+const VERSION_PATH_KEYS = ['odooPath', 'enterprisePath', 'designThemesPath', 'customAddonsPath', 'pythonPath', 'dumpsFolder'];
+function absolute(value, root) {
+    return typeof value === 'string' && value.trim() !== '' && !path.isAbsolute(value.trim())
+        ? path.resolve(root, value.trim())
+        : value;
+}
+function absolutizeSettings(settings, root) {
+    if (!settings) {
+        return;
+    }
+    for (const key of VERSION_PATH_KEYS) {
+        settings[key] = absolute(settings[key], root);
+    }
+    if (typeof settings.subModulesPaths === 'string' && settings.subModulesPaths.trim()) {
+        settings.subModulesPaths = settings.subModulesPaths
+            .split(',')
+            .map(entry => entry.trim())
+            .filter(Boolean)
+            .map(entry => absolute(entry, root))
+            .join(',');
+    }
+}
+/**
+ * A copy of `data` with every workspace-relative path made absolute against
+ * `root`, the workspace the data came from. A shared store never holds a
+ * relative path: `./custom-addons` would mean a different folder in every
+ * window that reads it.
+ */
+function absolutizePaths(data, root) {
+    const copy = structuredClone(data);
+    absolutizeSettings(copy.settings, root);
+    for (const version of Object.values(copy.versions ?? {})) {
+        absolutizeSettings(version?.settings, root);
+    }
+    for (const project of copy.projects ?? []) {
+        for (const repo of project?.repos ?? []) {
+            repo.path = absolute(repo.path, root);
+        }
+        for (const db of project?.dbs ?? []) {
+            db.sqlFilePath = absolute(db.sqlFilePath, root);
+            for (const assignment of db?.projectRepoBranches ?? []) {
+                assignment.repoPath = absolute(assignment.repoPath, root);
+            }
+        }
+        for (const entry of project?.upgradeConfig?.repos ?? []) {
+            entry.repoPath = absolute(entry.repoPath, root);
+        }
+    }
+    return copy;
+}
+/** One line per non-zero count, for a confirmation dialog. */
+function describeMerge(summary) {
+    const lines = [];
+    const add = (count, text) => {
+        if (count > 0) {
+            lines.push(`${count} ${text}`);
+        }
+    };
+    add(summary.projectsAdded, `new project${summary.projectsAdded === 1 ? '' : 's'}`);
+    add(summary.projectsMerged, `existing project${summary.projectsMerged === 1 ? '' : 's'} completed with what is missing`);
+    add(summary.databasesAdded, `database${summary.databasesAdded === 1 ? '' : 's'} added`);
+    add(summary.versionsAdded, `new version${summary.versionsAdded === 1 ? '' : 's'}`);
+    add(summary.versionsMatched, `version${summary.versionsMatched === 1 ? '' : 's'} matched to one already there, by branch`);
+    add(summary.templatesAdded, `database template${summary.templatesAdded === 1 ? '' : 's'}`);
+    return lines;
+}
+function addMissing(target, incoming, key) {
+    const known = new Set(target.map(key));
+    let added = 0;
+    for (const item of incoming ?? []) {
+        const id = key(item);
+        if (!known.has(id)) {
+            target.push(item);
+            known.add(id);
+            added += 1;
+        }
+    }
+    return added;
+}
+/**
+ * `incoming` merged into `target`. What is already in `target` is never
+ * overwritten: incoming data only fills gaps.
+ *
+ * Versions are matched by branch rather than id, because ids differ between
+ * machines and stores. An incoming version whose branch is already there is
+ * the same version: every reference to its id is pointed at the existing one.
+ */
+function mergeData(target, incoming) {
+    const data = structuredClone(target);
+    const source = structuredClone(incoming);
+    const summary = {
+        projectsAdded: 0, projectsMerged: 0, databasesAdded: 0, versionsAdded: 0, versionsMatched: 0, templatesAdded: 0
+    };
+    data.projects = Array.isArray(data.projects) ? data.projects : [];
+    data.versions = data.versions ?? {};
+    data.dbTemplates = Array.isArray(data.dbTemplates) ? data.dbTemplates : [];
+    // 1. Versions, and how incoming ids map onto this store's.
+    const idMap = new Map();
+    for (const [id, version] of Object.entries(source.versions ?? {})) {
+        const branch = String(version?.odooVersion ?? '').trim();
+        const match = Object.entries(data.versions).find(([, existing]) => String(existing?.odooVersion ?? '').trim() === branch && branch !== '');
+        if (match) {
+            idMap.set(id, match[0]);
+            summary.versionsMatched += 1;
+            continue;
+        }
+        const newId = data.versions[id] ? (0, node_crypto_1.randomUUID)() : id;
+        idMap.set(id, newId);
+        data.versions[newId] = { ...version, id: newId, isActive: false };
+        summary.versionsAdded += 1;
+    }
+    const remap = (id) => (typeof id === 'string' && idMap.has(id) ? idMap.get(id) : id);
+    // 2. References to those versions inside the incoming projects.
+    for (const project of source.projects ?? []) {
+        for (const db of project?.dbs ?? []) {
+            db.versionId = remap(db.versionId);
+        }
+        if (project?.selectedDbByVersion) {
+            project.selectedDbByVersion = Object.fromEntries(Object.entries(project.selectedDbByVersion).map(([versionId, dbId]) => [remap(versionId), dbId]));
+        }
+        for (const side of ['from', 'to']) {
+            if (project?.upgradeConfig?.[side]) {
+                project.upgradeConfig[side].versionId = remap(project.upgradeConfig[side].versionId);
+            }
+        }
+    }
+    // 3. Projects: new ones whole, existing ones completed.
+    const byKey = new Map(data.projects.map((project) => [(0, workspaceSelection_1.projectKey)(project), project]));
+    for (const project of source.projects ?? []) {
+        const existing = byKey.get((0, workspaceSelection_1.projectKey)(project));
+        if (!existing) {
+            data.projects.push(project);
+            byKey.set((0, workspaceSelection_1.projectKey)(project), project);
+            summary.projectsAdded += 1;
+            summary.databasesAdded += (project.dbs ?? []).length;
+            continue;
+        }
+        summary.projectsMerged += 1;
+        existing.dbs = existing.dbs ?? [];
+        existing.repos = existing.repos ?? [];
+        existing.tickets = existing.tickets ?? [];
+        summary.databasesAdded += addMissing(existing.dbs, project.dbs, (db) => db?.id);
+        addMissing(existing.repos, project.repos, (repo) => String(repo?.name ?? '').toLowerCase());
+        addMissing(existing.tickets, project.tickets, (ticket) => ticket?.id);
+        existing.selectedDbByVersion = { ...(project.selectedDbByVersion ?? {}), ...(existing.selectedDbByVersion ?? {}) };
+    }
+    // 4. Templates, by name.
+    summary.templatesAdded = addMissing(data.dbTemplates, source.dbTemplates, (template) => template?.name);
+    // 5. A legacy settings block only means something to a store with no
+    // versions yet: anywhere else it would be migrated into a duplicate.
+    if (source.settings && !data.settings && Object.keys(data.versions).length === 0) {
+        data.settings = source.settings;
+    }
+    return { data, summary };
+}
+/** What an import file holds: an export, or a raw data file. */
+function readImportFile(parsed) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return undefined;
+    }
+    const value = parsed;
+    const data = (value.schemaVersion !== undefined && value.data && typeof value.data === 'object')
+        ? value.data
+        : value;
+    return Array.isArray(data.projects) ? data : undefined;
+}
+exports.EXPORT_SCHEMA_VERSION = 1;
+function buildExport(data, exportedAt = new Date()) {
+    return { schemaVersion: exports.EXPORT_SCHEMA_VERSION, exportedAt: exportedAt.toISOString(), data };
 }
 
 

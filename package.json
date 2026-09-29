@@ -747,6 +747,24 @@
         "title": "Set Up an Upgrade",
         "category": "Odoo DevTools",
         "icon": "$(arrow-up)"
+      },
+      {
+        "command": "odoo.chooseDataStore",
+        "title": "Choose Data Store…",
+        "category": "Odoo DevTools",
+        "icon": "$(database)"
+      },
+      {
+        "command": "odoo.exportData",
+        "title": "Export Data…",
+        "category": "Odoo DevTools",
+        "icon": "$(export)"
+      },
+      {
+        "command": "odoo.importData",
+        "title": "Import Data…",
+        "category": "Odoo DevTools",
+        "icon": "$(cloud-download)"
       }
     ],
     "menus": {
@@ -807,6 +825,21 @@
           "command": "proj.openProjectWorkspace",
           "when": "view == projectSelector",
           "group": "1_project@5"
+        },
+        {
+          "command": "odoo.chooseDataStore",
+          "when": "view == projectSelector",
+          "group": "1_store@1"
+        },
+        {
+          "command": "odoo.exportData",
+          "when": "view == projectSelector",
+          "group": "1_store@2"
+        },
+        {
+          "command": "odoo.importData",
+          "when": "view == projectSelector",
+          "group": "1_store@3"
         },
         {
           "command": "odoo.startShell",
@@ -1812,7 +1845,7 @@
           "type": "string",
           "default": "",
           "scope": "window",
-          "markdownDescription": "The data file this workspace reads and writes: projects, versions, databases and upgrades. Empty means `.vscode/odoo-debugger-data.json` in the first workspace folder. Only a **workspace-level** value to a `.json` file is used for now; Open Project Workspace sets it so the workspace it opens keeps the same data. A user-level default, shared by every workspace, arrives with the shared data store."
+          "markdownDescription": "Where this workspace's projects, versions, databases and upgrades are kept. Empty means `.vscode/odoo-debugger-data.json` in the first workspace folder. A `.db` file is a **shared store** several workspaces use at once; set it at user level to share it everywhere, or per workspace. A `.json` file is honoured per workspace only. What is selected, and testing mode, stay per window. Use **Odoo DevTools: Choose Data Store…** rather than editing this by hand, so the current data can come along."
         },
         "odooDebugger.ticketBaseUrl": {
           "type": "string",

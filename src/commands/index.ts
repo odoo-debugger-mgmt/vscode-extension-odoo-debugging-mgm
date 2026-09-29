@@ -22,6 +22,7 @@ import { registerEditorCommands } from './editorCommands';
 import { registerHelpCommands } from './helpCommands';
 import { registerUpgradeCommand } from './upgradeCommand';
 import { registerCustomAddonsCommand } from './customAddonsCommand';
+import { registerDataStoreCommands } from './dataStoreCommands';
 
 export type RefreshReason = 'ui' | 'debugger' | 'all';
 
@@ -68,4 +69,5 @@ export function registerAllCommands(deps: CommandDeps): void {
     registerHelpCommands(deps);
     registerUpgradeCommand(deps);
     registerCustomAddonsCommand(deps);
+    registerDataStoreCommands(deps);
 }
