@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 import { DbsTreeProvider } from './views/dbsView';
 import { migrateLegacySwitchBehaviorSetting } from './services/environment';
@@ -47,7 +48,8 @@ import { registerAllCommands, RefreshReason } from './commands';
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext(): Promise<void> {
     try {
-        const result = await SettingsStore.getSelectedProject();
+        // Silent: this runs on activation and every refresh, before anyone asked for anything.
+        const result = await SettingsStore.peekSelectedProject();
         updateTestingContext(!!result?.project?.testingConfig?.isEnabled);
     } catch (error) {
         // If there's an error, default to testing disabled
@@ -134,7 +136,9 @@ export async function activate(context: vscode.ExtensionContext) {
     // Passive check only: stale references are logged, never prompted about.
     void logStaleReferences();
 
-    context.subscriptions.push(vscode.window.registerTreeDataProvider('projectSelector', providers.project));
+    // A TreeView handle so the view can say which shared store it shows.
+    const projectTreeView = vscode.window.createTreeView('projectSelector', { treeDataProvider: providers.project });
+    context.subscriptions.push(projectTreeView);
     context.subscriptions.push(vscode.window.registerTreeDataProvider('repoSelector', providers.repo));
     // A TreeView handle so a refused selection can move the row highlight
     // back to the database that is actually selected.
@@ -176,7 +180,7 @@ export async function activate(context: vscode.ExtensionContext) {
             refreshViews().catch(error => logger.warn('Refresh after a debug session change failed:', error));
         },
         getSelectedDbName: async () => {
-            const result = await SettingsStore.getSelectedProject();
+            const result = await SettingsStore.peekSelectedProject();
             const db = (result?.project.dbs as DatabaseModel[] | undefined)?.find(entry => entry.isSelected);
             return db?.id;
         }
@@ -255,7 +259,12 @@ export async function activate(context: vscode.ExtensionContext) {
         }, 300);
     };
     let storeSubscription: { dispose(): void } | undefined;
+    const describeStore = () => {
+        const store = currentMainStore();
+        projectTreeView.description = store?.kind === 'sqlite' ? `shared: ${path.basename(store.location)}` : undefined;
+    };
     const watchStore = () => {
+        describeStore();
         storeSubscription?.dispose();
         storeSubscription = currentMainStore()?.onDidChange?.(onStoreChanged);
     };

@@ -300,6 +300,12 @@ export class SqliteMainStore implements MainStore {
         });
     }
 
+    readOnlyReason(): string | undefined {
+        return this.readOnlyVersion === undefined
+            ? undefined
+            : `it was written by a newer Odoo DevTools (schema ${this.readOnlyVersion})`;
+    }
+
     onDidChange(listener: () => void): Disposable {
         this.listeners.add(listener);
         if (!this.pollTimer) {

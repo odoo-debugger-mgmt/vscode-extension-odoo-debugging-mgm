@@ -53,6 +53,7 @@ const counterOf = (data: DebuggerData, dbId: string) =>
         await store.commit(await store.read(), sampleData());
         const read = await store.read();
 
+        assert.strictEqual(store.readOnlyReason(), undefined);
         assert.deepStrictEqual(read.data.projects.map(project => project.name), ['Acme', 'Other']);
         assert.strictEqual(read.data.versions?.v17.odooVersion, '17.0');
         assert.strictEqual(read.data.dbTemplates?.[0].templateDbName, 'tpl_base');
@@ -131,8 +132,10 @@ const counterOf = (data: DebuggerData, dbId: string) =>
         raw.close();
 
         const newer = open();
+        assert.strictEqual(newer.readOnlyReason(), undefined, 'unknown until the store is read');
         const base = await newer.read();
         assert.strictEqual(base.data.projects.length, 2);
+        assert.match(newer.readOnlyReason() ?? '', /schema 99/);
         await assert.rejects(newer.commit(base, { ...base.data, projects: [] }), StoreReadOnlyError);
     });
 

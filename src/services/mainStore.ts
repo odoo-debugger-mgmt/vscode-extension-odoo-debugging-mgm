@@ -55,6 +55,8 @@ export interface MainStore {
     commit(base: StoreRead | undefined, next: DebuggerData): Promise<CommitResult>;
     /** Fires when another process changes the store. */
     onDidChange?(listener: () => void): Disposable;
+    /** Why saves to this store will fail, when they will; known once it has been read. */
+    readOnlyReason?(): string | undefined;
     dispose(): void;
 }
 

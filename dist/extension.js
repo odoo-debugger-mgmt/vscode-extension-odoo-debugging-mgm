@@ -43,7 +43,8 @@ exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
-const dbsView_1 = __webpack_require__(3);
+const path = __importStar(__webpack_require__(3));
+const dbsView_1 = __webpack_require__(4);
 const environment_1 = __webpack_require__(48);
 const dataMigration_1 = __webpack_require__(76);
 const project_1 = __webpack_require__(77);
@@ -78,7 +79,8 @@ const commands_1 = __webpack_require__(98);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
-        const result = await settingsStore_1.SettingsStore.getSelectedProject();
+        // Silent: this runs on activation and every refresh, before anyone asked for anything.
+        const result = await settingsStore_1.SettingsStore.peekSelectedProject();
         (0, context_1.updateTestingContext)(!!result?.project?.testingConfig?.isEnabled);
     }
     catch (error) {
@@ -153,7 +155,9 @@ async function activate(context) {
     void (0, environment_1.migrateLegacySwitchBehaviorSetting)();
     // Passive check only: stale references are logged, never prompted about.
     void (0, reconcile_1.logStaleReferences)();
-    context.subscriptions.push(vscode.window.registerTreeDataProvider('projectSelector', providers.project));
+    // A TreeView handle so the view can say which shared store it shows.
+    const projectTreeView = vscode.window.createTreeView('projectSelector', { treeDataProvider: providers.project });
+    context.subscriptions.push(projectTreeView);
     context.subscriptions.push(vscode.window.registerTreeDataProvider('repoSelector', providers.repo));
     // A TreeView handle so a refused selection can move the row highlight
     // back to the database that is actually selected.
@@ -192,7 +196,7 @@ async function activate(context) {
             refreshViews().catch(error => logger_1.logger.warn('Refresh after a debug session change failed:', error));
         },
         getSelectedDbName: async () => {
-            const result = await settingsStore_1.SettingsStore.getSelectedProject();
+            const result = await settingsStore_1.SettingsStore.peekSelectedProject();
             const db = result?.project.dbs?.find(entry => entry.isSelected);
             return db?.id;
         }
@@ -263,7 +267,12 @@ async function activate(context) {
         }, 300);
     };
     let storeSubscription;
+    const describeStore = () => {
+        const store = (0, mainStore_1.currentMainStore)();
+        projectTreeView.description = store?.kind === 'sqlite' ? `shared: ${path.basename(store.location)}` : undefined;
+    };
     const watchStore = () => {
+        describeStore();
         storeSubscription?.dispose();
         storeSubscription = (0, mainStore_1.currentMainStore)()?.onDidChange?.(onStoreChanged);
     };
@@ -459,6 +468,12 @@ module.exports = require("node:fs");
 
 /***/ }),
 /* 3 */
+/***/ ((module) => {
+
+module.exports = require("node:path");
+
+/***/ }),
+/* 4 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -498,7 +513,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.DbsTreeProvider = void 0;
 const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const baseTreeProvider_1 = __webpack_require__(5);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(31);
@@ -535,7 +550,8 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         return this.rows.get(dbId);
     }
     async getChildren(_element) {
-        const result = await settingsStore_1.SettingsStore.getSelectedProject();
+        // Silent: an empty list shows the view's welcome content.
+        const result = await settingsStore_1.SettingsStore.peekSelectedProject();
         if (!result) {
             return [];
         }
@@ -752,12 +768,6 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
 }
 exports.DbsTreeProvider = DbsTreeProvider;
 
-
-/***/ }),
-/* 4 */
-/***/ ((module) => {
-
-module.exports = require("node:path");
 
 /***/ }),
 /* 5 */
@@ -1030,6 +1040,20 @@ class SettingsStore {
             throw error;
         }
     }
+    static announcedReadOnly = new Set();
+    /**
+     * Says once, when a read-only store is opened, that it is - not only when
+     * the first save fails. Selecting still works: it is this window's.
+     */
+    static announceReadOnly(store) {
+        const reason = store.readOnlyReason?.();
+        if (!reason || this.announcedReadOnly.has(store.location)) {
+            return;
+        }
+        this.announcedReadOnly.add(store.location);
+        void (0, utils_1.showWarning)(`The data store ${store.location} is read-only here: ${reason}. `
+            + 'Changes to projects, versions and databases cannot be saved; selecting still works in this window.');
+    }
     /** The stored data, without this window's selection applied, and the read it came from. */
     static async readStored(store) {
         await this.flushPendingWrite(store.location);
@@ -1048,6 +1072,7 @@ class SettingsStore {
         }
         const snapshot = { ...read, data: this.cloneData(read.data) };
         this.cache.set(store.location, { mtimeMs: read.mtimeMs, read: snapshot });
+        this.announceReadOnly(store);
         return { data: this.cloneData(snapshot.data), read: snapshot };
     }
     /**
@@ -1913,7 +1938,7 @@ exports.listAllBranches = listAllBranches;
  * listings and checkouts via source control (with type-safe fallbacks).
  */
 const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const logger_1 = __webpack_require__(12);
 const process_1 = __webpack_require__(13);
 function resolveRepoPath(repoPath) {
@@ -2667,7 +2692,7 @@ exports.currentDataLocation = currentDataLocation;
  * The resolution is pure; only `currentDataLocation` touches vscode.
  */
 const os = __importStar(__webpack_require__(18));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
 const logger_1 = __webpack_require__(12);
 exports.DATA_FILE_NAME = 'odoo-debugger-data.json';
@@ -2829,7 +2854,7 @@ exports.disposeMainStores = disposeMainStores;
  * docs/superpowers/specs/2026-09-28-shared-data-store-design.md.
  */
 const fs = __importStar(__webpack_require__(20));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const jsonc_parser_1 = __webpack_require__(21);
 const settings_1 = __webpack_require__(7);
 const utils_1 = __webpack_require__(8);
@@ -4885,7 +4910,7 @@ exports.extraOf = extraOf;
  * is still experimental on Node 22.
  */
 const fs = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const mergeDocuments_1 = __webpack_require__(28);
 const workspaceSelection_1 = __webpack_require__(29);
 const logger_1 = __webpack_require__(12);
@@ -5135,6 +5160,11 @@ class SqliteMainStore {
             }
             return result;
         });
+    }
+    readOnlyReason() {
+        return this.readOnlyVersion === undefined
+            ? undefined
+            : `it was written by a newer Odoo DevTools (schema ${this.readOnlyVersion})`;
     }
     onDidChange(listener) {
         this.listeners.add(listener);
@@ -6942,7 +6972,8 @@ function syncUpgradeContext(config) {
 /** Keeps the context keys in step with what is stored, and heals the pair. */
 async function initializeUpgradeContext() {
     try {
-        const result = await settingsStore_1.SettingsStore.getSelectedProject();
+        // Silent: this runs on activation and every refresh.
+        const result = await settingsStore_1.SettingsStore.peekSelectedProject();
         const config = readUpgradeConfig(result?.project);
         syncUpgradeContext(config);
         // Both run: `||` would skip the second whenever the first healed.
@@ -6998,7 +7029,7 @@ class UpgradeTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     async getChildren(element) {
         // An empty list falls through to the view's welcome content, which
         // explains that a project has to be selected first.
-        const result = await settingsStore_1.SettingsStore.getSelectedProject();
+        const result = await settingsStore_1.SettingsStore.peekSelectedProject();
         if (!result) {
             return [];
         }
@@ -8603,7 +8634,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getRepoBranch = getRepoBranch;
 const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const fs = __importStar(__webpack_require__(20));
 const gitService_1 = __webpack_require__(11);
 const runtimeCache_1 = __webpack_require__(15);
@@ -9003,7 +9034,7 @@ exports.removeManagedBranch = removeManagedBranch;
  * happened to be on at the time.
  */
 const fs = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const process_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(12);
 /** The extension-managed local branch a worktree for `branch` checks out. */
@@ -9272,7 +9303,7 @@ exports.describeModeChange = describeModeChange;
  *
  * Pure: mapping is decided here, creating directories is not.
  */
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const repo_1 = __webpack_require__(44);
 const utils_1 = __webpack_require__(8);
 /** Anything illegal or confusing in a directory name becomes a dash. */
@@ -9668,7 +9699,7 @@ exports.resolveDatabaseSeries = resolveDatabaseSeries;
  * exist.
  */
 const fs = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const versionProposal_1 = __webpack_require__(57);
 const database_1 = __webpack_require__(46);
 const logger_1 = __webpack_require__(12);
@@ -9938,7 +9969,7 @@ exports.changeDatabaseVersion = changeDatabaseVersion;
 exports.changeDatabaseProjectRepoBranches = changeDatabaseProjectRepoBranches;
 exports.manageDatabaseTemplates = manageDatabaseTemplates;
 const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const os = __importStar(__webpack_require__(18));
 const node_crypto_1 = __webpack_require__(59);
 const db_1 = __webpack_require__(42);
@@ -11523,7 +11554,7 @@ exports.cloneOdooRepositories = cloneOdooRepositories;
  * version profile.
  */
 const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const fs = __importStar(__webpack_require__(2));
 const utils_1 = __webpack_require__(8);
 const process_1 = __webpack_require__(13);
@@ -11920,7 +11951,7 @@ exports.executeProvision = executeProvision;
  * stopped and an environment built by hand is adopted rather than rebuilt.
  */
 const fs = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const odooRequirements_1 = __webpack_require__(62);
 const worktree_1 = __webpack_require__(52);
 const pythonToolchain_1 = __webpack_require__(63);
@@ -12161,7 +12192,7 @@ exports.readOdooPythonWindow = readOdooPythonWindow;
  * named in requirements.txt's header comment.
  */
 const fs = __importStar(__webpack_require__(20));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 exports.FALLBACK_MIN_PYTHON = [3, 10];
 /**
  * Default `python3` of each distribution Odoo names in its requirements
@@ -12302,7 +12333,7 @@ exports.installRequirements = installRequirements;
  */
 const fs = __importStar(__webpack_require__(2));
 const os = __importStar(__webpack_require__(18));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
 const process_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(12);
@@ -12682,7 +12713,7 @@ exports.shouldAdoptLegacySourceRepo = shouldAdoptLegacySourceRepo;
  */
 const fs = __importStar(__webpack_require__(2));
 const os = __importStar(__webpack_require__(18));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
 const logger_1 = __webpack_require__(12);
 exports.DEFAULT_PROVISIONING_DIRNAME = 'odoo-dev';
@@ -13267,7 +13298,7 @@ exports.importPreparedDump = importPreparedDump;
 exports.prepareDumpViaTempFile = prepareDumpViaTempFile;
 const fs = __importStar(__webpack_require__(2));
 const fsp = __importStar(__webpack_require__(20));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const os = __importStar(__webpack_require__(18));
 const node_child_process_1 = __webpack_require__(14);
 const node_stream_1 = __webpack_require__(70);
@@ -15574,7 +15605,7 @@ exports.readModuleManifest = readModuleManifest;
 exports.findModuleForFile = findModuleForFile;
 exports.extractTicketIdsFromBranch = extractTicketIdsFromBranch;
 const fs = __importStar(__webpack_require__(20));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const logger_1 = __webpack_require__(12);
 const manifestCache = new Map();
 const TICKET_KEYS = ['task_id', 'task_ids', 'ticket', 'ticket_id', 'ticket_number'];
@@ -15872,7 +15903,8 @@ class RepoTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         return element;
     }
     async getChildren(_element) {
-        const result = await settingsStore_1.SettingsStore.getSelectedProject();
+        // Silent: an empty list shows the view's welcome content.
+        const result = await settingsStore_1.SettingsStore.peekSelectedProject();
         if (!result) {
             return [];
         }
@@ -16074,7 +16106,7 @@ const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(8);
 const psaeInternal_1 = __webpack_require__(83);
 const fs = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(6);
 const database_1 = __webpack_require__(46);
 const sortOptions_1 = __webpack_require__(36);
@@ -16138,8 +16170,9 @@ class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
             return [];
         }
         // Empty lists fall through to the view's welcome content, which
-        // explains that a project and database must be selected first.
-        const result = await settingsStore_1.SettingsStore.getSelectedProject();
+        // explains that a project and database must be selected first - so
+        // this reads silently rather than raising a toast from a refresh.
+        const result = await settingsStore_1.SettingsStore.peekSelectedProject();
         if (!result) {
             return [];
         }
@@ -17735,7 +17768,7 @@ exports.startDebugServer = startDebugServer;
  * (addons path, -i/-u, testing flags), and starts/stops the server and shell.
  */
 const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const settings_1 = __webpack_require__(7);
 const utils_1 = __webpack_require__(8);
 const psaeInternal_1 = __webpack_require__(83);
@@ -18280,7 +18313,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.updateManagedLaunchConfig = updateManagedLaunchConfig;
 const fs = __importStar(__webpack_require__(20));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const jsonc_parser_1 = __webpack_require__(21);
 /**
  * Manages the extension's entry in .vscode/launch.json. Only the managed
@@ -19095,7 +19128,7 @@ exports.selectProjectForExplorer = selectProjectForExplorer;
  * file operations, file watchers, branch display and missing-path detection.
  */
 const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(6);
 const repo_1 = __webpack_require__(44);
 const utils_1 = __webpack_require__(8);
@@ -19240,7 +19273,7 @@ class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
         if (!element) {
             // Empty lists fall through to the view's welcome content, which
             // offers the select-project / select-repos actions.
-            const selection = await settingsStore_1.SettingsStore.getSelectedProject();
+            const selection = await settingsStore_1.SettingsStore.peekSelectedProject();
             if (!selection) {
                 return [];
             }
@@ -19514,7 +19547,7 @@ exports.createFilesExcludeMatcher = createFilesExcludeMatcher;
  * files.exclude-compatible matcher used by the Project Repos tree.
  */
 const fs = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
 function globToRegExp(pattern) {
     const normalizedPattern = pattern.split(path.sep).join('/');
@@ -19665,7 +19698,7 @@ exports.registerWrongCopyGuard = registerWrongCopyGuard;
  * two directories with identical file trees is the hazard this design
  * introduces, so it gets a second line of defence.
  */
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(6);
 const logger_1 = __webpack_require__(12);
@@ -19803,7 +19836,7 @@ exports.migratable = migratable;
  *
  * Pure: takes an `exists` probe so every branch is testable.
  */
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 function slugifyBranch(branch) {
     return branch.replace(/[^A-Za-z0-9._-]+/g, '-');
 }
@@ -20376,7 +20409,7 @@ exports.registerProjectCommands = registerProjectCommands;
  * Command handlers for the Projects view and project workspaces.
  */
 const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const wizard_1 = __webpack_require__(66);
 const utils_1 = __webpack_require__(8);
 const notifications_1 = __webpack_require__(16);
@@ -20830,7 +20863,7 @@ exports.runSetup = runSetup;
  * exists to fix - never recorded where it put anything.
  */
 const fs = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
@@ -21071,7 +21104,7 @@ exports.detectCustomAddonsRoot = detectCustomAddonsRoot;
  */
 const fs = __importStar(__webpack_require__(2));
 const os = __importStar(__webpack_require__(18));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const logger_1 = __webpack_require__(12);
 /** Directory names that identify the two optional repos. */
 const ENTERPRISE_NAMES = new Set(['enterprise', 'odoo-enterprise']);
@@ -21282,7 +21315,7 @@ exports.collectRepoBranches = collectRepoBranches;
  */
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(6);
 const branches_1 = __webpack_require__(49);
 const utils_1 = __webpack_require__(8);
@@ -23072,7 +23105,7 @@ exports.registerReposExplorerCommands = registerReposExplorerCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const args_1 = __webpack_require__(112);
 const notifications_1 = __webpack_require__(16);
 const customWorktree_1 = __webpack_require__(54);
@@ -24137,7 +24170,7 @@ exports.describeUpgradePlan = describeUpgradePlan;
  * Pure: nothing here touches git, settings or the filesystem.
  */
 const repoPaths_1 = __webpack_require__(53);
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 function buildUpgradePlan(input) {
     const existing = new Set(input.existingVersions.map(entry => entry.trim()));
     const versionsToCreate = [input.fromSeries, input.toSeries]
@@ -24245,7 +24278,7 @@ exports.registerDataStoreCommands = registerDataStoreCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(20));
 const os = __importStar(__webpack_require__(18));
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const jsonc_parser_1 = __webpack_require__(21);
 const settingsStore_1 = __webpack_require__(6);
 const logger_1 = __webpack_require__(12);
@@ -24578,7 +24611,7 @@ exports.buildExport = buildExport;
  * Pure, and tested as data. The commands that use these live in
  * commands/dataStoreCommands.ts.
  */
-const path = __importStar(__webpack_require__(4));
+const path = __importStar(__webpack_require__(3));
 const node_crypto_1 = __webpack_require__(59);
 const workspaceSelection_1 = __webpack_require__(29);
 const loose = (data) => structuredClone(data);

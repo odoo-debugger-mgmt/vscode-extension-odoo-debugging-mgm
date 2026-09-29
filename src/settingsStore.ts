@@ -11,7 +11,7 @@
  */
 import * as vscode from 'vscode';
 import { SettingsModel } from './models/settings';
-import { DebuggerData, showError, getWorkspacePath, getDefaultVersionSettings, stripSettings } from './utils';
+import { DebuggerData, showError, showWarning, getWorkspacePath, getDefaultVersionSettings, stripSettings } from './utils';
 import { ProjectModel } from './models/project';
 import { DatabaseTemplateModel } from './models/dbTemplate';
 import { logger } from './services/logger';
@@ -218,6 +218,24 @@ export class SettingsStore {
         }
     }
 
+    private static readonly announcedReadOnly = new Set<string>();
+
+    /**
+     * Says once, when a read-only store is opened, that it is - not only when
+     * the first save fails. Selecting still works: it is this window's.
+     */
+    private static announceReadOnly(store: MainStore): void {
+        const reason = store.readOnlyReason?.();
+        if (!reason || this.announcedReadOnly.has(store.location)) {
+            return;
+        }
+        this.announcedReadOnly.add(store.location);
+        void showWarning(
+            `The data store ${store.location} is read-only here: ${reason}. `
+            + 'Changes to projects, versions and databases cannot be saved; selecting still works in this window.'
+        );
+    }
+
     /** The stored data, without this window's selection applied, and the read it came from. */
     private static async readStored(store: MainStore): Promise<{ data: DebuggerData; read: StoreRead }> {
         await this.flushPendingWrite(store.location);
@@ -237,6 +255,7 @@ export class SettingsStore {
         }
         const snapshot: StoreRead = { ...read, data: this.cloneData(read.data) };
         this.cache.set(store.location, { mtimeMs: read.mtimeMs, read: snapshot });
+        this.announceReadOnly(store);
         return { data: this.cloneData(snapshot.data), read: snapshot };
     }
 

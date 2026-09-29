@@ -139,7 +139,8 @@ export function syncUpgradeContext(config: UpgradeConfigModel): void {
 /** Keeps the context keys in step with what is stored, and heals the pair. */
 export async function initializeUpgradeContext(): Promise<void> {
     try {
-        const result = await SettingsStore.getSelectedProject();
+        // Silent: this runs on activation and every refresh.
+        const result = await SettingsStore.peekSelectedProject();
         const config = readUpgradeConfig(result?.project);
         syncUpgradeContext(config);
 
@@ -207,7 +208,7 @@ export class UpgradeTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
     async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
         // An empty list falls through to the view's welcome content, which
         // explains that a project has to be selected first.
-        const result = await SettingsStore.getSelectedProject();
+        const result = await SettingsStore.peekSelectedProject();
         if (!result) {
             return [];
         }

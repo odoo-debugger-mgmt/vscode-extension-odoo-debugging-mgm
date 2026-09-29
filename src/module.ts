@@ -104,8 +104,9 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         }
 
         // Empty lists fall through to the view's welcome content, which
-        // explains that a project and database must be selected first.
-        const result = await SettingsStore.getSelectedProject();
+        // explains that a project and database must be selected first - so
+        // this reads silently rather than raising a toast from a refresh.
+        const result = await SettingsStore.peekSelectedProject();
         if (!result) {
             return [];
         }

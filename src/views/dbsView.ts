@@ -42,7 +42,8 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
     }
 
     async getChildren(_element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
-        const result = await SettingsStore.getSelectedProject();
+        // Silent: an empty list shows the view's welcome content.
+        const result = await SettingsStore.peekSelectedProject();
         if (!result) {
             return [];
         }
