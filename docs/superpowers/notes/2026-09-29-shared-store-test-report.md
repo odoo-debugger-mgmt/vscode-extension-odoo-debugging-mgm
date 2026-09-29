@@ -5,7 +5,186 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds four runs, newest first. The earlier runs are kept unchanged.
+This file holds five runs, newest first. The earlier runs are kept unchanged.
+
+# Fifth run: launch entries in the workspace file (`73c7645`)
+
+**Scope:** as asked:
+- the test suite;
+- item 3: switch database in the generated window, and start the server;
+- no `.vscode/launch.json` in the repository, and the entries under `launch`
+  in the generated `.code-workspace`;
+- F5 and Start Server both start the server;
+- a `launch.json` left in the repository by an earlier build loses the
+  extension's entries;
+- a plain single-folder workspace still writes and launches from
+  `.vscode/launch.json`.
+
+**Setup:**
+- **Profile:** a new throwaway profile (`HOME=/tmp/claude/bk`). The Python and
+  Python Debugger extensions were copied in from the user's install, so that
+  F5 can really launch.
+- **Data:** A reads its own `.vscode/odoo-debugger-data.json`, reset to the
+  seed. There is no upgrade, and the acme clone is on `17.0-dev`.
+- **A stub `odoo-bin`:** it appends one line per start to
+  `/tmp/odt-brief/odoo-runs.log`: working directory, arguments, and whether
+  debugpy loaded it. Then it idles. "Started" below means a line appeared
+  there.
+- **Leftover `launch.json`:** made with the previous build, `1dc224a`, in a
+  separate worktree. It was run through Open Project Workspace and a database
+  switch, and wrote `repos/acme/.vscode/launch.json` (`?? .vscode/` in git),
+  with `odoo-debugger` and `odoo-debugger-19`, both with
+  `"cwd": "/tmp/odt-brief/repos/acme"`.
+- **A probe:** a throwaway extension that logs
+  `vscode.workspace.workspaceFile`. It was loaded next to ours for the runs
+  that needed it.
+
+## Verdict (fifth run)
+
+- **Fixed, when the workspace file is opened directly:**
+  - the entries move into the file's `launch` section;
+  - the repository's leftover `launch.json` and its `.vscode` go;
+  - F5 starts the server;
+  - the folder window is unchanged.
+- **Not fixed through Open Project Workspace, which is the brief's path
+  (serious):** the switch rewrites the repository's `launch.json` again, and
+  the workspace file gets nothing. See finding 12.
+- **Start Server fails in a workspace-file window (serious):** VS Code reports
+  "'launch.json' does not exist for passed workspace folder." Before failing,
+  it stops a server that is already running. See finding 13.
+
+## Test suite: matched
+
+- VS Code 1.139.1: **441 passing, 0 failing, 0 pending**.
+- The new suites all ran and passed:
+  - `Where launch configurations live`;
+  - `Launch configurations in a workspace file`;
+  - `Taking our entries back out of a repository`.
+
+## 3. The generated window, through Open Project Workspace: not matched
+
+1. **Opening:** in A, I ran Open Project Workspace and chose New window. The
+   generated window showed acme with acme-db2, as A's data file said. (On the
+   very first try with the old build, the New window click opened nothing. The
+   second try worked. That was probably my click, and it did not happen again.)
+2. **The switch:** I selected acme-db1 in the generated window. Then:
+   - `repos/acme/.vscode/launch.json` was **rewritten** by the new build (same
+     second as the switch). Both entries now have
+     `"cwd": "/tmp/odt-brief/A"` and `-d acme-db1`;
+   - the generated `.code-workspace` was **not touched**: it has no `launch`
+     section;
+   - nothing was cleaned up, the log has no `[debugger] moved …` line, and git
+     still shows `?? .vscode/`.
+3. **Why, per the probe:** in this window, `vscode.workspace.workspaceFile` is
+   `vscode-userdata:/tmp/claude/bk/.config/Code/User/globalStorage/ahmadmansour.odoo-devtools-vscode/workspaces/acme-uid-0001.code-workspace`.
+   - `launchTarget` (`src/services/launchConfig.ts:51`) accepts only a `file`
+     scheme, so it falls back to the first folder.
+   - The scheme comes from `buildWorkspaceFile`: it builds the path from
+     `context.globalStorageUri` (`src/projectWorkspace.ts:61`) and opens that
+     URI with `vscode.openFolder` (`:158`).
+   - Opened from the command line, the same file reports `file:`.
+   - `src/services/dataLocation.ts:145` makes the same `scheme === 'file'`
+     check. There it is harmless today, because the generated workspace pins
+     an absolute path.
+4. **Start Server here:** VS Code refused with "Configured debug type
+   'debugpy' is installed but not supported in this environment." Nothing
+   started. Running Tasks: Run Task first did not help.
+   - `debugpy` declares its debugger only
+     `when: "!virtualWorkspace && shellExecutionSupported"`.
+   - In the directly opened window below, with the same profile and
+     extensions, debugpy worked.
+   - So the `vscode-userdata:` workspace probably also keeps the Python
+     debugger from running at all in a window opened this way. That part is
+     likely, not proven.
+5. **Per-window selection:** A kept its own selection, as before.
+
+## 3. The same workspace file, opened directly: matched, except Start Server
+
+I opened the generated `.code-workspace` from the command line, with the
+repository's leftover `launch.json` in place.
+
+1. **The switch:** after selecting acme-db2, the log says:
+
+   > [debugger] moved 2 launch entries out of /tmp/odt-brief/repos/acme into
+   > …/workspaces/acme-uid-0001.code-workspace
+
+   - `repos/acme/.vscode/` is **gone**, and git shows the repository clean;
+   - the `.code-workspace` has a `launch` section with `odoo-debugger-19` and
+     `odoo-debugger`, both `"cwd": "/tmp/odt-brief/A"` and `-d acme-db2`;
+   - the run configuration list shows both as "workspace" entries.
+2. **F5 (Debug: Start Debugging):** started. The stub recorded `cwd`
+   `/tmp/odt-brief/A`, `-p 8069 … -d acme-db2 -i base -u acme_stock`, under
+   debugpy. Picking `odoo-debugger (workspace)` from the list did the same.
+3. **Start Server: not matched.** VS Code showed the modal:
+
+   > Command 'Odoo DevTools: Start Server' resulted in an error
+   >
+   > 'launch.json' does not exist for passed workspace folder.
+
+   Nothing started.
+   - I ran it again with the F5 server running: it **stopped that server
+     first**, then failed with the same modal.
+   - It is finding 13.
+4. **Rebuilding keeps the section:** Open Project Workspace, run again from A,
+   rewrote the `.code-workspace`. Both `launch` entries were unchanged; only
+   the indentation differs.
+
+## A plain folder window: matched
+
+In folder window A, selecting acme-db2 rewrote `A/.vscode/launch.json`. Both
+entries name `acme-db2`, with `"cwd": "/tmp/odt-brief/A"`. Nothing was written
+anywhere else.
+
+- **Start Server:** started `odoo-debugger`: `cwd` `/tmp/odt-brief/A`, `-p
+  8069 … -d acme-db2`, under debugpy.
+- **F5:** started the Run view's selected entry, `odoo-debugger-19 (A)`: `-p
+  8079 … -d acme-db2`, under debugpy.
+
+**Side observation, not from this fix:** with no 19.0 database chosen in the
+window, the `odoo-debugger-19` entry names `acme-db2`, a 17.0 database. The
+previous build wrote the same into the repository. Earlier, while the upgrade
+was set up, it named `acme-db19`.
+
+## Findings (fifth run)
+
+### 12. Through Open Project Workspace, launch entries still go into the repository (serious)
+
+**Steps:**
+1. In A, run Open Project Workspace, then New window.
+2. Switch database in the new window.
+
+**Expected:** entries under `launch` in the `.code-workspace`, and no
+`.vscode/launch.json` in the repository. A leftover one loses our entries.
+
+**Happened:** the repository's `launch.json` is rewritten; it is created if
+missing. The workspace file is untouched, and nothing is cleaned up.
+
+**Cause:** the window's `workspaceFile` is a `vscode-userdata:` URI, because
+the file is opened by its `globalStorageUri` URI. `launchTarget` accepts only
+`file:`.
+
+Whatever the fix, the unit tests pass `{ scheme: 'file' }` and cannot see
+this. Two ways a fix might go:
+- open the file as `vscode.Uri.file(workspaceFile.fsPath)`. A window reopened
+  from Recent would still carry whatever URI it was first opened with;
+- accept any scheme whose `fsPath` is on local disk.
+
+### 13. Start Server cannot start an entry that lives in a workspace file (serious)
+
+**Steps:** in a window whose entries are in the `.code-workspace` (opened
+directly, so finding 12 does not interfere), run Start Server.
+
+**Happened:** "Command 'Odoo DevTools: Start Server' resulted in an error —
+'launch.json' does not exist for passed workspace folder." Nothing starts, and
+a running server of that version is stopped first. F5 and the Run view start
+the same entry fine.
+
+**Likely cause:** `vscode.debug.startDebugging(undefined, name)` does not look
+names up in the workspace file's `launch` section.
+
+Everything that goes through `startServerForVersion` is probably affected:
+Restart Server, Run Server Without Debugging and Start Both Upgrade Servers.
+I only ran Start Server.
 
 # Fourth run: the first-setup move-off list (`9405f86`)
 
