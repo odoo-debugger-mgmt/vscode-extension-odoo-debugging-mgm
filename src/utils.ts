@@ -1,45 +1,25 @@
 /**
  * Shared utilities: workspace paths, module/repository discovery walkers,
- * data-file access helpers and setting display formatting. Messaging
+ * and setting display formatting. Messaging
  * helpers are re-exported from services/notifications.
  */
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { SettingsModel } from './models/settings';
 import { ProjectModel } from './models/project';
 import { RepoModel } from './models/repo';
 import { DatabaseTemplateModel } from './models/dbTemplate';
 import { getBranchesViaSourceControl } from './services/gitService';
 import { runtimeCache } from './services/runtimeCache';
-import { showError, showInfo, showWarning } from './services/notifications';
+import { showError, showWarning } from './services/notifications';
 import { runCommand } from './services/process';
 
-import { parse } from 'jsonc-parser';
 import { logger } from './services/logger';
+import { currentDataLocation } from './services/dataLocation';
 
 // Re-exported so existing `from './utils'` imports keep working; new code
 // should import these from './services/notifications' directly.
 export { MessageType, showMessage, showError, showInfo, showWarning, showModalWarning, showAutoInfo, showBriefStatus } from './services/notifications';
-
-const launchJsonFileContent = `{
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
-    "version": "0.2.0",
-
-    // Debug configurations for VS Code
-    // Odoo configurations will be automatically added here by the Odoo Debugger extension
-    "configurations": []
-}`;
-
-const debuggerDataFileContent = `{
-    // Odoo Debugger Extension Configuration
-    // This file stores your project settings and configurations
-    "settings": {
-        // Add your Odoo settings here
-    },
-    "projects": [],
-    "dbTemplates": []
-}`;
 
 // ============================================================================
 // INTERFACES
@@ -134,12 +114,14 @@ export function normalizePath(inputPath: string): string {
         return inputPath;
     }
 
-    const workspacePath = getWorkspacePath();
-    if (!workspacePath) {
+    // Relative to the data's own root rather than to whatever folder happens
+    // to come first: in a generated project workspace that is a repository.
+    const root = currentDataLocation()?.root ?? getWorkspacePath();
+    if (!root) {
         return inputPath; // Return as-is if no workspace
     }
 
-    return path.join(workspacePath, inputPath);
+    return path.join(root, inputPath);
 }
 
 
@@ -147,22 +129,6 @@ export function normalizePath(inputPath: string): string {
 // FILE SYSTEM UTILITIES
 // ============================================================================
 
-/**
- * Ensures the .vscode directory exists in the workspace
- * @param workspacePath - the workspace root path
- * @returns the .vscode directory path
- */
-function ensureVSCodeDirectory(workspacePath: string): string {
-    const vscodeDir = path.join(workspacePath, '.vscode');
-    try {
-        if (!fs.existsSync(vscodeDir)) {
-            fs.mkdirSync(vscodeDir, { recursive: true });
-        }
-    } catch (error) {
-        throw new Error(`Failed to create .vscode directory: ${error}`);
-    }
-    return vscodeDir;
-}
 
 export interface SearchOverrides {
     maxDepth?: number;
@@ -614,74 +580,6 @@ export function createInfoTreeItem(message: string): vscode.TreeItem {
     const item = new vscode.TreeItem(message, vscode.TreeItemCollapsibleState.None);
     item.contextValue = 'info';
     return item;
-}
-
-// ============================================================================
-// FILE I/O UTILITIES
-// ============================================================================
-
-/**
- * Creates initial data files for the Odoo debugger
- * @param filePath - full path to the file to create
- * @param workspacePath - workspace root path
- * @param fileName - name of the file to create
- * @returns the initial data object
- */
-async function createOdooDebuggerFile(filePath: string, workspacePath: string, fileName: string): Promise<any> {
-    try {
-        ensureVSCodeDirectory(workspacePath);
-
-        let data;
-        let content: string;
-
-        if (fileName === "launch.json") {
-            data = {
-                version: "0.2.0",
-                configurations: []
-            };
-            content = launchJsonFileContent;
-        } else {
-            data = {
-                settings: new SettingsModel(getDefaultVersionSettings()),
-                projects: [],
-                dbTemplates: []
-            };
-            content = debuggerDataFileContent;
-        }
-
-        fs.writeFileSync(filePath, content, 'utf-8');
-        return data;
-    } catch (error) {
-        void showError(`Failed to create ${fileName}: ${error}`);
-        throw error;
-    }
-}
-
-/**
- * Reads and parses a JSON file from the .vscode directory
- * @param fileName - the name of the file to read
- * @returns the parsed data or null if reading fails
- */
-export async function readFromFile(fileName: string): Promise<any> {
-    const workspacePath = getWorkspacePath();
-    if (!workspacePath) {
-        return null;
-    }
-
-    try {
-        const filePath = path.join(workspacePath, '.vscode', fileName);
-
-        if (!fs.existsSync(filePath)) {
-            void showInfo(`Creating ${fileName} file...`);
-            return await createOdooDebuggerFile(filePath, workspacePath, fileName);
-        }
-
-        const data = fs.readFileSync(filePath, 'utf-8');
-        return parse(data);
-    } catch (error) {
-        void showError(`Failed to read ${fileName}: ${error}`);
-        return null;
-    }
 }
 
 /**

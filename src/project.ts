@@ -338,17 +338,14 @@ export async function selectProject(projectUid: string) {
         await SettingsStore.saveWithoutComments(stripSettings(data));
     }
 
-    // Find and deselect the currently selected project
-    const oldSelectedIndex = projects.findIndex((p: ProjectModel) => p.isSelected);
-    if (oldSelectedIndex !== -1) {
-        await SettingsStore.saveWithComments(false, ["projects", oldSelectedIndex, "isSelected"], 'odoo-debugger-data.json');
-    }
-
     // Find and select the new project by UID
     const newSelectedIndex = projects.findIndex((p: ProjectModel) => p.uid === projectUid);
 
     if (newSelectedIndex !== -1) {
-        await SettingsStore.saveWithComments(true, ["projects", newSelectedIndex, "isSelected"], 'odoo-debugger-data.json');
+        // One save through the store: the selection is this window's choice,
+        // and saving routes it to workspaceState rather than into the file.
+        projects.forEach((p: ProjectModel, index: number) => (p.isSelected = index === newSelectedIndex));
+        await SettingsStore.saveWithoutComments(stripSettings(data));
 
         // Get the newly selected project
         const selectedProject = projects[newSelectedIndex];

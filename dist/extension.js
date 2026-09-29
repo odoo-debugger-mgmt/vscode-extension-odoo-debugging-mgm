@@ -44,36 +44,36 @@ exports.deactivate = deactivate;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
 const dbsView_1 = __webpack_require__(3);
-const environment_1 = __webpack_require__(41);
-const dataMigration_1 = __webpack_require__(70);
-const project_1 = __webpack_require__(71);
-const repos_1 = __webpack_require__(78);
-const module_1 = __webpack_require__(79);
-const testing_1 = __webpack_require__(80);
-const upgrade_1 = __webpack_require__(31);
-const debugger_1 = __webpack_require__(81);
-const provisionQueue_1 = __webpack_require__(83);
-const odooInstaller_1 = __webpack_require__(54);
+const environment_1 = __webpack_require__(44);
+const dataMigration_1 = __webpack_require__(73);
+const project_1 = __webpack_require__(74);
+const repos_1 = __webpack_require__(81);
+const module_1 = __webpack_require__(82);
+const testing_1 = __webpack_require__(83);
+const upgrade_1 = __webpack_require__(34);
+const debugger_1 = __webpack_require__(84);
+const provisionQueue_1 = __webpack_require__(86);
+const odooInstaller_1 = __webpack_require__(57);
 const settingsStore_1 = __webpack_require__(6);
-const versionsTreeProvider_1 = __webpack_require__(84);
-const versionsService_1 = __webpack_require__(24);
-const context_1 = __webpack_require__(33);
-const server_1 = __webpack_require__(85);
-const sortPreferences_1 = __webpack_require__(86);
-const projectReposExplorer_1 = __webpack_require__(87);
+const versionsTreeProvider_1 = __webpack_require__(87);
+const versionsService_1 = __webpack_require__(27);
+const context_1 = __webpack_require__(36);
+const server_1 = __webpack_require__(88);
+const sortPreferences_1 = __webpack_require__(89);
+const projectReposExplorer_1 = __webpack_require__(90);
 const logger_1 = __webpack_require__(12);
-const reconcile_1 = __webpack_require__(67);
-const runningState_1 = __webpack_require__(68);
-const wrongCopyGuard_1 = __webpack_require__(89);
-const versionMigration_1 = __webpack_require__(90);
-const versionProposal_1 = __webpack_require__(50);
-const environment_2 = __webpack_require__(41);
-const branches_1 = __webpack_require__(42);
-const setupState_1 = __webpack_require__(59);
+const reconcile_1 = __webpack_require__(70);
+const runningState_1 = __webpack_require__(71);
+const wrongCopyGuard_1 = __webpack_require__(92);
+const versionMigration_1 = __webpack_require__(93);
+const versionProposal_1 = __webpack_require__(53);
+const environment_2 = __webpack_require__(44);
+const branches_1 = __webpack_require__(45);
+const setupState_1 = __webpack_require__(62);
 const notifications_1 = __webpack_require__(16);
 const utils_1 = __webpack_require__(8);
-const statusBar_1 = __webpack_require__(91);
-const commands_1 = __webpack_require__(92);
+const statusBar_1 = __webpack_require__(94);
+const commands_1 = __webpack_require__(95);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -88,6 +88,9 @@ async function initializeTestingContext() {
 }
 async function activate(context) {
     (0, logger_1.registerLogger)(context);
+    // Before anything reads the data: the selection it applies is part of
+    // what VersionsService reads while initializing.
+    await settingsStore_1.SettingsStore.initialize(context);
     const sortPreferences = new sortPreferences_1.SortPreferences(context.workspaceState);
     // Initialize version management service
     const versionsService = versionsService_1.VersionsService.getInstance();
@@ -462,14 +465,14 @@ const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(4));
 const baseTreeProvider_1 = __webpack_require__(5);
 const settingsStore_1 = __webpack_require__(6);
-const versionsService_1 = __webpack_require__(24);
-const sortOptions_1 = __webpack_require__(29);
+const versionsService_1 = __webpack_require__(27);
+const sortOptions_1 = __webpack_require__(32);
 const utils_1 = __webpack_require__(8);
-const icons_1 = __webpack_require__(30);
-const upgrade_1 = __webpack_require__(31);
-const environment_1 = __webpack_require__(41);
-const dbs_1 = __webpack_require__(51);
-const runningState_1 = __webpack_require__(68);
+const icons_1 = __webpack_require__(33);
+const upgrade_1 = __webpack_require__(34);
+const environment_1 = __webpack_require__(44);
+const dbs_1 = __webpack_require__(54);
+const runningState_1 = __webpack_require__(71);
 /** Tree provider for the Databases view of the selected project. */
 class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     sortPreferences;
@@ -819,72 +822,117 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SettingsStore = void 0;
 /**
- * Workspace data store for .vscode/odoo-debugger-data.json: mtime-based
- * read cache and debounced, single-flight writes.
+ * The extension's data, as callers see it: the main store (services/mainStore.ts)
+ * with this window's selection applied on top.
+ *
+ * Reads go through an mtime-based cache and writes are debounced and
+ * single-flight. The selection - selected project, selected database per
+ * project, active version - is a per-window choice, so it is kept in
+ * `workspaceState` (services/workspaceSelection.ts) and stripped from what the
+ * store holds. Callers never see the split: they read and write the same
+ * `isSelected` / `activeVersion` fields as before.
  */
 const vscode = __importStar(__webpack_require__(1));
 const settings_1 = __webpack_require__(7);
 const utils_1 = __webpack_require__(8);
-const jsonc_parser_1 = __webpack_require__(17);
-const fs = __importStar(__webpack_require__(23));
-const path_1 = __importDefault(__webpack_require__(10));
 const logger_1 = __webpack_require__(12);
+const mainStore_1 = __webpack_require__(18);
+const workspaceSelection_1 = __webpack_require__(26);
 const WRITE_DEBOUNCE_MS = 25;
 class SettingsStore {
+    /** Keyed by store location, so a re-pointed store never serves the old cache. */
     static cache = new Map();
     static pendingWrites = new Map();
+    /**
+     * This window's selection. Absent in unit tests and before activation, in
+     * which case the selection flags simply stay in the data, as they always did.
+     */
+    static selectionState;
+    /**
+     * Called first thing on activation, before anything reads the data -
+     * VersionsService reads `activeVersion` while initializing.
+     *
+     * A generated project workspace opens with a selection handed over by the
+     * window that created it; that is consumed here, once.
+     */
+    static async initialize(context) {
+        this.selectionState = context.workspaceState;
+        const workspaceFile = vscode.workspace.workspaceFile;
+        if (!workspaceFile) {
+            return;
+        }
+        const key = `${workspaceSelection_1.HANDOFF_STATE_PREFIX}${workspaceFile.toString()}`;
+        const handedOver = (0, workspaceSelection_1.normalizeSelection)(context.globalState.get(key));
+        if (!handedOver) {
+            return;
+        }
+        await context.globalState.update(key, undefined);
+        if (!(0, workspaceSelection_1.readSelection)(context.workspaceState)) {
+            await (0, workspaceSelection_1.writeSelection)(context.workspaceState, handedOver);
+        }
+    }
+    /**
+     * Stores this window's selection for the window about to open
+     * `workspaceFile`, which picks it up in `initialize`.
+     */
+    static async handOffSelection(context, workspaceFile) {
+        const data = await this.get();
+        await context.globalState.update(`${workspaceSelection_1.HANDOFF_STATE_PREFIX}${workspaceFile.toString()}`, (0, workspaceSelection_1.extractSelection)(data));
+    }
+    /** Where this window's data lives, for pinning into generated workspaces. */
+    static currentLocation() {
+        return (0, mainStore_1.currentMainStore)()?.location;
+    }
     static cloneData(value) {
         if (typeof structuredClone === 'function') {
             return structuredClone(value);
         }
         return JSON.parse(JSON.stringify(value));
     }
-    static resolveFilePath(fileName) {
-        const workspacePath = (0, utils_1.getWorkspacePath)();
-        if (!workspacePath) {
+    static resolveStore() {
+        const store = (0, mainStore_1.currentMainStore)();
+        if (!store) {
+            // Kept for its notification: every command that needs data in a
+            // window with no folder open has always said so this way.
+            (0, utils_1.getWorkspacePath)();
+        }
+        return store;
+    }
+    /**
+     * The selection to apply to `data`: the stored one, or - the first time
+     * this workspace runs with a separate selection - whatever the data file
+     * itself still records, so an existing user keeps what they had selected.
+     */
+    static async selectionFor(data) {
+        const memento = this.selectionState;
+        if (!memento) {
             return undefined;
         }
-        return path_1.default.join(workspacePath, '.vscode', fileName);
-    }
-    static async updateCache(fileName, filePath, raw, data) {
-        // Fall back to "now" when stat fails (e.g. file not written yet).
-        const stats = await fs.stat(filePath).catch(() => undefined);
-        const mtimeMs = stats?.mtimeMs ?? Date.now();
-        this.cache.set(fileName, {
-            mtimeMs,
-            raw,
-            data: this.cloneData(data)
-        });
-    }
-    static async ensureDataLoaded(fileName, filePath) {
-        const loaded = await (0, utils_1.readFromFile)(fileName);
-        if (!loaded) {
-            throw new Error(`Error reading file: ${fileName}`);
+        const stored = (0, workspaceSelection_1.readSelection)(memento);
+        if (stored) {
+            return stored;
         }
-        const raw = await fs.readFile(filePath, 'utf-8').catch(() => JSON.stringify(loaded, null, 4));
-        await this.updateCache(fileName, filePath, raw, loaded);
-        return this.cloneData(loaded);
+        const seeded = (0, workspaceSelection_1.extractSelection)(data);
+        await (0, workspaceSelection_1.writeSelection)(memento, seeded);
+        return seeded;
     }
-    static async flushPendingWrite(fileName) {
-        const pending = this.pendingWrites.get(fileName);
+    static async flushPendingWrite(location) {
+        const pending = this.pendingWrites.get(location);
         if (!pending) {
             return;
         }
-        this.pendingWrites.delete(fileName);
+        this.pendingWrites.delete(location);
         if (pending.timer) {
             clearTimeout(pending.timer);
             pending.timer = undefined;
         }
         try {
             const jsonString = JSON.stringify(pending.data, null, 4);
-            await fs.writeFile(pending.filePath, jsonString, 'utf8');
-            await this.updateCache(fileName, pending.filePath, jsonString, pending.data);
+            const mtimeMs = await pending.store.write(jsonString);
+            this.cache.set(location, { mtimeMs, data: this.cloneData(pending.data) });
             pending.waiters.forEach(waiter => waiter.resolve());
         }
         catch (error) {
@@ -892,75 +940,56 @@ class SettingsStore {
             throw error;
         }
     }
-    /**
-     * Helper function to read raw file content for JSON modification
-     */
-    static async readRawFileContent(fileName) {
-        const filePath = this.resolveFilePath(fileName);
-        if (!filePath) {
-            return null;
+    /** The stored data, without this window's selection applied. */
+    static async readStored(store) {
+        await this.flushPendingWrite(store.location);
+        const mtimeMs = await store.stat();
+        const cached = this.cache.get(store.location);
+        if (cached && mtimeMs !== undefined && cached.mtimeMs === mtimeMs) {
+            return this.cloneData(cached.data);
         }
+        let read;
         try {
-            const stats = await fs.stat(filePath).catch(() => undefined);
-            if (!stats) {
-                return null;
-            }
-            const cached = this.cache.get(fileName);
-            if (cached && cached.mtimeMs === stats.mtimeMs) {
-                return cached.raw;
-            }
-            const raw = await fs.readFile(filePath, 'utf-8');
-            const parsed = (0, jsonc_parser_1.parse)(raw);
-            await this.updateCache(fileName, filePath, raw, parsed ?? {});
-            return raw;
+            read = await store.read();
         }
         catch (error) {
-            void (0, utils_1.showError)(`Failed to read raw content from ${fileName}: ${error}`);
-            return null;
+            void (0, utils_1.showError)(`Failed to read ${store.location}: ${error}`);
+            throw new Error(`Error reading file: ${store.location}`);
         }
-    }
-    static async get(fileName) {
-        const filePath = this.resolveFilePath(fileName);
-        if (!filePath) {
-            throw new Error(`Open a workspace before reading ${fileName}.`);
-        }
-        await this.flushPendingWrite(fileName);
-        const stats = await fs.stat(filePath).catch(() => undefined);
-        if (stats) {
-            const cached = this.cache.get(fileName);
-            if (cached && cached.mtimeMs === stats.mtimeMs) {
-                return this.cloneData(cached.data);
-            }
-        }
-        return this.ensureDataLoaded(fileName, filePath);
-    }
-    static async saveWithComments(value, jsonPath, fileName, options = {}) {
-        const filePath = this.resolveFilePath(fileName);
-        if (!filePath) {
-            return;
-        }
-        await this.flushPendingWrite(fileName);
-        const rawData = await this.readRawFileContent(fileName);
-        if (!rawData) {
-            return;
-        }
-        const edits = (0, jsonc_parser_1.modify)(rawData, jsonPath, value, options);
-        const updatedJson = (0, jsonc_parser_1.applyEdits)(rawData, edits);
-        await fs.writeFile(filePath, updatedJson, 'utf8');
-        const parsed = (0, jsonc_parser_1.parse)(updatedJson);
-        await this.updateCache(fileName, filePath, updatedJson, parsed ?? {});
+        this.cache.set(store.location, { mtimeMs: read.mtimeMs, data: this.cloneData(read.data) });
+        return this.cloneData(read.data);
     }
     /**
-     * Saves the entire data object to file
+     * The data with this window's selection applied. `fileName` is accepted
+     * for the existing call sites; there is only one data store.
      */
-    static async saveWithoutComments(data, fileName = 'odoo-debugger-data.json') {
-        const filePath = this.resolveFilePath(fileName);
-        if (!filePath) {
+    static async get(_fileName) {
+        const store = this.resolveStore();
+        if (!store) {
+            throw new Error('Open a workspace before reading the Odoo DevTools data.');
+        }
+        const data = await this.readStored(store);
+        const selection = await this.selectionFor(data);
+        return selection ? (0, workspaceSelection_1.applySelection)(data, selection) : data;
+    }
+    /**
+     * Saves the entire data object. The selection it carries goes to this
+     * window's workspaceState; the store receives the data without it.
+     */
+    static async saveWithoutComments(data, _fileName) {
+        const store = this.resolveStore();
+        if (!store) {
             return;
         }
-        const payload = this.cloneData(data);
+        let payload = this.cloneData(data);
+        const memento = this.selectionState;
+        if (memento) {
+            await (0, workspaceSelection_1.writeSelection)(memento, (0, workspaceSelection_1.extractSelection)(payload, (0, workspaceSelection_1.readSelection)(memento)));
+            payload = (0, workspaceSelection_1.stripSelection)(payload);
+        }
+        const location = store.location;
         await new Promise((resolve, reject) => {
-            const existing = this.pendingWrites.get(fileName);
+            const existing = this.pendingWrites.get(location);
             if (existing) {
                 existing.data = payload;
                 existing.waiters.push({ resolve, reject });
@@ -968,31 +997,27 @@ class SettingsStore {
                     clearTimeout(existing.timer);
                 }
                 existing.timer = setTimeout(() => {
-                    this.flushPendingWrite(fileName).catch(error => {
-                        logger_1.logger.warn(`Failed to flush pending write for ${fileName}:`, error);
+                    this.flushPendingWrite(location).catch(error => {
+                        logger_1.logger.warn(`Failed to flush pending write for ${location}:`, error);
                     });
                 }, WRITE_DEBOUNCE_MS);
                 return;
             }
             const pending = {
-                fileName,
-                filePath,
+                store,
                 data: payload,
                 waiters: [{ resolve, reject }]
             };
             pending.timer = setTimeout(() => {
-                this.flushPendingWrite(fileName).catch(error => {
-                    logger_1.logger.warn(`Failed to flush pending write for ${fileName}:`, error);
+                this.flushPendingWrite(location).catch(error => {
+                    logger_1.logger.warn(`Failed to flush pending write for ${location}:`, error);
                 });
             }, WRITE_DEBOUNCE_MS);
-            this.pendingWrites.set(fileName, pending);
+            this.pendingWrites.set(location, pending);
         });
     }
     static async load() {
-        const data = await this.get('odoo-debugger-data.json').catch(async () => {
-            const fallback = await (0, utils_1.readFromFile)('odoo-debugger-data.json') || {};
-            return fallback;
-        });
+        const data = await this.get().catch(() => ({ projects: [] }));
         return {
             settings: data.settings ? Object.assign(new settings_1.SettingsModel((0, utils_1.getDefaultVersionSettings)()), data.settings) : undefined,
             projects: data.projects || [],
@@ -1011,9 +1036,6 @@ class SettingsStore {
         await this.saveWithoutComments((0, utils_1.stripSettings)(data));
     }
     /**
-     * Gets the currently selected project with validation
-     */
-    /**
      * The selected project without any notification. Background callers - the
      * debugger sync in particular - must not raise "create a project first"
      * from a refresh the user never asked for.
@@ -1027,6 +1049,7 @@ class SettingsStore {
         const project = projects.find((p) => p.isSelected === true);
         return project ? { data, project } : null;
     }
+    /** Gets the currently selected project, offering the fix when there is none. */
     static async getSelectedProject() {
         const data = await this.get('odoo-debugger-data.json');
         const projects = data.projects;
@@ -1151,7 +1174,6 @@ exports.findModules = findModules;
 exports.findRepositories = findRepositories;
 exports.discoverModulesInRepos = discoverModulesInRepos;
 exports.createInfoTreeItem = createInfoTreeItem;
-exports.readFromFile = readFromFile;
 exports.camelCaseToTitleCase = camelCaseToTitleCase;
 exports.getSettingDisplayName = getSettingDisplayName;
 exports.getSettingDisplayValue = getSettingDisplayValue;
@@ -1159,19 +1181,18 @@ exports.getGitBranches = getGitBranches;
 exports.getDefaultVersionSettings = getDefaultVersionSettings;
 /**
  * Shared utilities: workspace paths, module/repository discovery walkers,
- * data-file access helpers and setting display formatting. Messaging
+ * and setting display formatting. Messaging
  * helpers are re-exported from services/notifications.
  */
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(9));
 const path = __importStar(__webpack_require__(10));
-const settings_1 = __webpack_require__(7);
 const gitService_1 = __webpack_require__(11);
 const runtimeCache_1 = __webpack_require__(15);
 const notifications_1 = __webpack_require__(16);
 const process_1 = __webpack_require__(13);
-const jsonc_parser_1 = __webpack_require__(17);
 const logger_1 = __webpack_require__(12);
+const dataLocation_1 = __webpack_require__(17);
 // Re-exported so existing `from './utils'` imports keep working; new code
 // should import these from './services/notifications' directly.
 var notifications_2 = __webpack_require__(16);
@@ -1183,23 +1204,6 @@ Object.defineProperty(exports, "showWarning", ({ enumerable: true, get: function
 Object.defineProperty(exports, "showModalWarning", ({ enumerable: true, get: function () { return notifications_2.showModalWarning; } }));
 Object.defineProperty(exports, "showAutoInfo", ({ enumerable: true, get: function () { return notifications_2.showAutoInfo; } }));
 Object.defineProperty(exports, "showBriefStatus", ({ enumerable: true, get: function () { return notifications_2.showBriefStatus; } }));
-const launchJsonFileContent = `{
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
-    "version": "0.2.0",
-
-    // Debug configurations for VS Code
-    // Odoo configurations will be automatically added here by the Odoo Debugger extension
-    "configurations": []
-}`;
-const debuggerDataFileContent = `{
-    // Odoo Debugger Extension Configuration
-    // This file stores your project settings and configurations
-    "settings": {
-        // Add your Odoo settings here
-    },
-    "projects": [],
-    "dbTemplates": []
-}`;
 /**
  * Strip settings from DebuggerData to ensure settings are managed exclusively by versions
  */
@@ -1269,31 +1273,13 @@ function normalizePath(inputPath) {
     if (path.isAbsolute(inputPath)) {
         return inputPath;
     }
-    const workspacePath = getWorkspacePath();
-    if (!workspacePath) {
+    // Relative to the data's own root rather than to whatever folder happens
+    // to come first: in a generated project workspace that is a repository.
+    const root = (0, dataLocation_1.currentDataLocation)()?.root ?? getWorkspacePath();
+    if (!root) {
         return inputPath; // Return as-is if no workspace
     }
-    return path.join(workspacePath, inputPath);
-}
-// ============================================================================
-// FILE SYSTEM UTILITIES
-// ============================================================================
-/**
- * Ensures the .vscode directory exists in the workspace
- * @param workspacePath - the workspace root path
- * @returns the .vscode directory path
- */
-function ensureVSCodeDirectory(workspacePath) {
-    const vscodeDir = path.join(workspacePath, '.vscode');
-    try {
-        if (!fs.existsSync(vscodeDir)) {
-            fs.mkdirSync(vscodeDir, { recursive: true });
-        }
-    }
-    catch (error) {
-        throw new Error(`Failed to create .vscode directory: ${error}`);
-    }
-    return vscodeDir;
+    return path.join(root, inputPath);
 }
 const DEFAULT_MODULE_EXCLUDES = [
     '**/node_modules/**',
@@ -1635,68 +1621,6 @@ function createInfoTreeItem(message) {
     const item = new vscode.TreeItem(message, vscode.TreeItemCollapsibleState.None);
     item.contextValue = 'info';
     return item;
-}
-// ============================================================================
-// FILE I/O UTILITIES
-// ============================================================================
-/**
- * Creates initial data files for the Odoo debugger
- * @param filePath - full path to the file to create
- * @param workspacePath - workspace root path
- * @param fileName - name of the file to create
- * @returns the initial data object
- */
-async function createOdooDebuggerFile(filePath, workspacePath, fileName) {
-    try {
-        ensureVSCodeDirectory(workspacePath);
-        let data;
-        let content;
-        if (fileName === "launch.json") {
-            data = {
-                version: "0.2.0",
-                configurations: []
-            };
-            content = launchJsonFileContent;
-        }
-        else {
-            data = {
-                settings: new settings_1.SettingsModel(getDefaultVersionSettings()),
-                projects: [],
-                dbTemplates: []
-            };
-            content = debuggerDataFileContent;
-        }
-        fs.writeFileSync(filePath, content, 'utf-8');
-        return data;
-    }
-    catch (error) {
-        void (0, notifications_1.showError)(`Failed to create ${fileName}: ${error}`);
-        throw error;
-    }
-}
-/**
- * Reads and parses a JSON file from the .vscode directory
- * @param fileName - the name of the file to read
- * @returns the parsed data or null if reading fails
- */
-async function readFromFile(fileName) {
-    const workspacePath = getWorkspacePath();
-    if (!workspacePath) {
-        return null;
-    }
-    try {
-        const filePath = path.join(workspacePath, '.vscode', fileName);
-        if (!fs.existsSync(filePath)) {
-            void (0, notifications_1.showInfo)(`Creating ${fileName} file...`);
-            return await createOdooDebuggerFile(filePath, workspacePath, fileName);
-        }
-        const data = fs.readFileSync(filePath, 'utf-8');
-        return (0, jsonc_parser_1.parse)(data);
-    }
-    catch (error) {
-        void (0, notifications_1.showError)(`Failed to read ${fileName}: ${error}`);
-        return null;
-    }
 }
 /**
  * Converts a camelCase string to a human-readable title case
@@ -2578,6 +2502,246 @@ function showBriefStatus(message, timeoutMs = 2000) {
 
 /***/ }),
 /* 17 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DATA_STORE_SETTING = exports.DATA_FILE_NAME = void 0;
+exports.dataRootFor = dataRootFor;
+exports.isSupportedStorePath = isSupportedStorePath;
+exports.resolveDataLocation = resolveDataLocation;
+exports.currentDataLocation = currentDataLocation;
+/**
+ * Where the extension's data lives for this window, and the directory that
+ * relative paths in it resolve against.
+ *
+ * By default that is `<first workspace folder>/.vscode/odoo-debugger-data.json`,
+ * as it always was. A workspace can pin a store with `odooDebugger.dataStore.path`
+ * - generated project workspaces do, because their first folder is a project
+ * repository, and reading the data from there is how the projects used to
+ * "vanish" in the window Open Project Workspace opened.
+ *
+ * Kept free of `utils` so `normalizePath` can use it without an import cycle.
+ * The resolution is pure; only `currentDataLocation` touches vscode.
+ */
+const path = __importStar(__webpack_require__(4));
+const vscode = __importStar(__webpack_require__(1));
+const logger_1 = __webpack_require__(12);
+exports.DATA_FILE_NAME = 'odoo-debugger-data.json';
+/** Setting key, under the `odooDebugger` section. */
+exports.DATA_STORE_SETTING = 'dataStore.path';
+function dataRootFor(file) {
+    const dir = path.dirname(file);
+    return path.basename(dir) === '.vscode' ? path.dirname(dir) : dir;
+}
+/**
+ * Only JSON stores exist until the shared store lands, so any other value is
+ * ignored rather than half-honoured.
+ */
+function isSupportedStorePath(value) {
+    return value.toLowerCase().endsWith('.json');
+}
+function resolveDataLocation(input) {
+    const configured = input.configured?.trim();
+    if (configured && isSupportedStorePath(configured)) {
+        // A relative value is relative to where it was written: the
+        // workspace file, or the folder whose settings hold it.
+        const base = input.workspaceFile ? path.dirname(input.workspaceFile) : input.firstFolder;
+        const file = path.isAbsolute(configured)
+            ? configured
+            : (base ? path.join(base, configured) : undefined);
+        if (file) {
+            return { file, root: dataRootFor(file), pinned: true };
+        }
+    }
+    if (!input.firstFolder) {
+        return undefined;
+    }
+    const file = path.join(input.firstFolder, '.vscode', exports.DATA_FILE_NAME);
+    return { file, root: input.firstFolder, pinned: false };
+}
+let warnedAbout;
+/**
+ * This window's data location. Only a **workspace-level** setting is read:
+ * a user-level value would point every workspace at one JSON file, and that
+ * needs the shared store's concurrency safety, which does not exist yet.
+ */
+function currentDataLocation() {
+    const inspected = vscode.workspace
+        .getConfiguration('odooDebugger')
+        .inspect(exports.DATA_STORE_SETTING);
+    const configured = inspected?.workspaceValue?.trim() || undefined;
+    if (configured && !isSupportedStorePath(configured) && warnedAbout !== configured) {
+        warnedAbout = configured;
+        logger_1.logger.warn(`[store] ignoring odooDebugger.dataStore.path "${configured}": only .json stores are supported yet`);
+    }
+    const workspaceFile = vscode.workspace.workspaceFile;
+    return resolveDataLocation({
+        configured,
+        workspaceFile: workspaceFile?.scheme === 'file' ? workspaceFile.fsPath : undefined,
+        firstFolder: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+    });
+}
+
+
+/***/ }),
+/* 18 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.JsonFileMainStore = void 0;
+exports.currentMainStore = currentMainStore;
+/**
+ * The main store: where the data every window shares is kept.
+ *
+ * Only the JSON file exists so far - the workspace's own
+ * `.vscode/odoo-debugger-data.json`, or the file a workspace pinned with
+ * `odooDebugger.dataStore.path`. The interface is the seam the SQLite store
+ * plugs into (see docs/superpowers/specs/2026-09-28-shared-data-store-design.md);
+ * SettingsStore keeps its cache and debounced writes above it.
+ */
+const fs = __importStar(__webpack_require__(19));
+const path = __importStar(__webpack_require__(4));
+const jsonc_parser_1 = __webpack_require__(20);
+const settings_1 = __webpack_require__(7);
+const utils_1 = __webpack_require__(8);
+const notifications_1 = __webpack_require__(16);
+const dataLocation_1 = __webpack_require__(17);
+const INITIAL_CONTENT = `{
+    // Odoo Debugger Extension Configuration
+    // This file stores your project settings and configurations
+    "settings": {
+        // Add your Odoo settings here
+    },
+    "projects": [],
+    "dbTemplates": []
+}`;
+class JsonFileMainStore {
+    location;
+    root;
+    constructor(location, root) {
+        this.location = location;
+        this.root = root;
+    }
+    async stat() {
+        const stats = await fs.stat(this.location).catch(() => undefined);
+        return stats?.mtimeMs;
+    }
+    async read() {
+        const existing = await this.stat();
+        if (existing === undefined) {
+            void (0, notifications_1.showInfo)(`Creating ${path.basename(this.location)} file...`);
+            await fs.mkdir(path.dirname(this.location), { recursive: true });
+            await fs.writeFile(this.location, INITIAL_CONTENT, 'utf-8');
+            // The legacy `settings` block is what VersionsService migrates
+            // into the first version, so a new store starts with the
+            // configured defaults rather than the empty object on disk.
+            return {
+                raw: INITIAL_CONTENT,
+                data: {
+                    settings: new settings_1.SettingsModel((0, utils_1.getDefaultVersionSettings)()),
+                    projects: [],
+                    dbTemplates: []
+                },
+                mtimeMs: (await this.stat()) ?? Date.now()
+            };
+        }
+        const raw = await fs.readFile(this.location, 'utf-8');
+        const data = (0, jsonc_parser_1.parse)(raw);
+        if (!data || typeof data !== 'object' || Array.isArray(data)) {
+            throw new Error(`${this.location} does not contain a JSON object.`);
+        }
+        return { raw, data, mtimeMs: existing };
+    }
+    async write(raw) {
+        await fs.mkdir(path.dirname(this.location), { recursive: true });
+        await fs.writeFile(this.location, raw, 'utf-8');
+        return (await this.stat()) ?? Date.now();
+    }
+}
+exports.JsonFileMainStore = JsonFileMainStore;
+/** This window's main store, or undefined when no workspace is open. */
+function currentMainStore() {
+    const location = (0, dataLocation_1.currentDataLocation)();
+    return location ? new JsonFileMainStore(location.file, location.root) : undefined;
+}
+
+
+/***/ }),
+/* 19 */
+/***/ ((module) => {
+
+module.exports = require("node:fs/promises");
+
+/***/ }),
+/* 20 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -2600,10 +2764,10 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   stripComments: () => (/* binding */ stripComments),
 /* harmony export */   visit: () => (/* binding */ visit)
 /* harmony export */ });
-/* harmony import */ var _impl_format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(18);
-/* harmony import */ var _impl_edit__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(21);
-/* harmony import */ var _impl_scanner__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(19);
-/* harmony import */ var _impl_parser__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(22);
+/* harmony import */ var _impl_format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(21);
+/* harmony import */ var _impl_edit__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(24);
+/* harmony import */ var _impl_scanner__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(22);
+/* harmony import */ var _impl_parser__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(25);
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -2785,7 +2949,7 @@ function applyEdits(text, edits) {
 
 
 /***/ }),
-/* 18 */
+/* 21 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -2793,8 +2957,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   format: () => (/* binding */ format),
 /* harmony export */   isEOL: () => (/* binding */ isEOL)
 /* harmony export */ });
-/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(19);
-/* harmony import */ var _string_intern__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(20);
+/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(22);
+/* harmony import */ var _string_intern__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(23);
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -3059,7 +3223,7 @@ function isEOL(text, offset) {
 
 
 /***/ }),
-/* 19 */
+/* 22 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -3512,7 +3676,7 @@ var CharacterCodes;
 
 
 /***/ }),
-/* 20 */
+/* 23 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -3553,7 +3717,7 @@ const supportedEols = ['\n', '\r', '\r\n'];
 
 
 /***/ }),
-/* 21 */
+/* 24 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -3563,8 +3727,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   removeProperty: () => (/* binding */ removeProperty),
 /* harmony export */   setProperty: () => (/* binding */ setProperty)
 /* harmony export */ });
-/* harmony import */ var _format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(18);
-/* harmony import */ var _parser__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(22);
+/* harmony import */ var _format__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(21);
+/* harmony import */ var _parser__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(25);
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -3753,7 +3917,7 @@ function isWS(text, offset) {
 
 
 /***/ }),
-/* 22 */
+/* 25 */
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -3770,7 +3934,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   stripComments: () => (/* binding */ stripComments),
 /* harmony export */   visit: () => (/* binding */ visit)
 /* harmony export */ });
-/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(19);
+/* harmony import */ var _scanner__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(22);
 /*---------------------------------------------------------------------------------------------
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -4433,13 +4597,161 @@ function getNodeType(value) {
 
 
 /***/ }),
-/* 23 */
-/***/ ((module) => {
+/* 26 */
+/***/ ((__unused_webpack_module, exports) => {
 
-module.exports = require("node:fs/promises");
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.HANDOFF_STATE_PREFIX = exports.SELECTION_STATE_KEY = exports.EMPTY_SELECTION = void 0;
+exports.projectKey = projectKey;
+exports.extractSelection = extractSelection;
+exports.stripSelection = stripSelection;
+exports.applySelection = applySelection;
+exports.isEmptySelection = isEmptySelection;
+exports.normalizeSelection = normalizeSelection;
+exports.readSelection = readSelection;
+exports.writeSelection = writeSelection;
+exports.EMPTY_SELECTION = { selectedDbByProject: {} };
+exports.SELECTION_STATE_KEY = 'odt.workspaceSelection';
+/** Prefix of the globalState key a generated workspace's selection is handed over under. */
+exports.HANDOFF_STATE_PREFIX = 'odt.workspaceHandoff:';
+/**
+ * How a project is keyed in the selection. Projects written before uids
+ * existed are only given one when a project is next selected, so the name
+ * stands in until then rather than making them unselectable.
+ */
+function projectKey(project) {
+    return project.uid || `name:${project.name ?? ''}`;
+}
+function projectsOf(data) {
+    return Array.isArray(data.projects) ? data.projects : [];
+}
+/**
+ * The selection a data object carries.
+ *
+ * A field the object does not carry at all keeps its `previous` value: a save
+ * built without `activeVersion` must not read as "no version is active".
+ */
+function extractSelection(data, previous = exports.EMPTY_SELECTION) {
+    const projects = projectsOf(data);
+    const hasProjects = Array.isArray(data.projects);
+    const selectedDbByProject = {};
+    for (const project of projects) {
+        const db = (project.dbs ?? []).find(entry => entry?.isSelected && entry.id);
+        if (db?.id) {
+            selectedDbByProject[projectKey(project)] = db.id;
+        }
+    }
+    const selectedProject = projects.find(project => project?.isSelected);
+    const activeVersion = typeof data.activeVersion === 'string' ? data.activeVersion.trim() : undefined;
+    return {
+        selectedProjectUid: hasProjects
+            ? (selectedProject ? projectKey(selectedProject) : undefined)
+            : previous.selectedProjectUid,
+        selectedDbByProject: hasProjects ? selectedDbByProject : { ...previous.selectedDbByProject },
+        activeVersionId: data.activeVersion === undefined
+            ? previous.activeVersionId
+            : (activeVersion || undefined)
+    };
+}
+/**
+ * A copy of `data` with every selection flag cleared, ready for the store.
+ * The flags are kept as `false` rather than deleted so the stored shape is the
+ * one the models construct.
+ */
+function stripSelection(data) {
+    const copy = structuredClone(data);
+    for (const project of projectsOf(copy)) {
+        project.isSelected = false;
+        for (const db of project.dbs ?? []) {
+            if (db) {
+                db.isSelected = false;
+            }
+        }
+    }
+    delete copy.activeVersion;
+    for (const version of Object.values(copy.versions ?? {})) {
+        if (version && typeof version === 'object') {
+            version.isActive = false;
+        }
+    }
+    return copy;
+}
+/**
+ * Sets the selection flags on `data` in place and returns it. An id that no
+ * longer exists selects nothing, rather than failing.
+ */
+function applySelection(data, selection) {
+    for (const project of projectsOf(data)) {
+        const key = projectKey(project);
+        project.isSelected = key === selection.selectedProjectUid;
+        const selectedDb = selection.selectedDbByProject[key];
+        for (const db of project.dbs ?? []) {
+            if (db) {
+                db.isSelected = !!selectedDb && db.id === selectedDb;
+            }
+        }
+    }
+    const versions = data.versions ?? {};
+    const active = selection.activeVersionId && versions[selection.activeVersionId]
+        ? selection.activeVersionId
+        : undefined;
+    if (active) {
+        data.activeVersion = active;
+    }
+    else {
+        delete data.activeVersion;
+    }
+    for (const [id, version] of Object.entries(versions)) {
+        if (version && typeof version === 'object') {
+            version.isActive = id === active;
+        }
+    }
+    return data;
+}
+/** Whether the data carries any selection at all, for seeding. */
+function isEmptySelection(selection) {
+    return !selection.selectedProjectUid
+        && !selection.activeVersionId
+        && Object.keys(selection.selectedDbByProject).length === 0;
+}
+/** A stored value, or undefined when it cannot describe a selection. */
+function normalizeSelection(raw) {
+    if (!raw || typeof raw !== 'object') {
+        return undefined;
+    }
+    const value = raw;
+    const dbs = {};
+    if (value.selectedDbByProject && typeof value.selectedDbByProject === 'object') {
+        for (const [key, id] of Object.entries(value.selectedDbByProject)) {
+            if (typeof id === 'string' && id) {
+                dbs[key] = id;
+            }
+        }
+    }
+    return {
+        selectedProjectUid: typeof value.selectedProjectUid === 'string' && value.selectedProjectUid
+            ? value.selectedProjectUid
+            : undefined,
+        selectedDbByProject: dbs,
+        activeVersionId: typeof value.activeVersionId === 'string' && value.activeVersionId
+            ? value.activeVersionId
+            : undefined
+    };
+}
+// ---------------------------------------------------------------------------
+// vscode-backed accessors
+// ---------------------------------------------------------------------------
+function readSelection(memento) {
+    return normalizeSelection(memento.get(exports.SELECTION_STATE_KEY));
+}
+async function writeSelection(memento, selection) {
+    await memento.update(exports.SELECTION_STATE_KEY, selection);
+}
+
 
 /***/ }),
-/* 24 */
+/* 27 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -4484,12 +4796,12 @@ exports.VersionsService = void 0;
  * default-value operations against odooDebugger.defaultVersion.*.
  */
 const vscode = __importStar(__webpack_require__(1));
-const version_1 = __webpack_require__(25);
+const version_1 = __webpack_require__(28);
 const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
-const versionIdentity_1 = __webpack_require__(27);
+const versionIdentity_1 = __webpack_require__(30);
 class VersionsService {
     static instance;
     versions = new Map();
@@ -5197,7 +5509,7 @@ exports.VersionsService = VersionsService;
 
 
 /***/ }),
-/* 25 */
+/* 28 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -5206,7 +5518,7 @@ exports.VersionModel = void 0;
 /**
  * Version model: a named settings profile bound to a target Odoo branch.
  */
-const crypto_1 = __webpack_require__(26);
+const crypto_1 = __webpack_require__(29);
 class VersionModel {
     id;
     name; // User-friendly name like "Odoo 17.0", "Saas 17.4"
@@ -5281,13 +5593,13 @@ exports.VersionModel = VersionModel;
 
 
 /***/ }),
-/* 26 */
+/* 29 */
 /***/ ((module) => {
 
 module.exports = require("crypto");
 
 /***/ }),
-/* 27 */
+/* 30 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -5342,7 +5654,7 @@ exports.probeBusyPorts = probeBusyPorts;
  * at the bottom does I/O, mirroring how pythonToolchain.ts keeps
  * `rankInterpreters` pure and `discoverInterpreters` impure.
  */
-const net = __importStar(__webpack_require__(28));
+const net = __importStar(__webpack_require__(31));
 /** Settings computed from the branch: visible in the tree, never editable. */
 exports.DERIVED_SETTING_KEYS = ['debuggerName', 'portNumber', 'shellPortNumber'];
 exports.SERVER_PORT_BASE = 8000;
@@ -5478,13 +5790,13 @@ async function probeBusyPorts(ports) {
 
 
 /***/ }),
-/* 28 */
+/* 31 */
 /***/ ((module) => {
 
 module.exports = require("node:net");
 
 /***/ }),
-/* 29 */
+/* 32 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -5548,7 +5860,7 @@ function getSortOptions(viewId) {
 
 
 /***/ }),
-/* 30 */
+/* 33 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -5612,7 +5924,7 @@ exports.disabledIcon = new vscode.ThemeIcon('circle-slash');
 
 
 /***/ }),
-/* 31 */
+/* 34 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -5676,15 +5988,15 @@ exports.toggleSourceModules = toggleSourceModules;
  */
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(6);
-const upgrade_1 = __webpack_require__(32);
-const context_1 = __webpack_require__(33);
-const upgradeApply_1 = __webpack_require__(34);
+const upgrade_1 = __webpack_require__(35);
+const context_1 = __webpack_require__(36);
+const upgradeApply_1 = __webpack_require__(37);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const utils_1 = __webpack_require__(8);
-const versionsService_1 = __webpack_require__(24);
+const versionsService_1 = __webpack_require__(27);
 const baseTreeProvider_1 = __webpack_require__(5);
-const icons_1 = __webpack_require__(30);
+const icons_1 = __webpack_require__(33);
 /**
  * The project's upgrade configuration, normalized.
  *
@@ -6004,7 +6316,7 @@ async function toggleSourceModules() {
 
 
 /***/ }),
-/* 32 */
+/* 35 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -6172,7 +6484,7 @@ function ensureUpgradeConfigModel(upgradeConfig) {
 
 
 /***/ }),
-/* 33 */
+/* 36 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -6248,7 +6560,7 @@ function updateUpgradeRememberedContext(isRemembered) {
 
 
 /***/ }),
-/* 34 */
+/* 37 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -6257,17 +6569,17 @@ exports.applyUpgradeSetup = applyUpgradeSetup;
 exports.stageTargetModules = stageTargetModules;
 exports.unstageTargetModules = unstageTargetModules;
 exports.revertUpgradeStaging = revertUpgradeStaging;
-const db_1 = __webpack_require__(35);
-const module_1 = __webpack_require__(36);
-const repo_1 = __webpack_require__(37);
-const upgrade_1 = __webpack_require__(32);
-const postgres_1 = __webpack_require__(38);
-const database_1 = __webpack_require__(39);
-const environment_1 = __webpack_require__(41);
+const db_1 = __webpack_require__(38);
+const module_1 = __webpack_require__(39);
+const repo_1 = __webpack_require__(40);
+const upgrade_1 = __webpack_require__(35);
+const postgres_1 = __webpack_require__(41);
+const database_1 = __webpack_require__(42);
+const environment_1 = __webpack_require__(44);
 const logger_1 = __webpack_require__(12);
-const repoPaths_1 = __webpack_require__(46);
-const customWorktree_1 = __webpack_require__(47);
-const upgradeSetup_1 = __webpack_require__(49);
+const repoPaths_1 = __webpack_require__(49);
+const customWorktree_1 = __webpack_require__(50);
+const upgradeSetup_1 = __webpack_require__(52);
 /**
  * The addons a version can install, or undefined when it is not built yet.
  * Undefined defers the check to the first launch rather than holding back
@@ -6491,13 +6803,13 @@ function revertUpgradeStaging(project) {
 
 
 /***/ }),
-/* 35 */
+/* 38 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.DatabaseModel = void 0;
-const versionsService_1 = __webpack_require__(24);
+const versionsService_1 = __webpack_require__(27);
 const logger_1 = __webpack_require__(12);
 class DatabaseModel {
     name;
@@ -6572,7 +6884,7 @@ exports.DatabaseModel = DatabaseModel;
 
 
 /***/ }),
-/* 36 */
+/* 39 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -6592,7 +6904,7 @@ exports.ModuleModel = ModuleModel;
 
 
 /***/ }),
-/* 37 */
+/* 40 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -6623,7 +6935,7 @@ exports.RepoModel = RepoModel;
 
 
 /***/ }),
-/* 38 */
+/* 41 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -6639,7 +6951,7 @@ exports.dropDatabaseIfExists = dropDatabaseIfExists;
 exports.renameDatabase = renameDatabase;
 exports.neutralizeDatabase = neutralizeDatabase;
 const process_1 = __webpack_require__(13);
-const database_1 = __webpack_require__(39);
+const database_1 = __webpack_require__(42);
 const logger_1 = __webpack_require__(12);
 /**
  * All PostgreSQL CLI operations (psql/createdb/dropdb). Every call passes
@@ -6734,7 +7046,7 @@ async function neutralizeDatabase(dbName, newUuid) {
 
 
 /***/ }),
-/* 39 */
+/* 42 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -6785,7 +7097,7 @@ exports.getActiveDatabaseNames = getActiveDatabaseNames;
  * Odoo series detection via the base module version.
  */
 const node_child_process_1 = __webpack_require__(14);
-const util = __importStar(__webpack_require__(40));
+const util = __importStar(__webpack_require__(43));
 const runtimeCache_1 = __webpack_require__(15);
 const logger_1 = __webpack_require__(12);
 const execFileAsync = util.promisify(node_child_process_1.execFile);
@@ -6990,13 +7302,13 @@ async function getActiveDatabaseNames() {
 
 
 /***/ }),
-/* 40 */
+/* 43 */
 /***/ ((module) => {
 
 module.exports = require("node:util");
 
 /***/ }),
-/* 41 */
+/* 44 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -7048,13 +7360,13 @@ exports.alignEnvironment = alignEnvironment;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(9));
 const path = __importStar(__webpack_require__(10));
-const repo_1 = __webpack_require__(37);
+const repo_1 = __webpack_require__(40);
 const settings_1 = __webpack_require__(7);
-const versionsService_1 = __webpack_require__(24);
+const versionsService_1 = __webpack_require__(27);
 const utils_1 = __webpack_require__(8);
-const branches_1 = __webpack_require__(42);
-const checkout_1 = __webpack_require__(43);
-const worktree_1 = __webpack_require__(45);
+const branches_1 = __webpack_require__(45);
+const checkout_1 = __webpack_require__(46);
+const worktree_1 = __webpack_require__(48);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
 const LEGACY_BEHAVIOR_MAP = {
@@ -7403,7 +7715,7 @@ async function applyEnvironmentDiff(diff, label) {
 
 
 /***/ }),
-/* 42 */
+/* 45 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -7444,7 +7756,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getRepoBranch = getRepoBranch;
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(4));
-const fs = __importStar(__webpack_require__(23));
+const fs = __importStar(__webpack_require__(19));
 const gitService_1 = __webpack_require__(11);
 const runtimeCache_1 = __webpack_require__(15);
 const logger_1 = __webpack_require__(12);
@@ -7496,7 +7808,7 @@ async function getRepoBranch(repoPath) {
 
 
 /***/ }),
-/* 43 */
+/* 46 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -7538,7 +7850,7 @@ exports.checkoutRepoBranch = checkoutRepoBranch;
 exports.alignCoreRepos = alignCoreRepos;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(9));
-const child_process_1 = __webpack_require__(44);
+const child_process_1 = __webpack_require__(47);
 const utils_1 = __webpack_require__(8);
 const gitService_1 = __webpack_require__(11);
 const runtimeCache_1 = __webpack_require__(15);
@@ -7773,13 +8085,13 @@ async function alignCoreRepos(settings, branch, needsCheckout) {
 
 
 /***/ }),
-/* 44 */
+/* 47 */
 /***/ ((module) => {
 
 module.exports = require("child_process");
 
 /***/ }),
-/* 45 */
+/* 48 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -8058,7 +8370,7 @@ async function removeManagedBranch(repoPath, branch) {
 
 
 /***/ }),
-/* 46 */
+/* 49 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -8113,7 +8425,7 @@ exports.describeModeChange = describeModeChange;
  * Pure: mapping is decided here, creating directories is not.
  */
 const path = __importStar(__webpack_require__(4));
-const repo_1 = __webpack_require__(37);
+const repo_1 = __webpack_require__(40);
 const utils_1 = __webpack_require__(8);
 /** Anything illegal or confusing in a directory name becomes a dash. */
 function slug(value) {
@@ -8218,7 +8530,7 @@ function describeModeChange(repoName, mode, root, branches, repoPath) {
 
 
 /***/ }),
-/* 47 */
+/* 50 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -8266,11 +8578,11 @@ const vscode = __importStar(__webpack_require__(1));
 const process_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
-const branches_1 = __webpack_require__(42);
-const worktree_1 = __webpack_require__(45);
+const branches_1 = __webpack_require__(45);
+const worktree_1 = __webpack_require__(48);
 const runtimeCache_1 = __webpack_require__(15);
 const gitService_1 = __webpack_require__(11);
-const sourceConflict_1 = __webpack_require__(48);
+const sourceConflict_1 = __webpack_require__(51);
 async function dirtyFiles(repoPath) {
     const stdout = await (0, process_1.tryRunCommand)('git', ['status', '--porcelain'], { cwd: repoPath });
     return stdout === undefined ? [] : (0, sourceConflict_1.parsePorcelainStatus)(stdout);
@@ -8381,7 +8693,7 @@ async function ensureCustomWorktrees(resolved, token, options = {}) {
 
 
 /***/ }),
-/* 48 */
+/* 51 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -8452,7 +8764,7 @@ function parsePorcelainStatus(stdout) {
 
 
 /***/ }),
-/* 49 */
+/* 52 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -8509,8 +8821,8 @@ exports.resolveDatabaseSeries = resolveDatabaseSeries;
  */
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(4));
-const versionProposal_1 = __webpack_require__(50);
-const database_1 = __webpack_require__(39);
+const versionProposal_1 = __webpack_require__(53);
+const database_1 = __webpack_require__(42);
 const logger_1 = __webpack_require__(12);
 /**
  * Which branch of a repository belongs to a series.
@@ -8626,7 +8938,7 @@ async function resolveDatabaseSeries(dbId, linkedSeries) {
 
 
 /***/ }),
-/* 50 */
+/* 53 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -8643,7 +8955,7 @@ exports.proposeVersions = proposeVersions;
  * Pure: takes the branches and returns rows. The scanning that produces those
  * branches lives in the callers.
  */
-const database_1 = __webpack_require__(39);
+const database_1 = __webpack_require__(42);
 /** How many series rows are offered beyond the repo-derived ones. */
 exports.MAX_SERIES_ROWS = 4;
 /**
@@ -8724,7 +9036,7 @@ function proposeVersions(repoBranches, seriesBranches, existing) {
 
 
 /***/ }),
-/* 51 */
+/* 54 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -8779,26 +9091,26 @@ exports.changeDatabaseProjectRepoBranches = changeDatabaseProjectRepoBranches;
 exports.manageDatabaseTemplates = manageDatabaseTemplates;
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(4));
-const os = __importStar(__webpack_require__(52));
-const node_crypto_1 = __webpack_require__(53);
-const db_1 = __webpack_require__(35);
+const os = __importStar(__webpack_require__(55));
+const node_crypto_1 = __webpack_require__(56);
+const db_1 = __webpack_require__(38);
 const utils_1 = __webpack_require__(8);
-const odooInstaller_1 = __webpack_require__(54);
-const wizard_1 = __webpack_require__(60);
+const odooInstaller_1 = __webpack_require__(57);
+const wizard_1 = __webpack_require__(63);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branches_1 = __webpack_require__(42);
+const branches_1 = __webpack_require__(45);
 const settingsStore_1 = __webpack_require__(6);
-const versionsService_1 = __webpack_require__(24);
-const dbResolution_1 = __webpack_require__(61);
-const dbNaming_1 = __webpack_require__(62);
-const database_1 = __webpack_require__(39);
-const upgrade_1 = __webpack_require__(31);
-const postgres_1 = __webpack_require__(38);
-const dumpImport_1 = __webpack_require__(63);
-const templates_1 = __webpack_require__(66);
-const reconcile_1 = __webpack_require__(67);
-const environment_1 = __webpack_require__(41);
+const versionsService_1 = __webpack_require__(27);
+const dbResolution_1 = __webpack_require__(64);
+const dbNaming_1 = __webpack_require__(65);
+const database_1 = __webpack_require__(42);
+const upgrade_1 = __webpack_require__(34);
+const postgres_1 = __webpack_require__(41);
+const dumpImport_1 = __webpack_require__(66);
+const templates_1 = __webpack_require__(69);
+const reconcile_1 = __webpack_require__(70);
+const environment_1 = __webpack_require__(44);
 /**
  * Database UI flows: creation wizard, selection, deletion, restore, version
  * and branch-mapping edits, and template management. All PostgreSQL / dump
@@ -10309,19 +10621,19 @@ async function manageDatabaseTemplates() {
 
 
 /***/ }),
-/* 52 */
+/* 55 */
 /***/ ((module) => {
 
 module.exports = require("node:os");
 
 /***/ }),
-/* 53 */
+/* 56 */
 /***/ ((module) => {
 
 module.exports = require("node:crypto");
 
 /***/ }),
-/* 54 */
+/* 57 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10375,11 +10687,11 @@ const utils_1 = __webpack_require__(8);
 const process_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
-const versionsService_1 = __webpack_require__(24);
-const provisioning_1 = __webpack_require__(55);
-const systemDeps_1 = __webpack_require__(58);
-const pythonToolchain_1 = __webpack_require__(57);
-const setupState_1 = __webpack_require__(59);
+const versionsService_1 = __webpack_require__(27);
+const provisioning_1 = __webpack_require__(58);
+const systemDeps_1 = __webpack_require__(61);
+const pythonToolchain_1 = __webpack_require__(60);
+const setupState_1 = __webpack_require__(62);
 const CLONE_TARGETS = {
     odoo: {
         dirName: 'odoo',
@@ -10715,7 +11027,7 @@ async function cloneOdooRepositories(defaultBaseDir) {
 
 
 /***/ }),
-/* 55 */
+/* 58 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10767,10 +11079,10 @@ exports.executeProvision = executeProvision;
  */
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(4));
-const odooRequirements_1 = __webpack_require__(56);
-const worktree_1 = __webpack_require__(45);
-const pythonToolchain_1 = __webpack_require__(57);
-const systemDeps_1 = __webpack_require__(58);
+const odooRequirements_1 = __webpack_require__(59);
+const worktree_1 = __webpack_require__(48);
+const pythonToolchain_1 = __webpack_require__(60);
+const systemDeps_1 = __webpack_require__(61);
 const logger_1 = __webpack_require__(12);
 function samePath(a, b) {
     return path.resolve(a) === path.resolve(b);
@@ -10955,7 +11267,7 @@ async function executeProvision(spec, progress, token) {
 
 
 /***/ }),
-/* 56 */
+/* 59 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11006,7 +11318,7 @@ exports.readOdooPythonWindow = readOdooPythonWindow;
  * (present in 19.0). The preferred interpreter comes from the distributions
  * named in requirements.txt's header comment.
  */
-const fs = __importStar(__webpack_require__(23));
+const fs = __importStar(__webpack_require__(19));
 const path = __importStar(__webpack_require__(4));
 exports.FALLBACK_MIN_PYTHON = [3, 10];
 /**
@@ -11093,7 +11405,7 @@ async function readOdooPythonWindow(odooPath) {
 
 
 /***/ }),
-/* 57 */
+/* 60 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11147,7 +11459,7 @@ exports.installRequirements = installRequirements;
  * pure and tested; discovery and venv creation shell out through runCommand.
  */
 const fs = __importStar(__webpack_require__(2));
-const os = __importStar(__webpack_require__(52));
+const os = __importStar(__webpack_require__(55));
 const path = __importStar(__webpack_require__(4));
 const vscode = __importStar(__webpack_require__(1));
 const process_1 = __webpack_require__(13);
@@ -11341,7 +11653,7 @@ async function installRequirements(venvPath, requirementsPath, uvPath, onLine, t
 
 
 /***/ }),
-/* 58 */
+/* 61 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11390,7 +11702,7 @@ exports.checkSystemDeps = checkSystemDeps;
  */
 const fs = __importStar(__webpack_require__(2));
 const process_1 = __webpack_require__(13);
-const pythonToolchain_1 = __webpack_require__(57);
+const pythonToolchain_1 = __webpack_require__(60);
 const INSTALL_HINTS = {
     wkhtmltopdf: {
         apt: 'sudo apt install wkhtmltopdf',
@@ -11471,7 +11783,7 @@ async function checkSystemDeps(venvPath) {
 
 
 /***/ }),
-/* 59 */
+/* 62 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11527,7 +11839,7 @@ exports.shouldAdoptLegacySourceRepo = shouldAdoptLegacySourceRepo;
  * only the read/write helpers at the bottom touch vscode and the filesystem.
  */
 const fs = __importStar(__webpack_require__(2));
-const os = __importStar(__webpack_require__(52));
+const os = __importStar(__webpack_require__(55));
 const path = __importStar(__webpack_require__(4));
 const vscode = __importStar(__webpack_require__(1));
 const logger_1 = __webpack_require__(12);
@@ -11617,7 +11929,7 @@ function shouldAdoptLegacySourceRepo(raw, legacyOdooPath, exists) {
 
 
 /***/ }),
-/* 60 */
+/* 63 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11857,7 +12169,7 @@ function step(run, accept, options = {}) {
 
 
 /***/ }),
-/* 61 */
+/* 64 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -11900,7 +12212,7 @@ function rememberDbForVersion(existing, versionId, dbId) {
 
 
 /***/ }),
-/* 62 */
+/* 65 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11943,7 +12255,7 @@ exports.generateDatabaseIdentifiers = generateDatabaseIdentifiers;
  * Deterministic database name suggestions (slugified project + kind + date
  * + collision-resolving hash).
  */
-const crypto = __importStar(__webpack_require__(26));
+const crypto = __importStar(__webpack_require__(29));
 const MAX_IDENTIFIER_LENGTH = 63;
 const KIND_LABELS = {
     dump: 'Dump',
@@ -12035,7 +12347,7 @@ function generateDatabaseIdentifiers(options) {
 
 
 /***/ }),
-/* 63 */
+/* 66 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12080,12 +12392,12 @@ exports.prepareDumpForImport = prepareDumpForImport;
 exports.importPreparedDump = importPreparedDump;
 exports.prepareDumpViaTempFile = prepareDumpViaTempFile;
 const fs = __importStar(__webpack_require__(2));
-const fsp = __importStar(__webpack_require__(23));
+const fsp = __importStar(__webpack_require__(19));
 const path = __importStar(__webpack_require__(4));
-const os = __importStar(__webpack_require__(52));
+const os = __importStar(__webpack_require__(55));
 const node_child_process_1 = __webpack_require__(14);
-const node_stream_1 = __webpack_require__(64);
-const promises_1 = __webpack_require__(65);
+const node_stream_1 = __webpack_require__(67);
+const promises_1 = __webpack_require__(68);
 const process_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(12);
 /** Recursively finds restorable dump sources under `root` (bounded depth). */
@@ -12388,19 +12700,19 @@ async function prepareDumpViaTempFile(dumpPath) {
 
 
 /***/ }),
-/* 64 */
+/* 67 */
 /***/ ((module) => {
 
 module.exports = require("node:stream");
 
 /***/ }),
-/* 65 */
+/* 68 */
 /***/ ((module) => {
 
 module.exports = require("node:stream/promises");
 
 /***/ }),
-/* 66 */
+/* 69 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -12411,7 +12723,7 @@ exports.validateTemplateDatabaseName = validateTemplateDatabaseName;
 exports.persistDatabaseTemplates = persistDatabaseTemplates;
 const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
-const postgres_1 = __webpack_require__(38);
+const postgres_1 = __webpack_require__(41);
 /**
  * Database-template metadata management. A template is a PostgreSQL database
  * (cloned via `createdb -T`) plus a metadata record stored in the workspace
@@ -12495,7 +12807,7 @@ async function persistDatabaseTemplates(data, templates) {
 
 
 /***/ }),
-/* 67 */
+/* 70 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -12503,7 +12815,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.findStaleReferences = findStaleReferences;
 exports.logStaleReferences = logStaleReferences;
 const settingsStore_1 = __webpack_require__(6);
-const postgres_1 = __webpack_require__(38);
+const postgres_1 = __webpack_require__(41);
 const logger_1 = __webpack_require__(12);
 /**
  * Returns references to PostgreSQL databases that no longer exist, or
@@ -12551,7 +12863,7 @@ async function logStaleReferences() {
 
 
 /***/ }),
-/* 68 */
+/* 71 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -12568,10 +12880,10 @@ exports.invalidateRunningState = invalidateRunningState;
  * split-view comparison of two running instances - share one state source.
  */
 const settingsStore_1 = __webpack_require__(6);
-const versionsService_1 = __webpack_require__(24);
-const database_1 = __webpack_require__(39);
-const debugSessions_1 = __webpack_require__(69);
-const dbResolution_1 = __webpack_require__(61);
+const versionsService_1 = __webpack_require__(27);
+const database_1 = __webpack_require__(42);
+const debugSessions_1 = __webpack_require__(72);
+const dbResolution_1 = __webpack_require__(64);
 const runtimeCache_1 = __webpack_require__(15);
 const logger_1 = __webpack_require__(12);
 /**
@@ -12652,7 +12964,7 @@ function invalidateRunningState() {
 
 
 /***/ }),
-/* 69 */
+/* 72 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -12714,7 +13026,7 @@ function resolveStopTarget(running, activeName) {
 
 
 /***/ }),
-/* 70 */
+/* 73 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12760,8 +13072,8 @@ exports.applyHookMigration = applyHookMigration;
 exports.migrateHookSettings = migrateHookSettings;
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(6);
-const versionsService_1 = __webpack_require__(24);
-const version_1 = __webpack_require__(25);
+const versionsService_1 = __webpack_require__(27);
+const version_1 = __webpack_require__(28);
 const utils_1 = __webpack_require__(8);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
@@ -12983,7 +13295,7 @@ async function migrateHookSettings() {
 
 
 /***/ }),
-/* 71 */
+/* 74 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13040,25 +13352,25 @@ exports.quickProjectSearch = quickProjectSearch;
  * import/export, ticket management and quick project search.
  */
 const vscode = __importStar(__webpack_require__(1));
-const os = __importStar(__webpack_require__(72));
-const project_1 = __webpack_require__(73);
-const repo_1 = __webpack_require__(37);
+const os = __importStar(__webpack_require__(75));
+const project_1 = __webpack_require__(76);
+const repo_1 = __webpack_require__(40);
 const utils_1 = __webpack_require__(8);
-const icons_1 = __webpack_require__(30);
+const icons_1 = __webpack_require__(33);
 const settingsStore_1 = __webpack_require__(6);
-const versionsService_1 = __webpack_require__(24);
-const crypto_1 = __webpack_require__(26);
-const environment_1 = __webpack_require__(41);
-const sortOptions_1 = __webpack_require__(29);
+const versionsService_1 = __webpack_require__(27);
+const crypto_1 = __webpack_require__(29);
+const environment_1 = __webpack_require__(44);
+const sortOptions_1 = __webpack_require__(32);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
 const notifications_2 = __webpack_require__(16);
 const baseTreeProvider_1 = __webpack_require__(5);
-const customAddonsCommand_1 = __webpack_require__(75);
-const wizard_1 = __webpack_require__(60);
-const branches_1 = __webpack_require__(42);
-const manifest_1 = __webpack_require__(76);
-const psaeInternal_1 = __webpack_require__(77);
+const customAddonsCommand_1 = __webpack_require__(78);
+const wizard_1 = __webpack_require__(63);
+const branches_1 = __webpack_require__(45);
+const manifest_1 = __webpack_require__(79);
+const psaeInternal_1 = __webpack_require__(80);
 let projectMetadataMigrationCompleted = false;
 function sanitizeProjectTickets(rawTickets) {
     if (!Array.isArray(rawTickets)) {
@@ -13338,15 +13650,13 @@ async function selectProject(projectUid) {
     if (needsSave) {
         await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
     }
-    // Find and deselect the currently selected project
-    const oldSelectedIndex = projects.findIndex((p) => p.isSelected);
-    if (oldSelectedIndex !== -1) {
-        await settingsStore_1.SettingsStore.saveWithComments(false, ["projects", oldSelectedIndex, "isSelected"], 'odoo-debugger-data.json');
-    }
     // Find and select the new project by UID
     const newSelectedIndex = projects.findIndex((p) => p.uid === projectUid);
     if (newSelectedIndex !== -1) {
-        await settingsStore_1.SettingsStore.saveWithComments(true, ["projects", newSelectedIndex, "isSelected"], 'odoo-debugger-data.json');
+        // One save through the store: the selection is this window's choice,
+        // and saving routes it to workspaceState rather than into the file.
+        projects.forEach((p, index) => (p.isSelected = index === newSelectedIndex));
+        await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
         // Get the newly selected project
         const selectedProject = projects[newSelectedIndex];
         // Align the workbench to the project's selected database, if any.
@@ -14083,21 +14393,21 @@ async function quickProjectSearch() {
 
 
 /***/ }),
-/* 72 */
+/* 75 */
 /***/ ((module) => {
 
 module.exports = require("os");
 
 /***/ }),
-/* 73 */
+/* 76 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectModel = void 0;
-const testing_1 = __webpack_require__(74);
-const upgrade_1 = __webpack_require__(32);
-const crypto_1 = __webpack_require__(26);
+const testing_1 = __webpack_require__(77);
+const upgrade_1 = __webpack_require__(35);
+const crypto_1 = __webpack_require__(29);
 class ProjectModel {
     name; // project sh name
     createdAt;
@@ -14132,7 +14442,7 @@ exports.ProjectModel = ProjectModel;
 
 
 /***/ }),
-/* 74 */
+/* 77 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -14219,7 +14529,7 @@ function ensureTestingConfigModel(testingConfig) {
 
 
 /***/ }),
-/* 75 */
+/* 78 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14273,7 +14583,7 @@ exports.registerCustomAddonsCommand = registerCustomAddonsCommand;
  * inherits it.
  */
 const vscode = __importStar(__webpack_require__(1));
-const versionsService_1 = __webpack_require__(24);
+const versionsService_1 = __webpack_require__(27);
 const runtimeCache_1 = __webpack_require__(15);
 const notifications_1 = __webpack_require__(16);
 /**
@@ -14319,7 +14629,7 @@ function registerCustomAddonsCommand(deps) {
 
 
 /***/ }),
-/* 76 */
+/* 79 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14360,7 +14670,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.readModuleManifest = readModuleManifest;
 exports.findModuleForFile = findModuleForFile;
 exports.extractTicketIdsFromBranch = extractTicketIdsFromBranch;
-const fs = __importStar(__webpack_require__(23));
+const fs = __importStar(__webpack_require__(19));
 const path = __importStar(__webpack_require__(4));
 const logger_1 = __webpack_require__(12);
 const manifestCache = new Map();
@@ -14471,7 +14781,7 @@ function extractTicketIdsFromBranch(branchName) {
 
 
 /***/ }),
-/* 77 */
+/* 80 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -14482,7 +14792,7 @@ exports.parsePsaeOverrides = parsePsaeOverrides;
 exports.resolvePsaeDirectories = resolvePsaeDirectories;
 exports.setPsaeDirectoryIncluded = setPsaeDirectoryIncluded;
 const utils_1 = __webpack_require__(8);
-const repoPaths_1 = __webpack_require__(46);
+const repoPaths_1 = __webpack_require__(49);
 /**
  * Single source of truth for "psae-internal" module directories (Odoo PS
  * convention: directories matching ps*-internal hold internal modules that
@@ -14573,7 +14883,7 @@ function setPsaeDirectoryIncluded(project, dir, include) {
 
 
 /***/ }),
-/* 78 */
+/* 81 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14617,19 +14927,19 @@ exports.selectRepo = selectRepo;
  * Repos view: lists git repositories discovered under the version's custom
  * addons folder and toggles their membership in the active project.
  */
-const repo_1 = __webpack_require__(37);
+const repo_1 = __webpack_require__(40);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(8);
 const settingsStore_1 = __webpack_require__(6);
-const upgrade_1 = __webpack_require__(31);
-const versionsService_1 = __webpack_require__(24);
+const upgrade_1 = __webpack_require__(34);
+const versionsService_1 = __webpack_require__(27);
 const path = __importStar(__webpack_require__(10));
 const fs = __importStar(__webpack_require__(9));
-const sortOptions_1 = __webpack_require__(29);
-const branches_1 = __webpack_require__(42);
+const sortOptions_1 = __webpack_require__(32);
+const branches_1 = __webpack_require__(45);
 const runtimeCache_1 = __webpack_require__(15);
 const baseTreeProvider_1 = __webpack_require__(5);
-const icons_1 = __webpack_require__(30);
+const icons_1 = __webpack_require__(33);
 async function mapWithConcurrency(items, limit, worker) {
     if (items.length === 0) {
         return [];
@@ -14799,7 +15109,7 @@ async function selectRepo(event) {
 
 
 /***/ }),
-/* 79 */
+/* 82 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14856,24 +15166,24 @@ exports.viewInstalledModules = viewInstalledModules;
  * install/upgrade state management, psae-internal groups, manifest
  * dependencies, bulk actions and odoo-bin scaffolding.
  */
-const module_1 = __webpack_require__(36);
+const module_1 = __webpack_require__(39);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(8);
-const psaeInternal_1 = __webpack_require__(77);
+const psaeInternal_1 = __webpack_require__(80);
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(4));
 const settingsStore_1 = __webpack_require__(6);
-const database_1 = __webpack_require__(39);
-const sortOptions_1 = __webpack_require__(29);
-const versionsService_1 = __webpack_require__(24);
-const repoPaths_1 = __webpack_require__(46);
-const environment_1 = __webpack_require__(41);
-const setupState_1 = __webpack_require__(59);
+const database_1 = __webpack_require__(42);
+const sortOptions_1 = __webpack_require__(32);
+const versionsService_1 = __webpack_require__(27);
+const repoPaths_1 = __webpack_require__(49);
+const environment_1 = __webpack_require__(44);
+const setupState_1 = __webpack_require__(62);
 const notifications_1 = __webpack_require__(16);
 const baseTreeProvider_1 = __webpack_require__(5);
 const process_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(12);
-const manifest_1 = __webpack_require__(76);
+const manifest_1 = __webpack_require__(79);
 /**
  * Whether module selections may be edited right now. Both refusals were
  * repeated at nine call sites with no way forward; hoisting them means the
@@ -15731,7 +16041,7 @@ async function viewInstalledModules() {
 
 
 /***/ }),
-/* 80 */
+/* 83 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15786,17 +16096,17 @@ exports.setSpecificLogLevel = setSpecificLogLevel;
  */
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(6);
-const testing_1 = __webpack_require__(74);
-const module_1 = __webpack_require__(36);
+const testing_1 = __webpack_require__(77);
+const module_1 = __webpack_require__(39);
 const utils_1 = __webpack_require__(8);
-const context_1 = __webpack_require__(33);
-const upgrade_1 = __webpack_require__(31);
-const debugger_1 = __webpack_require__(81);
-const database_1 = __webpack_require__(39);
+const context_1 = __webpack_require__(36);
+const upgrade_1 = __webpack_require__(34);
+const debugger_1 = __webpack_require__(84);
+const database_1 = __webpack_require__(42);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
 const baseTreeProvider_1 = __webpack_require__(5);
-const icons_1 = __webpack_require__(30);
+const icons_1 = __webpack_require__(33);
 class TestingTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     constructor(_context) {
         super();
@@ -16462,7 +16772,7 @@ async function setSpecificLogLevel() {
 
 
 /***/ }),
-/* 81 */
+/* 84 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16515,21 +16825,21 @@ const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(4));
 const settings_1 = __webpack_require__(7);
 const utils_1 = __webpack_require__(8);
-const psaeInternal_1 = __webpack_require__(77);
+const psaeInternal_1 = __webpack_require__(80);
 const settingsStore_1 = __webpack_require__(6);
-const versionsService_1 = __webpack_require__(24);
-const testing_1 = __webpack_require__(74);
-const database_1 = __webpack_require__(39);
+const versionsService_1 = __webpack_require__(27);
+const testing_1 = __webpack_require__(77);
+const database_1 = __webpack_require__(42);
 const logger_1 = __webpack_require__(12);
-const launchConfig_1 = __webpack_require__(82);
-const debugSessions_1 = __webpack_require__(69);
-const dbResolution_1 = __webpack_require__(61);
-const provisioning_1 = __webpack_require__(55);
-const repoPaths_1 = __webpack_require__(46);
-const customWorktree_1 = __webpack_require__(47);
-const setupState_1 = __webpack_require__(59);
-const environment_1 = __webpack_require__(41);
-const odooInstaller_1 = __webpack_require__(54);
+const launchConfig_1 = __webpack_require__(85);
+const debugSessions_1 = __webpack_require__(72);
+const dbResolution_1 = __webpack_require__(64);
+const provisioning_1 = __webpack_require__(58);
+const repoPaths_1 = __webpack_require__(49);
+const customWorktree_1 = __webpack_require__(50);
+const setupState_1 = __webpack_require__(62);
+const environment_1 = __webpack_require__(44);
+const odooInstaller_1 = __webpack_require__(57);
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
 const baseInstallNotifiedDbs = new Set();
@@ -17017,7 +17327,7 @@ async function startDebugServer(options = {}) {
 
 
 /***/ }),
-/* 82 */
+/* 85 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17056,9 +17366,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.updateManagedLaunchConfig = updateManagedLaunchConfig;
-const fs = __importStar(__webpack_require__(23));
+const fs = __importStar(__webpack_require__(19));
 const path = __importStar(__webpack_require__(4));
-const jsonc_parser_1 = __webpack_require__(17);
+const jsonc_parser_1 = __webpack_require__(20);
 /**
  * Manages the extension's entry in .vscode/launch.json. Only the managed
  * configuration (matched by name) is rewritten - user comments, formatting
@@ -17104,7 +17414,7 @@ async function updateManagedLaunchConfig(workspacePath, managedConfig) {
 
 
 /***/ }),
-/* 83 */
+/* 86 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17296,7 +17606,7 @@ async function offerStop(context, remaining) {
 
 
 /***/ }),
-/* 84 */
+/* 87 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17339,17 +17649,17 @@ exports.VersionsTreeProvider = exports.VersionSettingTreeItem = exports.VersionT
  * Versions view: version profiles with their settings as editable children.
  */
 const vscode = __importStar(__webpack_require__(1));
-const versionsService_1 = __webpack_require__(24);
+const versionsService_1 = __webpack_require__(27);
 const utils_1 = __webpack_require__(8);
-const provisioning_1 = __webpack_require__(55);
-const runningState_1 = __webpack_require__(68);
-const icons_1 = __webpack_require__(30);
-const sortOptions_1 = __webpack_require__(29);
+const provisioning_1 = __webpack_require__(58);
+const runningState_1 = __webpack_require__(71);
+const icons_1 = __webpack_require__(33);
+const sortOptions_1 = __webpack_require__(32);
 const logger_1 = __webpack_require__(12);
 const baseTreeProvider_1 = __webpack_require__(5);
-const versionIdentity_1 = __webpack_require__(27);
-const provisionQueue_1 = __webpack_require__(83);
-const upgrade_1 = __webpack_require__(31);
+const versionIdentity_1 = __webpack_require__(30);
+const provisionQueue_1 = __webpack_require__(86);
+const upgrade_1 = __webpack_require__(34);
 /** Provisioned state for the tree description, from the shared predicate. */
 function provisioningLabel(version) {
     // The queue owns the row while it is building: "not provisioned" during a
@@ -17583,7 +17893,7 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 
 /***/ }),
-/* 85 */
+/* 88 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17634,12 +17944,12 @@ exports.registerServerLifecycle = registerServerLifecycle;
  * waiting for the HTTP port to accept connections first.
  */
 const vscode = __importStar(__webpack_require__(1));
-const net = __importStar(__webpack_require__(28));
-const versionsService_1 = __webpack_require__(24);
+const net = __importStar(__webpack_require__(31));
+const versionsService_1 = __webpack_require__(27);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
-const runningState_1 = __webpack_require__(68);
-const debugSessions_1 = __webpack_require__(69);
+const runningState_1 = __webpack_require__(71);
+const debugSessions_1 = __webpack_require__(72);
 const DEFAULT_ODOO_PORT = 8069;
 /** Port the Odoo server listens on, from the active version's settings. */
 async function getActiveServerPort() {
@@ -17800,7 +18110,7 @@ function registerServerLifecycle(context, hooks) {
 
 
 /***/ }),
-/* 86 */
+/* 89 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -17823,7 +18133,7 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 87 */
+/* 90 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17874,18 +18184,18 @@ exports.selectProjectForExplorer = selectProjectForExplorer;
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(4));
 const settingsStore_1 = __webpack_require__(6);
-const repo_1 = __webpack_require__(37);
+const repo_1 = __webpack_require__(40);
 const utils_1 = __webpack_require__(8);
 const runtimeCache_1 = __webpack_require__(15);
-const filesExclude_1 = __webpack_require__(88);
+const filesExclude_1 = __webpack_require__(91);
 const baseTreeProvider_1 = __webpack_require__(5);
-const sortOptions_1 = __webpack_require__(29);
-const branches_1 = __webpack_require__(42);
-const repoPaths_1 = __webpack_require__(46);
-const environment_1 = __webpack_require__(41);
-const setupState_1 = __webpack_require__(59);
-const dumpImport_1 = __webpack_require__(63);
-const upgrade_1 = __webpack_require__(32);
+const sortOptions_1 = __webpack_require__(32);
+const branches_1 = __webpack_require__(45);
+const repoPaths_1 = __webpack_require__(49);
+const environment_1 = __webpack_require__(44);
+const setupState_1 = __webpack_require__(62);
+const dumpImport_1 = __webpack_require__(66);
+const upgrade_1 = __webpack_require__(35);
 /**
  * Both copies of every repository an active upgrade runs on.
  *
@@ -18248,7 +18558,7 @@ async function selectProjectForExplorer() {
 
 
 /***/ }),
-/* 88 */
+/* 91 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -18394,7 +18704,7 @@ function createFilesExcludeMatcher(scopeUri) {
 
 
 /***/ }),
-/* 89 */
+/* 92 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -18447,10 +18757,10 @@ const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(6);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
-const setupState_1 = __webpack_require__(59);
-const repoPaths_1 = __webpack_require__(46);
-const environment_1 = __webpack_require__(41);
-const upgrade_1 = __webpack_require__(32);
+const setupState_1 = __webpack_require__(62);
+const repoPaths_1 = __webpack_require__(49);
+const environment_1 = __webpack_require__(44);
+const upgrade_1 = __webpack_require__(35);
 const SUPPRESSED_KEY = 'odooDevtools.wrongCopyWarningSuppressed';
 /**
  * The repo and branch a path under the provisioning root belongs to, derived
@@ -18529,7 +18839,7 @@ function registerWrongCopyGuard(context) {
 
 
 /***/ }),
-/* 90 */
+/* 93 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -18650,7 +18960,7 @@ function migratable(diagnoses) {
 
 
 /***/ }),
-/* 91 */
+/* 94 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -18691,10 +19001,10 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.StatusBarIndicators = void 0;
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(6);
-const versionsService_1 = __webpack_require__(24);
+const versionsService_1 = __webpack_require__(27);
 const utils_1 = __webpack_require__(8);
 const logger_1 = __webpack_require__(12);
-const runningState_1 = __webpack_require__(68);
+const runningState_1 = __webpack_require__(71);
 /**
  * Status bar indicators for the active project, database and version.
  * Clicking each opens the corresponding quick-switch picker, so the current
@@ -18786,25 +19096,25 @@ exports.StatusBarIndicators = StatusBarIndicators;
 
 
 /***/ }),
-/* 92 */
+/* 95 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(93);
-const projectCommands_1 = __webpack_require__(95);
-const repoCommands_1 = __webpack_require__(101);
-const dbCommands_1 = __webpack_require__(102);
-const moduleCommands_1 = __webpack_require__(103);
-const testingCommands_1 = __webpack_require__(104);
-const versionCommands_1 = __webpack_require__(105);
-const debugCommands_1 = __webpack_require__(108);
-const reposExplorerCommands_1 = __webpack_require__(109);
-const editorCommands_1 = __webpack_require__(110);
-const helpCommands_1 = __webpack_require__(111);
-const upgradeCommand_1 = __webpack_require__(112);
-const customAddonsCommand_1 = __webpack_require__(75);
+const viewCommands_1 = __webpack_require__(96);
+const projectCommands_1 = __webpack_require__(98);
+const repoCommands_1 = __webpack_require__(104);
+const dbCommands_1 = __webpack_require__(105);
+const moduleCommands_1 = __webpack_require__(106);
+const testingCommands_1 = __webpack_require__(107);
+const versionCommands_1 = __webpack_require__(108);
+const debugCommands_1 = __webpack_require__(111);
+const reposExplorerCommands_1 = __webpack_require__(112);
+const editorCommands_1 = __webpack_require__(113);
+const helpCommands_1 = __webpack_require__(114);
+const upgradeCommand_1 = __webpack_require__(115);
+const customAddonsCommand_1 = __webpack_require__(78);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -18824,7 +19134,7 @@ function registerAllCommands(deps) {
 
 
 /***/ }),
-/* 93 */
+/* 96 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -18864,10 +19174,10 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(94);
-const sortOptions_1 = __webpack_require__(29);
+const quickSearch_1 = __webpack_require__(97);
+const sortOptions_1 = __webpack_require__(32);
 const notifications_1 = __webpack_require__(16);
-const module_1 = __webpack_require__(79);
+const module_1 = __webpack_require__(82);
 /**
  * Generic per-view plumbing: refresh, sort, and quick-search commands.
  */
@@ -18996,7 +19306,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 94 */
+/* 97 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -19108,7 +19418,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 95 */
+/* 98 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -19152,21 +19462,21 @@ exports.registerProjectCommands = registerProjectCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(4));
-const wizard_1 = __webpack_require__(60);
+const wizard_1 = __webpack_require__(63);
 const utils_1 = __webpack_require__(8);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const project_1 = __webpack_require__(71);
-const dbs_1 = __webpack_require__(51);
-const odooInstaller_1 = __webpack_require__(54);
-const projectWorkspace_1 = __webpack_require__(96);
-const setupFlow_1 = __webpack_require__(98);
-const setupState_1 = __webpack_require__(59);
-const context_1 = __webpack_require__(33);
-const versionProposal_1 = __webpack_require__(50);
-const versionPick_1 = __webpack_require__(100);
+const project_1 = __webpack_require__(74);
+const dbs_1 = __webpack_require__(54);
+const odooInstaller_1 = __webpack_require__(57);
+const projectWorkspace_1 = __webpack_require__(99);
+const setupFlow_1 = __webpack_require__(101);
+const setupState_1 = __webpack_require__(62);
+const context_1 = __webpack_require__(36);
+const versionProposal_1 = __webpack_require__(53);
+const versionPick_1 = __webpack_require__(103);
 const gitService_1 = __webpack_require__(11);
-const provisionQueue_1 = __webpack_require__(83);
+const provisionQueue_1 = __webpack_require__(86);
 function registerProjectCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('projectSelector.create', async () => {
@@ -19328,7 +19638,7 @@ function registerProjectCommands(deps) {
 
 
 /***/ }),
-/* 96 */
+/* 99 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -19376,11 +19686,11 @@ exports.quickSwitchProjectWorkspace = quickSwitchProjectWorkspace;
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
-const versionsService_1 = __webpack_require__(24);
-const workspaceFolders_1 = __webpack_require__(97);
-const repoPaths_1 = __webpack_require__(46);
-const environment_1 = __webpack_require__(41);
-const setupState_1 = __webpack_require__(59);
+const versionsService_1 = __webpack_require__(27);
+const workspaceFolders_1 = __webpack_require__(100);
+const repoPaths_1 = __webpack_require__(49);
+const environment_1 = __webpack_require__(44);
+const setupState_1 = __webpack_require__(62);
 async function getActiveProjectOrPrompt() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
@@ -19488,7 +19798,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 97 */
+/* 100 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -19548,7 +19858,7 @@ function repoFolderEntries(resolved, existingPaths) {
 
 
 /***/ }),
-/* 98 */
+/* 101 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -19600,10 +19910,10 @@ const path = __importStar(__webpack_require__(4));
 const vscode = __importStar(__webpack_require__(1));
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branches_1 = __webpack_require__(42);
-const customAddonsCommand_1 = __webpack_require__(75);
-const setupDetection_1 = __webpack_require__(99);
-const setupState_1 = __webpack_require__(59);
+const branches_1 = __webpack_require__(45);
+const customAddonsCommand_1 = __webpack_require__(78);
+const setupDetection_1 = __webpack_require__(102);
+const setupState_1 = __webpack_require__(62);
 /** The per-version key that every repository-discovery site already reads. */
 const CUSTOM_ADDONS_KEY = 'defaultVersion.customAddonsPath';
 function readConfiguredCustomAddons() {
@@ -19784,7 +20094,7 @@ async function runSetup(options) {
 
 
 /***/ }),
-/* 99 */
+/* 102 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -19836,7 +20146,7 @@ exports.detectCustomAddonsRoot = detectCustomAddonsRoot;
  * list one level deep so it can never wander a large home directory.
  */
 const fs = __importStar(__webpack_require__(2));
-const os = __importStar(__webpack_require__(52));
+const os = __importStar(__webpack_require__(55));
 const path = __importStar(__webpack_require__(4));
 const logger_1 = __webpack_require__(12);
 /** Directory names that identify the two optional repos. */
@@ -20001,7 +20311,7 @@ function detectCustomAddonsRoot(roots) {
 
 
 /***/ }),
-/* 100 */
+/* 103 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20050,7 +20360,7 @@ const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(4));
 const settingsStore_1 = __webpack_require__(6);
-const branches_1 = __webpack_require__(42);
+const branches_1 = __webpack_require__(45);
 const utils_1 = __webpack_require__(8);
 const logger_1 = __webpack_require__(12);
 /** Stated, not measured: enough to stop someone ticking four boxes blind. */
@@ -20150,7 +20460,7 @@ async function collectRepoBranches() {
 
 
 /***/ }),
-/* 101 */
+/* 104 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20193,8 +20503,8 @@ exports.registerRepoCommands = registerRepoCommands;
  * Command handlers for the Repos view.
  */
 const vscode = __importStar(__webpack_require__(1));
-const repos_1 = __webpack_require__(78);
-const projectWorkspace_1 = __webpack_require__(96);
+const repos_1 = __webpack_require__(81);
+const projectWorkspace_1 = __webpack_require__(99);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
@@ -20206,7 +20516,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 102 */
+/* 105 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20252,9 +20562,9 @@ const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(6);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const dbs_1 = __webpack_require__(51);
+const dbs_1 = __webpack_require__(54);
 const notifications_2 = __webpack_require__(16);
-const server_1 = __webpack_require__(85);
+const server_1 = __webpack_require__(88);
 const utils_1 = __webpack_require__(8);
 function registerDbCommands(deps) {
     const { context, versionsService, providers, dbTreeView, refreshAll } = deps;
@@ -20454,7 +20764,7 @@ function registerDbCommands(deps) {
 
 
 /***/ }),
-/* 103 */
+/* 106 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20498,7 +20808,7 @@ exports.registerModuleCommands = registerModuleCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const notifications_1 = __webpack_require__(16);
-const module_1 = __webpack_require__(79);
+const module_1 = __webpack_require__(82);
 /**
  * Tree context menus pass (clickedItem, selectedItems); with canSelectMany
  * enabled a bulk action applies to the whole selection when the clicked
@@ -20589,7 +20899,7 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 104 */
+/* 107 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20633,7 +20943,7 @@ exports.registerTestingCommands = registerTestingCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(6);
-const testing_1 = __webpack_require__(80);
+const testing_1 = __webpack_require__(83);
 function registerTestingCommands(deps) {
     const { context, providers, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleTesting', async (event) => {
@@ -20682,7 +20992,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 105 */
+/* 108 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20726,24 +21036,24 @@ exports.registerVersionCommands = registerVersionCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
-const args_1 = __webpack_require__(106);
+const args_1 = __webpack_require__(109);
 const utils_1 = __webpack_require__(8);
-const versionIdentity_1 = __webpack_require__(27);
+const versionIdentity_1 = __webpack_require__(30);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(107);
+const branchPick_1 = __webpack_require__(110);
 const runtimeCache_1 = __webpack_require__(15);
-const environment_1 = __webpack_require__(41);
-const odooInstaller_1 = __webpack_require__(54);
-const provisioning_1 = __webpack_require__(55);
-const wizard_1 = __webpack_require__(60);
-const worktree_1 = __webpack_require__(45);
-const server_1 = __webpack_require__(85);
-const dbResolution_1 = __webpack_require__(61);
+const environment_1 = __webpack_require__(44);
+const odooInstaller_1 = __webpack_require__(57);
+const provisioning_1 = __webpack_require__(58);
+const wizard_1 = __webpack_require__(63);
+const worktree_1 = __webpack_require__(48);
+const server_1 = __webpack_require__(88);
+const dbResolution_1 = __webpack_require__(64);
 const settingsStore_1 = __webpack_require__(6);
-const setupState_1 = __webpack_require__(59);
-const versionMigration_1 = __webpack_require__(90);
-const upgrade_1 = __webpack_require__(31);
+const setupState_1 = __webpack_require__(62);
+const versionMigration_1 = __webpack_require__(93);
+const upgrade_1 = __webpack_require__(34);
 function registerVersionCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('odoo.checkVersions', async () => {
@@ -21351,7 +21661,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 106 */
+/* 109 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21444,7 +21754,7 @@ function extractUri(arg) {
 
 
 /***/ }),
-/* 107 */
+/* 110 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21496,7 +21806,7 @@ exports.pickRepoBranch = pickRepoBranch;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
 const gitService_1 = __webpack_require__(11);
-const wizard_1 = __webpack_require__(60);
+const wizard_1 = __webpack_require__(63);
 const MANUAL_ITEM = {
     label: '$(pencil) Enter branch manually…',
     description: 'e.g. "19.0", "saas-18.4", "master"',
@@ -21654,7 +21964,7 @@ async function pickRepoBranch(repoPath, title, placeHolder, current, exclude, ca
 
 
 /***/ }),
-/* 108 */
+/* 111 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21697,12 +22007,12 @@ exports.registerDebugCommands = registerDebugCommands;
  * Start/stop/restart server (with and without debugging) and shell commands.
  */
 const vscode = __importStar(__webpack_require__(1));
-const debugger_1 = __webpack_require__(81);
-const server_1 = __webpack_require__(85);
+const debugger_1 = __webpack_require__(84);
+const server_1 = __webpack_require__(88);
 const notifications_1 = __webpack_require__(16);
 const settingsStore_1 = __webpack_require__(6);
-const versionsService_1 = __webpack_require__(24);
-const upgrade_1 = __webpack_require__(32);
+const versionsService_1 = __webpack_require__(27);
+const upgrade_1 = __webpack_require__(35);
 function registerDebugCommands(deps) {
     const { context } = deps;
     context.subscriptions.push(vscode.commands.registerCommand('odoo.startServer', async () => {
@@ -21791,7 +22101,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 109 */
+/* 112 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21839,25 +22149,25 @@ exports.registerReposExplorerCommands = registerReposExplorerCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(4));
-const args_1 = __webpack_require__(106);
+const args_1 = __webpack_require__(109);
 const notifications_1 = __webpack_require__(16);
-const customWorktree_1 = __webpack_require__(47);
+const customWorktree_1 = __webpack_require__(50);
 const notifications_2 = __webpack_require__(16);
 const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const runtimeCache_1 = __webpack_require__(15);
-const projectReposExplorer_1 = __webpack_require__(87);
+const projectReposExplorer_1 = __webpack_require__(90);
 const utils_2 = __webpack_require__(8);
 const notifications_3 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const process_1 = __webpack_require__(13);
-const worktree_1 = __webpack_require__(45);
-const setupState_1 = __webpack_require__(59);
-const repoPaths_1 = __webpack_require__(46);
-const sourceConflict_1 = __webpack_require__(48);
-const repo_1 = __webpack_require__(37);
-const environment_1 = __webpack_require__(41);
-const upgrade_1 = __webpack_require__(31);
+const worktree_1 = __webpack_require__(48);
+const setupState_1 = __webpack_require__(62);
+const repoPaths_1 = __webpack_require__(49);
+const sourceConflict_1 = __webpack_require__(51);
+const repo_1 = __webpack_require__(40);
+const environment_1 = __webpack_require__(44);
+const upgrade_1 = __webpack_require__(34);
 /** Registers the checkout/worktree mode toggle for a project repository. */
 function registerRepoBranchModeCommand(deps) {
     const { context, refreshAll } = deps;
@@ -22083,7 +22393,7 @@ function registerReposExplorerCommands(deps) {
 
 
 /***/ }),
-/* 110 */
+/* 113 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22128,10 +22438,10 @@ exports.registerEditorCommands = registerEditorCommands;
  * commands themselves stay callable from the palette.
  */
 const vscode = __importStar(__webpack_require__(1));
-const manifest_1 = __webpack_require__(76);
-const module_1 = __webpack_require__(79);
-const testing_1 = __webpack_require__(80);
-const debugger_1 = __webpack_require__(81);
+const manifest_1 = __webpack_require__(79);
+const module_1 = __webpack_require__(82);
+const testing_1 = __webpack_require__(83);
+const debugger_1 = __webpack_require__(84);
 const notifications_1 = __webpack_require__(16);
 async function moduleForActiveEditor() {
     const editor = vscode.window.activeTextEditor;
@@ -22190,7 +22500,7 @@ function registerEditorCommands(deps) {
 
 
 /***/ }),
-/* 111 */
+/* 114 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22277,7 +22587,7 @@ function registerHelpCommands(deps) {
 
 
 /***/ }),
-/* 112 */
+/* 115 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22335,18 +22645,18 @@ const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(107);
-const upgradePlan_1 = __webpack_require__(113);
-const upgradeApply_1 = __webpack_require__(34);
-const upgradeSetup_1 = __webpack_require__(49);
-const provisionQueue_1 = __webpack_require__(83);
-const setupState_1 = __webpack_require__(59);
+const branchPick_1 = __webpack_require__(110);
+const upgradePlan_1 = __webpack_require__(116);
+const upgradeApply_1 = __webpack_require__(37);
+const upgradeSetup_1 = __webpack_require__(52);
+const provisionQueue_1 = __webpack_require__(86);
+const setupState_1 = __webpack_require__(62);
 const gitService_1 = __webpack_require__(11);
-const dbNaming_1 = __webpack_require__(62);
-const dbs_1 = __webpack_require__(51);
-const upgrade_1 = __webpack_require__(31);
-const wizard_1 = __webpack_require__(60);
-const repo_1 = __webpack_require__(37);
+const dbNaming_1 = __webpack_require__(65);
+const dbs_1 = __webpack_require__(54);
+const upgrade_1 = __webpack_require__(34);
+const wizard_1 = __webpack_require__(63);
+const repo_1 = __webpack_require__(40);
 /** How a database is described in the picker, without probing every one. */
 function describeDatabase(db, versionsService) {
     const version = db.versionId ? versionsService.getVersion(db.versionId) : undefined;
@@ -22849,7 +23159,7 @@ function registerUpgradeCommand(deps) {
 
 
 /***/ }),
-/* 113 */
+/* 116 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22902,7 +23212,7 @@ exports.describeUpgradePlan = describeUpgradePlan;
  *
  * Pure: nothing here touches git, settings or the filesystem.
  */
-const repoPaths_1 = __webpack_require__(46);
+const repoPaths_1 = __webpack_require__(49);
 const path = __importStar(__webpack_require__(4));
 function buildUpgradePlan(input) {
     const existing = new Set(input.existingVersions.map(entry => entry.trim()));

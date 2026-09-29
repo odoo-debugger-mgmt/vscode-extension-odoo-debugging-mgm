@@ -1,0 +1,138 @@
+/**
+ * The per-window selection split: what is taken out of the data on save, and
+ * what is put back on read. The data file must end up with no selection in
+ * it, and the model callers read must look exactly as it did before.
+ */
+import * as assert from 'assert';
+import type { DebuggerData } from '../utils';
+import {
+    EMPTY_SELECTION,
+    applySelection,
+    extractSelection,
+    isEmptySelection,
+    normalizeSelection,
+    projectKey,
+    stripSelection
+} from '../services/workspaceSelection';
+
+function sample(): DebuggerData {
+    return {
+        projects: [
+            {
+                uid: 'p1', name: 'Acme', isSelected: true,
+                dbs: [{ id: 'acme-17', isSelected: false }, { id: 'acme-19', isSelected: true }]
+            },
+            {
+                uid: 'p2', name: 'Other', isSelected: false,
+                dbs: [{ id: 'other-17', isSelected: true }]
+            }
+        ] as never,
+        versions: {
+            v17: { id: 'v17', odooVersion: '17.0', isActive: false },
+            v19: { id: 'v19', odooVersion: '19.0', isActive: true }
+        },
+        activeVersion: 'v19',
+        dbTemplates: []
+    };
+}
+
+type Flags = { isSelected: boolean; dbs: Array<{ isSelected: boolean }> };
+const projects = (data: DebuggerData) => data.projects as unknown as Flags[];
+
+suite('Workspace selection', () => {
+    test('extract reads the selected project, each project\'s database and the active version', () => {
+        assert.deepStrictEqual(extractSelection(sample()), {
+            selectedProjectUid: 'p1',
+            selectedDbByProject: { p1: 'acme-19', p2: 'other-17' },
+            activeVersionId: 'v19'
+        });
+    });
+
+    test('strip leaves no selection in what is stored', () => {
+        const stripped = stripSelection(sample());
+
+        assert.ok(projects(stripped).every(project => !project.isSelected));
+        assert.ok(projects(stripped).every(project => project.dbs.every(db => !db.isSelected)));
+        assert.strictEqual(stripped.activeVersion, undefined);
+        assert.ok(Object.values(stripped.versions ?? {}).every(version => !version.isActive));
+    });
+
+    test('strip does not touch the object it was given', () => {
+        const data = sample();
+        stripSelection(data);
+
+        assert.strictEqual(data.activeVersion, 'v19');
+        assert.strictEqual(projects(data)[0].isSelected, true);
+    });
+
+    test('extract, strip, apply gives back the same flags', () => {
+        const original = sample();
+        const restored = applySelection(stripSelection(original), extractSelection(original));
+
+        assert.deepStrictEqual(restored, original);
+    });
+
+    test('each project keeps its own selected database', () => {
+        const selection = { ...EMPTY_SELECTION, selectedDbByProject: { p1: 'acme-17', p2: 'other-17' } };
+        const applied = applySelection(stripSelection(sample()), selection);
+
+        assert.deepStrictEqual(projects(applied)[0].dbs.map(db => db.isSelected), [true, false]);
+        assert.deepStrictEqual(projects(applied)[1].dbs.map(db => db.isSelected), [true]);
+    });
+
+    test('ids that no longer exist select nothing', () => {
+        const applied = applySelection(stripSelection(sample()), {
+            selectedProjectUid: 'gone',
+            selectedDbByProject: { p1: 'dropped-db' },
+            activeVersionId: 'deleted-version'
+        });
+
+        assert.ok(projects(applied).every(project => !project.isSelected));
+        assert.ok(projects(applied)[0].dbs.every(db => !db.isSelected));
+        assert.strictEqual(applied.activeVersion, undefined);
+    });
+
+    test('a save that does not carry a field keeps the previous value', () => {
+        const previous = extractSelection(sample());
+        const partial = { projects: sample().projects } as DebuggerData;
+
+        assert.strictEqual(extractSelection(partial, previous).activeVersionId, 'v19');
+    });
+
+    test('a save that deselects everything is recorded as such', () => {
+        const data = sample();
+        projects(data).forEach(project => (project.isSelected = false));
+        data.activeVersion = '';
+
+        const selection = extractSelection(data, extractSelection(sample()));
+
+        assert.strictEqual(selection.selectedProjectUid, undefined);
+        assert.strictEqual(selection.activeVersionId, undefined);
+    });
+
+    test('a legacy file seeds the selection it recorded', () => {
+        // The first run with a separate selection reads the flags that the
+        // file still carries, so nobody loses what they had selected.
+        const seeded = extractSelection(sample());
+
+        assert.ok(!isEmptySelection(seeded));
+        assert.ok(isEmptySelection(extractSelection(stripSelection(sample()))));
+    });
+
+    test('projects written before uids are keyed by name', () => {
+        assert.strictEqual(projectKey({ name: 'Old' }), 'name:Old');
+        const data = { projects: [{ name: 'Old', isSelected: true, dbs: [] }] } as unknown as DebuggerData;
+        const applied = applySelection(stripSelection(data), extractSelection(data));
+
+        assert.strictEqual(projects(applied)[0].isSelected, true);
+    });
+
+    test('a malformed stored value reads as no selection', () => {
+        assert.strictEqual(normalizeSelection(undefined), undefined);
+        assert.strictEqual(normalizeSelection('nonsense'), undefined);
+        assert.deepStrictEqual(
+            normalizeSelection({ selectedProjectUid: 7, selectedDbByProject: { p1: 3, p2: 'db' } }),
+            { selectedProjectUid: undefined, selectedDbByProject: { p2: 'db' }, activeVersionId: undefined }
+        );
+    });
+});
