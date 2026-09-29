@@ -95,9 +95,17 @@ async function buildWorkspaceFile(context: vscode.ExtensionContext, project: Pro
         folders.map(folder => folder.path)
     ));
 
+    // Pin the data: the new window's first folder is a project repository,
+    // and without this it would read (and create) a data file inside it.
+    const settings: Record<string, string> = {};
+    const dataLocation = SettingsStore.currentLocation();
+    if (dataLocation) {
+        settings['odooDebugger.dataStore.path'] = dataLocation;
+    }
+
     const workspaceData = {
         folders,
-        settings: {}
+        settings
     };
 
     const content = Buffer.from(JSON.stringify(workspaceData, null, 2), 'utf8');
@@ -129,6 +137,8 @@ export async function openProjectWorkspace(context: vscode.ExtensionContext): Pr
         return;
     }
     const forceNewWindow = choice === 'New window';
+    // The selection is per window; the opened workspace starts from this one's.
+    await SettingsStore.handOffSelection(context, workspaceFile);
     await vscode.commands.executeCommand('vscode.openFolder', workspaceFile, forceNewWindow);
 }
 

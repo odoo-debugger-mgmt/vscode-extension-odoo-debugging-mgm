@@ -19746,9 +19746,16 @@ async function buildWorkspaceFile(context, project) {
     // file from this workspace cannot land in another version's copy.
     const selectedDb = project.dbs?.find(entry => entry.isSelected);
     folders.push(...(0, workspaceFolders_1.repoFolderEntries)((0, repoPaths_1.resolveProjectRepos)(project.repos ?? [], selectedDb ? (0, environment_1.resolveProjectRepoBranchAssignments)(selectedDb, project.repos ?? []) : [], (0, setupState_1.readSetupState)().provisioningRoot), folders.map(folder => folder.path)));
+    // Pin the data: the new window's first folder is a project repository,
+    // and without this it would read (and create) a data file inside it.
+    const settings = {};
+    const dataLocation = settingsStore_1.SettingsStore.currentLocation();
+    if (dataLocation) {
+        settings['odooDebugger.dataStore.path'] = dataLocation;
+    }
     const workspaceData = {
         folders,
-        settings: {}
+        settings
     };
     const content = Buffer.from(JSON.stringify(workspaceData, null, 2), 'utf8');
     await vscode.workspace.fs.writeFile(workspaceFile, content);
@@ -19771,6 +19778,8 @@ async function openProjectWorkspace(context) {
         return;
     }
     const forceNewWindow = choice === 'New window';
+    // The selection is per window; the opened workspace starts from this one's.
+    await settingsStore_1.SettingsStore.handOffSelection(context, workspaceFile);
     await vscode.commands.executeCommand('vscode.openFolder', workspaceFile, forceNewWindow);
 }
 async function quickSwitchProjectWorkspace(context) {

@@ -1808,6 +1808,12 @@
           "default": "",
           "markdownDescription": "Path to an existing [uv](https://docs.astral.sh/uv/) binary. Empty means look on `PATH`. When uv is not found, provisioning falls back to the standard library `venv` and `pip`."
         },
+        "odooDebugger.dataStore.path": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "markdownDescription": "The data file this workspace reads and writes: projects, versions, databases and upgrades. Empty means `.vscode/odoo-debugger-data.json` in the first workspace folder. Only a **workspace-level** value to a `.json` file is used for now; Open Project Workspace sets it so the workspace it opens keeps the same data. A user-level default, shared by every workspace, arrives with the shared data store."
+        },
         "odooDebugger.ticketBaseUrl": {
           "type": "string",
           "default": "https://www.odoo.com",

@@ -28,6 +28,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Changed
 
+- **What is selected is remembered per window**, not in `.vscode/odoo-debugger-data.json`: the selected project, each project's selected database and the active version. Existing selections carry over on first start. This is the first step towards several workspaces sharing one set of data.
 - **Requires VS Code 1.101 or later** (was 1.100). The shared data store planned for multi-workspace use needs the `node:sqlite` module, which VS Code's runtime ships from 1.101.
 - **Debugger name and ports are derived from the version's branch** and are read-only, so parallel versions cannot collide on a port. Existing versions are healed on load.
 - **Database creation asks which branch each project repository should use** instead of silently recording whatever was checked out at the time.
@@ -65,6 +66,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Fixed
 
+- **Open Project Workspace no longer loses your projects.** The workspace it opened started with its first project repository as the root, so the extension read — and created — a data file inside that repository, and nothing was there. The generated workspace now points at the original data (`odooDebugger.dataStore.path`) and opens with the same selection; relative paths still resolve against the original workspace. The debugger's `launch.json` in that window still goes to the first repository's `.vscode`.
 - **Restart Server's command id is now `odt.server.restart`.** It was `odoo.restartServer`, which the official Odoo extension also registers, so whichever loaded second failed to register it. The keybinding (`Ctrl+Alt+O R`) and title are unchanged; a custom keybinding bound to the old id needs updating.
 - **Only an upgrade database can look selected during an upgrade.** A database selected before upgrade mode started kept its selected icon next to the pair, and couldn't be moved off it because selecting outside the pair is refused. The selection now moves to the "upgrading from" database. Clicking a database outside the pair also no longer leaves its row highlighted beside the actual selection.
 - **Repositories keeping one copy per branch have their file actions back in Project Repos.** Their root rows matched none of the root menus, so New File, New Folder, Reveal, Copy Path and Open in Terminal were missing on every such repository — which, during an upgrade, is all of them.

@@ -20,7 +20,7 @@ A **Get Started with Odoo DevTools** walkthrough is available from VS Code's Wel
 The source repository is never run directly: every version gets its own worktree cut from it, so that checkout stays yours to switch branches freely.
 
 1. Open a folder in VS Code.
-   The extension stores its state in `.vscode/odoo-debugger-data.json`, so projects/versions/databases are **workspace-specific**.
+   The extension stores its data in `.vscode/odoo-debugger-data.json`, so projects/versions/databases are **workspace-specific**. What you have *selected* — the project, each project's database and the active version — is remembered per window, not in that file.
 
 2. Run **`Odoo DevTools: Set Up`** — once per machine, not per workspace.
    It looks for Odoo checkouts you already have and shows what it found for confirmation, so this is usually one click. If there is nothing to find it offers to clone the repositories (community/enterprise/design-themes, any branch, optionally a **shallow copy**) and records where it put them.
@@ -283,6 +283,7 @@ Every view also has search (`$(search)`) and sort (`$(sort-precedence)`) actions
 - `odooDebugger.sourceRepo.odoo` / `.enterprise` / `.designThemes` — the repositories per-version worktrees are cut from. Set once by **Set Up**, at user level.
 - `odooDebugger.provisioning.root` — directory holding per-version worktrees and virtualenvs. Empty means `~/odoo-dev`.
 - `odooDebugger.provisioning.uvPath` — path to an existing `uv` binary. Empty means look on `PATH`; when uv is absent, provisioning falls back to the standard library `venv` and `pip`.
+- `odooDebugger.dataStore.path` — the data file this workspace reads and writes. Empty means `.vscode/odoo-debugger-data.json`; for now only a workspace-level value to a `.json` file is used. Open Project Workspace sets it so the workspace it opens keeps the same data.
 - `odooDebugger.databaseSwitchBehavior` — `auto` / `ask` / `never` (see above).
 - `odooDebugger.statusBar.enabled` — show the project/database/version status bar items.
 - `odooDebugger.server.openBrowserOnStart` — open the web client automatically after the server starts (default off).
