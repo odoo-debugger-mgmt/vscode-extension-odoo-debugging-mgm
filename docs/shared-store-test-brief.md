@@ -142,8 +142,10 @@ not with nothing selected.
 3. Check the first repository's folder on disk. **There must be no new
    `.vscode/odoo-debugger-data.json` in it**, and, once you have switched a
    database in the new window, no `.vscode/launch.json` either. The launch
-   entries are in the generated `.code-workspace` file, under `launch`, and F5
-   and Start Server work from that window.
+   entries are in the generated `.code-workspace` file, under `launch`, and F5,
+   Start Server and Restart Server all work from that window. A leftover
+   `launch.json` in the repository loses our entries (and goes, if nothing
+   else is in it).
 4. In the generated window, select a different database. Back in `A`, **expect**
    `A`'s selection unchanged. Selection is per window.
 

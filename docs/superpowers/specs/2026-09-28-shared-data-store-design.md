@@ -520,7 +520,12 @@ Each step ships on its own and leaves the extension working.
      folder (`launchTarget` in `services/launchConfig.ts`). `folders[0]` is
      the first repository in a generated window, and writing there shared one
      `launch.json` between every workspace listing it first. Entries earlier
-     builds left there are removed on the first sync.
+     builds left there are removed on the first sync. The generated file is
+     opened by its path: opened by its global-storage URI, the window was a
+     `vscode-userdata:` workspace, which the target check missed and debugpy
+     refuses. VS Code looks a configuration up by name only in a folder's
+     `launch.json`, so Start Server passes the workspace file's entry as
+     itself.
 2. **The shared store — implemented.** `SqliteMainStore`
    (`services/sqliteMainStore.ts`), the three-way merge
    (`services/mergeDocuments.ts`), Choose Data Store / Export Data / Import
