@@ -20,6 +20,7 @@ in the code until a later entry says so.
 | Document | Topic |
 |---|---|
 | [2026-09-28-shared-data-store-design.md](superpowers/specs/2026-09-28-shared-data-store-design.md) | Sharing extension data across workspaces: a main store plus per-workspace state. |
+| [2026-09-29-node-sqlite-spike.md](superpowers/notes/2026-09-29-node-sqlite-spike.md) | Spike result for that design: which VS Code versions have `node:sqlite`, and how it behaves across two windows. |
 
 ## Historical design records
 

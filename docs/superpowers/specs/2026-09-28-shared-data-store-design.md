@@ -2,6 +2,11 @@
 
 **Status:** proposal. Nothing here is implemented. One decision (SQLite vs the
 fallback, §4) waits on the spike at the end of this document.
+**Spike outcome (2026-09-29):** `node:sqlite` loads from VS Code 1.101.0
+(Node 22.15.1) onward, but not on 1.100.0, the current minimum (Node 20.19).
+Where it loads, WAL, `data_version` and the `rev`-guarded writes behave as §4
+assumes. §4 therefore stands only if `engines.vscode` is raised to `^1.101.0`.
+Full results: [the spike report](../notes/2026-09-29-node-sqlite-spike.md).
 **Depends on:** `2026-09-01-custom-repo-worktrees-design.md` (path resolution
 through `resolveProjectRepos`), `2026-09-01-first-run-setup-design.md` (user-level
 setup with a workspace override).
