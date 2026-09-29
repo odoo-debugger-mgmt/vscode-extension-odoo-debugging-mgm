@@ -24272,6 +24272,22 @@ function describeLocation(location) {
 function hasData(data) {
     return (data.projects?.length ?? 0) > 0 || Object.keys(data.versions ?? {}).length > 0;
 }
+/** The preview text for a merge: what it adds, or that it adds nothing, and what it found. */
+function describeMergePreview(summary, heading) {
+    const { adds, notes } = (0, dataImport_1.describeMerge)(summary);
+    const body = adds.length > 0
+        ? `${heading}\n${adds.map(line => `  ${line}`).join('\n')}`
+        : 'Nothing is missing: it is all here already.';
+    return notes.length > 0 ? `${body}\n\n(${notes.join('; ')}.)` : body;
+}
+/** "3 projects, 2 versions and 5 databases": what a store holds, for Replace's warning. */
+function describeContents(data) {
+    const count = (value, one, many) => `${value} ${value === 1 ? one : many}`;
+    const databases = (data.projects ?? []).reduce((total, project) => total + (project.dbs?.length ?? 0), 0);
+    return `${count(data.projects?.length ?? 0, 'project', 'projects')}, `
+        + `${count(Object.keys(data.versions ?? {}).length, 'version', 'versions')} and `
+        + `${count(databases, 'database', 'databases')}`;
+}
 /**
  * Copies this window's data into the store at `file`, filling gaps and never
  * overwriting what it already holds. Returns false when the user backs out.
@@ -24293,45 +24309,98 @@ async function offerToBringDataAlong(file) {
     }
     const targetRead = await target.read();
     const { data, summary } = (0, dataImport_1.mergeData)(targetRead.data, mine);
-    const lines = (0, dataImport_1.describeMerge)(summary);
+    const { adds } = (0, dataImport_1.describeMerge)(summary);
+    if (adds.length === 0) {
+        // Joining a store that already holds all of this: nothing to ask.
+        return true;
+    }
     const choice = await (0, notifications_1.showModalInfo)(`Bring this workspace's data into ${file}?\n\n`
-        + (lines.length > 0 ? lines.map(line => `  ${line}`).join('\n') : '  Nothing is missing there.')
+        + describeMergePreview(summary, 'It adds:')
         + '\n\nNothing already in that store is overwritten. This workspace\'s own file is left as it is.', 'Bring It Along', 'Use What Is There');
     if (!choice) {
         return false;
     }
-    if (choice === 'Bring It Along' && lines.length > 0) {
+    if (choice === 'Bring It Along') {
         await target.commit(targetRead, data);
-        logger_1.logger.info(`[store] merged this workspace's data into ${file}: ${lines.join('; ')}`);
+        logger_1.logger.info(`[store] merged this workspace's data into ${file}: ${adds.join('; ')}`);
     }
     return true;
+}
+/** Asks for an existing store, or where to create one. */
+async function pickStoreFile(mode, near) {
+    if (mode === 'open') {
+        // An open dialog, not a save dialog: joining an existing store must
+        // not ask whether to "overwrite" it.
+        const picked = await vscode.window.showOpenDialog({
+            title: 'Open an existing data store',
+            openLabel: 'Use This Store',
+            canSelectMany: false,
+            defaultUri: vscode.Uri.file(path.dirname(near)),
+            filters: { 'Odoo DevTools data store': ['db'] }
+        });
+        return picked?.[0]?.fsPath;
+    }
+    const uri = await vscode.window.showSaveDialog({
+        title: 'Create a data store',
+        saveLabel: 'Create Store',
+        defaultUri: vscode.Uri.file(near),
+        filters: { 'Odoo DevTools data store': ['db'] }
+    });
+    if (!uri) {
+        return undefined;
+    }
+    return uri.fsPath.toLowerCase().endsWith('.db') ? uri.fsPath : `${uri.fsPath}.db`;
 }
 async function chooseDataStore() {
     const current = (0, dataLocation_1.currentDataLocation)();
     const sharedDefault = path.join((0, setupState_1.readSetupState)().provisioningRoot, SHARED_STORE_FILE);
-    const picked = await vscode.window.showQuickPick([
-        {
-            label: '$(database) Shared store',
-            description: sharedDefault,
-            detail: 'One store several workspaces use at once - one per Odoo version, say. What is selected stays per window.',
-            action: 'shared'
-        },
-        {
-            label: '$(folder-opened) Choose a store file…',
-            detail: 'A .db file anywhere: a separate store for one client, for instance.',
-            action: 'pick'
-        },
-        {
-            label: '$(file) This workspace only',
-            description: `.vscode/${dataLocation_1.DATA_FILE_NAME}`,
-            detail: 'The data lives with this workspace, as it always did.',
-            action: 'workspace'
-        }
-    ], {
-        title: 'Choose Data Store',
-        placeHolder: `Now using ${describeLocation(current)}`
+    const inUse = (file) => current?.kind === 'sqlite' && path.resolve(current.file) === path.resolve(file);
+    const customInUse = current?.kind === 'sqlite' && !inUse(sharedDefault) ? current.file : undefined;
+    const rows = [];
+    if (customInUse) {
+        rows.push({
+            label: `$(check) ${path.basename(customInUse)}`,
+            description: `${customInUse} — in use`,
+            detail: 'The shared store this window uses now.',
+            action: 'store', file: customInUse, current: true
+        });
+    }
+    rows.push({
+        label: `${inUse(sharedDefault) ? '$(check)' : '$(database)'} Shared store`,
+        description: inUse(sharedDefault) ? `${sharedDefault} — in use` : sharedDefault,
+        detail: 'One store several workspaces use at once - one per Odoo version, say. What is selected stays per window.',
+        action: 'store', file: sharedDefault, current: inUse(sharedDefault)
+    }, {
+        label: '$(folder-opened) Open an existing store…',
+        detail: 'A .db file another workspace already uses.',
+        action: 'open'
+    }, {
+        label: '$(new-file) Create a new store…',
+        detail: 'A separate store: for one client, for instance.',
+        action: 'create'
+    }, {
+        label: `${current?.kind === 'json' ? '$(check)' : '$(file)'} This workspace only`,
+        description: current?.kind === 'json' ? `.vscode/${dataLocation_1.DATA_FILE_NAME} — in use` : `.vscode/${dataLocation_1.DATA_FILE_NAME}`,
+        detail: 'The data lives with this workspace, as it always did.',
+        action: 'workspace', current: current?.kind === 'json'
     });
+    const quickPick = vscode.window.createQuickPick();
+    quickPick.title = 'Choose Data Store';
+    quickPick.placeholder = `Now using ${describeLocation(current)}`;
+    quickPick.items = rows;
+    // Enter on its own keeps what is in use, rather than switching.
+    quickPick.activeItems = rows.filter(row => row.current);
+    const picked = await new Promise(resolve => {
+        quickPick.onDidAccept(() => resolve(quickPick.selectedItems[0]));
+        quickPick.onDidHide(() => resolve(undefined));
+        quickPick.show();
+    });
+    quickPick.dispose();
     if (!picked) {
+        return;
+    }
+    if (picked.current) {
+        void (0, notifications_1.showInfo)(`Already using ${describeLocation(current)}.`);
         return;
     }
     const config = vscode.workspace.getConfiguration('odooDebugger');
@@ -24344,18 +24413,11 @@ async function chooseDataStore() {
         void (0, notifications_1.showInfo)('This workspace now uses its own data file.');
         return;
     }
-    let file = sharedDefault;
-    if (picked.action === 'pick') {
-        const uri = await vscode.window.showSaveDialog({
-            title: 'Choose or create a data store',
-            saveLabel: 'Use This Store',
-            defaultUri: vscode.Uri.file(sharedDefault),
-            filters: { 'Odoo DevTools data store': ['db'] }
-        });
-        if (!uri) {
-            return;
-        }
-        file = uri.fsPath.toLowerCase().endsWith('.db') ? uri.fsPath : `${uri.fsPath}.db`;
+    const file = picked.action === 'store'
+        ? picked.file
+        : await pickStoreFile(picked.action, sharedDefault);
+    if (!file) {
+        return;
     }
     const scope = await vscode.window.showQuickPick([
         { label: 'All workspaces', detail: 'Every workspace uses this store unless it chooses otherwise.', global: true },
@@ -24419,27 +24481,35 @@ async function importData(deps) {
     delete incoming.activeVersion;
     const current = await settingsStore_1.SettingsStore.get();
     const { data, summary } = (0, dataImport_1.mergeData)(current, incoming);
-    const lines = (0, dataImport_1.describeMerge)(summary);
-    const choice = await (0, notifications_1.showModalInfo)(`Import ${path.basename(file)} into ${describeLocation((0, dataLocation_1.currentDataLocation)())}?\n\n`
-        + (lines.length > 0 ? `Merging adds:\n${lines.map(line => `  ${line}`).join('\n')}\n\n` : 'Merging adds nothing: it is all here already.\n\n')
-        + 'Merge never overwrites what is here. Replace discards it.', 'Merge', 'Replace…');
+    const { adds } = (0, dataImport_1.describeMerge)(summary);
+    const where = describeLocation((0, dataLocation_1.currentDataLocation)());
+    const choice = await (0, notifications_1.showModalInfo)(`Import ${path.basename(file)} into ${where}?\n\n`
+        + describeMergePreview(summary, 'Merging adds:')
+        + `\n\nMerge never overwrites what is here. Replace would discard the ${describeContents(current)} here now.`, 'Merge', 'Replace…');
     if (!choice) {
         return;
     }
-    let result = data;
-    if (choice === 'Replace…') {
-        const confirmed = await (0, notifications_1.showModalWarning)(`Replace everything in ${describeLocation((0, dataLocation_1.currentDataLocation)())} with ${path.basename(file)}? `
-            + 'Every project, version and database record there now is discarded. Export first if you might want it back.', 'Replace Everything');
+    if (choice === 'Merge') {
+        if (adds.length > 0) {
+            await settingsStore_1.SettingsStore.saveWithoutComments(data);
+        }
+    }
+    else {
+        // The safe answer comes first, so Enter keeps the data.
+        const confirmed = await (0, notifications_1.showModalWarning)(`Replace everything in ${where} with ${path.basename(file)}?\n\n`
+            + `The ${describeContents(current)} there now are discarded, and replaced by the `
+            + `${describeContents(incoming)} in the file. Export first if you might want them back.`, 'Keep Current Data', 'Replace Everything');
         if (confirmed !== 'Replace Everything') {
             return;
         }
-        result = incoming;
+        await settingsStore_1.SettingsStore.saveWithoutComments(incoming);
     }
-    await settingsStore_1.SettingsStore.saveWithoutComments(result);
     await deps.versionsService.refresh();
     await deps.refreshAll({ reason: 'all' });
     void (0, notifications_1.showInfo)(choice === 'Merge'
-        ? `Imported ${path.basename(file)}${lines.length > 0 ? `: ${lines.join(', ')}` : ' (nothing was missing)'}.`
+        ? (adds.length > 0
+            ? `Imported ${path.basename(file)}: ${adds.join(', ')}.`
+            : `Nothing to import: everything in ${path.basename(file)} is already here.`)
         : `Replaced the data with ${path.basename(file)}.`);
 }
 function registerDataStoreCommands(deps) {
@@ -24563,21 +24633,27 @@ function absolutizePaths(data, root) {
     }
     return copy;
 }
-/** One line per non-zero count, for a confirmation dialog. */
+/**
+ * What a merge would change, for a confirmation dialog: `adds` lists what it
+ * adds, and is empty when it adds nothing; `notes` says what it found already
+ * there, which changes nothing and must not read as a change.
+ */
 function describeMerge(summary) {
-    const lines = [];
-    const add = (count, text) => {
-        if (count > 0) {
-            lines.push(`${count} ${text}`);
-        }
+    const lines = (entries) => entries
+        .filter(([count]) => count > 0)
+        .map(([count, one, many]) => `${count} ${count === 1 ? one : many}`);
+    return {
+        adds: lines([
+            [summary.projectsAdded, 'new project', 'new projects'],
+            [summary.projectsMerged, 'existing project completed with what it was missing', 'existing projects completed with what they were missing'],
+            [summary.databasesAdded, 'database added', 'databases added'],
+            [summary.versionsAdded, 'new version', 'new versions'],
+            [summary.templatesAdded, 'database template', 'database templates']
+        ]),
+        notes: lines([
+            [summary.versionsMatched, 'version is already there, matched by branch', 'versions are already there, matched by branch']
+        ])
     };
-    add(summary.projectsAdded, `new project${summary.projectsAdded === 1 ? '' : 's'}`);
-    add(summary.projectsMerged, `existing project${summary.projectsMerged === 1 ? '' : 's'} completed with what is missing`);
-    add(summary.databasesAdded, `database${summary.databasesAdded === 1 ? '' : 's'} added`);
-    add(summary.versionsAdded, `new version${summary.versionsAdded === 1 ? '' : 's'}`);
-    add(summary.versionsMatched, `version${summary.versionsMatched === 1 ? '' : 's'} matched to one already there, by branch`);
-    add(summary.templatesAdded, `database template${summary.templatesAdded === 1 ? '' : 's'}`);
-    return lines;
 }
 function addMissing(target, incoming, key) {
     const known = new Set(target.map(key));
@@ -24609,13 +24685,25 @@ function mergeData(target, incoming) {
     const projects = data.projects = Array.isArray(data.projects) ? data.projects : [];
     const versions = data.versions = data.versions ?? {};
     const templates = data.dbTemplates = Array.isArray(data.dbTemplates) ? data.dbTemplates : [];
-    // 1. Versions, and how incoming ids map onto this store's.
+    // 1. Versions, and how incoming ids map onto this store's. The same id
+    // on the same branch is the same version; otherwise the same branch and
+    // name, so a cloned version (same branch, another name) keeps its own
+    // match; otherwise the first on that branch not already claimed.
     const idMap = new Map();
+    const claimed = new Set();
+    const branchOf = (version) => String(version?.odooVersion ?? '').trim();
     for (const [id, version] of Object.entries(source.versions ?? {})) {
-        const branch = String(version?.odooVersion ?? '').trim();
-        const match = Object.entries(versions).find(([, existing]) => String(existing?.odooVersion ?? '').trim() === branch && branch !== '');
+        const branch = branchOf(version);
+        const candidates = branch
+            ? Object.entries(versions).filter(([existingId, existing]) => branchOf(existing) === branch && !claimed.has(existingId))
+            : [];
+        const name = version?.name;
+        const match = candidates.find(([existingId]) => existingId === id)
+            ?? candidates.find(([, existing]) => name !== undefined && existing.name === name)
+            ?? candidates[0];
         if (match) {
             idMap.set(id, match[0]);
+            claimed.add(match[0]);
             summary.versionsMatched += 1;
             continue;
         }
@@ -24650,13 +24738,18 @@ function mergeData(target, incoming) {
             summary.databasesAdded += (project.dbs ?? []).length;
             continue;
         }
-        summary.projectsMerged += 1;
         existing.dbs = existing.dbs ?? [];
         existing.repos = existing.repos ?? [];
         existing.tickets = existing.tickets ?? [];
-        summary.databasesAdded += addMissing(existing.dbs, project.dbs, db => db?.id);
-        addMissing(existing.repos, project.repos, repo => String(repo?.name ?? '').toLowerCase());
-        addMissing(existing.tickets, project.tickets, ticket => ticket?.id);
+        const dbsAdded = addMissing(existing.dbs, project.dbs, db => db?.id);
+        const reposAdded = addMissing(existing.repos, project.repos, repo => String(repo?.name ?? '').toLowerCase());
+        const ticketsAdded = addMissing(existing.tickets, project.tickets, ticket => ticket?.id);
+        summary.databasesAdded += dbsAdded;
+        // Counted only when it actually gained something: a project that was
+        // already complete is not "completed".
+        if (dbsAdded + reposAdded + ticketsAdded > 0) {
+            summary.projectsMerged += 1;
+        }
         // selectedDbByVersion is not merged: it is a per-window choice.
     }
     // 4. Templates, by name.

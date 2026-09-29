@@ -128,10 +128,48 @@ suite('Data import', () => {
         assert.strictEqual(readImportFile({ unrelated: true }), undefined);
     });
 
-    test('the summary reads as sentences, and says nothing about what did not happen', () => {
+    test('the summary lists what is added; what was already there is a note, not a change', () => {
         assert.deepStrictEqual(
             describeMerge({ projectsAdded: 1, projectsMerged: 0, databasesAdded: 2, versionsAdded: 0, versionsMatched: 1, templatesAdded: 0 }),
-            ['1 new project', '2 databases added', '1 version matched to one already there, by branch']
+            { adds: ['1 new project', '2 databases added'], notes: ['1 version is already there, matched by branch'] }
         );
     });
+
+    test('re-importing what is already there adds nothing, and says so', () => {
+        const { data } = mergeData(target(), incoming());
+        const { summary } = mergeData(data, incoming());
+
+        assert.deepStrictEqual(describeMerge(summary).adds, []);
+        assert.strictEqual(summary.projectsMerged, 0);
+    });
+
+    test('a cloned version keeps its own match instead of collapsing onto the first of its branch', () => {
+        const here = target();
+        here.versions!['v17-clone'] = { id: 'v17-clone', name: 'Odoo 17.0 (Copy)', odooVersion: '17.0' };
+        (here.versions!['v17-here'] as any).name = 'Odoo 17.0';
+        const there: DebuggerData = {
+            projects: [{ uid: 'p9', name: 'New', dbs: [{ id: 'a', versionId: 'x1' }, { id: 'b', versionId: 'x2' }] }] as never,
+            versions: {
+                x1: { id: 'x1', name: 'Odoo 17.0 (Copy)', odooVersion: '17.0' },
+                x2: { id: 'x2', name: 'Odoo 17.0', odooVersion: '17.0' }
+            }
+        };
+        const { data, summary } = mergeData(here, there);
+        const dbs = (data.projects.find(project => project.uid === 'p9') as any).dbs;
+
+        assert.strictEqual(dbs.find((db: any) => db.id === 'a').versionId, 'v17-clone');
+        assert.strictEqual(dbs.find((db: any) => db.id === 'b').versionId, 'v17-here');
+        assert.strictEqual(summary.versionsAdded, 0);
+    });
+
+    test('the same id on the same branch is the same version, whatever its name', () => {
+        const there: DebuggerData = {
+            projects: [{ uid: 'p9', name: 'New', dbs: [{ id: 'a', versionId: 'v17-here' }] }] as never,
+            versions: { 'v17-here': { id: 'v17-here', name: 'Renamed elsewhere', odooVersion: '17.0' } }
+        };
+        const { data } = mergeData(target(), there);
+
+        assert.strictEqual((data.projects.find(project => project.uid === 'p9') as any).dbs[0].versionId, 'v17-here');
+    });
+
 });

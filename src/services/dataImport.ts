@@ -111,21 +111,27 @@ export interface MergeSummary {
     templatesAdded: number;
 }
 
-/** One line per non-zero count, for a confirmation dialog. */
-export function describeMerge(summary: MergeSummary): string[] {
-    const lines: string[] = [];
-    const add = (count: number, text: string) => {
-        if (count > 0) {
-            lines.push(`${count} ${text}`);
-        }
+/**
+ * What a merge would change, for a confirmation dialog: `adds` lists what it
+ * adds, and is empty when it adds nothing; `notes` says what it found already
+ * there, which changes nothing and must not read as a change.
+ */
+export function describeMerge(summary: MergeSummary): { adds: string[]; notes: string[] } {
+    const lines = (entries: Array<[number, string, string]>) => entries
+        .filter(([count]) => count > 0)
+        .map(([count, one, many]) => `${count} ${count === 1 ? one : many}`);
+    return {
+        adds: lines([
+            [summary.projectsAdded, 'new project', 'new projects'],
+            [summary.projectsMerged, 'existing project completed with what it was missing', 'existing projects completed with what they were missing'],
+            [summary.databasesAdded, 'database added', 'databases added'],
+            [summary.versionsAdded, 'new version', 'new versions'],
+            [summary.templatesAdded, 'database template', 'database templates']
+        ]),
+        notes: lines([
+            [summary.versionsMatched, 'version is already there, matched by branch', 'versions are already there, matched by branch']
+        ])
     };
-    add(summary.projectsAdded, `new project${summary.projectsAdded === 1 ? '' : 's'}`);
-    add(summary.projectsMerged, `existing project${summary.projectsMerged === 1 ? '' : 's'} completed with what is missing`);
-    add(summary.databasesAdded, `database${summary.databasesAdded === 1 ? '' : 's'} added`);
-    add(summary.versionsAdded, `new version${summary.versionsAdded === 1 ? '' : 's'}`);
-    add(summary.versionsMatched, `version${summary.versionsMatched === 1 ? '' : 's'} matched to one already there, by branch`);
-    add(summary.templatesAdded, `database template${summary.templatesAdded === 1 ? '' : 's'}`);
-    return lines;
 }
 
 function addMissing<T>(target: T[], incoming: T[] | undefined, key: (item: T) => unknown): number {
@@ -161,14 +167,25 @@ export function mergeData(target: DebuggerData, incoming: DebuggerData): { data:
     const versions: Record<string, LooseVersion> = data.versions = data.versions ?? {};
     const templates = data.dbTemplates = Array.isArray(data.dbTemplates) ? data.dbTemplates : [];
 
-    // 1. Versions, and how incoming ids map onto this store's.
+    // 1. Versions, and how incoming ids map onto this store's. The same id
+    // on the same branch is the same version; otherwise the same branch and
+    // name, so a cloned version (same branch, another name) keeps its own
+    // match; otherwise the first on that branch not already claimed.
     const idMap = new Map<string, string>();
+    const claimed = new Set<string>();
+    const branchOf = (version: LooseVersion | undefined) => String(version?.odooVersion ?? '').trim();
     for (const [id, version] of Object.entries(source.versions ?? {})) {
-        const branch = String(version?.odooVersion ?? '').trim();
-        const match = Object.entries(versions).find(([, existing]) =>
-            String(existing?.odooVersion ?? '').trim() === branch && branch !== '');
+        const branch = branchOf(version);
+        const candidates = branch
+            ? Object.entries(versions).filter(([existingId, existing]) => branchOf(existing) === branch && !claimed.has(existingId))
+            : [];
+        const name = (version as { name?: unknown })?.name;
+        const match = candidates.find(([existingId]) => existingId === id)
+            ?? candidates.find(([, existing]) => name !== undefined && (existing as { name?: unknown }).name === name)
+            ?? candidates[0];
         if (match) {
             idMap.set(id, match[0]);
+            claimed.add(match[0]);
             summary.versionsMatched += 1;
             continue;
         }
@@ -206,13 +223,18 @@ export function mergeData(target: DebuggerData, incoming: DebuggerData): { data:
             summary.databasesAdded += (project.dbs ?? []).length;
             continue;
         }
-        summary.projectsMerged += 1;
         existing.dbs = existing.dbs ?? [];
         existing.repos = existing.repos ?? [];
         existing.tickets = existing.tickets ?? [];
-        summary.databasesAdded += addMissing(existing.dbs, project.dbs, db => db?.id);
-        addMissing(existing.repos, project.repos, repo => String(repo?.name ?? '').toLowerCase());
-        addMissing(existing.tickets, project.tickets, ticket => ticket?.id);
+        const dbsAdded = addMissing(existing.dbs, project.dbs, db => db?.id);
+        const reposAdded = addMissing(existing.repos, project.repos, repo => String(repo?.name ?? '').toLowerCase());
+        const ticketsAdded = addMissing(existing.tickets, project.tickets, ticket => ticket?.id);
+        summary.databasesAdded += dbsAdded;
+        // Counted only when it actually gained something: a project that was
+        // already complete is not "completed".
+        if (dbsAdded + reposAdded + ticketsAdded > 0) {
+            summary.projectsMerged += 1;
+        }
         // selectedDbByVersion is not merged: it is a per-window choice.
     }
 
