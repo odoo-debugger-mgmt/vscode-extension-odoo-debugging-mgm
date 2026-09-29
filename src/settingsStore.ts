@@ -15,7 +15,8 @@ import { DebuggerData, showError, getWorkspacePath, getDefaultVersionSettings, s
 import { ProjectModel } from './models/project';
 import { DatabaseTemplateModel } from './models/dbTemplate';
 import { logger } from './services/logger';
-import { MainStore, currentMainStore } from './services/mainStore';
+import { MainStore, StoreRead, currentMainStore } from './services/mainStore';
+import { jsonEqual } from './services/mergeDocuments';
 import {
     HANDOFF_STATE_PREFIX,
     WorkspaceSelection,
@@ -29,12 +30,15 @@ import {
 
 interface CachedFileEntry {
     mtimeMs: number;
-    data: DebuggerData;
+    /** Never handed out: callers get clones. */
+    read: StoreRead;
 }
 
 interface PendingWrite {
     store: MainStore;
     data: DebuggerData;
+    /** What the caller read, so a shared store can tell its changes from another window's. */
+    base?: StoreRead;
     timer?: NodeJS.Timeout;
     waiters: Array<{ resolve: () => void; reject: (error: unknown) => void }>;
 }
@@ -50,6 +54,17 @@ export class SettingsStore {
      * which case the selection flags simply stay in the data, as they always did.
      */
     private static selectionState: vscode.Memento | undefined;
+    /**
+     * The stored snapshot each handed-out object was cloned from, keyed by its
+     * `projects` array: `load()` and `stripSettings()` build new top-level
+     * objects but keep that array, so every existing save finds its base.
+     */
+    private static readonly baseOf = new WeakMap<object, StoreRead>();
+
+    /** Forgets every cached read; the next `get()` goes to the store. */
+    static invalidate(): void {
+        this.cache.clear();
+    }
 
     /**
      * Called first thing on activation, before anything reads the data -
@@ -149,9 +164,18 @@ export class SettingsStore {
         }
 
         try {
-            const jsonString = JSON.stringify(pending.data, null, 4);
-            const mtimeMs = await pending.store.write(jsonString);
-            this.cache.set(location, { mtimeMs, data: this.cloneData(pending.data) });
+            // A save that changes nothing writes nothing: VersionsService saves
+            // on every load, and a no-op write would wake every other window
+            // sharing the store, which would load, and save, and so on.
+            // Compared as it will be stored: a Date and its ISO string are
+            // the same value once written.
+            const next = JSON.parse(JSON.stringify(pending.data)) as DebuggerData;
+            if (!pending.base || !jsonEqual(next, pending.base.data)) {
+                await pending.store.commit(pending.base, next);
+                // Re-read next time: after a merge the store holds more than
+                // this window wrote.
+                this.cache.delete(location);
+            }
             pending.waiters.forEach(waiter => waiter.resolve());
         } catch (error) {
             pending.waiters.forEach(waiter => waiter.reject(error));
@@ -159,14 +183,14 @@ export class SettingsStore {
         }
     }
 
-    /** The stored data, without this window's selection applied. */
-    private static async readStored(store: MainStore): Promise<DebuggerData> {
+    /** The stored data, without this window's selection applied, and the read it came from. */
+    private static async readStored(store: MainStore): Promise<{ data: DebuggerData; read: StoreRead }> {
         await this.flushPendingWrite(store.location);
 
         const mtimeMs = await store.stat();
         const cached = this.cache.get(store.location);
         if (cached && mtimeMs !== undefined && cached.mtimeMs === mtimeMs) {
-            return this.cloneData(cached.data);
+            return { data: this.cloneData(cached.read.data), read: cached.read };
         }
 
         let read;
@@ -176,8 +200,9 @@ export class SettingsStore {
             void showError(`Failed to read ${store.location}: ${error}`);
             throw new Error(`Error reading file: ${store.location}`);
         }
-        this.cache.set(store.location, { mtimeMs: read.mtimeMs, data: this.cloneData(read.data) });
-        return this.cloneData(read.data);
+        const snapshot: StoreRead = { ...read, data: this.cloneData(read.data) };
+        this.cache.set(store.location, { mtimeMs: read.mtimeMs, read: snapshot });
+        return { data: this.cloneData(snapshot.data), read: snapshot };
     }
 
     /**
@@ -190,7 +215,10 @@ export class SettingsStore {
             throw new Error('Open a workspace before reading the Odoo DevTools data.');
         }
 
-        const data = await this.readStored(store);
+        const { data, read } = await this.readStored(store);
+        if (Array.isArray(data.projects)) {
+            this.baseOf.set(data.projects, read);
+        }
         const selection = await this.selectionFor(data);
         return selection ? applySelection(data, selection) : data;
     }
@@ -205,6 +233,8 @@ export class SettingsStore {
             return;
         }
 
+        const base = (data.projects && this.baseOf.get(data.projects))
+            ?? this.cache.get(store.location)?.read;
         let payload = this.cloneData(data);
         const memento = this.selectionState;
         if (memento) {
@@ -217,6 +247,7 @@ export class SettingsStore {
             const existing = this.pendingWrites.get(location);
             if (existing) {
                 existing.data = payload;
+                existing.base = base;
                 existing.waiters.push({ resolve, reject });
                 if (existing.timer) {
                     clearTimeout(existing.timer);
@@ -232,6 +263,7 @@ export class SettingsStore {
             const pending: PendingWrite = {
                 store,
                 data: payload,
+                base,
                 waiters: [{ resolve, reject }]
             };
 

@@ -12,6 +12,7 @@ suite('Data location', () => {
     test('defaults to the first folder\'s .vscode file, rooted at that folder', () => {
         assert.deepStrictEqual(resolveDataLocation({ firstFolder: '/work/v17' }), {
             file: path.join('/work/v17', '.vscode', 'odoo-debugger-data.json'),
+            kind: 'json',
             root: '/work/v17',
             pinned: false
         });
@@ -40,11 +41,38 @@ suite('Data location', () => {
         assert.strictEqual(location?.root, path.join('/ws', 'data'));
     });
 
-    test('a store that is not JSON is ignored until the shared store exists', () => {
-        const location = resolveDataLocation({ configured: '/home/me/odoo-dev/store.db', firstFolder: '/work/v17' });
+    test('a shared .db store is honoured at user level, and relative paths stay the window\'s', () => {
+        const location = resolveDataLocation(
+            { configuredGlobally: '~/odoo-dev/odoo-devtools.db', firstFolder: '/work/v17' }, '/home/me');
+
+        assert.strictEqual(location?.file, '/home/me/odoo-dev/odoo-devtools.db');
+        assert.strictEqual(location?.kind, 'sqlite');
+        assert.strictEqual(location?.root, '/work/v17');
+    });
+
+    test('a workspace value beats the user-level one', () => {
+        const location = resolveDataLocation({
+            configured: '/clients/other.db',
+            configuredGlobally: '/home/me/odoo-dev/odoo-devtools.db',
+            firstFolder: '/work/v17'
+        });
+
+        assert.strictEqual(location?.file, '/clients/other.db');
+    });
+
+    test('a user-level JSON store is ignored: one JSON file cannot be shared safely', () => {
+        const location = resolveDataLocation({ configuredGlobally: '/home/me/data.json', firstFolder: '/work/v17' });
 
         assert.strictEqual(location?.pinned, false);
-        assert.strictEqual(location?.root, '/work/v17');
+        assert.strictEqual(location?.kind, 'json');
+    });
+
+    test('a relative user-level store is ignored: it has nothing to be relative to', () => {
+        assert.strictEqual(resolveDataLocation({ configuredGlobally: 'odoo.db', firstFolder: '/work/v17' })?.pinned, false);
+    });
+
+    test('an unknown kind of file is ignored', () => {
+        assert.strictEqual(resolveDataLocation({ configured: '/tmp/store.txt', firstFolder: '/work/v17' })?.pinned, false);
     });
 
     test('no folder and no usable pin means no data location', () => {
@@ -87,7 +115,7 @@ suite('JSON main store', () => {
 
         assert.strictEqual((await store.read()).data.projects[0].name, 'Acme');
 
-        await store.write(JSON.stringify({ projects: [{ name: 'Renamed' }] }));
+        await store.commit(undefined, { projects: [{ name: 'Renamed' }] } as never);
         assert.strictEqual((await store.read()).data.projects[0].name, 'Renamed');
     });
 

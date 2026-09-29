@@ -21,6 +21,7 @@ import {
 } from './services/provisionQueue';
 import { provisionAndCreateVersion, provisionExistingVersion } from './odooInstaller';
 import { SettingsStore } from './settingsStore';
+import { closeOtherMainStores, currentMainStore, disposeMainStores } from './services/mainStore';
 import { VersionsTreeProvider } from './versionsTreeProvider';
 import { VersionsService } from './versionsService';
 import { updateTestingContext, updateActiveContext, updateServerRunningContext, updateConfiguredContext } from './context';
@@ -236,6 +237,42 @@ export async function activate(context: vscode.ExtensionContext) {
     };
 
     registerAllCommands({ context, providers, versionsService, sortPreferences, moduleTreeView, dbTreeView, refreshAll });
+
+    // Another window wrote to a shared store, or this window switched stores:
+    // re-read everything. Debounced, because one save elsewhere can touch
+    // several documents and each is its own change.
+    let storeChangeTimer: NodeJS.Timeout | undefined;
+    const onStoreChanged = () => {
+        if (storeChangeTimer) {
+            clearTimeout(storeChangeTimer);
+        }
+        storeChangeTimer = setTimeout(() => {
+            storeChangeTimer = undefined;
+            SettingsStore.invalidate();
+            void versionsService.refresh()
+                .then(() => refreshAll({ reason: 'all' }))
+                .catch(error => logger.warn('Refreshing after a data store change failed:', error));
+        }, 300);
+    };
+    let storeSubscription: { dispose(): void } | undefined;
+    const watchStore = () => {
+        storeSubscription?.dispose();
+        storeSubscription = currentMainStore()?.onDidChange?.(onStoreChanged);
+    };
+    watchStore();
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+        if (event.affectsConfiguration('odooDebugger.dataStore.path')) {
+            closeOtherMainStores();
+            watchStore();
+            onStoreChanged();
+        }
+    }));
+    context.subscriptions.push({
+        dispose: () => {
+            storeSubscription?.dispose();
+            disposeMainStores();
+        }
+    });
     registerWrongCopyGuard(context);
 
     void statusBar.update();
