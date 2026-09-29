@@ -7552,13 +7552,19 @@ async function applyUpgradeSetup(project, setup, versionSettingsFor, token) {
         });
     }
     // 4. Build the copies for both sides, now rather than on some later sync.
-    for (const database of [sourceDb, targetDb]) {
-        if (!database || token?.isCancellationRequested) {
+    //    Both are resolved first, so freeing a branch for one side never
+    //    moves the source onto the branch the other side is about to need.
+    const worktreeRepos = repos.filter(repo => (0, repo_1.normalizeBranchMode)(repo.branchMode) === 'worktree');
+    const sides = [sourceDb, targetDb]
+        .filter((database) => !!database)
+        .map(database => (0, repoPaths_1.resolveProjectRepos)(worktreeRepos, (0, environment_1.sanitizeProjectRepoBranchAssignments)(database.projectRepoBranches), setup.root));
+    for (const [index, resolved] of sides.entries()) {
+        if (token?.isCancellationRequested) {
             continue;
         }
-        const resolved = (0, repoPaths_1.resolveProjectRepos)(repos.filter(repo => (0, repo_1.normalizeBranchMode)(repo.branchMode) === 'worktree'), (0, environment_1.sanitizeProjectRepoBranchAssignments)(database.projectRepoBranches), setup.root);
+        const alsoNeeded = sides.filter((_, other) => other !== index).flat();
         try {
-            const outcome = await (0, customWorktree_1.ensureCustomWorktrees)(resolved, token, { interactive: true });
+            const outcome = await (0, customWorktree_1.ensureCustomWorktrees)(resolved, token, { interactive: true, alsoNeeded });
             problems.push(...outcome.problems);
         }
         catch (error) {
@@ -9594,8 +9600,9 @@ async function ensureCustomWorktrees(resolved, token, options = {}) {
             // anyway is how a correctly built set of copies kept raising the
             // "using the source checkout" modal on every refresh.
             const satisfied = await (0, worktree_1.worktreeAlreadySatisfies)(sourcePath, entry.branch, entry.path);
-            // The branches this run gives other copies of the same repository.
-            const reserved = new Set(resolved
+            // The branches this run, or the one after it, gives other copies of
+            // the same repository.
+            const reserved = new Set([...resolved, ...(options.alsoNeeded ?? [])]
                 .filter(other => other.isWorktree && other.branch && other.repo.path === sourcePath)
                 .map(other => other.branch));
             if (!satisfied && !(await freeBranch(sourcePath, entry.repo.name, entry.branch, interactive, reserved))) {

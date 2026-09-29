@@ -130,6 +130,23 @@ suite('Source-conflict arbitration against real git', function () {
         assert.ok(/detach/i.test(message), `detach consequence missing:\n${message}`);
     });
 
+    test('the branch the other side of an upgrade needs is not offered to move onto', async () => {
+        // Third test run: on a first setup, the only other branch offered was
+        // the one the target side's copy was about to check out.
+        const other = resolved(repo, 'acme', 'main', path.join(root, 'acme@main'));
+        const { picks } = await withStubbedDialogs(
+            { modal: 'Move to Another Branch', quickPick: undefined },
+            () => ensureCustomWorktrees(
+                [resolved(repo, 'acme', '17.0-acme', dest)],
+                undefined,
+                { interactive: true, alsoNeeded: [other] }
+            )
+        );
+
+        assert.strictEqual(picks.length, 1);
+        assert.deepStrictEqual(picks[0], ['19.0-acme']);
+    });
+
     test('item 4.2 — Move really moves the checkout, and the copy is created', async () => {
         const { result, picks } = await withStubbedDialogs(
             { modal: 'Move to Another Branch', quickPick: 'main' },

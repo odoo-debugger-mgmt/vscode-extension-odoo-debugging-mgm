@@ -164,17 +164,23 @@ export async function applyUpgradeSetup(
     }
 
     // 4. Build the copies for both sides, now rather than on some later sync.
-    for (const database of [sourceDb, targetDb]) {
-        if (!database || token?.isCancellationRequested) {
-            continue;
-        }
-        const resolved = resolveProjectRepos(
-            repos.filter(repo => normalizeBranchMode(repo.branchMode) === 'worktree'),
+    //    Both are resolved first, so freeing a branch for one side never
+    //    moves the source onto the branch the other side is about to need.
+    const worktreeRepos = repos.filter(repo => normalizeBranchMode(repo.branchMode) === 'worktree');
+    const sides = [sourceDb, targetDb]
+        .filter((database): database is NonNullable<typeof database> => !!database)
+        .map(database => resolveProjectRepos(
+            worktreeRepos,
             sanitizeProjectRepoBranchAssignments(database.projectRepoBranches),
             setup.root
-        );
+        ));
+    for (const [index, resolved] of sides.entries()) {
+        if (token?.isCancellationRequested) {
+            continue;
+        }
+        const alsoNeeded = sides.filter((_, other) => other !== index).flat();
         try {
-            const outcome = await ensureCustomWorktrees(resolved, token, { interactive: true });
+            const outcome = await ensureCustomWorktrees(resolved, token, { interactive: true, alsoNeeded });
             problems.push(...outcome.problems);
         } catch (error) {
             logger.error('[upgrade] building per-branch copies failed:', error);
