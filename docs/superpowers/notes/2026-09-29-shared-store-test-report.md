@@ -5,6 +5,258 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
+This file holds two runs. The **second run**, on the fixes, comes first. The
+first run follows it unchanged.
+
+# Second run: the fixes (`b714132`)
+
+**Scope:** the test suite, then items 2, 5, 7, 7b, 9 and 12 of the updated
+brief, as asked. The environment is the same as the first run's (Ubuntu 26.04,
+VS Code 1.139.1 as an Extension Development Host under Xvfb, a throwaway
+`HOME`, PostgreSQL running without the fixture databases).
+
+**Fixture:** rebuilt from scratch. It is the same as the first run's, plus
+`acme-db19`, linked to 19.0, so that 7b has an upgrade target. The store was
+`/tmp/odt-brief/shared.db`, reached through Choose Data Store, **Create a new
+store…**, then **All workspaces**, **Bring It Along**.
+
+## Verdict (second run)
+
+- **Fixed and confirmed in real windows:**
+  - finding 1: each window launches its own database, and an active upgrade
+    pins both sides in both windows;
+  - finding 2: the workspace's own file keeps the selection, and a second
+    profile opens where the first left off;
+  - finding 3: a no-op import says so and writes nothing;
+  - finding 6: Replace now names what it discards and defaults to keeping;
+  - finding 7: a read-only store is announced on open, selecting works,
+    changes are refused;
+  - finding 8: Choose Data Store marks the store in use, and the Projects view
+    names it;
+  - the cloned-version remap.
+- **Still present:** finding 5, the error toast "No project is selected." on a
+  new window with no selection.
+- **New, moderate (finding 9):** after an upgrade is toggled off from
+  **another** window, window A **shows** one database as selected but
+  **launches** another.
+- **New, minor (findings 10 and 11):**
+  - a refused change on a read-only store surfaces as VS Code's generic
+    "Error running command …", which blames the extension;
+  - the source-checkout picker offers a branch another worktree already holds.
+- **Not re-tested:** items 3, 4, 6, 8, 10 and 11, since they were not asked
+  for. Item 4's dialogs were seen along the way (see item 5 below).
+
+## Test suite: matched
+
+- `npm ci`, then `npm test` on VS Code 1.139.1: **416 passing, 0 failing,
+  0 pending**.
+- `✔ two processes committing at once lose no update to their own databases
+  (201ms)` ran and passed.
+- Lint: 0 errors.
+- The rebuilt `dist/` was identical to the committed one.
+
+## 2. An existing workspace keeps its selection: matched
+
+- **On open,** A showed `acme · acme-db1 · 17.0 :8069`. The file's only change
+  was a default `testingConfig` added to `acme`; the selection stayed in the
+  file.
+- **After selecting acme-db2 and closing,** the diff against the copy showed:
+  - `acme-db1` `isSelected` became `false`, and `acme-db2` became `true`;
+  - `activeVersion` and `isActive: true` were kept;
+  - `acme` gained `"selectedDbByVersion": { "ver-17-0001": "acme-db2" }` and
+    the default `testingConfig`;
+  - nothing else changed.
+  The file records the selection I left. The repositories' `isSelected` flags
+  were untouched.
+- **Reopening A** brought back `acme · acme-db2 · 17.0`.
+- **`--profile-temp`:** the window titled "Temp 1" opened A on
+  `acme · acme-db2 · 17.0 :8069`, with the same selection in the Databases
+  view and **no** "No project is selected." toast. Finding 2 is fixed.
+
+## 5. A second window on the same store: matched
+
+- **Moving A onto the store.** On the way, item 4's list read:
+  - "Shared store", "Open an existing store…", "Create a new store…";
+  - "This workspace only .vscode/odoo-debugger-data.json — in use", marked
+    with a check and pre-selected;
+  - placeholder: "Now using this workspace's file …".
+  The bring-along dialog read "It adds: 2 new projects / 4 databases added /
+  2 new versions". Afterwards, the Projects view header read
+  **"shared: shared.db"**. Finding 8 is fixed.
+- **The store holds no selection:** no project or database carries
+  `isSelected`, and no project carries `selectedDbByVersion`.
+- **B on open** showed `acme` and `beta` with nothing selected, and still
+  raised the **error toast "No project is selected."** with [Select Project].
+  Finding 5 is unchanged.
+- **B's selection:** I chose `beta`, `beta-db1` and Odoo 19.0. A stayed on
+  `acme · acme-db2 · 17.0`, and the store still recorded no per-version
+  database.
+
+## 7. Simultaneous edits to one project: matched
+
+A was on acme-db1 and B on acme-db2. I ran three rounds of context-menu marks,
+about 0.3 s apart:
+- install versus upgrade;
+- upgrade versus install;
+- clear versus install.
+
+Every mark was kept on its own database and shown in both windows. The rev
+went 1 → 3 → 5 → 7. `[store] merged changes…` did not appear: the saves did
+not overlap, as in the first run.
+
+## 7b. Each window launches its own database: matched
+
+**Steps 1 to 3.** A was on acme-db1 and B on acme-db2, both 17.0.
+
+- A's **Copy Odoo Command**:
+  `… -d acme-db1 -i acme_sale -u acme_stock …`, which is acme-db1's own marks.
+- A's `launch.json`, `odoo-debugger` (17.0): `-d acme-db1 -i acme_sale -u acme_stock`.
+- B's `launch.json`, `odoo-debugger`: `-d acme-db2 -i acme_stock,acme_crm -u acme_sale`.
+
+Finding 1 is fixed.
+
+**Step 4, with an upgrade.**
+- **Setup:** in A, Set Up an Upgrade, with acme-db2 (17.0) → acme-db19
+  (19.0), acme `17.0-dev` → `main`. The plan dialog listed the per-branch
+  copies under the throwaway `HOME`.
+- **Result:** both windows' `launch.json` files had `odoo-debugger` (17.0)
+  with `-d acme-db2` and `odoo-debugger-19` with `-d acme-db19` (on
+  `…/acme@main`).
+- **A cannot diverge from the pin.** Selecting acme-db1 in A while the upgrade
+  was on was refused: '"acme-db1" is not part of this upgrade, so it cannot be
+  selected while an upgrade is set up.' [Exit Upgrade Mode].
+- **The discriminating case:**
+  1. B toggled the upgrade off.
+  2. A selected acme-db1; its status bar showed `acme-db1`.
+  3. **B** toggled the upgrade back on, which read "Upgrade resumed: 17.0 →
+     19.0.".
+  A's Copy Odoo Command then gave `-d acme-db2 -i acme_stock,acme_crm -u
+  acme_sale`, and both windows' `launch.json` files had 17.0 → `acme-db2` and
+  19.0 → `acme-db19`. The pin wins in the window that did not set it.
+- **Side observation:** during setup, cancelling "Move this checkout off
+  17.0-dev" did not cancel the setup. The upgrade was saved as active, running
+  on the source checkout, with the warning "acme is using the source checkout:
+  the branch each needs is checked out there." [Resolve]. That may be intended.
+
+## 9. Export and import: matched
+
+1. **Export.** The notification read "Exported 2 project(s) to
+   /tmp/odt-brief/export1.json.". The file has no project or database
+   `isSelected`, no `activeVersion` and no `selectedDbByVersion`. The two
+   `isSelected: true` are repository flags. Every path is absolute, including
+   `dumpsFolder` (`/tmp/odt-brief/DB Dumps`) and the upgrade's `repoPath`.
+2. **Re-import, verbatim:**
+
+   > Import export1.json into shared store /tmp/odt-brief/shared.db?
+   >
+   > Nothing is missing: it is all here already.
+   >
+   > (2 versions are already there, matched by branch.)
+   >
+   > Merge never overwrites what is here. Replace would discard the 2 projects, 2 versions and 4 databases here now.
+   >
+   > [Replace…] [Cancel] [Merge]
+
+   After Merge, the toast read "Nothing to import: everything in export1.json
+   is already here.", and the store was **byte-identical**, revs included.
+   Finding 3 is fixed.
+3. **Raw seed file** (`odoo-debugger-data.json`, copied into A's `.vscode/`):
+   the same "Nothing is missing" preview. Merge wrote nothing, and there were
+   still two versions.
+4. **Another machine's file with a clone.** Versions `m2-17-aaaa`,
+   `m2-19-bbbb` and a clone `m2-17-clone` ("Odoo 17.0 (clone)", port 8089),
+   plus projects `gamma` (on the clone) and `delta` (on 19.0). The preview
+   read "Merging adds: 2 new projects / 2 databases added / 1 new version /
+   (2 versions are already there, matched by branch.)". After Merge:
+   - the clone was added as its own version;
+   - `gamma-db1` → `m2-17-clone`;
+   - `delta-db1` → `ver-19-0002`, remapped.
+   **The clone does not collapse.**
+5. **Replace.** I imported a one-project `small.json`. The first dialog read
+   "Nothing is missing… Replace would discard the 4 projects, 3 versions and 6
+   databases here now." The second, verbatim:
+
+   > Replace everything in shared store /tmp/odt-brief/shared.db with small.json?
+   >
+   > The 4 projects, 3 versions and 6 databases there now are discarded, and replaced by the 1 project, 3 versions and 1 database in the file. Export first if you might want them back.
+   >
+   > [Replace Everything] [Cancel] [Keep Current Data]
+
+   **Keep Current Data** is the default. I chose Cancel, and the store was
+   unchanged. The wording now says what happens before you commit. One small
+   thing: "discard the 4 projects" counts `beta`, which the file puts straight
+   back. The second dialog's "replaced by …" makes that clear.
+
+## 12. A store from the future: matched
+
+- **On open:** with schema set to 99, the data showed, and a warning was
+  raised on open, found in the notification center:
+
+  > The data store /tmp/odt-brief/shared.db is read-only here: it was written by a newer Odoo DevTools (schema 99). Changes to projects, versions and databases cannot be saved; selecting still works in this window.
+
+- **Selecting acme-db1** worked, with no error. Finding 7 is fixed.
+- **Marking a module** was refused. The mark did not appear, and the store
+  stayed byte-identical. See finding 10 for how the refusal is shown.
+- **Afterwards:** reset to `1`, and the user-level
+  `odooDebugger.dataStore.path` cleared.
+
+## New findings (second run)
+
+### 9. After another window toggles an upgrade off, a window shows one database and launches another (moderate)
+
+**Steps** (A and B on `acme`, one shared store, a remembered upgrade
+acme-db2 (17.0) → acme-db19):
+1. With the upgrade off, select `acme-db1` in A.
+2. In **B**, toggle the upgrade on. A follows: its view and status bar move to
+   `acme-db2`, and it launches `acme-db2`, as expected.
+3. In **B**, toggle the upgrade off again.
+
+**Expected:** A is back where it was, showing and launching `acme-db1`, or at
+least showing what it launches.
+
+**Happened:** A's status bar and Databases view show **`acme-db2`**, but A's
+Copy Odoo Command and `launch.json` use **`-d acme-db1`**.
+
+**Cause:** A's `workspaceState`
+(`AhmadMansour.odoo-devtools-vscode` → `odt.workspaceSelection`) holds
+`"selectedDbByProject": {"acme-uid-0001": "acme-db2"}` but
+`"rememberedDbByProject": {"acme-uid-0001": {"ver-17-0001": "acme-db1", …}}`.
+- When the upgrade became active, A's selected database was moved to the
+  pinned one, but its per-version memory was not.
+- When the upgrade ended, `resolveDbForVersion` preferred the memory
+  (`acme-db1`) over the selection (`acme-db2`).
+
+The same mismatch is possible in the window that toggles the upgrade itself;
+I did not check that.
+
+### 10. A change refused by a read-only store shows as an extension crash (minor)
+
+Marking a module on the schema-99 store shows:
+
+> Error running command moduleSelector.setToInstall: The data store /tmp/odt-brief/shared.db was written by a newer Odoo DevTools (schema 99); it is read-only here.. This is likely caused by the extension that contributes moduleSelector.setToInstall.
+
+The `StoreReadOnlyError` escapes the command handler, so VS Code adds its
+"likely caused by the extension" line. The message also ends in a double
+period. The log shows `WARN: Failed to flush pending write for …`. The
+behaviour is right (nothing was written); only the presentation is off.
+
+### 11. The source-checkout picker offers a branch another worktree holds (minor)
+
+During setup and resume, "Move this checkout off '17.0-dev'" offered `main`.
+The `…/acme@main` worktree already had `main` checked out (after the first
+setup), so choosing it cannot work. It should be filtered out or explained.
+The first time, it was the **only** choice, so the user's only ways out were
+Detach or Cancel.
+
+### Still present: finding 5
+
+"No project is selected." is still an **error** toast on a new window with no
+selection (B in item 5).
+
+---
+
+# First run (`d6e4207`)
+
 ## Verdict
 
 - **Works:**
