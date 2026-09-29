@@ -1,11 +1,13 @@
 # Shared data across workspaces: design
 
-**Status:** proposal. Nothing here is implemented. One decision (SQLite vs the
-fallback, §4) waits on the spike at the end of this document.
+**Status:** decided 2026-09-29. The main store is SQLite through `node:sqlite`,
+and `engines.vscode` is raised to `^1.101.0`. Step 1 of the build order is
+implemented; steps 2 to 5 are not.
 **Spike outcome (2026-09-29):** `node:sqlite` loads from VS Code 1.101.0
 (Node 22.15.1) onward, but not on 1.100.0, the current minimum (Node 20.19).
 Where it loads, WAL, `data_version` and the `rev`-guarded writes behave as §4
-assumes. §4 therefore stands only if `engines.vscode` is raised to `^1.101.0`.
+assumes. §4 therefore stands only if `engines.vscode` is raised to `^1.101.0`,
+which was accepted. §4.2 records what the spike changed.
 Full results: [the spike report](../notes/2026-09-29-node-sqlite-spike.md).
 **Depends on:** `2026-09-01-custom-repo-worktrees-design.md` (path resolution
 through `resolveProjectRepos`), `2026-09-01-first-run-setup-design.md` (user-level
@@ -277,6 +279,32 @@ as the model does today. That keeps the change inside `SettingsStore`:
   same field of the same project is the only case that loses anything, and it
   resolves last-writer-wins on that field.
 
+#### 4.2 What the spike changed
+
+- **Short lock waits, retried off the thread.** `DatabaseSync` is synchronous,
+  and the Extension Host thread is shared by every extension in the window. A
+  write waiting on a 5 s `busy_timeout` would freeze all of them for up to 5 s.
+  `busy_timeout` is therefore short (about 200 ms), and a busy commit is retried
+  asynchronously with backoff, a handful of times, before it is reported as a
+  failure.
+- **The smallest API surface.** Only `DatabaseSync`, `exec`, `prepare` and
+  `run` / `get` / `all`, with every setting (`journal_mode`, `busy_timeout`,
+  `foreign_keys`) passed as a `PRAGMA` rather than a constructor option. That
+  surface worked unchanged from Node 22.15 to 24.20; the module is still
+  experimental on Node 22.
+- **A warning nobody sees.** Node 22 builds (VS Code 1.101 to at least 1.109)
+  print one `ExperimentalWarning` per Extension Host, to its stderr only. It
+  never reaches the output channel or the UI. Node 24 builds print nothing.
+- **Types and bundling.** `@types/node` moves to `22.x` for the
+  `node:sqlite` declarations. Webpack needs no change: it treats `node:sqlite`
+  as an external on its own.
+- **Still unverified:** remote Extension Hosts (Remote-SSH, WSL, Dev Containers,
+  Codespaces run the VS Code Server's own Node), other VS Code-based editors,
+  and macOS and Windows. So the store checks for the module at runtime. When it
+  is missing, shared mode is refused with a message naming the runtime, and the
+  workspace keeps its legacy file. There is no second store implementation to
+  fall back to.
+
 ### 5. Repositories across workspaces
 
 Developers lay out custom code in different ways, and the design accommodates
@@ -454,23 +482,37 @@ Resolution is one function either way; the layouts cost a few lines each.
 | Situation | Behaviour |
 |---|---|
 | Store path points at nothing | Offer Create / Choose / Use Legacy. Never silently start empty. |
-| Store is locked for longer than `busy_timeout` | The save fails with a named error and the in-memory change is kept for retry. Never a partial write. |
+| Store stays locked through every retry (§4.2) | The save fails with a named error and the in-memory change is kept for retry. Never a partial write. |
 | Two windows edit the same field of the same project | Last writer wins on that field. Logged in the Odoo DevTools output channel. |
 | `workspaceState` lost (new profile) | The registry restores attached projects. The version binding is asked again, one question. |
 | A version's repo location is missing on disk | Same as today's missing path: Project Repos flags it with *Relocate Repository*, now per version. |
 | Store written by a newer extension (`schema_version` higher than known) | Open read-only and say so. Never downgrade the schema. |
-| `node:sqlite` unavailable at runtime | Fall back to the JSON implementation chosen in §4, or refuse shared mode with a clear message. Decided by the spike. |
+| `node:sqlite` unavailable at runtime (e.g. a remote host or another editor on an older Node) | Refuse shared mode with a message naming the runtime; the workspace keeps its legacy file (§4.2). |
 
 ## Build order
 
 Each step ships on its own and leaves the extension working.
 
-1. **`MainStore` interface.** `JsonFileMainStore` wraps today's file. The
-   per-window overlay moves to `workspaceState`. No behaviour change for
-   existing users, but the Open Project Workspace bug goes away once the
-   generated workspace pins the file.
-2. **The shared store.** `SqliteMainStore` (or the fallback), Choose Data Store,
-   export/import, migration, and change events.
+1. **`MainStore` interface — implemented.** `JsonFileMainStore`
+   (`services/mainStore.ts`) wraps today's file. The selected project, the
+   selected database per project and the active version live in
+   `workspaceState` (`services/workspaceSelection.ts`), seeded once from the
+   file so existing users keep their selection. Generated project workspaces
+   pin the file through `odooDebugger.dataStore.path` and hand the selection
+   over, which fixes bug 6. Where it differs from the rest of this document:
+   - `testingConfig.isEnabled` has **not** moved. Its module stash is project
+     data, and moving the flag without the stash would split one state in
+     two. It moves in step 2, together with the stash question under *Open
+     questions*.
+   - `odooDebugger.dataStore.path` is honoured **only at workspace level, and
+     only for `.json` files**. A user-level value would make every workspace
+     share one JSON file before step 2's concurrency safety exists.
+   - Still open: in a generated multi-root window, `launch.json` and
+     `startDebugging` still target `folders[0]/.vscode`, which is the first
+     repository. That belongs in the workspace file's own `launch` section.
+2. **The shared store.** `SqliteMainStore`, Choose Data Store, the user-level
+   default, export/import, migration, change events, and testing mode moving to
+   the window.
 3. **Per-version repo locations**, workspace binding and the registry.
 4. **The upgrade plan** only copies shared directories; Start This Side; Open
    the Other Side.
