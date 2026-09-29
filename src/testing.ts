@@ -6,7 +6,8 @@
 import * as vscode from "vscode";
 import { SettingsStore } from './settingsStore';
 import { TestTag, TestingConfigModel, LogLevel, ensureTestingConfigModel } from './models/testing';
-import { ModuleModel } from './models/module';
+import { ModuleModel, ModuleState } from './models/module';
+import type { DatabaseModel } from './models/db';
 import { InstalledModuleInfo } from './models/module';
 import { showError, showInfo, showAutoInfo, stripSettings, createInfoTreeItem } from './utils';
 import { updateTestingContext } from './context';
@@ -231,6 +232,28 @@ export class TestingTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
     }
 }
 
+/**
+ * Stashes a database's install/upgrade marks on the database itself and
+ * clears them. A database already stashed keeps its first stash: stashing the
+ * cleared state over it would lose the marks for good.
+ */
+export function stashModules(db: DatabaseModel): void {
+    if (!db.testingModuleStates) {
+        db.testingModuleStates = (db.modules ?? []).map(module => ({ name: module.name, state: module.state }));
+    }
+    db.modules = [];
+}
+
+/** Gives every stashed database its own marks back. */
+export function restoreStashedModules(dbs: DatabaseModel[] | undefined): void {
+    for (const db of dbs ?? []) {
+        if (db.testingModuleStates) {
+            db.modules = db.testingModuleStates.map(saved => new ModuleModel(saved.name, saved.state as ModuleState));
+            db.testingModuleStates = undefined;
+        }
+    }
+}
+
 export async function toggleTesting(event: any): Promise<void> {
     try {
         const { isEnabled } = event;
@@ -268,13 +291,9 @@ export async function toggleTesting(event: any): Promise<void> {
 
             project.testingConfig.isEnabled = false;
 
-            // Restore saved module states
-            if (project.testingConfig.savedModuleStates) {
-                db.modules = project.testingConfig.savedModuleStates.map(saved =>
-                    new ModuleModel(saved.name, saved.state as any)
-                );
-                project.testingConfig.savedModuleStates = undefined;
-            }
+            // Every database that was stashed gets its own marks back - not
+            // the one selected now, which may have changed while testing ran.
+            restoreStashedModules(project.dbs);
 
             await SettingsStore.saveWithoutComments(stripSettings(data));
             updateTestingContext(false);
@@ -292,14 +311,7 @@ export async function toggleTesting(event: any): Promise<void> {
                 return;
             }
 
-            // Save current module states
-            project.testingConfig.savedModuleStates = db.modules.map(module => ({
-                name: module.name,
-                state: module.state
-            }));
-
-            // Clear all modules
-            db.modules = [];
+            stashModules(db);
             project.testingConfig.isEnabled = true;
 
             await SettingsStore.saveWithoutComments(stripSettings(data));
@@ -341,11 +353,7 @@ export async function prepareTestRunForFile(filePath: string, moduleName: string
         if (confirm !== 'Enable Testing') {
             return false;
         }
-        project.testingConfig.savedModuleStates = db.modules.map(module => ({
-            name: module.name,
-            state: module.state
-        }));
-        db.modules = [];
+        stashModules(db);
         project.testingConfig.isEnabled = true;
         updateTestingContext(true);
     }

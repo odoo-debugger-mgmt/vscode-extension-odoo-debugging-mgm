@@ -18,6 +18,13 @@ export interface DatabaseOptions {
     internalName?: string;
     kind?: string;
     projectRepoBranches?: ProjectRepoBranchAssignment[];
+    testingModuleStates?: SavedModuleState[];
+}
+
+/** A module's install/upgrade mark, as stashed while testing mode is on. */
+export interface SavedModuleState {
+    name: string;
+    state: string;
 }
 
 export interface ProjectRepoBranchAssignment {
@@ -41,6 +48,12 @@ export class DatabaseModel {
     internalName?: string;
     kind?: string;
     projectRepoBranches: ProjectRepoBranchAssignment[] = [];
+    /**
+     * This database's own module marks, stashed while testing mode has
+     * cleared them. Kept on the database rather than the project, so the
+     * marks go back to the database they came from.
+     */
+    testingModuleStates?: SavedModuleState[];
 
     constructor(name: string, createdAt: Date, options: DatabaseOptions = {}) {
         this.displayName = options.displayName || name;
@@ -63,6 +76,7 @@ export class DatabaseModel {
                     branch: entry.branch.trim()
                 }))
             : [];
+        this.testingModuleStates = Array.isArray(options.testingModuleStates) ? options.testingModuleStates : undefined;
 
         if (options.internalName) {
             this.internalName = options.internalName;

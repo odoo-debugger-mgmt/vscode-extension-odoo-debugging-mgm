@@ -912,8 +912,15 @@ class SettingsStore {
             return undefined;
         }
         const stored = (0, workspaceSelection_1.readSelection)(memento);
-        if (stored) {
+        if (stored?.testingByProject) {
             return stored;
+        }
+        if (stored) {
+            // Stored before testing mode moved to the window: keep the
+            // selection, and take testing from the data this once.
+            const seededTesting = { ...stored, testingByProject: (0, workspaceSelection_1.extractSelection)(data).testingByProject };
+            await (0, workspaceSelection_1.writeSelection)(memento, seededTesting);
+            return seededTesting;
         }
         const seeded = (0, workspaceSelection_1.extractSelection)(data);
         await (0, workspaceSelection_1.writeSelection)(memento, seeded);
@@ -4611,10 +4618,40 @@ exports.isEmptySelection = isEmptySelection;
 exports.normalizeSelection = normalizeSelection;
 exports.readSelection = readSelection;
 exports.writeSelection = writeSelection;
+const DEFAULT_TESTING = { isEnabled: false, testTags: [], stopAfterInit: false, logLevel: 'disabled' };
 exports.EMPTY_SELECTION = { selectedDbByProject: {} };
 exports.SELECTION_STATE_KEY = 'odt.workspaceSelection';
 /** Prefix of the globalState key a generated workspace's selection is handed over under. */
 exports.HANDOFF_STATE_PREFIX = 'odt.workspaceHandoff:';
+function testingStateOf(config) {
+    const state = {
+        isEnabled: !!config.isEnabled,
+        testTags: Array.isArray(config.testTags) ? structuredClone(config.testTags) : [],
+        stopAfterInit: !!config.stopAfterInit,
+        logLevel: typeof config.logLevel === 'string' ? config.logLevel : 'disabled'
+    };
+    if (typeof config.testFile === 'string' && config.testFile) {
+        state.testFile = config.testFile;
+    }
+    return state;
+}
+/**
+ * Replaces the per-window testing fields of a stored config in place. A
+ * legacy `savedModuleStates` is kept: the data migration moves it onto its
+ * database, and a save that runs first must not drop it.
+ */
+function setTesting(config, state) {
+    config.isEnabled = state.isEnabled;
+    config.testTags = structuredClone(state.testTags);
+    config.stopAfterInit = state.stopAfterInit;
+    config.logLevel = state.logLevel;
+    if (state.testFile) {
+        config.testFile = state.testFile;
+    }
+    else {
+        delete config.testFile;
+    }
+}
 /**
  * How a project is keyed in the selection. Projects written before uids
  * existed are only given one when a project is next selected, so the name
@@ -4642,6 +4679,12 @@ function extractSelection(data, previous = exports.EMPTY_SELECTION) {
             selectedDbByProject[projectKey(project)] = db.id;
         }
     }
+    const testingByProject = {};
+    for (const project of projects) {
+        if (project?.testingConfig) {
+            testingByProject[projectKey(project)] = testingStateOf(project.testingConfig);
+        }
+    }
     const selectedProject = projects.find(project => project?.isSelected);
     const activeVersion = typeof data.activeVersion === 'string' ? data.activeVersion.trim() : undefined;
     return {
@@ -4651,7 +4694,10 @@ function extractSelection(data, previous = exports.EMPTY_SELECTION) {
         selectedDbByProject: hasProjects ? selectedDbByProject : { ...previous.selectedDbByProject },
         activeVersionId: data.activeVersion === undefined
             ? previous.activeVersionId
-            : (activeVersion || undefined)
+            : (activeVersion || undefined),
+        testingByProject: hasProjects
+            ? testingByProject
+            : (previous.testingByProject ? { ...previous.testingByProject } : undefined)
     };
 }
 /**
@@ -4667,6 +4713,9 @@ function stripSelection(data) {
             if (db) {
                 db.isSelected = false;
             }
+        }
+        if (project.testingConfig) {
+            setTesting(project.testingConfig, DEFAULT_TESTING);
         }
     }
     delete copy.activeVersion;
@@ -4689,6 +4738,17 @@ function applySelection(data, selection) {
         for (const db of project.dbs ?? []) {
             if (db) {
                 db.isSelected = !!selectedDb && db.id === selectedDb;
+            }
+        }
+        // Undefined means "not recorded yet": the data's own testing stands.
+        if (selection.testingByProject) {
+            const testing = selection.testingByProject[key];
+            if (testing) {
+                project.testingConfig = project.testingConfig ?? {};
+                setTesting(project.testingConfig, testing);
+            }
+            else if (project.testingConfig) {
+                setTesting(project.testingConfig, DEFAULT_TESTING);
             }
         }
     }
@@ -4736,8 +4796,21 @@ function normalizeSelection(raw) {
         selectedDbByProject: dbs,
         activeVersionId: typeof value.activeVersionId === 'string' && value.activeVersionId
             ? value.activeVersionId
-            : undefined
+            : undefined,
+        testingByProject: normalizeTesting(value.testingByProject)
     };
+}
+function normalizeTesting(raw) {
+    if (!raw || typeof raw !== 'object') {
+        return undefined;
+    }
+    const result = {};
+    for (const [key, state] of Object.entries(raw)) {
+        if (state && typeof state === 'object') {
+            result[key] = testingStateOf(state);
+        }
+    }
+    return result;
 }
 // ---------------------------------------------------------------------------
 // vscode-backed accessors
@@ -6826,6 +6899,12 @@ class DatabaseModel {
     internalName;
     kind;
     projectRepoBranches = [];
+    /**
+     * This database's own module marks, stashed while testing mode has
+     * cleared them. Kept on the database rather than the project, so the
+     * marks go back to the database they came from.
+     */
+    testingModuleStates;
     constructor(name, createdAt, options = {}) {
         this.displayName = options.displayName || name;
         this.name = this.displayName;
@@ -6847,6 +6926,7 @@ class DatabaseModel {
                 branch: entry.branch.trim()
             }))
             : [];
+        this.testingModuleStates = Array.isArray(options.testingModuleStates) ? options.testingModuleStates : undefined;
         if (options.internalName) {
             this.internalName = options.internalName;
         }
@@ -13067,6 +13147,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.collectLegacyBranchesNeedingVersions = collectLegacyBranchesNeedingVersions;
 exports.applyDatabaseFieldMigration = applyDatabaseFieldMigration;
 exports.applyBranchNameMigration = applyBranchNameMigration;
+exports.moveTestingStashToDatabase = moveTestingStashToDatabase;
 exports.migrateDebuggerData = migrateDebuggerData;
 exports.applyHookMigration = applyHookMigration;
 exports.migrateHookSettings = migrateHookSettings;
@@ -13165,6 +13246,35 @@ function applyBranchNameMigration(data) {
     return { changed, preserved };
 }
 /**
+ * Moves testing mode's module stash from the project onto a database.
+ *
+ * The stash used to live on the project, and turning testing off restored it
+ * onto whichever database was selected at that moment. It now lives on the
+ * database it was taken from. Which one that was is not recorded, so the
+ * database selected now is the best answer - the one the old code would have
+ * restored onto. A project with no selected database keeps its stash until one
+ * is. Returns whether anything moved.
+ */
+function moveTestingStashToDatabase(data) {
+    let moved = false;
+    for (const project of (data.projects ?? [])) {
+        const stash = project?.testingConfig?.savedModuleStates;
+        if (!Array.isArray(stash)) {
+            continue;
+        }
+        const db = (project.dbs ?? []).find((entry) => entry?.isSelected);
+        if (!db) {
+            continue;
+        }
+        if (!Array.isArray(db.testingModuleStates)) {
+            db.testingModuleStates = stash;
+        }
+        delete project.testingConfig.savedModuleStates;
+        moved = true;
+    }
+    return moved;
+}
+/**
  * One-time, non-fatal migration of odoo-debugger-data.json to the v1.2 shape.
  * Runs at activation after the legacy-settings migration and after the tree
  * providers are constructed (so the versions-changed refresh command exists).
@@ -13188,6 +13298,7 @@ async function migrateDebuggerData() {
             logger_1.logger.info(`[migration] kept ${branchNameResult.preserved} legacy branch label(s) as odooVersion`);
         }
         const hookResult = applyHookMigration(data);
+        const stashMoved = moveTestingStashToDatabase(data);
         const droppedFromSettings = await migrateHookSettings();
         const dropped = [...new Set([...hookResult.droppedCommands, ...droppedFromSettings])];
         if (dropped.length > 0) {
@@ -13197,7 +13308,7 @@ async function migrateDebuggerData() {
                 'They ran before a branch switch; there is no longer one to run before. ' +
                 'Add them to postSwitchCommands only if they still make sense after the switch.');
         }
-        if (changed || branchNameResult.changed || hookResult.changed || missingBranches.length > 0) {
+        if (changed || branchNameResult.changed || hookResult.changed || stashMoved || missingBranches.length > 0) {
             // Save as-is (no settings strip): if the legacy-settings migration
             // has not run yet, its data must survive this write.
             await settingsStore_1.SettingsStore.saveWithoutComments(data);
@@ -16080,6 +16191,8 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.TestingTreeProvider = void 0;
+exports.stashModules = stashModules;
+exports.restoreStashedModules = restoreStashedModules;
 exports.toggleTesting = toggleTesting;
 exports.prepareTestRunForFile = prepareTestRunForFile;
 exports.toggleStopAfterInit = toggleStopAfterInit;
@@ -16274,6 +16387,26 @@ class TestingTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     }
 }
 exports.TestingTreeProvider = TestingTreeProvider;
+/**
+ * Stashes a database's install/upgrade marks on the database itself and
+ * clears them. A database already stashed keeps its first stash: stashing the
+ * cleared state over it would lose the marks for good.
+ */
+function stashModules(db) {
+    if (!db.testingModuleStates) {
+        db.testingModuleStates = (db.modules ?? []).map(module => ({ name: module.name, state: module.state }));
+    }
+    db.modules = [];
+}
+/** Gives every stashed database its own marks back. */
+function restoreStashedModules(dbs) {
+    for (const db of dbs ?? []) {
+        if (db.testingModuleStates) {
+            db.modules = db.testingModuleStates.map(saved => new module_1.ModuleModel(saved.name, saved.state));
+            db.testingModuleStates = undefined;
+        }
+    }
+}
 async function toggleTesting(event) {
     try {
         const { isEnabled } = event;
@@ -16301,11 +16434,9 @@ async function toggleTesting(event) {
                 return;
             }
             project.testingConfig.isEnabled = false;
-            // Restore saved module states
-            if (project.testingConfig.savedModuleStates) {
-                db.modules = project.testingConfig.savedModuleStates.map(saved => new module_1.ModuleModel(saved.name, saved.state));
-                project.testingConfig.savedModuleStates = undefined;
-            }
+            // Every database that was stashed gets its own marks back - not
+            // the one selected now, which may have changed while testing ran.
+            restoreStashedModules(project.dbs);
             await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
             (0, context_1.updateTestingContext)(false);
             (0, utils_1.showAutoInfo)('Testing disabled. Previous module states restored.', 3000);
@@ -16317,13 +16448,7 @@ async function toggleTesting(event) {
             if (confirm !== 'Enable Testing') {
                 return;
             }
-            // Save current module states
-            project.testingConfig.savedModuleStates = db.modules.map(module => ({
-                name: module.name,
-                state: module.state
-            }));
-            // Clear all modules
-            db.modules = [];
+            stashModules(db);
             project.testingConfig.isEnabled = true;
             await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
             (0, context_1.updateTestingContext)(true);
@@ -16359,11 +16484,7 @@ async function prepareTestRunForFile(filePath, moduleName) {
         if (confirm !== 'Enable Testing') {
             return false;
         }
-        project.testingConfig.savedModuleStates = db.modules.map(module => ({
-            name: module.name,
-            state: module.state
-        }));
-        db.modules = [];
+        stashModules(db);
         project.testingConfig.isEnabled = true;
         (0, context_1.updateTestingContext)(true);
     }

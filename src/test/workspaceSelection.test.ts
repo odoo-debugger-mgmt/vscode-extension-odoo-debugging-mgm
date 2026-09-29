@@ -44,7 +44,8 @@ suite('Workspace selection', () => {
         assert.deepStrictEqual(extractSelection(sample()), {
             selectedProjectUid: 'p1',
             selectedDbByProject: { p1: 'acme-19', p2: 'other-17' },
-            activeVersionId: 'v19'
+            activeVersionId: 'v19',
+            testingByProject: {}
         });
     });
 
@@ -132,7 +133,59 @@ suite('Workspace selection', () => {
         assert.strictEqual(normalizeSelection('nonsense'), undefined);
         assert.deepStrictEqual(
             normalizeSelection({ selectedProjectUid: 7, selectedDbByProject: { p1: 3, p2: 'db' } }),
-            { selectedProjectUid: undefined, selectedDbByProject: { p2: 'db' }, activeVersionId: undefined }
+            { selectedProjectUid: undefined, selectedDbByProject: { p2: 'db' }, activeVersionId: undefined, testingByProject: undefined }
         );
+    });
+
+    suite('testing mode', () => {
+        function withTesting(): DebuggerData {
+            const data = sample();
+            (data.projects[0] as any).testingConfig = {
+                isEnabled: true, testTags: [{ id: 't', value: 'sale', state: 'include', type: 'module' }],
+                testFile: '/a/test_x.py', stopAfterInit: true, logLevel: 'debug',
+                savedModuleStates: [{ name: 'sale', state: 'install' }]
+            };
+            return data;
+        }
+        const testingOf = (data: DebuggerData, index = 0) => (data.projects[index] as any).testingConfig;
+
+        test('is per window: extracted, stripped from the store, applied back', () => {
+            const data = withTesting();
+            const selection = extractSelection(data);
+
+            assert.strictEqual(selection.testingByProject?.p1.isEnabled, true);
+            const stored = stripSelection(data);
+            assert.strictEqual(testingOf(stored).isEnabled, false);
+            assert.deepStrictEqual(testingOf(stored).testTags, []);
+            assert.strictEqual(testingOf(stored).testFile, undefined);
+
+            const restored = applySelection(stored, selection);
+            assert.strictEqual(testingOf(restored).isEnabled, true);
+            assert.strictEqual(testingOf(restored).testFile, '/a/test_x.py');
+            assert.strictEqual(testingOf(restored).logLevel, 'debug');
+        });
+
+        test('a legacy stash survives a save that runs before the migration', () => {
+            assert.deepStrictEqual(testingOf(stripSelection(withTesting())).savedModuleStates, [{ name: 'sale', state: 'install' }]);
+        });
+
+        test('another window, with no testing recorded, sees testing off', () => {
+            const applied = applySelection(stripSelection(withTesting()), { ...EMPTY_SELECTION, testingByProject: {} });
+
+            assert.strictEqual(testingOf(applied).isEnabled, false);
+        });
+
+        test('a selection stored before testing moved leaves the data\'s testing alone', () => {
+            const applied = applySelection(withTesting(), { ...EMPTY_SELECTION });
+
+            assert.strictEqual(testingOf(applied).isEnabled, true);
+            assert.strictEqual(normalizeSelection({ selectedDbByProject: {} })?.testingByProject, undefined);
+        });
+
+        test('projects without a testing config do not grow one', () => {
+            const applied = applySelection(stripSelection(sample()), extractSelection(sample()));
+
+            assert.strictEqual(testingOf(applied), undefined);
+        });
     });
 });

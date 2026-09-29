@@ -107,6 +107,36 @@ export function applyBranchNameMigration(data: DebuggerData): { changed: boolean
 }
 
 /**
+ * Moves testing mode's module stash from the project onto a database.
+ *
+ * The stash used to live on the project, and turning testing off restored it
+ * onto whichever database was selected at that moment. It now lives on the
+ * database it was taken from. Which one that was is not recorded, so the
+ * database selected now is the best answer - the one the old code would have
+ * restored onto. A project with no selected database keeps its stash until one
+ * is. Returns whether anything moved.
+ */
+export function moveTestingStashToDatabase(data: Partial<DebuggerData>): boolean {
+    let moved = false;
+    for (const project of (data.projects ?? []) as any[]) {
+        const stash = project?.testingConfig?.savedModuleStates;
+        if (!Array.isArray(stash)) {
+            continue;
+        }
+        const db = (project.dbs ?? []).find((entry: any) => entry?.isSelected);
+        if (!db) {
+            continue;
+        }
+        if (!Array.isArray(db.testingModuleStates)) {
+            db.testingModuleStates = stash;
+        }
+        delete project.testingConfig.savedModuleStates;
+        moved = true;
+    }
+    return moved;
+}
+
+/**
  * One-time, non-fatal migration of odoo-debugger-data.json to the v1.2 shape.
  * Runs at activation after the legacy-settings migration and after the tree
  * providers are constructed (so the versions-changed refresh command exists).
@@ -132,6 +162,7 @@ export async function migrateDebuggerData(): Promise<void> {
             logger.info(`[migration] kept ${branchNameResult.preserved} legacy branch label(s) as odooVersion`);
         }
         const hookResult = applyHookMigration(data);
+        const stashMoved = moveTestingStashToDatabase(data);
         const droppedFromSettings = await migrateHookSettings();
         const dropped = [...new Set([...hookResult.droppedCommands, ...droppedFromSettings])];
         if (dropped.length > 0) {
@@ -143,7 +174,7 @@ export async function migrateDebuggerData(): Promise<void> {
                 'Add them to postSwitchCommands only if they still make sense after the switch.'
             );
         }
-        if (changed || branchNameResult.changed || hookResult.changed || missingBranches.length > 0) {
+        if (changed || branchNameResult.changed || hookResult.changed || stashMoved || missingBranches.length > 0) {
             // Save as-is (no settings strip): if the legacy-settings migration
             // has not run yet, its data must survive this write.
             await SettingsStore.saveWithoutComments(data);

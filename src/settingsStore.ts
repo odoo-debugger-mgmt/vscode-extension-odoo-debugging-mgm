@@ -121,8 +121,15 @@ export class SettingsStore {
             return undefined;
         }
         const stored = readSelection(memento);
-        if (stored) {
+        if (stored?.testingByProject) {
             return stored;
+        }
+        if (stored) {
+            // Stored before testing mode moved to the window: keep the
+            // selection, and take testing from the data this once.
+            const seededTesting = { ...stored, testingByProject: extractSelection(data).testingByProject };
+            await writeSelection(memento, seededTesting);
+            return seededTesting;
         }
         const seeded = extractSelection(data);
         await writeSelection(memento, seeded);

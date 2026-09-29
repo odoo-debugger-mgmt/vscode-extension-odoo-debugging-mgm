@@ -1,6 +1,6 @@
 /**
  * Per-window selection: which project, which database per project and which
- * version this workspace has chosen.
+ * version this workspace has chosen, and each project's testing mode.
  *
  * These are choices one window makes, not facts about the data, so they live
  * in `workspaceState` rather than in the data file. Two windows sharing one
@@ -21,7 +21,28 @@ export interface WorkspaceSelection {
     /** Project key -> id of the database selected in that project. */
     selectedDbByProject: Record<string, string>;
     activeVersionId?: string;
+    /**
+     * Project key -> testing mode in this window. Undefined, rather than
+     * empty, until it has been recorded once: a selection stored before
+     * testing moved here seeds it from the data instead of switching testing
+     * off for anyone who had it on.
+     */
+    testingByProject?: Record<string, TestingState>;
 }
+
+/**
+ * Testing mode as one window runs it. The module stash is not here: it
+ * belongs to the database it was taken from (`testingModuleStates`).
+ */
+export interface TestingState {
+    isEnabled: boolean;
+    testTags: unknown[];
+    testFile?: string;
+    stopAfterInit: boolean;
+    logLevel: string;
+}
+
+const DEFAULT_TESTING: TestingState = { isEnabled: false, testTags: [], stopAfterInit: false, logLevel: 'disabled' };
 
 export const EMPTY_SELECTION: WorkspaceSelection = { selectedDbByProject: {} };
 
@@ -35,6 +56,37 @@ interface ProjectLike {
     name?: string;
     isSelected?: boolean;
     dbs?: Array<{ id?: string; isSelected?: boolean }>;
+    testingConfig?: Partial<TestingState> & { savedModuleStates?: unknown };
+}
+
+function testingStateOf(config: Partial<TestingState>): TestingState {
+    const state: TestingState = {
+        isEnabled: !!config.isEnabled,
+        testTags: Array.isArray(config.testTags) ? structuredClone(config.testTags) : [],
+        stopAfterInit: !!config.stopAfterInit,
+        logLevel: typeof config.logLevel === 'string' ? config.logLevel : 'disabled'
+    };
+    if (typeof config.testFile === 'string' && config.testFile) {
+        state.testFile = config.testFile;
+    }
+    return state;
+}
+
+/**
+ * Replaces the per-window testing fields of a stored config in place. A
+ * legacy `savedModuleStates` is kept: the data migration moves it onto its
+ * database, and a save that runs first must not drop it.
+ */
+function setTesting(config: NonNullable<ProjectLike['testingConfig']>, state: TestingState): void {
+    config.isEnabled = state.isEnabled;
+    config.testTags = structuredClone(state.testTags);
+    config.stopAfterInit = state.stopAfterInit;
+    config.logLevel = state.logLevel;
+    if (state.testFile) {
+        config.testFile = state.testFile;
+    } else {
+        delete config.testFile;
+    }
 }
 
 /**
@@ -71,6 +123,13 @@ export function extractSelection(
         }
     }
 
+    const testingByProject: Record<string, TestingState> = {};
+    for (const project of projects) {
+        if (project?.testingConfig) {
+            testingByProject[projectKey(project)] = testingStateOf(project.testingConfig);
+        }
+    }
+
     const selectedProject = projects.find(project => project?.isSelected);
     const activeVersion = typeof data.activeVersion === 'string' ? data.activeVersion.trim() : undefined;
 
@@ -81,7 +140,10 @@ export function extractSelection(
         selectedDbByProject: hasProjects ? selectedDbByProject : { ...previous.selectedDbByProject },
         activeVersionId: data.activeVersion === undefined
             ? previous.activeVersionId
-            : (activeVersion || undefined)
+            : (activeVersion || undefined),
+        testingByProject: hasProjects
+            ? testingByProject
+            : (previous.testingByProject ? { ...previous.testingByProject } : undefined)
     };
 }
 
@@ -98,6 +160,9 @@ export function stripSelection<T extends Partial<DebuggerData>>(data: T): T {
             if (db) {
                 db.isSelected = false;
             }
+        }
+        if (project.testingConfig) {
+            setTesting(project.testingConfig, DEFAULT_TESTING);
         }
     }
     delete copy.activeVersion;
@@ -121,6 +186,16 @@ export function applySelection<T extends Partial<DebuggerData>>(data: T, selecti
         for (const db of project.dbs ?? []) {
             if (db) {
                 db.isSelected = !!selectedDb && db.id === selectedDb;
+            }
+        }
+        // Undefined means "not recorded yet": the data's own testing stands.
+        if (selection.testingByProject) {
+            const testing = selection.testingByProject[key];
+            if (testing) {
+                project.testingConfig = project.testingConfig ?? {};
+                setTesting(project.testingConfig, testing);
+            } else if (project.testingConfig) {
+                setTesting(project.testingConfig, DEFAULT_TESTING);
             }
         }
     }
@@ -170,8 +245,22 @@ export function normalizeSelection(raw: unknown): WorkspaceSelection | undefined
         selectedDbByProject: dbs,
         activeVersionId: typeof value.activeVersionId === 'string' && value.activeVersionId
             ? value.activeVersionId
-            : undefined
+            : undefined,
+        testingByProject: normalizeTesting(value.testingByProject)
     };
+}
+
+function normalizeTesting(raw: unknown): Record<string, TestingState> | undefined {
+    if (!raw || typeof raw !== 'object') {
+        return undefined;
+    }
+    const result: Record<string, TestingState> = {};
+    for (const [key, state] of Object.entries(raw as Record<string, unknown>)) {
+        if (state && typeof state === 'object') {
+            result[key] = testingStateOf(state as Partial<TestingState>);
+        }
+    }
+    return result;
 }
 
 // ---------------------------------------------------------------------------
