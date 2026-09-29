@@ -5,7 +5,120 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds five runs, newest first. The earlier runs are kept unchanged.
+This file holds six runs, newest first. The earlier runs are kept unchanged.
+
+# Sixth run: the fifth run's fixes (`e5fae52`)
+
+**Scope:** as asked:
+- the test suite;
+- Open Project Workspace → New window, then a database switch:
+  - entries under `launch` in the `.code-workspace`;
+  - the repository's leftover `.vscode/` gone;
+  - Start Server, Restart Server and F5 all start the server;
+- a start that fails while a server runs leaves that server running;
+- a window reopened the old way, from Recent: the "Reopen It" message once,
+  and after reopening, the debugger runs;
+- a plain folder window unchanged.
+
+**Setup:**
+- **Profile:** a new throwaway profile (`HOME=/tmp/claude/bl`), with the
+  Python extensions and the stub `odoo-bin` as in the fifth run.
+- **Data:** A's own data file, reset to the seed.
+- **Installed builds, not a dev host:** VS Code does not add Extension
+  Development Host windows to Recent, so the Recent check cannot be done in
+  one. The previous build (`a106206`) and this one (`e5fae52`) were packaged
+  with `npx vsce package` from separate worktrees, and installed into the
+  profile with `code --install-extension`.
+- **The leftover:** made with the previous build (Open Project Workspace, New
+  window, database switch): `repos/acme/.vscode/launch.json` with both
+  entries.
+- **The Recent entry:** with the previous build installed, Open Project
+  Workspace → New window left this Recent entry:
+  `vscode-userdata:/tmp/claude/bl/.config/Code/User/globalStorage/ahmadmansour.odoo-devtools-vscode/workspaces/acme-uid-0001.code-workspace`.
+
+## Verdict (sixth run)
+
+**Findings 12 and 13 are fixed.** Everything asked for matched.
+
+The one wrinkle: the reopen message is an ordinary toast. It hid itself
+before I could click it, twice; it stays in the notification center, and
+Reopen It works from there. It's worth a look, because someone who misses it
+has no other pointer.
+
+## Test suite: matched
+
+- VS Code 1.139.1: **446 passing, 0 failing, 0 pending**.
+
+## Reopening the old way, from Recent: matched
+
+1. **Opening it:** with this build installed, I opened A, then File: Open
+   Recent. The list showed "acme-uid-0001 (Workspace)
+   ~/.config/Code/User/globalStorage/ahmadmansour.odoo-devtools-vscode…". I
+   picked it.
+2. **The message:**
+
+   > This workspace was opened in a way that keeps the Python debugger from
+   > running. Reopen it from its file to fix that.
+
+   It came with a **Reopen It** button, and was logged once. The notification
+   center held that single message.
+3. **The toast hides itself** after a few seconds, like any info message.
+   - My first two clicks came after it had gone, so nothing reopened.
+   - From the notification center, **Reopen It** reopened the window. A new
+     workspace-storage entry appeared for
+     `file:///tmp/claude/bl/.config/Code/User/globalStorage/ahmadmansour.odoo-devtools-vscode/workspaces/acme-uid-0001.code-workspace`.
+   - The new window's log has no second message.
+4. **After reopening:** selecting acme-db1 logged "[debugger] moved 2 launch
+   entries out of /tmp/odt-brief/repos/acme into …/acme-uid-0001.code-workspace".
+   - The repository's `.vscode/` was gone.
+   - **Start Server** started the stub under debugpy: `cwd` `/tmp/odt-brief/A`,
+     `-p 8069 … -d acme-db1 -i acme_sale`.
+
+## Open Project Workspace → New window: matched
+
+I put the leftover `launch.json` back into the repository and removed the
+`launch` section from the `.code-workspace`, so that both changes would be
+visible. Then I quit VS Code and opened A.
+
+1. **Open Project Workspace → New window** opened the window on the `file:`
+   workspace, with no reopen message.
+2. **Selecting acme-db2:**
+   - the log says "[debugger] moved 2 launch entries out of
+     /tmp/odt-brief/repos/acme into …";
+   - `repos/acme/.vscode/` is **gone**, and git shows the repository clean;
+   - the `.code-workspace` has `launch` with `odoo-debugger-19` and
+     `odoo-debugger`, both `"cwd": "/tmp/odt-brief/A"` and `-d acme-db2`.
+3. **Start Server:** started: `-p 8069 … -d acme-db2 -i base -u acme_stock`,
+   `cwd` `/tmp/odt-brief/A`, under debugpy (pid 1265814).
+4. **Restart Server:** pid 1265814 ended, and a new run started (pid 1268012)
+   with the same arguments.
+5. **F5 (Debug: Start Debugging):** started the Run view's selected entry,
+   `odoo-debugger-19 (workspace)`: `-p 8079 … -d acme-db2`, under debugpy.
+
+## A start that fails leaves the running server alone: matched
+
+1. With pid 1268012 running, I removed the `odoo-debugger` entry from the
+   `.code-workspace`. It stayed removed: nothing rewrote it.
+2. **Start Server** showed "Could not start "odoo-debugger". Its launch entry
+   may not be written yet."
+3. **pid 1268012 kept running**, and no new run started.
+4. I put the entry back afterwards.
+
+## A plain folder window: matched
+
+In folder window A, selecting acme-db1 rewrote `A/.vscode/launch.json`: both
+entries, `"cwd": "/tmp/odt-brief/A"`, `-d acme-db1`. The `.code-workspace` was
+byte-identical afterwards, and the repository got nothing.
+
+- **Start Server:** `-p 8069 … -d acme-db1 -i acme_sale`, under debugpy.
+- **F5:** started the selected `odoo-debugger-19 (A)`: `-p 8079 … -d acme-db1`.
+
+## Also seen (sixth run)
+
+- **The first New window click:** in the two fresh dev-host profiles, the
+  first New window click on Open Project Workspace opened nothing, while the
+  second worked. The log had no error. With the installed build it worked the
+  first time. It is unexplained, and may be how I drive the window.
 
 # Fifth run: launch entries in the workspace file (`73c7645`)
 

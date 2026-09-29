@@ -22,7 +22,7 @@ steps exist in the code; the rest is still a proposal.
 |---|---|
 | [2026-09-28-shared-data-store-design.md](superpowers/specs/2026-09-28-shared-data-store-design.md) | Sharing extension data across workspaces: a main store plus per-workspace state. |
 | [2026-09-29-node-sqlite-spike.md](superpowers/notes/2026-09-29-node-sqlite-spike.md) | Spike result for that design: which VS Code versions have `node:sqlite`, and how it behaves across two windows. |
-| [2026-09-29-shared-store-test-report.md](superpowers/notes/2026-09-29-shared-store-test-report.md) | Results of the [shared store test brief](shared-store-test-brief.md) in real windows, in five runs: the first, and four re-tests of the fixes. |
+| [2026-09-29-shared-store-test-report.md](superpowers/notes/2026-09-29-shared-store-test-report.md) | Results of the [shared store test brief](shared-store-test-brief.md) in real windows, in six runs: the first, and five re-tests of the fixes. |
 
 ## Historical design records
 
