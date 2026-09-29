@@ -6,6 +6,7 @@ A **Get Started with Odoo DevTools** walkthrough is available from VS Code's Wel
 
 ## Requirements
 
+- VS Code 1.101 or later.
 - `git`, and a clone of the Odoo repository (Set Up offers to clone one). Enterprise and design-themes clones are optional.
 - The **Python Debugger** extension (`ms-python.debugpy`): the generated launch configurations use its `debugpy` type.
 - A Python interpreter the branch supports, or [uv](https://docs.astral.sh/uv/) so provisioning can install one. Without uv, provisioning falls back to the standard library `venv` and `pip`. You do not build virtualenvs yourself: each version gets its own.

@@ -28,6 +28,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Changed
 
+- **Requires VS Code 1.101 or later** (was 1.100). The shared data store planned for multi-workspace use needs the `node:sqlite` module, which VS Code's runtime ships from 1.101.
 - **Debugger name and ports are derived from the version's branch** and are read-only, so parallel versions cannot collide on a port. Existing versions are healed on load.
 - **Database creation asks which branch each project repository should use** instead of silently recording whatever was checked out at the time.
 - `db.branchName` is removed: a database's core branch comes from its version, which is the only place it was ever authoritative. Legacy values are folded into the database's Odoo version where no version profile matches.
