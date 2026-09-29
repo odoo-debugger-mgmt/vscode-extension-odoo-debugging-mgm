@@ -22,11 +22,12 @@ import { SettingsStore } from '../settingsStore';
 import { readSetupState } from '../services/setupState';
 import { diagnoseVersion, needsAttention } from '../services/versionMigration';
 import { currentUpgradeConfig, refuseDuringUpgrade } from '../upgrade';
+import { registerCommand } from './registerCommand';
 
 export function registerVersionCommands(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.checkVersions', async () => {
+    context.subscriptions.push(registerCommand('odoo.checkVersions', async () => {
         try {
             const setup = readSetupState();
             const diagnoses = versionsService.getVersions().map(version => diagnoseVersion(
@@ -70,7 +71,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.openVersionInBrowser', async (versionIdOrTreeItem?: unknown) => {
+    context.subscriptions.push(registerCommand('odoo.openVersionInBrowser', async (versionIdOrTreeItem?: unknown) => {
         try {
             let versionId = extractVersionId(versionIdOrTreeItem);
             if (!versionId) {
@@ -122,7 +123,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.createVersion', async () => {
+    context.subscriptions.push(registerCommand('odoo.createVersion', async () => {
         try {
             // Two prompts: branch, then name. Paths and ports come from the
             // odooDebugger.defaultVersion.* settings and stay editable in the
@@ -176,11 +177,11 @@ export function registerVersionCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.openVersionDefaults', async () => {
+    context.subscriptions.push(registerCommand('odoo.openVersionDefaults', async () => {
         await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:AhmadMansour.odoo-devtools-vscode odooDebugger.defaultVersion');
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.changeBranch', async (versionIdOrTreeItem?: unknown) => {
+    context.subscriptions.push(registerCommand('odoo.changeBranch', async (versionIdOrTreeItem?: unknown) => {
         try {
             const versionId = extractVersionId(versionIdOrTreeItem);
             if (!versionId) {
@@ -258,7 +259,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setActiveVersion', async (versionIdOrTreeItem?: unknown) => {
+    context.subscriptions.push(registerCommand('odoo.setActiveVersion', async (versionIdOrTreeItem?: unknown) => {
         try {
             let versionId = extractVersionId(versionIdOrTreeItem);
             if (!versionId) {
@@ -385,7 +386,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
         }
     };
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.editVersionSetting', async (versionIdOrTreeItem?: unknown, settingKey?: string, currentValue?: unknown) => {
+    context.subscriptions.push(registerCommand('odoo.editVersionSetting', async (versionIdOrTreeItem?: unknown, settingKey?: string, currentValue?: unknown) => {
         try {
             const ref = extractVersionSettingRef(versionIdOrTreeItem, settingKey, currentValue);
             if (!ref) {
@@ -452,7 +453,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.cloneVersion', async (versionIdOrTreeItem?: unknown) => {
+    context.subscriptions.push(registerCommand('odoo.cloneVersion', async (versionIdOrTreeItem?: unknown) => {
         try {
             let versionId = extractVersionId(versionIdOrTreeItem);
             if (!versionId) {
@@ -493,7 +494,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.deleteVersion', async (versionIdOrTreeItem?: unknown) => {
+    context.subscriptions.push(registerCommand('odoo.deleteVersion', async (versionIdOrTreeItem?: unknown) => {
         try {
             let versionId = extractVersionId(versionIdOrTreeItem);
             if (!versionId) {
@@ -592,7 +593,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setSettingToDefault', async (settingTreeItem?: unknown) => {
+    context.subscriptions.push(registerCommand('odoo.setSettingToDefault', async (settingTreeItem?: unknown) => {
         try {
             const ref = extractVersionSettingRef(settingTreeItem);
             if (!ref) {
@@ -609,7 +610,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setSettingAsDefault', async (settingTreeItem?: unknown) => {
+    context.subscriptions.push(registerCommand('odoo.setSettingAsDefault', async (settingTreeItem?: unknown) => {
         try {
             const ref = extractVersionSettingRef(settingTreeItem);
             if (!ref) {
@@ -626,7 +627,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setAllSettingsToDefault', async (versionTreeItem?: unknown) => {
+    context.subscriptions.push(registerCommand('odoo.setAllSettingsToDefault', async (versionTreeItem?: unknown) => {
         try {
             const versionId = extractVersionId(versionTreeItem);
             if (!versionId) {
@@ -658,7 +659,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setAllSettingsAsDefault', async (versionTreeItem?: unknown) => {
+    context.subscriptions.push(registerCommand('odoo.setAllSettingsAsDefault', async (versionTreeItem?: unknown) => {
         try {
             const versionId = extractVersionId(versionTreeItem);
             if (!versionId) {
@@ -690,11 +691,11 @@ export function registerVersionCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.refreshVersions', async () => {
+    context.subscriptions.push(registerCommand('odoo.refreshVersions', async () => {
         await versionsService.refresh();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.manageVersions', async () => {
+    context.subscriptions.push(registerCommand('odoo.manageVersions', async () => {
         const actions = [
             'Create New Version',
             'Switch Active Version',

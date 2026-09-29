@@ -30,6 +30,7 @@ import {
 import { openMainStore } from '../services/mainStore';
 import { stripSelection } from '../services/workspaceSelection';
 import { MergeSummary, absolutizePaths, buildExport, describeMerge, mergeData, readImportFile } from '../services/dataImport';
+import { registerCommand } from './registerCommand';
 
 const SHARED_STORE_FILE = 'odoo-devtools.db';
 
@@ -347,8 +348,8 @@ export function registerDataStoreCommands(deps: CommandDeps): void {
         }
     };
     deps.context.subscriptions.push(
-        vscode.commands.registerCommand('odoo.chooseDataStore', guarded('Choose Data Store', chooseDataStore)),
-        vscode.commands.registerCommand('odoo.exportData', guarded('Export Data', exportData)),
-        vscode.commands.registerCommand('odoo.importData', guarded('Import Data', () => importData(deps)))
+        registerCommand('odoo.chooseDataStore', guarded('Choose Data Store', chooseDataStore)),
+        registerCommand('odoo.exportData', guarded('Export Data', exportData)),
+        registerCommand('odoo.importData', guarded('Import Data', () => importData(deps)))
     );
 }

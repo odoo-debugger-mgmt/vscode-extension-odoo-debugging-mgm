@@ -15,6 +15,7 @@ import { VersionsService } from '../versionsService';
 import { invalidateRepositoryDiscoveryCache } from '../services/runtimeCache';
 import { showInfo } from '../services/notifications';
 import type { CommandDeps } from './index';
+import { registerCommand } from './registerCommand';
 
 /**
  * Asks for the folder and records it. Returns the chosen path, or undefined
@@ -58,7 +59,7 @@ export function registerCustomAddonsCommand(deps: CommandDeps): void {
     const { context, refreshAll } = deps;
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('odoo.chooseCustomAddonsPath', async () => {
+        registerCommand('odoo.chooseCustomAddonsPath', async () => {
             const chosen = await chooseCustomAddonsFolder();
             if (!chosen) {
                 return;

@@ -10,6 +10,7 @@ import { setModuleToUpgrade } from '../module';
 import { prepareTestRunForFile } from '../testing';
 import { startDebugServer } from '../debugger';
 import { showInfo } from '../services/notifications';
+import { registerCommand } from './registerCommand';
 
 interface ActiveModule {
     name: string;
@@ -35,7 +36,7 @@ async function moduleForActiveEditor(): Promise<ActiveModule | undefined> {
 export function registerEditorCommands(deps: CommandDeps): void {
     const { context, providers, moduleTreeView, refreshAll } = deps;
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.upgradeCurrentModule', async () => {
+    context.subscriptions.push(registerCommand('odoo.upgradeCurrentModule', async () => {
         const module = await moduleForActiveEditor();
         if (!module) {
             return;
@@ -50,7 +51,7 @@ export function registerEditorCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.runTestsForCurrentFile', async () => {
+    context.subscriptions.push(registerCommand('odoo.runTestsForCurrentFile', async () => {
         const module = await moduleForActiveEditor();
         if (!module) {
             return;
@@ -62,7 +63,7 @@ export function registerEditorCommands(deps: CommandDeps): void {
         await startDebugServer();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.revealModuleInView', async () => {
+    context.subscriptions.push(registerCommand('odoo.revealModuleInView', async () => {
         const module = await moduleForActiveEditor();
         if (!module) {
             return;

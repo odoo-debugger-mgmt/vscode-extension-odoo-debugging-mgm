@@ -10,26 +10,27 @@ import { SettingsStore } from '../settingsStore';
 import { VersionsService } from '../versionsService';
 import { ensureUpgradeConfigModel } from '../models/upgrade';
 import type { DatabaseModel } from '../models/db';
+import { registerCommand } from './registerCommand';
 
 export function registerDebugCommands(deps: CommandDeps): void {
     const { context } = deps;
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.startServer', async () => {
+    context.subscriptions.push(registerCommand('odoo.startServer', async () => {
         await startDebugServer();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.startServerNoDebug', async () => {
+    context.subscriptions.push(registerCommand('odoo.startServerNoDebug', async () => {
         await startDebugServer({ noDebug: true });
     }));
 
     // startDebugServer already stops the extension's own session first, so a
     // restart is a plain start; the separate command exists for
     // discoverability (palette + keybinding).
-    context.subscriptions.push(vscode.commands.registerCommand('odt.server.restart', async () => {
+    context.subscriptions.push(registerCommand('odt.server.restart', async () => {
         await startDebugServer();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.startShell', async () => {
+    context.subscriptions.push(registerCommand('odoo.startShell', async () => {
         await startDebugShell();
     }));
 
@@ -37,7 +38,7 @@ export function registerDebugCommands(deps: CommandDeps): void {
     // second server's port probe races the first's startup otherwise, and two
     // interpreters resolving their addons paths at the same moment is the one
     // way to make a cold start look like a hang.
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.startBothServers', async () => {
+    context.subscriptions.push(registerCommand('odoo.startBothServers', async () => {
         const result = await SettingsStore.getSelectedProject();
         if (!result) {
             return;
@@ -87,17 +88,17 @@ export function registerDebugCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.stopServer', async () => {
+    context.subscriptions.push(registerCommand('odoo.stopServer', async () => {
         await stopDebugServer();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.openInBrowser', async () => {
+    context.subscriptions.push(registerCommand('odoo.openInBrowser', async () => {
         const result = await SettingsStore.getSelectedProject();
         const selectedDb = (result?.project.dbs as DatabaseModel[] | undefined)?.find(db => db.isSelected);
         await openServerInBrowser(selectedDb?.id, selectedDb?.versionId);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.copyCommand', async () => {
+    context.subscriptions.push(registerCommand('odoo.copyCommand', async () => {
         const command = await buildOdooCommandLine(false);
         if (!command) {
             return;

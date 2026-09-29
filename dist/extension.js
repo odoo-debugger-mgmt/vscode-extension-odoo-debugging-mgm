@@ -48,34 +48,34 @@ const dbsView_1 = __webpack_require__(4);
 const environment_1 = __webpack_require__(48);
 const dataMigration_1 = __webpack_require__(76);
 const project_1 = __webpack_require__(77);
-const repos_1 = __webpack_require__(84);
-const module_1 = __webpack_require__(85);
-const testing_1 = __webpack_require__(86);
+const repos_1 = __webpack_require__(85);
+const module_1 = __webpack_require__(86);
+const testing_1 = __webpack_require__(87);
 const upgrade_1 = __webpack_require__(38);
-const debugger_1 = __webpack_require__(87);
-const provisionQueue_1 = __webpack_require__(89);
+const debugger_1 = __webpack_require__(88);
+const provisionQueue_1 = __webpack_require__(90);
 const odooInstaller_1 = __webpack_require__(61);
 const settingsStore_1 = __webpack_require__(6);
 const mainStore_1 = __webpack_require__(19);
-const versionsTreeProvider_1 = __webpack_require__(90);
+const versionsTreeProvider_1 = __webpack_require__(91);
 const versionsService_1 = __webpack_require__(31);
 const context_1 = __webpack_require__(40);
-const server_1 = __webpack_require__(91);
-const sortPreferences_1 = __webpack_require__(92);
-const projectReposExplorer_1 = __webpack_require__(93);
+const server_1 = __webpack_require__(92);
+const sortPreferences_1 = __webpack_require__(93);
+const projectReposExplorer_1 = __webpack_require__(94);
 const logger_1 = __webpack_require__(12);
 const reconcile_1 = __webpack_require__(73);
 const runningState_1 = __webpack_require__(74);
-const wrongCopyGuard_1 = __webpack_require__(95);
-const versionMigration_1 = __webpack_require__(96);
+const wrongCopyGuard_1 = __webpack_require__(96);
+const versionMigration_1 = __webpack_require__(97);
 const versionProposal_1 = __webpack_require__(57);
 const environment_2 = __webpack_require__(48);
 const branches_1 = __webpack_require__(49);
 const setupState_1 = __webpack_require__(66);
 const notifications_1 = __webpack_require__(16);
 const utils_1 = __webpack_require__(8);
-const statusBar_1 = __webpack_require__(97);
-const commands_1 = __webpack_require__(98);
+const statusBar_1 = __webpack_require__(98);
+const commands_1 = __webpack_require__(99);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -4931,16 +4931,20 @@ const RETRY_DELAYS_MS = [50, 100, 200, 400, 800];
 const POLL_INTERVAL_MS = 1500;
 /** Top-level keys held as documents; anything else goes to `meta.extra`. */
 const DOCUMENT_KEYS = new Set(['projects', 'versions', 'dbTemplates', 'activeVersion']);
+/*
+ * The messages end without a full stop: they are shown both on their own and
+ * inside "Failed to …: <message>", and VS Code adds one of its own.
+ */
 class StoreBusyError extends Error {
     constructor(location) {
-        super(`The data store ${location} stayed locked by another window; the change was not saved.`);
+        super(`The data store ${location} stayed locked by another window; the change was not saved`);
         this.name = 'StoreBusyError';
     }
 }
 exports.StoreBusyError = StoreBusyError;
 class StoreReadOnlyError extends Error {
     constructor(location, version) {
-        super(`The data store ${location} was written by a newer Odoo DevTools (schema ${version}); it is read-only here.`);
+        super(`The data store ${location} is read-only here: a newer Odoo DevTools (schema ${version}) wrote it; the change was not saved`);
         this.name = 'StoreReadOnlyError';
     }
 }
@@ -14316,8 +14320,8 @@ const baseTreeProvider_1 = __webpack_require__(5);
 const customAddonsCommand_1 = __webpack_require__(81);
 const wizard_1 = __webpack_require__(67);
 const branches_1 = __webpack_require__(49);
-const manifest_1 = __webpack_require__(82);
-const psaeInternal_1 = __webpack_require__(83);
+const manifest_1 = __webpack_require__(83);
+const psaeInternal_1 = __webpack_require__(84);
 let projectMetadataMigrationCompleted = false;
 function sanitizeProjectTickets(rawTickets) {
     if (!Array.isArray(rawTickets)) {
@@ -15533,6 +15537,7 @@ const vscode = __importStar(__webpack_require__(1));
 const versionsService_1 = __webpack_require__(31);
 const runtimeCache_1 = __webpack_require__(15);
 const notifications_1 = __webpack_require__(16);
+const registerCommand_1 = __webpack_require__(82);
 /**
  * Asks for the folder and records it. Returns the chosen path, or undefined
  * when the user cancels.
@@ -15564,7 +15569,7 @@ async function rememberCustomAddonsFolder(folder) {
 }
 function registerCustomAddonsCommand(deps) {
     const { context, refreshAll } = deps;
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.chooseCustomAddonsPath', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.chooseCustomAddonsPath', async () => {
         const chosen = await chooseCustomAddonsFolder();
         if (!chosen) {
             return;
@@ -15577,6 +15582,82 @@ function registerCustomAddonsCommand(deps) {
 
 /***/ }),
 /* 82 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.isStoreRefusal = isStoreRefusal;
+exports.reportingStoreRefusals = reportingStoreRefusals;
+exports.registerCommand = registerCommand;
+/**
+ * `vscode.commands.registerCommand`, except that a change the data store
+ * refused is reported as what it is.
+ *
+ * A read-only or locked store rejects the save a command ends with. Uncaught,
+ * that reached VS Code as "Error running command …. This is likely caused by
+ * the extension that contributes …" - blaming the extension for a store doing
+ * what it should. Every other error still propagates unchanged.
+ */
+const vscode = __importStar(__webpack_require__(1));
+const sqliteMainStore_1 = __webpack_require__(27);
+const notifications_1 = __webpack_require__(16);
+/** Whether `error` is the store refusing a change, rather than a failure. */
+function isStoreRefusal(error) {
+    return error instanceof sqliteMainStore_1.StoreReadOnlyError || error instanceof sqliteMainStore_1.StoreBusyError;
+}
+/** Runs `handler`, turning a store refusal into a warning. */
+async function reportingStoreRefusals(handler) {
+    try {
+        return await handler();
+    }
+    catch (error) {
+        if (isStoreRefusal(error)) {
+            void (0, notifications_1.showWarning)(`${error.message}.`);
+            return undefined;
+        }
+        throw error;
+    }
+}
+function registerCommand(command, callback, thisArg) {
+    return vscode.commands.registerCommand(command, (...args) => reportingStoreRefusals(() => callback.apply(thisArg, args)));
+}
+
+
+/***/ }),
+/* 83 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15728,7 +15809,7 @@ function extractTicketIdsFromBranch(branchName) {
 
 
 /***/ }),
-/* 83 */
+/* 84 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -15830,7 +15911,7 @@ function setPsaeDirectoryIncluded(project, dir, include) {
 
 
 /***/ }),
-/* 84 */
+/* 85 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16057,7 +16138,7 @@ async function selectRepo(event) {
 
 
 /***/ }),
-/* 85 */
+/* 86 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16117,7 +16198,7 @@ exports.viewInstalledModules = viewInstalledModules;
 const module_1 = __webpack_require__(43);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(8);
-const psaeInternal_1 = __webpack_require__(83);
+const psaeInternal_1 = __webpack_require__(84);
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(6);
@@ -16131,7 +16212,7 @@ const notifications_1 = __webpack_require__(16);
 const baseTreeProvider_1 = __webpack_require__(5);
 const process_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(12);
-const manifest_1 = __webpack_require__(82);
+const manifest_1 = __webpack_require__(83);
 /**
  * Whether module selections may be edited right now. Both refusals were
  * repeated at nine call sites with no way forward; hoisting them means the
@@ -16990,7 +17071,7 @@ async function viewInstalledModules() {
 
 
 /***/ }),
-/* 86 */
+/* 87 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17052,7 +17133,7 @@ const module_1 = __webpack_require__(43);
 const utils_1 = __webpack_require__(8);
 const context_1 = __webpack_require__(40);
 const upgrade_1 = __webpack_require__(38);
-const debugger_1 = __webpack_require__(87);
+const debugger_1 = __webpack_require__(88);
 const database_1 = __webpack_require__(46);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
@@ -17732,7 +17813,7 @@ async function setSpecificLogLevel() {
 
 
 /***/ }),
-/* 87 */
+/* 88 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17785,13 +17866,13 @@ const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
 const settings_1 = __webpack_require__(7);
 const utils_1 = __webpack_require__(8);
-const psaeInternal_1 = __webpack_require__(83);
+const psaeInternal_1 = __webpack_require__(84);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(31);
 const testing_1 = __webpack_require__(80);
 const database_1 = __webpack_require__(46);
 const logger_1 = __webpack_require__(12);
-const launchConfig_1 = __webpack_require__(88);
+const launchConfig_1 = __webpack_require__(89);
 const debugSessions_1 = __webpack_require__(75);
 const dbResolution_1 = __webpack_require__(58);
 const provisioning_1 = __webpack_require__(62);
@@ -18287,7 +18368,7 @@ async function startDebugServer(options = {}) {
 
 
 /***/ }),
-/* 88 */
+/* 89 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -18374,7 +18455,7 @@ async function updateManagedLaunchConfig(workspacePath, managedConfig) {
 
 
 /***/ }),
-/* 89 */
+/* 90 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18566,7 +18647,7 @@ async function offerStop(context, remaining) {
 
 
 /***/ }),
-/* 90 */
+/* 91 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -18618,7 +18699,7 @@ const sortOptions_1 = __webpack_require__(36);
 const logger_1 = __webpack_require__(12);
 const baseTreeProvider_1 = __webpack_require__(5);
 const versionIdentity_1 = __webpack_require__(34);
-const provisionQueue_1 = __webpack_require__(89);
+const provisionQueue_1 = __webpack_require__(90);
 const upgrade_1 = __webpack_require__(38);
 /** Provisioned state for the tree description, from the shared predicate. */
 function provisioningLabel(version) {
@@ -18853,7 +18934,7 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 
 /***/ }),
-/* 91 */
+/* 92 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -19070,7 +19151,7 @@ function registerServerLifecycle(context, hooks) {
 
 
 /***/ }),
-/* 92 */
+/* 93 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -19093,7 +19174,7 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 93 */
+/* 94 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -19147,7 +19228,7 @@ const settingsStore_1 = __webpack_require__(6);
 const repo_1 = __webpack_require__(44);
 const utils_1 = __webpack_require__(8);
 const runtimeCache_1 = __webpack_require__(15);
-const filesExclude_1 = __webpack_require__(94);
+const filesExclude_1 = __webpack_require__(95);
 const baseTreeProvider_1 = __webpack_require__(5);
 const sortOptions_1 = __webpack_require__(36);
 const branches_1 = __webpack_require__(49);
@@ -19518,7 +19599,7 @@ async function selectProjectForExplorer() {
 
 
 /***/ }),
-/* 94 */
+/* 95 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -19664,7 +19745,7 @@ function createFilesExcludeMatcher(scopeUri) {
 
 
 /***/ }),
-/* 95 */
+/* 96 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -19799,7 +19880,7 @@ function registerWrongCopyGuard(context) {
 
 
 /***/ }),
-/* 96 */
+/* 97 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -19920,7 +20001,7 @@ function migratable(diagnoses) {
 
 
 /***/ }),
-/* 97 */
+/* 98 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20056,26 +20137,26 @@ exports.StatusBarIndicators = StatusBarIndicators;
 
 
 /***/ }),
-/* 98 */
+/* 99 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(99);
-const projectCommands_1 = __webpack_require__(101);
-const repoCommands_1 = __webpack_require__(107);
-const dbCommands_1 = __webpack_require__(108);
-const moduleCommands_1 = __webpack_require__(109);
-const testingCommands_1 = __webpack_require__(110);
-const versionCommands_1 = __webpack_require__(111);
-const debugCommands_1 = __webpack_require__(114);
-const reposExplorerCommands_1 = __webpack_require__(115);
-const editorCommands_1 = __webpack_require__(116);
-const helpCommands_1 = __webpack_require__(117);
-const upgradeCommand_1 = __webpack_require__(118);
+const viewCommands_1 = __webpack_require__(100);
+const projectCommands_1 = __webpack_require__(102);
+const repoCommands_1 = __webpack_require__(108);
+const dbCommands_1 = __webpack_require__(109);
+const moduleCommands_1 = __webpack_require__(110);
+const testingCommands_1 = __webpack_require__(111);
+const versionCommands_1 = __webpack_require__(112);
+const debugCommands_1 = __webpack_require__(115);
+const reposExplorerCommands_1 = __webpack_require__(116);
+const editorCommands_1 = __webpack_require__(117);
+const helpCommands_1 = __webpack_require__(118);
+const upgradeCommand_1 = __webpack_require__(119);
 const customAddonsCommand_1 = __webpack_require__(81);
-const dataStoreCommands_1 = __webpack_require__(120);
+const dataStoreCommands_1 = __webpack_require__(121);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -20096,7 +20177,7 @@ function registerAllCommands(deps) {
 
 
 /***/ }),
-/* 99 */
+/* 100 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20136,10 +20217,11 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(100);
+const quickSearch_1 = __webpack_require__(101);
 const sortOptions_1 = __webpack_require__(36);
 const notifications_1 = __webpack_require__(16);
-const module_1 = __webpack_require__(85);
+const module_1 = __webpack_require__(86);
+const registerCommand_1 = __webpack_require__(82);
 /**
  * Generic per-view plumbing: refresh, sort, and quick-search commands.
  */
@@ -20147,7 +20229,7 @@ function registerViewCommands(deps) {
     const { context, providers, sortPreferences, refreshAll } = deps;
     const registerViewSortCommand = (viewId, provider) => {
         const options = (0, sortOptions_1.getSortOptions)(viewId);
-        context.subscriptions.push(vscode.commands.registerCommand(`${viewId}.sort`, async () => {
+        context.subscriptions.push((0, registerCommand_1.registerCommand)(`${viewId}.sort`, async () => {
             const current = sortPreferences.get(viewId, (0, sortOptions_1.getDefaultSortOption)(viewId));
             const picks = options.map(option => ({
                 label: `${option.id === current ? '$(check) ' : ''}${option.label}`,
@@ -20172,12 +20254,12 @@ function registerViewCommands(deps) {
     registerViewSortCommand('versionsManager', providers.versions);
     // The explorer view keeps the historical 'projectRepos' sort ids so stored preferences survive.
     registerViewSortCommand('projectRepos', providers.projectReposExplorer);
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.quickSearch', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('projectSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('repoSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('moduleSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('testingSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('repoSelector.quickSearch', async () => {
         const items = ((await providers.repo.getChildren()) ?? [])
             .filter(item => !!item.command && (0, quickSearch_1.getTreeItemLabel)(item).trim().length > 0);
         await (0, quickSearch_1.quickSearchTreeItems)(items, {
@@ -20186,7 +20268,7 @@ function registerViewCommands(deps) {
             emptyMessage: 'No repositories available to search.'
         });
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.quickSearch', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.quickSearch', async () => {
         const items = ((await providers.db.getChildren()) ?? [])
             .filter(item => item.contextValue === 'database' && !!item.command);
         await (0, quickSearch_1.quickSearchTreeItems)(items, {
@@ -20195,7 +20277,7 @@ function registerViewCommands(deps) {
             emptyMessage: 'No databases available to search.'
         });
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.quickSearch', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('moduleSelector.quickSearch', async () => {
         // Include modules nested under psae-internal groups in the search.
         const rootItems = ((await providers.module.getChildren()) ?? []);
         const nestedItems = rootItems.flatMap(item => item.psaeChildren ?? []);
@@ -20236,7 +20318,7 @@ function registerViewCommands(deps) {
             }
         });
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('versionsManager.quickSearch', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('versionsManager.quickSearch', async () => {
         const items = ((await providers.versions.getChildren()) ?? [])
             .filter(item => {
             const contextValue = item.contextValue;
@@ -20249,7 +20331,7 @@ function registerViewCommands(deps) {
             emptyMessage: 'No versions available to search.'
         });
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectRepos.quickSearch', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('projectRepos.quickSearch', async () => {
         const rootNodes = ((await providers.projectReposExplorer.getChildren()) ?? [])
             .filter(node => node.kind === 'repo');
         const items = rootNodes.map(node => providers.projectReposExplorer.getTreeItem(node));
@@ -20268,7 +20350,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 100 */
+/* 101 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20380,7 +20462,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 101 */
+/* 102 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20431,17 +20513,18 @@ const logger_1 = __webpack_require__(12);
 const project_1 = __webpack_require__(77);
 const dbs_1 = __webpack_require__(59);
 const odooInstaller_1 = __webpack_require__(61);
-const projectWorkspace_1 = __webpack_require__(102);
-const setupFlow_1 = __webpack_require__(104);
+const projectWorkspace_1 = __webpack_require__(103);
+const setupFlow_1 = __webpack_require__(105);
 const setupState_1 = __webpack_require__(66);
 const context_1 = __webpack_require__(40);
 const versionProposal_1 = __webpack_require__(57);
-const versionPick_1 = __webpack_require__(106);
+const versionPick_1 = __webpack_require__(107);
 const gitService_1 = __webpack_require__(11);
-const provisionQueue_1 = __webpack_require__(89);
+const provisionQueue_1 = __webpack_require__(90);
+const registerCommand_1 = __webpack_require__(82);
 function registerProjectCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.create', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('projectSelector.create', async () => {
         try {
             // Get settings from active version
             const settings = await versionsService.getActiveVersionSettings();
@@ -20509,38 +20592,38 @@ function registerProjectCommands(deps) {
             void (0, notifications_1.showError)((0, logger_1.errorMessage)(err));
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.selectProject', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('projectSelector.selectProject', async (event) => {
         await (0, project_1.selectProject)(event);
         await refreshAll();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.delete', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('projectSelector.delete', async (event) => {
         await (0, project_1.deleteProject)(event);
         await refreshAll();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.editSettings', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('projectSelector.editSettings', async (event) => {
         await (0, project_1.editProjectSettings)(event);
         await refreshAll({ reason: 'ui' });
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.manageTickets', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('projectSelector.manageTickets', async (event) => {
         await (0, project_1.manageProjectTickets)(event);
         await refreshAll({ reason: 'ui' });
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.openTicket', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('projectSelector.openTicket', async (event) => {
         await (0, project_1.openProjectTicket)(event);
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.duplicateProject', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('projectSelector.duplicateProject', async (event) => {
         await (0, project_1.duplicateProject)(event);
         await refreshAll();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.exportProject', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('projectSelector.exportProject', async (event) => {
         await (0, project_1.exportProject)(event);
         await refreshAll({ reason: 'ui' });
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.importProject', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('projectSelector.importProject', async () => {
         await (0, project_1.importProject)();
         await refreshAll({ reason: 'ui' });
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setup', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.setup', async () => {
         // Detection first: the clone wizard is the fallback, not the entry point.
         const configured = await (0, setupFlow_1.runSetup)({
             cloneFallback: () => (0, odooInstaller_1.cloneOdooRepositories)(path.dirname((0, setupState_1.readSetupState)().provisioningRoot))
@@ -20579,20 +20662,20 @@ function registerProjectCommands(deps) {
         // without waiting it out.
         void (0, provisionQueue_1.offerStop)(context, rest.length);
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo-debugger.quickProjectSearch', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo-debugger.quickProjectSearch', async () => {
         await (0, project_1.quickProjectSearch)();
         await refreshAll({ reason: 'ui' });
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('proj.openProjectWorkspace', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('proj.openProjectWorkspace', async () => {
         await (0, projectWorkspace_1.openProjectWorkspace)(context);
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('proj.rebuildProjectWorkspace', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('proj.rebuildProjectWorkspace', async () => {
         await (0, projectWorkspace_1.rebuildProjectWorkspace)(context);
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('proj.quickSwitchProject', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('proj.quickSwitchProject', async () => {
         await (0, projectWorkspace_1.quickSwitchProjectWorkspace)(context);
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.detectTickets', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('projectSelector.detectTickets', async () => {
         await (0, project_1.detectProjectTickets)();
         await refreshAll({ reason: 'ui' });
     }));
@@ -20600,7 +20683,7 @@ function registerProjectCommands(deps) {
 
 
 /***/ }),
-/* 102 */
+/* 103 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20649,7 +20732,7 @@ const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const versionsService_1 = __webpack_require__(31);
-const workspaceFolders_1 = __webpack_require__(103);
+const workspaceFolders_1 = __webpack_require__(104);
 const repoPaths_1 = __webpack_require__(53);
 const environment_1 = __webpack_require__(48);
 const setupState_1 = __webpack_require__(66);
@@ -20769,7 +20852,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 103 */
+/* 104 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -20829,7 +20912,7 @@ function repoFolderEntries(resolved, existingPaths) {
 
 
 /***/ }),
-/* 104 */
+/* 105 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20883,7 +20966,7 @@ const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const branches_1 = __webpack_require__(49);
 const customAddonsCommand_1 = __webpack_require__(81);
-const setupDetection_1 = __webpack_require__(105);
+const setupDetection_1 = __webpack_require__(106);
 const setupState_1 = __webpack_require__(66);
 /** The per-version key that every repository-discovery site already reads. */
 const CUSTOM_ADDONS_KEY = 'defaultVersion.customAddonsPath';
@@ -21065,7 +21148,7 @@ async function runSetup(options) {
 
 
 /***/ }),
-/* 105 */
+/* 106 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21282,7 +21365,7 @@ function detectCustomAddonsRoot(roots) {
 
 
 /***/ }),
-/* 106 */
+/* 107 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21431,54 +21514,18 @@ async function collectRepoBranches() {
 
 
 /***/ }),
-/* 107 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+/* 108 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerRepoCommands = registerRepoCommands;
-/**
- * Command handlers for the Repos view.
- */
-const vscode = __importStar(__webpack_require__(1));
-const repos_1 = __webpack_require__(84);
-const projectWorkspace_1 = __webpack_require__(102);
+const repos_1 = __webpack_require__(85);
+const projectWorkspace_1 = __webpack_require__(103);
+const registerCommand_1 = __webpack_require__(82);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
-    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.selectRepo', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('repoSelector.selectRepo', async (event) => {
         await (0, repos_1.selectRepo)(event);
         await (0, projectWorkspace_1.rebuildProjectWorkspace)(context);
         await refreshAll();
@@ -21487,7 +21534,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 108 */
+/* 109 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21535,11 +21582,12 @@ const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const dbs_1 = __webpack_require__(59);
 const notifications_2 = __webpack_require__(16);
-const server_1 = __webpack_require__(91);
+const server_1 = __webpack_require__(92);
 const utils_1 = __webpack_require__(8);
+const registerCommand_1 = __webpack_require__(82);
 function registerDbCommands(deps) {
     const { context, versionsService, providers, dbTreeView, refreshAll } = deps;
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.create', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.create', async () => {
         try {
             // Get settings from active version
             const settings = await versionsService.getActiveVersionSettings();
@@ -21587,7 +21635,7 @@ function registerDbCommands(deps) {
             logger_1.logger.warn('Could not move the Databases view highlight:', err);
         }
     };
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.selectDb', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.selectDb', async (event) => {
         try {
             await (0, dbs_1.selectDatabase)(event);
             await refreshAll();
@@ -21598,7 +21646,7 @@ function registerDbCommands(deps) {
         }
         await highlightSelectedDb();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.delete', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.delete', async (event) => {
         try {
             await (0, dbs_1.deleteDb)(event);
             await refreshAll();
@@ -21608,7 +21656,7 @@ function registerDbCommands(deps) {
             logger_1.logger.error('Error in database deletion:', err);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.restore', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.restore', async (event) => {
         try {
             // restoreDb shows its own success notification.
             await (0, dbs_1.restoreDb)(event);
@@ -21619,7 +21667,7 @@ function registerDbCommands(deps) {
             logger_1.logger.error('Error in database restoration:', err);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.changeVersion', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.changeVersion', async (event) => {
         try {
             await (0, dbs_1.changeDatabaseVersion)(event);
             await refreshAll();
@@ -21629,7 +21677,7 @@ function registerDbCommands(deps) {
             logger_1.logger.error('Error in database version change:', err);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.configureRepoBranches', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.configureRepoBranches', async (event) => {
         try {
             await (0, dbs_1.changeDatabaseProjectRepoBranches)(event);
             await refreshAll({ reason: 'ui' });
@@ -21639,7 +21687,7 @@ function registerDbCommands(deps) {
             logger_1.logger.error('Error in database project repo branch mapping update:', err);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.manageTemplates', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.manageTemplates', async () => {
         try {
             await (0, dbs_1.manageDatabaseTemplates)();
             await refreshAll({ reason: 'ui' });
@@ -21649,7 +21697,7 @@ function registerDbCommands(deps) {
             logger_1.logger.error('Error in database template management:', err);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.openInBrowser', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.openInBrowser', async (event) => {
         const db = (0, dbs_1.extractDatabaseFromEvent)(event);
         if (!db) {
             void (0, notifications_1.showError)('Could not identify the database to open in the browser.');
@@ -21659,7 +21707,7 @@ function registerDbCommands(deps) {
         // serving it, not from whichever version happens to be active.
         await (0, server_1.openServerInBrowser)(db.id, db.versionId);
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.openPsqlShell', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.openPsqlShell', async (event) => {
         const db = (0, dbs_1.extractDatabaseFromEvent)(event);
         if (!db) {
             void (0, notifications_1.showError)('Could not identify the database to open in psql.');
@@ -21670,7 +21718,7 @@ function registerDbCommands(deps) {
         // db names are validated on creation, but quote defensively anyway
         terminal.sendText(`psql ${JSON.stringify(db.id)}`);
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.rename', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.rename', async (event) => {
         const db = (0, dbs_1.extractDatabaseFromEvent)(event);
         if (!db) {
             void (0, notifications_1.showError)('Could not identify the database to rename.');
@@ -21702,7 +21750,7 @@ function registerDbCommands(deps) {
         await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
         await refreshAll({ reason: 'ui' });
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.copyName', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.copyName', async (event) => {
         const db = (0, dbs_1.extractDatabaseFromEvent)(event);
         if (!db) {
             void (0, notifications_1.showError)('Could not identify the database whose name to copy.');
@@ -21711,7 +21759,7 @@ function registerDbCommands(deps) {
         await vscode.env.clipboard.writeText(db.id);
         (0, notifications_2.showBriefStatus)(`Copied database name: ${db.id}`);
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.clone', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.clone', async (event) => {
         try {
             await (0, dbs_1.cloneDatabaseFlow)(event);
             await refreshAll({ reason: 'ui' });
@@ -21721,7 +21769,7 @@ function registerDbCommands(deps) {
             logger_1.logger.error('Error in database clone:', err);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.reconcile', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.reconcile', async () => {
         try {
             await (0, dbs_1.reconcileDatabasesFlow)();
             await refreshAll({ reason: 'ui' });
@@ -21730,141 +21778,6 @@ function registerDbCommands(deps) {
             void (0, notifications_1.showError)(`Failed to reconcile databases: ${(0, logger_1.errorMessage)(err)}`);
             logger_1.logger.error('Error in database reconciliation:', err);
         }
-    }));
-}
-
-
-/***/ }),
-/* 109 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.registerModuleCommands = registerModuleCommands;
-/**
- * Command handlers for the Modules view.
- */
-const vscode = __importStar(__webpack_require__(1));
-const notifications_1 = __webpack_require__(16);
-const module_1 = __webpack_require__(85);
-/**
- * Tree context menus pass (clickedItem, selectedItems); with canSelectMany
- * enabled a bulk action applies to the whole selection when the clicked
- * item is part of it.
- */
-function targetsOf(event, selection) {
-    if (selection && selection.length > 1 && selection.includes(event)) {
-        return selection;
-    }
-    return [event];
-}
-function registerModuleCommands(deps) {
-    const { context, refreshAll } = deps;
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.select', async (event) => {
-        await (0, module_1.selectModule)(event);
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.togglePsaeInternalModule', async (event) => {
-        await (0, module_1.togglePsaeInternalModule)(event);
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.create', async () => {
-        await (0, module_1.createModuleFromScaffold)();
-        await refreshAll({ reason: 'ui' });
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.setToInstall', async (event, selection) => {
-        for (const target of targetsOf(event, selection)) {
-            await (0, module_1.setModuleToInstall)(target);
-        }
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.setToUpgrade', async (event, selection) => {
-        for (const target of targetsOf(event, selection)) {
-            await (0, module_1.setModuleToUpgrade)(target);
-        }
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.clearState', async (event, selection) => {
-        for (const target of targetsOf(event, selection)) {
-            await (0, module_1.clearModuleState)(target);
-        }
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.updateAll', async () => {
-        await (0, module_1.updateAllModules)();
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.updateInstalled', async () => {
-        await (0, module_1.updateInstalledModules)();
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.installAll', async () => {
-        await (0, module_1.installAllModules)();
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.clearAll', async () => {
-        await (0, module_1.clearAllModuleSelections)();
-        await refreshAll();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.viewInstalled', async () => {
-        await (0, module_1.viewInstalledModules)();
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.quickConfigure', async () => {
-        await (0, module_1.quickConfigureModules)();
-        // One refresh when the picker closes, however many states changed.
-        await refreshAll();
-    }));
-    // Same reveal behavior as the Project Repos view, triggered from a
-    // module item (module nodes carry moduleData.path, not a resourceUri).
-    const modulePathOf = (event) => event?.moduleData?.path;
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.revealInExplorer', async (event) => {
-        const modulePath = modulePathOf(event);
-        if (!modulePath) {
-            void (0, notifications_1.showInfo)('Could not identify the module to reveal.');
-            return;
-        }
-        await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(modulePath));
-    }));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.revealInOS', async (event) => {
-        const modulePath = modulePathOf(event);
-        if (!modulePath) {
-            void (0, notifications_1.showInfo)('Could not identify the module to reveal.');
-            return;
-        }
-        await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(modulePath));
     }));
 }
 
@@ -21908,50 +21821,150 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.registerTestingCommands = registerTestingCommands;
+exports.registerModuleCommands = registerModuleCommands;
 /**
- * Command handlers for the Testing view.
+ * Command handlers for the Modules view.
  */
 const vscode = __importStar(__webpack_require__(1));
+const notifications_1 = __webpack_require__(16);
+const module_1 = __webpack_require__(86);
+const registerCommand_1 = __webpack_require__(82);
+/**
+ * Tree context menus pass (clickedItem, selectedItems); with canSelectMany
+ * enabled a bulk action applies to the whole selection when the clicked
+ * item is part of it.
+ */
+function targetsOf(event, selection) {
+    if (selection && selection.length > 1 && selection.includes(event)) {
+        return selection;
+    }
+    return [event];
+}
+function registerModuleCommands(deps) {
+    const { context, refreshAll } = deps;
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('moduleSelector.select', async (event) => {
+        await (0, module_1.selectModule)(event);
+        await refreshAll();
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('moduleSelector.togglePsaeInternalModule', async (event) => {
+        await (0, module_1.togglePsaeInternalModule)(event);
+        await refreshAll();
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('moduleSelector.create', async () => {
+        await (0, module_1.createModuleFromScaffold)();
+        await refreshAll({ reason: 'ui' });
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('moduleSelector.setToInstall', async (event, selection) => {
+        for (const target of targetsOf(event, selection)) {
+            await (0, module_1.setModuleToInstall)(target);
+        }
+        await refreshAll();
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('moduleSelector.setToUpgrade', async (event, selection) => {
+        for (const target of targetsOf(event, selection)) {
+            await (0, module_1.setModuleToUpgrade)(target);
+        }
+        await refreshAll();
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('moduleSelector.clearState', async (event, selection) => {
+        for (const target of targetsOf(event, selection)) {
+            await (0, module_1.clearModuleState)(target);
+        }
+        await refreshAll();
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('moduleSelector.updateAll', async () => {
+        await (0, module_1.updateAllModules)();
+        await refreshAll();
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('moduleSelector.updateInstalled', async () => {
+        await (0, module_1.updateInstalledModules)();
+        await refreshAll();
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('moduleSelector.installAll', async () => {
+        await (0, module_1.installAllModules)();
+        await refreshAll();
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('moduleSelector.clearAll', async () => {
+        await (0, module_1.clearAllModuleSelections)();
+        await refreshAll();
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('moduleSelector.viewInstalled', async () => {
+        await (0, module_1.viewInstalledModules)();
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('moduleSelector.quickConfigure', async () => {
+        await (0, module_1.quickConfigureModules)();
+        // One refresh when the picker closes, however many states changed.
+        await refreshAll();
+    }));
+    // Same reveal behavior as the Project Repos view, triggered from a
+    // module item (module nodes carry moduleData.path, not a resourceUri).
+    const modulePathOf = (event) => event?.moduleData?.path;
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('moduleSelector.revealInExplorer', async (event) => {
+        const modulePath = modulePathOf(event);
+        if (!modulePath) {
+            void (0, notifications_1.showInfo)('Could not identify the module to reveal.');
+            return;
+        }
+        await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(modulePath));
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('moduleSelector.revealInOS', async (event) => {
+        const modulePath = modulePathOf(event);
+        if (!modulePath) {
+            void (0, notifications_1.showInfo)('Could not identify the module to reveal.');
+            return;
+        }
+        await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(modulePath));
+    }));
+}
+
+
+/***/ }),
+/* 111 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerTestingCommands = registerTestingCommands;
 const settingsStore_1 = __webpack_require__(6);
-const testing_1 = __webpack_require__(86);
+const testing_1 = __webpack_require__(87);
+const registerCommand_1 = __webpack_require__(82);
 function registerTestingCommands(deps) {
     const { context, providers, refreshAll } = deps;
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleTesting', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('testingSelector.toggleTesting', async (event) => {
         await (0, testing_1.toggleTesting)(event);
         await refreshAll({ reason: 'ui' });
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleStopAfterInit', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('testingSelector.toggleStopAfterInit', async () => {
         await (0, testing_1.toggleStopAfterInit)();
         await refreshAll({ reason: 'ui' });
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.setTestFile', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('testingSelector.setTestFile', async () => {
         await (0, testing_1.setTestFile)();
         await refreshAll({ reason: 'ui' });
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.addTestTag', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('testingSelector.addTestTag', async () => {
         await (0, testing_1.addTestTag)();
         providers.testing.refresh();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.removeTestTag', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('testingSelector.removeTestTag', async (event) => {
         await (0, testing_1.removeTestTag)(event);
         providers.testing.refresh();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.cycleTestTagState', async (event) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('testingSelector.cycleTestTagState', async (event) => {
         await (0, testing_1.cycleTestTagState)(event);
         providers.testing.refresh();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.toggleLogLevel', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('testingSelector.toggleLogLevel', async () => {
         await (0, testing_1.toggleLogLevel)();
         providers.testing.refresh();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.setSpecificLogLevel', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('testingSelector.setSpecificLogLevel', async () => {
         await (0, testing_1.setSpecificLogLevel)();
         providers.testing.refresh();
     }));
     // No-argument wrapper (keybinding / palette): reads the current state
     // instead of requiring the tree item's payload.
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.toggleTestingMode', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.toggleTestingMode', async () => {
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         if (!result) {
             return;
@@ -21963,7 +21976,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 111 */
+/* 112 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22007,27 +22020,28 @@ exports.registerVersionCommands = registerVersionCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
-const args_1 = __webpack_require__(112);
+const args_1 = __webpack_require__(113);
 const utils_1 = __webpack_require__(8);
 const versionIdentity_1 = __webpack_require__(34);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(113);
+const branchPick_1 = __webpack_require__(114);
 const runtimeCache_1 = __webpack_require__(15);
 const environment_1 = __webpack_require__(48);
 const odooInstaller_1 = __webpack_require__(61);
 const provisioning_1 = __webpack_require__(62);
 const wizard_1 = __webpack_require__(67);
 const worktree_1 = __webpack_require__(52);
-const server_1 = __webpack_require__(91);
+const server_1 = __webpack_require__(92);
 const dbResolution_1 = __webpack_require__(58);
 const settingsStore_1 = __webpack_require__(6);
 const setupState_1 = __webpack_require__(66);
-const versionMigration_1 = __webpack_require__(96);
+const versionMigration_1 = __webpack_require__(97);
 const upgrade_1 = __webpack_require__(38);
+const registerCommand_1 = __webpack_require__(82);
 function registerVersionCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.checkVersions', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.checkVersions', async () => {
         try {
             const setup = (0, setupState_1.readSetupState)();
             const diagnoses = versionsService.getVersions().map(version => (0, versionMigration_1.diagnoseVersion)({
@@ -22060,7 +22074,7 @@ function registerVersionCommands(deps) {
             void (0, notifications_1.showError)(`Could not check the version environments: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.openVersionInBrowser', async (versionIdOrTreeItem) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.openVersionInBrowser', async (versionIdOrTreeItem) => {
         try {
             let versionId = (0, args_1.extractVersionId)(versionIdOrTreeItem);
             if (!versionId) {
@@ -22104,7 +22118,7 @@ function registerVersionCommands(deps) {
             void (0, notifications_1.showError)(`Failed to open the server in the browser: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.createVersion', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.createVersion', async () => {
         try {
             // Two prompts: branch, then name. Paths and ports come from the
             // odooDebugger.defaultVersion.* settings and stay editable in the
@@ -22149,10 +22163,10 @@ function registerVersionCommands(deps) {
             void (0, notifications_1.showError)(`Failed to create version: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.openVersionDefaults', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.openVersionDefaults', async () => {
         await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:AhmadMansour.odoo-devtools-vscode odooDebugger.defaultVersion');
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.changeBranch', async (versionIdOrTreeItem) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.changeBranch', async (versionIdOrTreeItem) => {
         try {
             const versionId = (0, args_1.extractVersionId)(versionIdOrTreeItem);
             if (!versionId) {
@@ -22214,7 +22228,7 @@ function registerVersionCommands(deps) {
             void (0, notifications_1.showError)(`Failed to change branch: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setActiveVersion', async (versionIdOrTreeItem) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.setActiveVersion', async (versionIdOrTreeItem) => {
         try {
             let versionId = (0, args_1.extractVersionId)(versionIdOrTreeItem);
             if (!versionId) {
@@ -22335,7 +22349,7 @@ function registerVersionCommands(deps) {
             return `--dev=${devModeOption.label}`;
         }
     };
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.editVersionSetting', async (versionIdOrTreeItem, settingKey, currentValue) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.editVersionSetting', async (versionIdOrTreeItem, settingKey, currentValue) => {
         try {
             const ref = (0, args_1.extractVersionSettingRef)(versionIdOrTreeItem, settingKey, currentValue);
             if (!ref) {
@@ -22394,7 +22408,7 @@ function registerVersionCommands(deps) {
             void (0, notifications_1.showError)(`Failed to edit setting: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.cloneVersion', async (versionIdOrTreeItem) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.cloneVersion', async (versionIdOrTreeItem) => {
         try {
             let versionId = (0, args_1.extractVersionId)(versionIdOrTreeItem);
             if (!versionId) {
@@ -22432,7 +22446,7 @@ function registerVersionCommands(deps) {
             void (0, notifications_1.showError)(`Failed to clone the selected version: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.deleteVersion', async (versionIdOrTreeItem) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.deleteVersion', async (versionIdOrTreeItem) => {
         try {
             let versionId = (0, args_1.extractVersionId)(versionIdOrTreeItem);
             if (!versionId) {
@@ -22518,7 +22532,7 @@ function registerVersionCommands(deps) {
             void (0, notifications_1.showError)(`Failed to delete the selected version: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setSettingToDefault', async (settingTreeItem) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.setSettingToDefault', async (settingTreeItem) => {
         try {
             const ref = (0, args_1.extractVersionSettingRef)(settingTreeItem);
             if (!ref) {
@@ -22534,7 +22548,7 @@ function registerVersionCommands(deps) {
             void (0, notifications_1.showError)(`Failed to reset setting to default: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setSettingAsDefault', async (settingTreeItem) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.setSettingAsDefault', async (settingTreeItem) => {
         try {
             const ref = (0, args_1.extractVersionSettingRef)(settingTreeItem);
             if (!ref) {
@@ -22550,7 +22564,7 @@ function registerVersionCommands(deps) {
             void (0, notifications_1.showError)(`Unable to save this setting as the default: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setAllSettingsToDefault', async (versionTreeItem) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.setAllSettingsToDefault', async (versionTreeItem) => {
         try {
             const versionId = (0, args_1.extractVersionId)(versionTreeItem);
             if (!versionId) {
@@ -22575,7 +22589,7 @@ function registerVersionCommands(deps) {
             void (0, notifications_1.showError)(`Failed to reset all settings to default: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setAllSettingsAsDefault', async (versionTreeItem) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.setAllSettingsAsDefault', async (versionTreeItem) => {
         try {
             const versionId = (0, args_1.extractVersionId)(versionTreeItem);
             if (!versionId) {
@@ -22600,10 +22614,10 @@ function registerVersionCommands(deps) {
             void (0, notifications_1.showError)(`Unable to save these settings as the new defaults: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.refreshVersions', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.refreshVersions', async () => {
         await versionsService.refresh();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.manageVersions', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.manageVersions', async () => {
         const actions = [
             'Create New Version',
             'Switch Active Version',
@@ -22632,7 +22646,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 112 */
+/* 113 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22725,7 +22739,7 @@ function extractUri(arg) {
 
 
 /***/ }),
-/* 113 */
+/* 114 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22935,7 +22949,7 @@ async function pickRepoBranch(repoPath, title, placeHolder, current, exclude, ca
 
 
 /***/ }),
-/* 114 */
+/* 115 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22978,34 +22992,35 @@ exports.registerDebugCommands = registerDebugCommands;
  * Start/stop/restart server (with and without debugging) and shell commands.
  */
 const vscode = __importStar(__webpack_require__(1));
-const debugger_1 = __webpack_require__(87);
-const server_1 = __webpack_require__(91);
+const debugger_1 = __webpack_require__(88);
+const server_1 = __webpack_require__(92);
 const notifications_1 = __webpack_require__(16);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(31);
 const upgrade_1 = __webpack_require__(39);
+const registerCommand_1 = __webpack_require__(82);
 function registerDebugCommands(deps) {
     const { context } = deps;
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.startServer', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.startServer', async () => {
         await (0, debugger_1.startDebugServer)();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.startServerNoDebug', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.startServerNoDebug', async () => {
         await (0, debugger_1.startDebugServer)({ noDebug: true });
     }));
     // startDebugServer already stops the extension's own session first, so a
     // restart is a plain start; the separate command exists for
     // discoverability (palette + keybinding).
-    context.subscriptions.push(vscode.commands.registerCommand('odt.server.restart', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odt.server.restart', async () => {
         await (0, debugger_1.startDebugServer)();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.startShell', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.startShell', async () => {
         await (0, debugger_1.startDebugShell)();
     }));
     // Both sides of an upgrade at once. Started in order and waited on: the
     // second server's port probe races the first's startup otherwise, and two
     // interpreters resolving their addons paths at the same moment is the one
     // way to make a cold start look like a hang.
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.startBothServers', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.startBothServers', async () => {
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         if (!result) {
             return;
@@ -23052,15 +23067,15 @@ function registerDebugCommands(deps) {
             (0, notifications_1.showBriefStatus)('Both upgrade servers are starting');
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.stopServer', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.stopServer', async () => {
         await (0, debugger_1.stopDebugServer)();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.openInBrowser', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.openInBrowser', async () => {
         const result = await settingsStore_1.SettingsStore.getSelectedProject();
         const selectedDb = result?.project.dbs?.find(db => db.isSelected);
         await (0, server_1.openServerInBrowser)(selectedDb?.id, selectedDb?.versionId);
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.copyCommand', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.copyCommand', async () => {
         const command = await (0, debugger_1.buildOdooCommandLine)(false);
         if (!command) {
             return;
@@ -23072,7 +23087,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 115 */
+/* 116 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23120,14 +23135,14 @@ exports.registerReposExplorerCommands = registerReposExplorerCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
-const args_1 = __webpack_require__(112);
+const args_1 = __webpack_require__(113);
 const notifications_1 = __webpack_require__(16);
 const customWorktree_1 = __webpack_require__(54);
 const notifications_2 = __webpack_require__(16);
 const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const runtimeCache_1 = __webpack_require__(15);
-const projectReposExplorer_1 = __webpack_require__(93);
+const projectReposExplorer_1 = __webpack_require__(94);
 const utils_2 = __webpack_require__(8);
 const notifications_3 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
@@ -23139,6 +23154,7 @@ const sourceConflict_1 = __webpack_require__(55);
 const repo_1 = __webpack_require__(44);
 const environment_1 = __webpack_require__(48);
 const upgrade_1 = __webpack_require__(38);
+const registerCommand_1 = __webpack_require__(82);
 /** Registers the checkout/worktree mode toggle for a project repository. */
 function registerRepoBranchModeCommand(deps) {
     const { context, refreshAll } = deps;
@@ -23202,7 +23218,7 @@ function registerRepoBranchModeCommand(deps) {
             void (0, notifications_1.showError)(`Could not change the repository mode: ${(0, logger_1.errorMessage)(error)}`);
         }
     };
-    context.subscriptions.push(vscode.commands.registerCommand('odt.repo.toggleBranchMode', toggle), vscode.commands.registerCommand('odt.repo.useSingleCheckout', toggle));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odt.repo.toggleBranchMode', toggle), (0, registerCommand_1.registerCommand)('odt.repo.useSingleCheckout', toggle));
 }
 /**
  * `odt.repo.resolveWorktrees`: creates the per-branch copies the debugger sync
@@ -23214,7 +23230,7 @@ function registerRepoBranchModeCommand(deps) {
  */
 function registerResolveWorktreesCommand(deps) {
     const { context, refreshAll } = deps;
-    context.subscriptions.push(vscode.commands.registerCommand('odt.repo.resolveWorktrees', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odt.repo.resolveWorktrees', async () => {
         try {
             const result = await settingsStore_1.SettingsStore.getSelectedProject();
             if (!result) {
@@ -23284,32 +23300,32 @@ function registerReposExplorerCommands(deps) {
     const { context, providers } = deps;
     // Tree context menus pass the tree node (which carries `.uri`), while
     // programmatic calls may pass a Uri directly — extractUri handles both.
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFile', async (arg) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odt.projectReposExplorer.newFile', async (arg) => {
         await (0, projectReposExplorer_1.createNewFile)((0, args_1.extractUri)(arg));
         providers.projectReposExplorer.refresh();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFolder', async (arg) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odt.projectReposExplorer.newFolder', async (arg) => {
         await (0, projectReposExplorer_1.createNewFolder)((0, args_1.extractUri)(arg));
         providers.projectReposExplorer.refresh();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.rename', async (arg) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odt.projectReposExplorer.rename', async (arg) => {
         await (0, projectReposExplorer_1.renameEntry)((0, args_1.extractUri)(arg));
         providers.projectReposExplorer.refresh();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.selectProject', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odt.projectReposExplorer.selectProject', async () => {
         await (0, projectReposExplorer_1.selectProjectForExplorer)();
         providers.projectReposExplorer.refresh();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyFilePath', async (arg) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odooDebugger.copyFilePath', async (arg) => {
         await copyPathToClipboard((0, args_1.extractUri)(arg), false);
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyRelativePath', async (arg) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odooDebugger.copyRelativePath', async (arg) => {
         await copyPathToClipboard((0, args_1.extractUri)(arg), true);
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.openInIntegratedTerminal', async (arg) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odooDebugger.openInIntegratedTerminal', async (arg) => {
         await openUriInIntegratedTerminal((0, args_1.extractUri)(arg));
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.revealInExplorer', async (arg) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odooDebugger.revealInExplorer', async (arg) => {
         const uri = (0, args_1.extractUri)(arg);
         if (!uri) {
             void (0, notifications_1.showInfo)('Select a file or folder first.');
@@ -23317,7 +23333,7 @@ function registerReposExplorerCommands(deps) {
         }
         await vscode.commands.executeCommand('revealInExplorer', uri);
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.revealFileInOS', async (arg) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odooDebugger.revealFileInOS', async (arg) => {
         const uri = (0, args_1.extractUri)(arg);
         if (!uri) {
             void (0, notifications_1.showInfo)('Select a file or folder first.');
@@ -23325,7 +23341,7 @@ function registerReposExplorerCommands(deps) {
         }
         await vscode.commands.executeCommand('revealFileInOS', uri);
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.relocateRepo', async (arg) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odooDebugger.relocateRepo', async (arg) => {
         const repo = arg?.repo;
         if (!repo?.path) {
             void (0, notifications_1.showInfo)('Select a repository to relocate.');
@@ -23364,7 +23380,7 @@ function registerReposExplorerCommands(deps) {
 
 
 /***/ }),
-/* 116 */
+/* 117 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23409,11 +23425,12 @@ exports.registerEditorCommands = registerEditorCommands;
  * commands themselves stay callable from the palette.
  */
 const vscode = __importStar(__webpack_require__(1));
-const manifest_1 = __webpack_require__(82);
-const module_1 = __webpack_require__(85);
-const testing_1 = __webpack_require__(86);
-const debugger_1 = __webpack_require__(87);
+const manifest_1 = __webpack_require__(83);
+const module_1 = __webpack_require__(86);
+const testing_1 = __webpack_require__(87);
+const debugger_1 = __webpack_require__(88);
 const notifications_1 = __webpack_require__(16);
+const registerCommand_1 = __webpack_require__(82);
 async function moduleForActiveEditor() {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.uri.scheme !== 'file') {
@@ -23430,7 +23447,7 @@ async function moduleForActiveEditor() {
 }
 function registerEditorCommands(deps) {
     const { context, providers, moduleTreeView, refreshAll } = deps;
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.upgradeCurrentModule', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.upgradeCurrentModule', async () => {
         const module = await moduleForActiveEditor();
         if (!module) {
             return;
@@ -23444,7 +23461,7 @@ function registerEditorCommands(deps) {
             await (0, debugger_1.startDebugServer)();
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.runTestsForCurrentFile', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.runTestsForCurrentFile', async () => {
         const module = await moduleForActiveEditor();
         if (!module) {
             return;
@@ -23455,7 +23472,7 @@ function registerEditorCommands(deps) {
         await refreshAll();
         await (0, debugger_1.startDebugServer)();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.revealModuleInView', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.revealModuleInView', async () => {
         const module = await moduleForActiveEditor();
         if (!module) {
             return;
@@ -23471,7 +23488,7 @@ function registerEditorCommands(deps) {
 
 
 /***/ }),
-/* 117 */
+/* 118 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23517,6 +23534,7 @@ exports.registerHelpCommands = registerHelpCommands;
  * Shortcuts editor for customization.
  */
 const vscode = __importStar(__webpack_require__(1));
+const registerCommand_1 = __webpack_require__(82);
 /** 'ctrl+alt+o s' → 'Ctrl+Alt+O S' */
 function formatKey(key) {
     return key
@@ -23529,7 +23547,7 @@ function formatKey(key) {
 }
 function registerHelpCommands(deps) {
     const { context } = deps;
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.showKeyboardShortcuts', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.showKeyboardShortcuts', async () => {
         const contributes = vscode.extensions.getExtension('AhmadMansour.odoo-devtools-vscode')?.packageJSON?.contributes;
         const keybindings = contributes?.keybindings ?? [];
         const titles = new Map((contributes?.commands ?? []).map(entry => [entry.command, entry.title]));
@@ -23558,7 +23576,7 @@ function registerHelpCommands(deps) {
 
 
 /***/ }),
-/* 118 */
+/* 119 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23616,11 +23634,11 @@ const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(113);
-const upgradePlan_1 = __webpack_require__(119);
+const branchPick_1 = __webpack_require__(114);
+const upgradePlan_1 = __webpack_require__(120);
 const upgradeApply_1 = __webpack_require__(41);
 const upgradeSetup_1 = __webpack_require__(56);
-const provisionQueue_1 = __webpack_require__(89);
+const provisionQueue_1 = __webpack_require__(90);
 const setupState_1 = __webpack_require__(66);
 const gitService_1 = __webpack_require__(11);
 const dbNaming_1 = __webpack_require__(68);
@@ -23628,6 +23646,7 @@ const dbs_1 = __webpack_require__(59);
 const upgrade_1 = __webpack_require__(38);
 const wizard_1 = __webpack_require__(67);
 const repo_1 = __webpack_require__(44);
+const registerCommand_1 = __webpack_require__(82);
 /** How a database is described in the picker, without probing every one. */
 function describeDatabase(db, versionsService) {
     const version = db.versionId ? versionsService.getVersion(db.versionId) : undefined;
@@ -23866,7 +23885,7 @@ function registerUpgradeCommand(deps) {
     // does, so the tree row needs no knowledge of what happens next. Off keeps
     // the upgrade; on resumes a kept one, and sets one up only when there is
     // nothing to resume.
-    context.subscriptions.push(vscode.commands.registerCommand('upgradeSelector.toggleUpgrade', async (payload) => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('upgradeSelector.toggleUpgrade', async (payload) => {
         try {
             const config = await (0, upgrade_1.currentUpgradeConfig)();
             const enabled = payload?.isEnabled ?? config.isActive();
@@ -23887,15 +23906,15 @@ function registerUpgradeCommand(deps) {
             void (0, notifications_1.showError)(`Could not toggle upgrade mode: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('upgradeSelector.toggleSourceModules', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('upgradeSelector.toggleSourceModules', async () => {
         if (await (0, upgrade_1.toggleSourceModules)()) {
             await refreshAll();
         }
     }));
     // Changing an upgrade is setting one up with the current one preselected:
     // the review step is where any single answer is changed.
-    context.subscriptions.push(vscode.commands.registerCommand('upgradeSelector.changeUpgrade', () => vscode.commands.executeCommand('odoo.setUpUpgrade')));
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setUpUpgrade', async () => {
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('upgradeSelector.changeUpgrade', () => vscode.commands.executeCommand('odoo.setUpUpgrade')));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.setUpUpgrade', async () => {
         try {
             const result = await settingsStore_1.SettingsStore.getSelectedProject();
             if (!result) {
@@ -24130,7 +24149,7 @@ function registerUpgradeCommand(deps) {
 
 
 /***/ }),
-/* 119 */
+/* 120 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24240,7 +24259,7 @@ function describeUpgradePlan(plan, input) {
 
 
 /***/ }),
-/* 120 */
+/* 121 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24301,7 +24320,8 @@ const setupState_1 = __webpack_require__(66);
 const dataLocation_1 = __webpack_require__(17);
 const mainStore_1 = __webpack_require__(19);
 const workspaceSelection_1 = __webpack_require__(29);
-const dataImport_1 = __webpack_require__(121);
+const dataImport_1 = __webpack_require__(122);
+const registerCommand_1 = __webpack_require__(82);
 const SHARED_STORE_FILE = 'odoo-devtools.db';
 /** This window's data as the store holds it: no selection, absolute paths. */
 async function portableCurrentData() {
@@ -24569,12 +24589,12 @@ function registerDataStoreCommands(deps) {
             void (0, notifications_1.showError)(`${name} failed: ${(0, logger_1.errorMessage)(error)}`);
         }
     };
-    deps.context.subscriptions.push(vscode.commands.registerCommand('odoo.chooseDataStore', guarded('Choose Data Store', chooseDataStore)), vscode.commands.registerCommand('odoo.exportData', guarded('Export Data', exportData)), vscode.commands.registerCommand('odoo.importData', guarded('Import Data', () => importData(deps))));
+    deps.context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.chooseDataStore', guarded('Choose Data Store', chooseDataStore)), (0, registerCommand_1.registerCommand)('odoo.exportData', guarded('Export Data', exportData)), (0, registerCommand_1.registerCommand)('odoo.importData', guarded('Import Data', () => importData(deps))));
 }
 
 
 /***/ }),
-/* 121 */
+/* 122 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 

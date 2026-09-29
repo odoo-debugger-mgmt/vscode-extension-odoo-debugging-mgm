@@ -46,6 +46,7 @@ import type { DatabaseModel } from '../models/db';
 import type { ProjectModel } from '../models/project';
 import type { UpgradeConfigModel } from '../models/upgrade';
 import type { VersionsService } from '../versionsService';
+import { registerCommand } from './registerCommand';
 
 /** Everything the wizard collects, filled in as it goes. */
 interface SetupDraft {
@@ -376,7 +377,7 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
     // does, so the tree row needs no knowledge of what happens next. Off keeps
     // the upgrade; on resumes a kept one, and sets one up only when there is
     // nothing to resume.
-    context.subscriptions.push(vscode.commands.registerCommand(
+    context.subscriptions.push(registerCommand(
         'upgradeSelector.toggleUpgrade',
         async (payload?: { isEnabled?: boolean }) => {
             try {
@@ -400,7 +401,7 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
         }
     ));
 
-    context.subscriptions.push(vscode.commands.registerCommand(
+    context.subscriptions.push(registerCommand(
         'upgradeSelector.toggleSourceModules',
         async () => {
             if (await toggleSourceModules()) {
@@ -411,12 +412,12 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
 
     // Changing an upgrade is setting one up with the current one preselected:
     // the review step is where any single answer is changed.
-    context.subscriptions.push(vscode.commands.registerCommand(
+    context.subscriptions.push(registerCommand(
         'upgradeSelector.changeUpgrade',
         () => vscode.commands.executeCommand('odoo.setUpUpgrade')
     ));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setUpUpgrade', async () => {
+    context.subscriptions.push(registerCommand('odoo.setUpUpgrade', async () => {
         try {
             const result = await SettingsStore.getSelectedProject();
             if (!result) {

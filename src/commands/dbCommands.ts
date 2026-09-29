@@ -23,11 +23,12 @@ import { showBriefStatus } from '../services/notifications';
 import { openServerInBrowser } from '../services/server';
 import { getDatabaseLabel, stripSettings } from '../utils';
 import type { DatabaseModel } from '../models/db';
+import { registerCommand } from './registerCommand';
 
 export function registerDbCommands(deps: CommandDeps): void {
     const { context, versionsService, providers, dbTreeView, refreshAll } = deps;
 
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.create', async () => {
+    context.subscriptions.push(registerCommand('dbSelector.create', async () => {
         try {
             // Get settings from active version
             const settings = await versionsService.getActiveVersionSettings();
@@ -76,7 +77,7 @@ export function registerDbCommands(deps: CommandDeps): void {
         }
     };
 
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.selectDb', async (event) => {
+    context.subscriptions.push(registerCommand('dbSelector.selectDb', async (event) => {
         try {
             await selectDatabase(event);
             await refreshAll();
@@ -87,7 +88,7 @@ export function registerDbCommands(deps: CommandDeps): void {
         await highlightSelectedDb();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.delete', async (event) => {
+    context.subscriptions.push(registerCommand('dbSelector.delete', async (event) => {
         try {
             await deleteDb(event);
             await refreshAll();
@@ -97,7 +98,7 @@ export function registerDbCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.restore', async (event) => {
+    context.subscriptions.push(registerCommand('dbSelector.restore', async (event) => {
         try {
             // restoreDb shows its own success notification.
             await restoreDb(event);
@@ -108,7 +109,7 @@ export function registerDbCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.changeVersion', async (event) => {
+    context.subscriptions.push(registerCommand('dbSelector.changeVersion', async (event) => {
         try {
             await changeDatabaseVersion(event);
             await refreshAll();
@@ -118,7 +119,7 @@ export function registerDbCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.configureRepoBranches', async (event) => {
+    context.subscriptions.push(registerCommand('dbSelector.configureRepoBranches', async (event) => {
         try {
             await changeDatabaseProjectRepoBranches(event);
             await refreshAll({ reason: 'ui' });
@@ -128,7 +129,7 @@ export function registerDbCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.manageTemplates', async () => {
+    context.subscriptions.push(registerCommand('dbSelector.manageTemplates', async () => {
         try {
             await manageDatabaseTemplates();
             await refreshAll({ reason: 'ui' });
@@ -138,7 +139,7 @@ export function registerDbCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.openInBrowser', async (event) => {
+    context.subscriptions.push(registerCommand('dbSelector.openInBrowser', async (event) => {
         const db = extractDatabaseFromEvent(event);
         if (!db) {
             void showError('Could not identify the database to open in the browser.');
@@ -149,7 +150,7 @@ export function registerDbCommands(deps: CommandDeps): void {
         await openServerInBrowser(db.id, db.versionId);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.openPsqlShell', async (event) => {
+    context.subscriptions.push(registerCommand('dbSelector.openPsqlShell', async (event) => {
         const db = extractDatabaseFromEvent(event);
         if (!db) {
             void showError('Could not identify the database to open in psql.');
@@ -161,7 +162,7 @@ export function registerDbCommands(deps: CommandDeps): void {
         terminal.sendText(`psql ${JSON.stringify(db.id)}`);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.rename', async (event) => {
+    context.subscriptions.push(registerCommand('dbSelector.rename', async (event) => {
         const db = extractDatabaseFromEvent(event);
         if (!db) {
             void showError('Could not identify the database to rename.');
@@ -195,7 +196,7 @@ export function registerDbCommands(deps: CommandDeps): void {
         await refreshAll({ reason: 'ui' });
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.copyName', async (event) => {
+    context.subscriptions.push(registerCommand('dbSelector.copyName', async (event) => {
         const db = extractDatabaseFromEvent(event);
         if (!db) {
             void showError('Could not identify the database whose name to copy.');
@@ -205,7 +206,7 @@ export function registerDbCommands(deps: CommandDeps): void {
         showBriefStatus(`Copied database name: ${db.id}`);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.clone', async (event) => {
+    context.subscriptions.push(registerCommand('dbSelector.clone', async (event) => {
         try {
             await cloneDatabaseFlow(event);
             await refreshAll({ reason: 'ui' });
@@ -215,7 +216,7 @@ export function registerDbCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.reconcile', async () => {
+    context.subscriptions.push(registerCommand('dbSelector.reconcile', async () => {
         try {
             await reconcileDatabasesFlow();
             await refreshAll({ reason: 'ui' });

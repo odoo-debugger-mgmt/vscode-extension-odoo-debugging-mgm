@@ -54,16 +54,21 @@ interface StoredDocument {
 /** Top-level keys held as documents; anything else goes to `meta.extra`. */
 const DOCUMENT_KEYS = new Set(['projects', 'versions', 'dbTemplates', 'activeVersion']);
 
+/*
+ * The messages end without a full stop: they are shown both on their own and
+ * inside "Failed to …: <message>", and VS Code adds one of its own.
+ */
+
 export class StoreBusyError extends Error {
     constructor(location: string) {
-        super(`The data store ${location} stayed locked by another window; the change was not saved.`);
+        super(`The data store ${location} stayed locked by another window; the change was not saved`);
         this.name = 'StoreBusyError';
     }
 }
 
 export class StoreReadOnlyError extends Error {
     constructor(location: string, version: number) {
-        super(`The data store ${location} was written by a newer Odoo DevTools (schema ${version}); it is read-only here.`);
+        super(`The data store ${location} is read-only here: a newer Odoo DevTools (schema ${version}) wrote it; the change was not saved`);
         this.name = 'StoreReadOnlyError';
     }
 }

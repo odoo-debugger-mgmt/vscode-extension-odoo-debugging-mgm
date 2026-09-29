@@ -42,11 +42,12 @@ import {
     setQueueSnapshot,
     writeQueue
 } from '../services/provisionQueue';
+import { registerCommand } from './registerCommand';
 
 export function registerProjectCommands(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
 
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.create', async () => {
+    context.subscriptions.push(registerCommand('projectSelector.create', async () => {
         try {
             // Get settings from active version
             const settings = await versionsService.getActiveVersionSettings();
@@ -129,46 +130,46 @@ export function registerProjectCommands(deps: CommandDeps): void {
         }
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.selectProject', async (event) => {
+    context.subscriptions.push(registerCommand('projectSelector.selectProject', async (event) => {
         await selectProject(event);
         await refreshAll();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.delete', async (event) => {
+    context.subscriptions.push(registerCommand('projectSelector.delete', async (event) => {
         await deleteProject(event);
         await refreshAll();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.editSettings', async (event) => {
+    context.subscriptions.push(registerCommand('projectSelector.editSettings', async (event) => {
         await editProjectSettings(event);
         await refreshAll({ reason: 'ui' });
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.manageTickets', async (event) => {
+    context.subscriptions.push(registerCommand('projectSelector.manageTickets', async (event) => {
         await manageProjectTickets(event);
         await refreshAll({ reason: 'ui' });
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.openTicket', async (event) => {
+    context.subscriptions.push(registerCommand('projectSelector.openTicket', async (event) => {
         await openProjectTicket(event);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.duplicateProject', async (event) => {
+    context.subscriptions.push(registerCommand('projectSelector.duplicateProject', async (event) => {
         await duplicateProject(event);
         await refreshAll();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.exportProject', async (event) => {
+    context.subscriptions.push(registerCommand('projectSelector.exportProject', async (event) => {
         await exportProject(event);
         await refreshAll({ reason: 'ui' });
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.importProject', async () => {
+    context.subscriptions.push(registerCommand('projectSelector.importProject', async () => {
         await importProject();
         await refreshAll({ reason: 'ui' });
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.setup', async () => {
+    context.subscriptions.push(registerCommand('odoo.setup', async () => {
         // Detection first: the clone wizard is the fallback, not the entry point.
         const configured = await runSetup({
             cloneFallback: () => cloneOdooRepositories(path.dirname(readSetupState().provisioningRoot))
@@ -217,24 +218,24 @@ export function registerProjectCommands(deps: CommandDeps): void {
         void offerStop(context, rest.length);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo-debugger.quickProjectSearch', async () => {
+    context.subscriptions.push(registerCommand('odoo-debugger.quickProjectSearch', async () => {
         await quickProjectSearch();
         await refreshAll({ reason: 'ui' });
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('proj.openProjectWorkspace', async () => {
+    context.subscriptions.push(registerCommand('proj.openProjectWorkspace', async () => {
         await openProjectWorkspace(context);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('proj.rebuildProjectWorkspace', async () => {
+    context.subscriptions.push(registerCommand('proj.rebuildProjectWorkspace', async () => {
         await rebuildProjectWorkspace(context);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('proj.quickSwitchProject', async () => {
+    context.subscriptions.push(registerCommand('proj.quickSwitchProject', async () => {
         await quickSwitchProjectWorkspace(context);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.detectTickets', async () => {
+    context.subscriptions.push(registerCommand('projectSelector.detectTickets', async () => {
         await detectProjectTickets();
         await refreshAll({ reason: 'ui' });
     }));

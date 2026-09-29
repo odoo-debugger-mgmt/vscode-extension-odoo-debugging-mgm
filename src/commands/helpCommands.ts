@@ -6,6 +6,7 @@
  */
 import * as vscode from 'vscode';
 import type { CommandDeps } from './index';
+import { registerCommand } from './registerCommand';
 
 interface KeybindingContribution {
     command: string;
@@ -32,7 +33,7 @@ function formatKey(key: string): string {
 export function registerHelpCommands(deps: CommandDeps): void {
     const { context } = deps;
 
-    context.subscriptions.push(vscode.commands.registerCommand('odoo.showKeyboardShortcuts', async () => {
+    context.subscriptions.push(registerCommand('odoo.showKeyboardShortcuts', async () => {
         const contributes = vscode.extensions.getExtension('AhmadMansour.odoo-devtools-vscode')?.packageJSON?.contributes as
             | { keybindings?: KeybindingContribution[]; commands?: CommandContribution[] }
             | undefined;

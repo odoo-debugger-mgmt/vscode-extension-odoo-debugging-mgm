@@ -18,6 +18,7 @@ import {
     createModuleFromScaffold,
     quickConfigureModules
 } from '../module';
+import { registerCommand } from './registerCommand';
 
 /**
  * Tree context menus pass (clickedItem, selectedItems); with canSelectMany
@@ -34,67 +35,67 @@ function targetsOf(event: unknown, selection?: unknown[]): unknown[] {
 export function registerModuleCommands(deps: CommandDeps): void {
     const { context, refreshAll } = deps;
 
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.select', async (event) => {
+    context.subscriptions.push(registerCommand('moduleSelector.select', async (event) => {
         await selectModule(event);
         await refreshAll();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.togglePsaeInternalModule', async (event) => {
+    context.subscriptions.push(registerCommand('moduleSelector.togglePsaeInternalModule', async (event) => {
         await togglePsaeInternalModule(event);
         await refreshAll();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.create', async () => {
+    context.subscriptions.push(registerCommand('moduleSelector.create', async () => {
         await createModuleFromScaffold();
         await refreshAll({ reason: 'ui' });
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.setToInstall', async (event, selection?: unknown[]) => {
+    context.subscriptions.push(registerCommand('moduleSelector.setToInstall', async (event, selection?: unknown[]) => {
         for (const target of targetsOf(event, selection)) {
             await setModuleToInstall(target);
         }
         await refreshAll();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.setToUpgrade', async (event, selection?: unknown[]) => {
+    context.subscriptions.push(registerCommand('moduleSelector.setToUpgrade', async (event, selection?: unknown[]) => {
         for (const target of targetsOf(event, selection)) {
             await setModuleToUpgrade(target);
         }
         await refreshAll();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.clearState', async (event, selection?: unknown[]) => {
+    context.subscriptions.push(registerCommand('moduleSelector.clearState', async (event, selection?: unknown[]) => {
         for (const target of targetsOf(event, selection)) {
             await clearModuleState(target);
         }
         await refreshAll();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.updateAll', async () => {
+    context.subscriptions.push(registerCommand('moduleSelector.updateAll', async () => {
         await updateAllModules();
         await refreshAll();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.updateInstalled', async () => {
+    context.subscriptions.push(registerCommand('moduleSelector.updateInstalled', async () => {
         await updateInstalledModules();
         await refreshAll();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.installAll', async () => {
+    context.subscriptions.push(registerCommand('moduleSelector.installAll', async () => {
         await installAllModules();
         await refreshAll();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.clearAll', async () => {
+    context.subscriptions.push(registerCommand('moduleSelector.clearAll', async () => {
         await clearAllModuleSelections();
         await refreshAll();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.viewInstalled', async () => {
+    context.subscriptions.push(registerCommand('moduleSelector.viewInstalled', async () => {
         await viewInstalledModules();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.quickConfigure', async () => {
+    context.subscriptions.push(registerCommand('moduleSelector.quickConfigure', async () => {
         await quickConfigureModules();
         // One refresh when the picker closes, however many states changed.
         await refreshAll();
@@ -105,7 +106,7 @@ export function registerModuleCommands(deps: CommandDeps): void {
     const modulePathOf = (event: unknown): string | undefined =>
         (event as { moduleData?: { path?: string } } | undefined)?.moduleData?.path;
 
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.revealInExplorer', async (event) => {
+    context.subscriptions.push(registerCommand('moduleSelector.revealInExplorer', async (event) => {
         const modulePath = modulePathOf(event);
         if (!modulePath) {
             void showInfo('Could not identify the module to reveal.');
@@ -114,7 +115,7 @@ export function registerModuleCommands(deps: CommandDeps): void {
         await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(modulePath));
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.revealInOS', async (event) => {
+    context.subscriptions.push(registerCommand('moduleSelector.revealInOS', async (event) => {
         const modulePath = modulePathOf(event);
         if (!modulePath) {
             void showInfo('Could not identify the module to reveal.');

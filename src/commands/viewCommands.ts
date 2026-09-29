@@ -4,6 +4,7 @@ import { quickSearchTreeItems, getTreeItemLabel } from './quickSearch';
 import { getSortOptions, getDefaultSortOption, SortableViewId } from '../sortOptions';
 import { showInfo } from '../services/notifications';
 import { setModuleToInstall, setModuleToUpgrade, clearModuleState } from '../module';
+import { registerCommand } from './registerCommand';
 
 /**
  * Generic per-view plumbing: refresh, sort, and quick-search commands.
@@ -14,7 +15,7 @@ export function registerViewCommands(deps: CommandDeps): void {
     const registerViewSortCommand = (viewId: SortableViewId, provider: { refresh(): void }) => {
         const options = getSortOptions(viewId);
         type SortPickItem = vscode.QuickPickItem & { optionId: string };
-        context.subscriptions.push(vscode.commands.registerCommand(`${viewId}.sort`, async () => {
+        context.subscriptions.push(registerCommand(`${viewId}.sort`, async () => {
             const current = sortPreferences.get(viewId, getDefaultSortOption(viewId));
             const picks: SortPickItem[] = options.map(option => ({
                 label: `${option.id === current ? '$(check) ' : ''}${option.label}`,
@@ -41,13 +42,13 @@ export function registerViewCommands(deps: CommandDeps): void {
     // The explorer view keeps the historical 'projectRepos' sort ids so stored preferences survive.
     registerViewSortCommand('projectRepos', providers.projectReposExplorer);
 
-    context.subscriptions.push(vscode.commands.registerCommand('projectSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    context.subscriptions.push(vscode.commands.registerCommand('testingSelector.refresh', async () => refreshAll({ reason: 'ui' })));
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(registerCommand('projectSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(registerCommand('repoSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(registerCommand('moduleSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(registerCommand('testingSelector.refresh', async () => refreshAll({ reason: 'ui' })));
+    context.subscriptions.push(registerCommand('dbSelector.refresh', async () => refreshAll({ reason: 'ui' })));
 
-    context.subscriptions.push(vscode.commands.registerCommand('repoSelector.quickSearch', async () => {
+    context.subscriptions.push(registerCommand('repoSelector.quickSearch', async () => {
         const items = ((await providers.repo.getChildren()) ?? [])
             .filter(item => !!item.command && getTreeItemLabel(item).trim().length > 0);
 
@@ -58,7 +59,7 @@ export function registerViewCommands(deps: CommandDeps): void {
         });
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('dbSelector.quickSearch', async () => {
+    context.subscriptions.push(registerCommand('dbSelector.quickSearch', async () => {
         const items = ((await providers.db.getChildren()) ?? [])
             .filter(item => item.contextValue === 'database' && !!item.command);
 
@@ -69,7 +70,7 @@ export function registerViewCommands(deps: CommandDeps): void {
         });
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('moduleSelector.quickSearch', async () => {
+    context.subscriptions.push(registerCommand('moduleSelector.quickSearch', async () => {
         // Include modules nested under psae-internal groups in the search.
         const rootItems = ((await providers.module.getChildren()) ?? []);
         const nestedItems = rootItems.flatMap(item => (item as vscode.TreeItem & { psaeChildren?: vscode.TreeItem[] }).psaeChildren ?? []);
@@ -114,7 +115,7 @@ export function registerViewCommands(deps: CommandDeps): void {
         });
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('versionsManager.quickSearch', async () => {
+    context.subscriptions.push(registerCommand('versionsManager.quickSearch', async () => {
         const items = ((await providers.versions.getChildren()) ?? [])
             .filter(item => {
                 const contextValue = item.contextValue;
@@ -129,7 +130,7 @@ export function registerViewCommands(deps: CommandDeps): void {
         });
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('projectRepos.quickSearch', async () => {
+    context.subscriptions.push(registerCommand('projectRepos.quickSearch', async () => {
         const rootNodes = ((await providers.projectReposExplorer.getChildren()) ?? [])
             .filter(node => node.kind === 'repo');
         const items = rootNodes.map(node => providers.projectReposExplorer.getTreeItem(node));

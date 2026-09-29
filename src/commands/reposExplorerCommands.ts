@@ -30,6 +30,7 @@ import { parsePorcelainStatus } from '../services/sourceConflict';
 import { normalizeBranchMode, RepoBranchMode, RepoModel } from '../models/repo';
 import { sanitizeProjectRepoBranchAssignments } from '../services/environment';
 import { readUpgradeConfig, refuseDuringUpgrade } from '../upgrade';
+import { registerCommand } from './registerCommand';
 
 /** Registers the checkout/worktree mode toggle for a project repository. */
 export function registerRepoBranchModeCommand(deps: CommandDeps): void {
@@ -111,8 +112,8 @@ export function registerRepoBranchModeCommand(deps: CommandDeps): void {
     };
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('odt.repo.toggleBranchMode', toggle),
-        vscode.commands.registerCommand('odt.repo.useSingleCheckout', toggle)
+        registerCommand('odt.repo.toggleBranchMode', toggle),
+        registerCommand('odt.repo.useSingleCheckout', toggle)
     );
 }
 
@@ -128,7 +129,7 @@ export function registerResolveWorktreesCommand(deps: CommandDeps): void {
     const { context, refreshAll } = deps;
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('odt.repo.resolveWorktrees', async () => {
+        registerCommand('odt.repo.resolveWorktrees', async () => {
             try {
                 const result = await SettingsStore.getSelectedProject();
                 if (!result) {
@@ -214,33 +215,33 @@ export function registerReposExplorerCommands(deps: CommandDeps): void {
 
     // Tree context menus pass the tree node (which carries `.uri`), while
     // programmatic calls may pass a Uri directly — extractUri handles both.
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFile', async (arg?: unknown) => {
+    context.subscriptions.push(registerCommand('odt.projectReposExplorer.newFile', async (arg?: unknown) => {
         await explorerCreateNewFile(extractUri(arg));
         providers.projectReposExplorer.refresh();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.newFolder', async (arg?: unknown) => {
+    context.subscriptions.push(registerCommand('odt.projectReposExplorer.newFolder', async (arg?: unknown) => {
         await explorerCreateNewFolder(extractUri(arg));
         providers.projectReposExplorer.refresh();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.rename', async (arg?: unknown) => {
+    context.subscriptions.push(registerCommand('odt.projectReposExplorer.rename', async (arg?: unknown) => {
         await explorerRenameEntry(extractUri(arg));
         providers.projectReposExplorer.refresh();
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odt.projectReposExplorer.selectProject', async () => {
+    context.subscriptions.push(registerCommand('odt.projectReposExplorer.selectProject', async () => {
         await selectProjectForExplorer();
         providers.projectReposExplorer.refresh();
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyFilePath', async (arg?: unknown) => {
+    context.subscriptions.push(registerCommand('odooDebugger.copyFilePath', async (arg?: unknown) => {
         await copyPathToClipboard(extractUri(arg), false);
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.copyRelativePath', async (arg?: unknown) => {
+    context.subscriptions.push(registerCommand('odooDebugger.copyRelativePath', async (arg?: unknown) => {
         await copyPathToClipboard(extractUri(arg), true);
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.openInIntegratedTerminal', async (arg?: unknown) => {
+    context.subscriptions.push(registerCommand('odooDebugger.openInIntegratedTerminal', async (arg?: unknown) => {
         await openUriInIntegratedTerminal(extractUri(arg));
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.revealInExplorer', async (arg?: unknown) => {
+    context.subscriptions.push(registerCommand('odooDebugger.revealInExplorer', async (arg?: unknown) => {
         const uri = extractUri(arg);
         if (!uri) {
             void showInfo('Select a file or folder first.');
@@ -248,7 +249,7 @@ export function registerReposExplorerCommands(deps: CommandDeps): void {
         }
         await vscode.commands.executeCommand('revealInExplorer', uri);
     }));
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.revealFileInOS', async (arg?: unknown) => {
+    context.subscriptions.push(registerCommand('odooDebugger.revealFileInOS', async (arg?: unknown) => {
         const uri = extractUri(arg);
         if (!uri) {
             void showInfo('Select a file or folder first.');
@@ -257,7 +258,7 @@ export function registerReposExplorerCommands(deps: CommandDeps): void {
         await vscode.commands.executeCommand('revealFileInOS', uri);
     }));
 
-    context.subscriptions.push(vscode.commands.registerCommand('odooDebugger.relocateRepo', async (arg?: unknown) => {
+    context.subscriptions.push(registerCommand('odooDebugger.relocateRepo', async (arg?: unknown) => {
         const repo = (arg as { repo?: { name?: string; path?: string } } | undefined)?.repo;
         if (!repo?.path) {
             void showInfo('Select a repository to relocate.');
