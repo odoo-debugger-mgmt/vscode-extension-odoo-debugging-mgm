@@ -31,7 +31,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ### Changed
 
 - **Testing mode is per window**, and the module selections it clears are stashed on the database they came from rather than on the project.
-- **What is selected is remembered per window**, not in `.vscode/odoo-debugger-data.json`: the selected project, each project's selected database and the active version. Existing selections carry over on first start. This is the first step towards several workspaces sharing one set of data.
+- **What is selected is remembered per window**: the selected project, each project's selected database, the database each version last launched against, and the active version. A shared store never holds them; the workspace's own `.vscode/odoo-debugger-data.json` keeps a copy of the last selection, so another profile or editor opens where you left off. Existing selections carry over on first start.
 - **Requires VS Code 1.101 or later** (was 1.100). The shared data store planned for multi-workspace use needs the `node:sqlite` module, which VS Code's runtime ships from 1.101.
 - **Debugger name and ports are derived from the version's branch** and are read-only, so parallel versions cannot collide on a port. Existing versions are healed on load.
 - **Database creation asks which branch each project repository should use** instead of silently recording whatever was checked out at the time.
@@ -69,6 +69,9 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Fixed
 
+- **In a shared store, a window launched the database another window had selected.** The database each version last ran against was shared, and preferred over the window's own selection, so F5 and Copy Odoo Command followed whichever window picked last. It is per window now; only an active upgrade's two databases are the same everywhere.
+- **Import's preview claimed to change what it left alone**: re-importing an export announced projects "completed" and changed nothing. It now says when there is nothing to add, and does not write. A cloned version no longer collapses onto the first version of its branch on import.
+- **Selecting a database in a read-only store said it failed and then selected it anyway.** Selection is per window, so it now simply works there; a save that is refused no longer changes the selection.
 - **Turning testing mode off after switching databases restored the wrong database's modules.** The stash was the project's, and went back onto whichever database was selected by then. Each database now gets its own marks back.
 - **Open Project Workspace no longer loses your projects.** The workspace it opened started with its first project repository as the root, so the extension read — and created — a data file inside that repository, and nothing was there. The generated workspace now points at the original data (`odooDebugger.dataStore.path`) and opens with the same selection; relative paths still resolve against the original workspace. The debugger's `launch.json` in that window still goes to the first repository's `.vscode`.
 - **Restart Server's command id is now `odt.server.restart`.** It was `odoo.restartServer`, which the official Odoo extension also registers, so whichever loaded second failed to register it. The keybinding (`Ctrl+Alt+O R`) and title are unchanged; a custom keybinding bound to the old id needs updating.

@@ -211,24 +211,32 @@ Odoo is version-based, and it is common to keep one workspace per version.
 By default each workspace keeps its own data in `.vscode/odoo-debugger-data.json`.
 To let several workspaces work from the same projects, versions and databases,
 run **Odoo DevTools: Choose Data Store…** and pick the **shared store**
-(`~/odoo-dev/odoo-devtools.db` by default) or any `.db` file, for every
-workspace or for this one only. It offers to bring the current workspace's data
-along: a merge that fills gaps and never overwrites what the store already
-holds. The workspace's own file is left as it is.
+(`~/odoo-dev/odoo-devtools.db` by default), open an existing `.db` another
+workspace uses, or create a new one — for every workspace or for this one only.
+It offers to bring the current workspace's data along: a merge that fills gaps
+and never overwrites what the store already holds. The workspace's own file is
+left as it is. The Projects view shows which shared store it is reading.
 
 - **Shared:** projects, repositories, databases and their module marks,
   versions (and their ports, which stay unique across windows), upgrades and
   database templates.
 - **Per window:** the selected project, each project's selected database, the
-  active version, and testing mode. Selecting a database in one window never
-  changes what another window launches.
+  database each version last launched against, the active version, and testing
+  mode. Selecting a database in one window never changes what another window
+  launches. An active upgrade is the exception, on purpose: its two databases
+  are the same in every window, so either window can start both sides.
+- Without a shared store, the workspace's own file also keeps a copy of the
+  last selection, so another profile, another editor or an older build opens
+  the workspace where you left it.
 - Windows sharing a store see each other's changes within a couple of seconds.
   When two windows change the same project at once, both changes are kept; only
   a value both changed differently goes to whichever saved last.
 - **Export Data…** writes a portable JSON copy, and **Import Data…** merges one
   (or a plain `odoo-debugger-data.json`) into the current store, or replaces it.
-  Versions are matched by branch, so importing from another machine does not
-  duplicate them.
+  The preview says exactly what a merge adds, or that it adds nothing. Versions
+  are matched by branch, so importing from another machine does not duplicate
+  them.
+- A store written by a newer Odoo DevTools opens read-only, and says so.
 - Keep the store on a local disk: SQLite's locking is unreliable over network
   shares.
 - The shared store needs VS Code 1.101 or later. An editor on an older runtime

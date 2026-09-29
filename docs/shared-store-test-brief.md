@@ -123,12 +123,15 @@ count, say so: that is a test-harness problem, not a store problem.
 
 **Expect:**
 
-- no `"isSelected": true` anywhere;
-- no `activeVersion`;
-- every version `"isActive": false`;
+- the file still records a selection - the one you left - because a
+  workspace's own file keeps a copy for other profiles and editors;
+- repository `isSelected` flags are membership in the project, not selection,
+  and are unaffected either way;
 - nothing else lost or changed beyond that.
 
-Reopen `A`: the selection you left should come back.
+Reopen `A`: the selection you left should come back. Then open `A` in a
+**second profile** (`--profile-temp`): it should open with the same selection,
+not with nothing selected.
 
 ## 3 · Open Project Workspace keeps the data (step 1 fix)
 
@@ -200,6 +203,17 @@ Both windows on the same project.
    is fine if the saves did not overlap.
 5. Repeat step 2 a few times. Report any case where one window's mark
    disappeared.
+
+## 7b · Each window launches its own database
+
+Both windows on the same project, on one shared store.
+
+1. In `A`, select database 1. In `B`, select database 2, of the same version.
+2. In `A`, run **Copy Odoo Command** and read `A`'s `.vscode/launch.json`.
+3. **Expect** `-d` to be database 1 in both, and database 1's module marks -
+   not `B`'s. (This was finding 1 of the first run.)
+4. With an upgrade active whose sides include that version, **expect** its
+   database instead, in both windows.
 
 ## 8 · Testing mode is per window, and its stash is per database
 

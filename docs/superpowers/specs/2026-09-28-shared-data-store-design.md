@@ -92,7 +92,7 @@ store.
 | Databases: version link, per-repo branch mapping, kind, dump path | main | |
 | Module install/upgrade marks | main | They belong to a database, and a database belongs to one version, so in practice one window edits them. Upgrade mode stages the source database's marks onto the target, which needs both sides from either window. |
 | Upgrade configuration | main | It pairs two versions and two databases: cross-workspace by definition. |
-| `selectedDbByVersion` | main | Start Both Servers needs each side's database from either window. |
+| `selectedDbByVersion` | workspace | *Revised after testing.* It was main, for Start Both Servers - which made one window's database choice decide what every window launched. It is per window; an active upgrade pins its two databases instead (`dbForVersion` in `services/dbResolution.ts`), so either window still starts both sides. |
 | DB templates | main | |
 | Workspace registry (§3) | main | Discovery only. |
 | Projects attached to this workspace | workspace | Each workspace shows its own subset. |
@@ -109,6 +109,13 @@ to be placed under `workspaceFolders[0]`, which in a multi-root window is a
 user's repository, which is bug 6 again. The price is that it cannot be seen or
 edited by hand. The registry row (§3) mirrors the attached projects, so they can
 be restored if the state is lost.
+
+**A JSON workspace file keeps a copy.** *Revised after testing.* Only a shared
+(SQLite) store is written without the per-window fields. The workspace's own
+file keeps the last selection, as before 1.3: the window's `workspaceState`
+still decides for that window, and the file's copy is what another profile,
+another editor or an older build starts from. Stripping it there broke the
+design's own goal that nothing changes until someone opts in.
 
 **Call sites do not change.** The split happens at the `SettingsStore` seam:
 
@@ -530,6 +537,12 @@ Each step ships on its own and leaves the extension working.
      shared store is opt-in, through Choose Data Store.
    - Verified with three processes committing 200 times each to one file: no
      update lost, a couple of hundred conflicts merged along the way.
+   - **Tested in real windows** on 2026-09-29
+     ([report](../notes/2026-09-29-shared-store-test-report.md)): the suite
+     passed in a real Extension Host and nearly everything matched. The
+     findings were fixed the same day - most importantly, `selectedDbByVersion`
+     moved to the window (see §1), and the workspace's own JSON file keeps a
+     copy of the selection.
 3. **Per-version repo locations**, workspace binding and the registry.
 4. **The upgrade plan** only copies shared directories; Start This Side; Open
    the Other Side.
