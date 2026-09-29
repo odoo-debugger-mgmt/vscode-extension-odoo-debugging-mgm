@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import { parse } from 'jsonc-parser';
 import {
     launchTarget,
+    localWorkspaceFilePath,
     removeManagedLaunchConfigs,
     updateManagedLaunchConfig,
     updateManagedLaunchConfigIn,
@@ -107,6 +108,19 @@ suite('Where launch configurations live', () => {
         assert.deepStrictEqual(launchTarget({ scheme: 'file', fsPath: '/w/acme.code-workspace' }, ['/repos/acme']), {
             kind: 'workspaceFile', filePath: '/w/acme.code-workspace', firstFolderPath: '/repos/acme'
         });
+    });
+
+    test('a workspace opened by its global-storage URI still keeps them in its file', () => {
+        // Open Project Workspace used to open the file that way, and the
+        // Recent list reopens it the same way.
+        assert.deepStrictEqual(launchTarget({ scheme: 'vscode-userdata', fsPath: '/u/acme.code-workspace' }, ['/repos/acme']), {
+            kind: 'workspaceFile', filePath: '/u/acme.code-workspace', firstFolderPath: '/repos/acme'
+        });
+    });
+
+    test('a workspace file on another machine is not written through the local disk', () => {
+        assert.strictEqual(localWorkspaceFilePath({ scheme: 'vscode-remote', fsPath: '/r/x.code-workspace' }), undefined);
+        assert.strictEqual(launchTarget({ scheme: 'vscode-remote', fsPath: '/r/x.code-workspace' }, ['/repo'])?.kind, 'folder');
     });
 
     test('an untitled workspace has no file yet, so its first folder is used', () => {

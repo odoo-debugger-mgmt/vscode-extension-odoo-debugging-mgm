@@ -15,6 +15,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { logger } from './logger';
+import { localWorkspaceFilePath } from './launchConfig';
 
 export const DATA_FILE_NAME = 'odoo-debugger-data.json';
 
@@ -142,7 +143,7 @@ export function currentDataLocation(): DataLocation | undefined {
     return resolveDataLocation({
         configured,
         configuredGlobally,
-        workspaceFile: workspaceFile?.scheme === 'file' ? workspaceFile.fsPath : undefined,
+        workspaceFile: localWorkspaceFilePath(workspaceFile),
         firstFolder: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
     });
 }

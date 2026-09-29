@@ -43,13 +43,28 @@ export type LaunchTarget =
     | { kind: 'folder'; folderPath: string; filePath: string }
     | { kind: 'workspaceFile'; filePath: string; firstFolderPath?: string };
 
+/**
+ * The local path of a saved workspace file, or undefined when there is none
+ * to write to: an untitled workspace, or one on another machine.
+ *
+ * `vscode-userdata:` counts. A workspace file kept in the extension's global
+ * storage, and opened by that storage URI, reports this scheme rather than
+ * `file:` - which is how Open Project Workspace used to open it, and how such
+ * a window still reopens from the Recent list.
+ */
+export function localWorkspaceFilePath(workspaceFile: { scheme: string; fsPath: string } | undefined): string | undefined {
+    return workspaceFile && (workspaceFile.scheme === 'file' || workspaceFile.scheme === 'vscode-userdata')
+        ? workspaceFile.fsPath
+        : undefined;
+}
+
 export function launchTarget(
     workspaceFile: { scheme: string; fsPath: string } | undefined,
     folderPaths: readonly string[]
 ): LaunchTarget | undefined {
-    // An untitled multi-root workspace has no file to write to yet.
-    if (workspaceFile?.scheme === 'file') {
-        return { kind: 'workspaceFile', filePath: workspaceFile.fsPath, firstFolderPath: folderPaths[0] };
+    const filePath = localWorkspaceFilePath(workspaceFile);
+    if (filePath) {
+        return { kind: 'workspaceFile', filePath, firstFolderPath: folderPaths[0] };
     }
     const folderPath = folderPaths[0];
     return folderPath
