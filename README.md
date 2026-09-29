@@ -246,6 +246,8 @@ left as it is. The Projects view shows which shared store it is reading.
 
 The extension maintains **one launch configuration per provisioned version** in `.vscode/launch.json` — or, in a saved multi-root workspace (a `.code-workspace` file, such as the one Open Project Workspace generates), in that file's `launch` section, so nothing is written into your repositories — each named after that version's derived `debuggerName` and carrying its own port and database. Only those entries are rewritten — your own configurations and comments are preserved. It assembles `--addons-path`, `-d`, `-i`/`-u` from your module selections, ports, time limits, dev mode and testing flags automatically.
 
+A version's entry only ever uses a database of that version: with none chosen, it is left out of the file until you pick one, and Start Server asks for one.
+
 Because the entries are stable and unique, the Run and Debug dropdown works as a version switcher. **F5 follows whatever the dropdown has selected, while `Ctrl+Alt+O S` always follows the *active* version.** That divergence is deliberate: it is what lets you debug one version from the dropdown while launching another from the chord. **Stop Server** targets the active version's session, and asks only when several versions are running and none of them is the active one.
 
 Generated project workspaces also include the active version's own `odoo`, `enterprise` and `design-themes` checkouts, so files you open belong to the version you are running and breakpoints bind to the right worktree.

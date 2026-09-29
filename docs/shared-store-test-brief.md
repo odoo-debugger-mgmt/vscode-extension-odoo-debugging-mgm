@@ -146,6 +146,10 @@ not with nothing selected.
    Start Server and Restart Server all work from that window. A leftover
    `launch.json` in the repository loses our entries (and goes, if nothing
    else is in it).
+
+   A generated workspace an earlier build opened, reopened from **Recent**,
+   shows a message and a `Reopen for debugger` status bar item that stays
+   until clicked; clicking it reopens the window from its file.
 4. In the generated window, select a different database. Back in `A`, **expect**
    `A`'s selection unchanged. Selection is per window.
 
@@ -223,6 +227,9 @@ Both windows on the same project, on one shared store.
    on, then off again. **Expect** `A`'s status bar, Databases view and
    `launch.json` to name the **same** database, whichever it is. (Finding 9 of
    the second run: they disagreed.)
+6. In a window where no 19.0 database is chosen, **expect** no 19.0 entry in
+   the launch file, and Start Server on 19.0 to ask for a database. Choosing
+   one brings the entry back, naming it.
 
 ## 8 · Testing mode is per window, and its stash is per database
 

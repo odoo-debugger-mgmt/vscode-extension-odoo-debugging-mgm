@@ -92,7 +92,7 @@ store.
 | Databases: version link, per-repo branch mapping, kind, dump path | main | |
 | Module install/upgrade marks | main | They belong to a database, and a database belongs to one version, so in practice one window edits them. Upgrade mode stages the source database's marks onto the target, which needs both sides from either window. |
 | Upgrade configuration | main | It pairs two versions and two databases: cross-workspace by definition. |
-| `selectedDbByVersion` | workspace | *Revised after testing.* It was main, for Start Both Servers - which made one window's database choice decide what every window launched. It is per window; an active upgrade pins its two databases instead (`dbForVersion` in `services/dbResolution.ts`), so either window still starts both sides. The order is: the pin, then the window's selected database when it belongs to that version, then the memory - so a window always launches what it shows as selected. |
+| `selectedDbByVersion` | workspace | *Revised after testing.* It was main, for Start Both Servers - which made one window's database choice decide what every window launched. It is per window; an active upgrade pins its two databases instead (`dbForVersion` in `services/dbResolution.ts`), so either window still starts both sides. The order is: the pin, then the window's selected database when it belongs to that version, then the memory - so a window always launches what it shows as selected. A database of another version is never used; a legacy one with no version is. |
 | DB templates | main | |
 | Workspace registry (§3) | main | Discovery only. |
 | Projects attached to this workspace | workspace | Each workspace shows its own subset. |
