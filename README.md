@@ -20,7 +20,7 @@ A **Get Started with Odoo DevTools** walkthrough is available from VS Code's Wel
 The source repository is never run directly: every version gets its own worktree cut from it, so that checkout stays yours to switch branches freely.
 
 1. Open a folder in VS Code.
-   The extension stores its data in `.vscode/odoo-debugger-data.json`, so projects/versions/databases are **workspace-specific**. What you have *selected* — the project, each project's database and the active version — is remembered per window, not in that file.
+   The extension stores its data in `.vscode/odoo-debugger-data.json`, so projects/versions/databases are **workspace-specific** — unless you [share them between workspaces](#sharing-data-between-workspaces). What you have *selected* — the project, each project's database, the active version and testing mode — is remembered per window, not in that file.
 
 2. Run **`Odoo DevTools: Set Up`** — once per machine, not per workspace.
    It looks for Odoo checkouts you already have and shows what it found for confirmation, so this is usually one click. If there is nothing to find it offers to clone the repositories (community/enterprise/design-themes, any branch, optionally a **shallow copy**) and records where it put them.
@@ -205,6 +205,35 @@ and telling you which.
 - Repos whose folder was moved or deleted are flagged with a **Relocate Repository** action.
 - Honors your `files.exclude` settings.
 
+## Sharing data between workspaces
+
+Odoo is version-based, and it is common to keep one workspace per version.
+By default each workspace keeps its own data in `.vscode/odoo-debugger-data.json`.
+To let several workspaces work from the same projects, versions and databases,
+run **Odoo DevTools: Choose Data Store…** and pick the **shared store**
+(`~/odoo-dev/odoo-devtools.db` by default) or any `.db` file, for every
+workspace or for this one only. It offers to bring the current workspace's data
+along: a merge that fills gaps and never overwrites what the store already
+holds. The workspace's own file is left as it is.
+
+- **Shared:** projects, repositories, databases and their module marks,
+  versions (and their ports, which stay unique across windows), upgrades and
+  database templates.
+- **Per window:** the selected project, each project's selected database, the
+  active version, and testing mode. Selecting a database in one window never
+  changes what another window launches.
+- Windows sharing a store see each other's changes within a couple of seconds.
+  When two windows change the same project at once, both changes are kept; only
+  a value both changed differently goes to whichever saved last.
+- **Export Data…** writes a portable JSON copy, and **Import Data…** merges one
+  (or a plain `odoo-debugger-data.json`) into the current store, or replaces it.
+  Versions are matched by branch, so importing from another machine does not
+  duplicate them.
+- Keep the store on a local disk: SQLite's locking is unreliable over network
+  shares.
+- The shared store needs VS Code 1.101 or later. An editor on an older runtime
+  says so and keeps using the workspace's own file.
+
 ## Debugging & launch.json
 
 The extension maintains **one launch configuration per provisioned version** in `.vscode/launch.json`, each named after that version's derived `debuggerName` and carrying its own port and database. Only those entries are rewritten — your own configurations and comments are preserved. It assembles `--addons-path`, `-d`, `-i`/`-u` from your module selections, ports, time limits, dev mode and testing flags automatically.
@@ -283,7 +312,7 @@ Every view also has search (`$(search)`) and sort (`$(sort-precedence)`) actions
 - `odooDebugger.sourceRepo.odoo` / `.enterprise` / `.designThemes` — the repositories per-version worktrees are cut from. Set once by **Set Up**, at user level.
 - `odooDebugger.provisioning.root` — directory holding per-version worktrees and virtualenvs. Empty means `~/odoo-dev`.
 - `odooDebugger.provisioning.uvPath` — path to an existing `uv` binary. Empty means look on `PATH`; when uv is absent, provisioning falls back to the standard library `venv` and `pip`.
-- `odooDebugger.dataStore.path` — the data file this workspace reads and writes. Empty means `.vscode/odoo-debugger-data.json`; for now only a workspace-level value to a `.json` file is used. Open Project Workspace sets it so the workspace it opens keeps the same data.
+- `odooDebugger.dataStore.path` — where the data lives. Empty means `.vscode/odoo-debugger-data.json`. A `.db` file is a shared store, honoured at user or workspace level; a `.json` file is honoured per workspace only. Set it with **Choose Data Store…** so the current data can come along; Open Project Workspace sets it so the workspace it opens keeps the same data.
 - `odooDebugger.databaseSwitchBehavior` — `auto` / `ask` / `never` (see above).
 - `odooDebugger.statusBar.enabled` — show the project/database/version status bar items.
 - `odooDebugger.server.openBrowserOnStart` — open the web client automatically after the server starts (default off).

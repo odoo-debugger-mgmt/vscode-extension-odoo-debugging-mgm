@@ -12,10 +12,10 @@ User-facing documentation lives in the root [README](../README.md), the
 | [manual-test-brief.md](manual-test-brief.md) | Manual test script for what the automated suite cannot judge: wording, sequence, appearance. |
 | [media-capture-plan.md](media-capture-plan.md) | Which screen recordings to make for the README and walkthrough, and how. |
 
-## Proposals
+## In progress
 
-Designs not yet implemented. Read these as proposals: nothing in them exists
-in the code until a later entry says so.
+Designs being built in steps. Each one's *Build order* section says which
+steps exist in the code; the rest is still a proposal.
 
 | Document | Topic |
 |---|---|

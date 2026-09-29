@@ -10,6 +10,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Added
 
+- **A shared data store for several workspaces.** Odoo DevTools: Choose Data Store… moves a workspace onto a shared `.db` store (`~/odoo-dev/odoo-devtools.db` by default, or any file), for every workspace or one. Projects, versions, databases and upgrades are shared; what each window has selected, and testing mode, stay per window. Windows see each other's changes as they happen, and simultaneous edits to one project are merged rather than lost. Opt-in: new and existing workspaces keep their own file until they choose.
+- **Export Data… and Import Data…** move data between stores and machines as JSON. Import merges without overwriting — versions matched by branch — or, after a second confirmation, replaces everything.
 - **Versions provision themselves.** Create Version now builds a complete environment for a branch: a git **worktree**, an interpreter that branch actually supports, a `uv`-backed virtualenv and its `requirements.txt` — with live progress and cancellation. Choose *Profile only* to register a version without building anything.
 - **Several versions can be checked out at once.** Each version owns its worktree, so activating one no longer checks anything out and can no longer fail on a dirty working tree. Comparing a database before and after an upgrade is now two live environments rather than two checkouts of the same directory.
 - **Per-version custom code.** A repository can be switched to **Use One Copy Per Branch** (right-click it in Repos), after which each branch it is mapped to gets its own worktree under the provisioning root. The addons path, module discovery, scaffolding, the Project Repos tree and the generated workspace all follow the active version, so two versions run against their own custom addons. Repositories stay in plain checkout mode unless you opt in.
@@ -28,6 +30,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Changed
 
+- **Testing mode is per window**, and the module selections it clears are stashed on the database they came from rather than on the project.
 - **What is selected is remembered per window**, not in `.vscode/odoo-debugger-data.json`: the selected project, each project's selected database and the active version. Existing selections carry over on first start. This is the first step towards several workspaces sharing one set of data.
 - **Requires VS Code 1.101 or later** (was 1.100). The shared data store planned for multi-workspace use needs the `node:sqlite` module, which VS Code's runtime ships from 1.101.
 - **Debugger name and ports are derived from the version's branch** and are read-only, so parallel versions cannot collide on a port. Existing versions are healed on load.
@@ -66,6 +69,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Fixed
 
+- **Turning testing mode off after switching databases restored the wrong database's modules.** The stash was the project's, and went back onto whichever database was selected by then. Each database now gets its own marks back.
 - **Open Project Workspace no longer loses your projects.** The workspace it opened started with its first project repository as the root, so the extension read — and created — a data file inside that repository, and nothing was there. The generated workspace now points at the original data (`odooDebugger.dataStore.path`) and opens with the same selection; relative paths still resolve against the original workspace. The debugger's `launch.json` in that window still goes to the first repository's `.vscode`.
 - **Restart Server's command id is now `odt.server.restart`.** It was `odoo.restartServer`, which the official Odoo extension also registers, so whichever loaded second failed to register it. The keybinding (`Ctrl+Alt+O R`) and title are unchanged; a custom keybinding bound to the old id needs updating.
 - **Only an upgrade database can look selected during an upgrade.** A database selected before upgrade mode started kept its selected icon next to the pair, and couldn't be moved off it because selecting outside the pair is refused. The selection now moves to the "upgrading from" database. Clicking a database outside the pair also no longer leaves its row highlighted beside the actual selection.

@@ -1,8 +1,8 @@
 # Shared data across workspaces: design
 
 **Status:** decided 2026-09-29. The main store is SQLite through `node:sqlite`,
-and `engines.vscode` is raised to `^1.101.0`. Step 1 of the build order is
-implemented; steps 2 to 5 are not.
+and `engines.vscode` is raised to `^1.101.0`. Steps 1 and 2 of the build order
+are implemented; steps 3 to 5 are not.
 **Spike outcome (2026-09-29):** `node:sqlite` loads from VS Code 1.101.0
 (Node 22.15.1) onward, but not on 1.100.0, the current minimum (Node 20.19).
 Where it loads, WAL, `data_version` and the `rev`-guarded writes behave as §4
@@ -299,8 +299,9 @@ as the model does today. That keeps the change inside `SettingsStore`:
   `node:sqlite` declarations. Webpack needs no change: it treats `node:sqlite`
   as an external on its own.
 - **Still unverified:** remote Extension Hosts (Remote-SSH, WSL, Dev Containers,
-  Codespaces run the VS Code Server's own Node), other VS Code-based editors,
-  and macOS and Windows. So the store checks for the module at runtime. When it
+  Codespaces run the VS Code Server's own Node), other VS Code-based editors -
+  Cursor and VSCodium are in use by testers, and their *Help → About* shows the
+  Node version to check against 22.15 - and macOS and Windows. So the store checks for the module at runtime. When it
   is missing, shared mode is refused with a message naming the runtime, and the
   workspace keeps its legacy file. There is no second store implementation to
   fall back to.
@@ -510,9 +511,25 @@ Each step ships on its own and leaves the extension working.
    - Still open: in a generated multi-root window, `launch.json` and
      `startDebugging` still target `folders[0]/.vscode`, which is the first
      repository. That belongs in the workspace file's own `launch` section.
-2. **The shared store.** `SqliteMainStore`, Choose Data Store, the user-level
-   default, export/import, migration, change events, and testing mode moving to
-   the window.
+2. **The shared store — implemented.** `SqliteMainStore`
+   (`services/sqliteMainStore.ts`), the three-way merge
+   (`services/mergeDocuments.ts`), Choose Data Store / Export Data / Import
+   Data (`commands/dataStoreCommands.ts`, `services/dataImport.ts`), change
+   events through `PRAGMA data_version`, and testing mode per window with its
+   stash on the database (`DatabaseModel.testingModuleStates`). Where it
+   differs from the rest of this document:
+   - **One `documents` table**, keyed by `(kind, key)`, rather than a table per
+     kind; foreign keys and cascades wait for normalisation, when a query needs
+     them.
+   - **The legacy file is not renamed** after its data moves into a shared
+     store. Project workspaces generated before the move pin that file, and
+     renaming it would open them on an empty one - bug 6 again. It is simply no
+     longer the one in use.
+   - A `.db` store is honoured at user or workspace level; a `.json` store at
+     workspace level only. New installs still use the workspace file: the
+     shared store is opt-in, through Choose Data Store.
+   - Verified with three processes committing 200 times each to one file: no
+     update lost, a couple of hundred conflicts merged along the way.
 3. **Per-version repo locations**, workspace binding and the registry.
 4. **The upgrade plan** only copies shared directories; Start This Side; Open
    the Other Side.
@@ -578,9 +595,12 @@ on, since those can ship an older Electron.
 
 ## Open questions
 
-- Should shared mode become the default for new installs, once it has proven
-  itself, with legacy mode kept for existing workspaces?
-- Should testing mode's module stash move from the project to the database it
-  was taken from, to match the move of the testing flag to the workspace?
-- Is team sharing (several machines, one store) a goal? If it is, the
-  PostgreSQL backend moves from "possible later" to the build order.
+Answered 2026-09-29:
+
+- **Default for new installs:** the workspace file, for now. The shared store
+  is opt-in until it has been used for a while.
+- **Testing mode's module stash:** on the database it was taken from. That also
+  fixed turning testing off after switching databases, which restored one
+  database's marks onto another.
+- **Team sharing:** not a goal now. The store interface keeps a PostgreSQL
+  backend possible without rework.
