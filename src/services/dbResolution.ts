@@ -19,8 +19,10 @@ export interface VersionScopedDb {
 /**
  * Resolution order: the database the active upgrade pins to this version,
  * then the selected database when it belongs to this version, then the
- * database remembered for this version, then the selected database
- * regardless - which is the behaviour that existed before.
+ * database remembered for this version, then the selected database only when
+ * it belongs to no version at all (one from before databases had versions).
+ * A database of another version is never used: running 19.0 code against a
+ * 17.0 database is not a better default than asking for one.
  *
  * The selection comes before the memory so a window always launches the
  * database it shows as selected. The memory is for the other versions: the
@@ -48,6 +50,7 @@ export function resolveDbForVersion<T extends VersionScopedDb>(
         if (remembered) {
             return remembered;
         }
+        return selected && !selected.versionId ? selected : undefined;
     }
 
     return selected;

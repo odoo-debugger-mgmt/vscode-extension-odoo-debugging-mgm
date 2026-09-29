@@ -63,16 +63,20 @@ suite('Per-version database resolution', () => {
         assert.strictEqual(resolved?.id, 'shop-18');
     });
 
-    test('falls back to the selected database when nothing else matches', () => {
-        // v17 has no memory and the selection belongs to v18: still better
-        // than no -d at all, and matches the pre-existing global behaviour.
-        const resolved = resolveDbForVersion(DBS, {}, 'v17');
-        assert.strictEqual(resolved?.id, 'shop-18');
+    test('a database of another version is never used', () => {
+        // v17 has no memory and the selection belongs to v18. Running 17.0
+        // code against an 18.0 database is worse than asking for one.
+        assert.strictEqual(resolveDbForVersion(DBS, {}, 'v17'), undefined);
     });
 
     test('ignores a remembered database that no longer exists', () => {
-        const resolved = resolveDbForVersion(DBS, { v17: 'deleted-db' }, 'v17');
-        assert.strictEqual(resolved?.id, 'shop-18');
+        assert.strictEqual(resolveDbForVersion(DBS, { v17: 'deleted-db' }, 'v17'), undefined);
+    });
+
+    test('a selected database that belongs to no version still resolves', () => {
+        // Databases from before versions existed carry no versionId.
+        const legacy: VersionScopedDb[] = [{ id: 'old', isSelected: true }, { id: 'shop-18', versionId: 'v18' }];
+        assert.strictEqual(resolveDbForVersion(legacy, {}, 'v17')?.id, 'old');
     });
 
     test('resolves the selected database when no version is given', () => {

@@ -17,6 +17,7 @@ import { logger, errorMessage } from './services/logger';
 import {
     launchTarget,
     readManagedLaunchConfig,
+    removeManagedLaunchConfigIn,
     removeManagedLaunchConfigs,
     updateManagedLaunchConfigIn,
     type LaunchTarget
@@ -30,6 +31,9 @@ import { ensureCustomWorktrees } from './services/customWorktree';
 import { readSetupState } from './services/setupState';
 import { resolveProjectRepoBranchAssignments } from './services/environment';
 import { provisionExistingVersion } from './odooInstaller';
+
+/** Why prepareArgs refuses: no database of that version is selected. */
+const NO_DATABASE = 'Select a database before running this action.';
 
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
@@ -140,6 +144,8 @@ export async function setupDebugger(): Promise<any> {
     const setupRoot = readSetupState().provisioningRoot;
     const worktreeProblems = new Set<string>();
     const worktreesNeedingResolution = new Set<string>();
+    /** Versions whose entry is removed: no database of theirs is selected. */
+    const withoutDatabase = new Set<string>();
 
     let activeConfig: unknown;
 
@@ -170,12 +176,17 @@ export async function setupDebugger(): Promise<any> {
         try {
             args = await prepareArgs(project, settings as SettingsModel, { versionId: version.id });
         } catch (error) {
+            // No database of this version: the entry an earlier sync wrote
+            // still names the old one, so F5 would still launch it there.
+            if (error instanceof Error && error.message === NO_DATABASE) {
+                withoutDatabase.add(settings.debuggerName);
+            }
             // A version with no resolvable database is skipped rather than
             // failing the sync for every other version. Only the active one is
             // worth telling the user about.
             if (version.id === activeVersion?.id) {
                 logger.warn('Could not prepare debugger launch arguments:', error);
-                if (error instanceof Error && error.message === 'Select a database before running this action.') {
+                if (error instanceof Error && error.message === NO_DATABASE) {
                     void showInfo('Select a database before configuring the debugger.');
                 } else {
                     void showError(error instanceof Error ? error.message : 'Could not prepare debugger launch arguments.');
@@ -224,6 +235,16 @@ export async function setupDebugger(): Promise<any> {
             });
         } else {
             void showWarning(`Some repositories fell back to their source checkout — ${Array.from(worktreeProblems).join('; ')}`);
+        }
+    }
+
+    if (withoutDatabase.size > 0) {
+        const removed = await removeManagedLaunchConfigIn(target, withoutDatabase).catch(error => {
+            logger.warn('[debugger] could not remove launch entries of versions without a database:', error);
+            return 0;
+        });
+        if (removed > 0) {
+            logger.info(`[debugger] removed the launch entries of ${Array.from(withoutDatabase).join(', ')}: no database of that version is selected`);
         }
     }
 
@@ -278,7 +299,7 @@ async function prepareArgs(
 
     const db = dbForVersion(project, options.versionId);
     if (!db) {
-        throw new Error('Select a database before running this action.');
+        throw new Error(NO_DATABASE);
     }
     const projectModules = db.modules ?? [];
 
@@ -475,7 +496,7 @@ export async function buildOdooCommandLine(isShell = false): Promise<string | un
         });
     } catch (error) {
         if (error instanceof Error) {
-            if (error.message === 'Select a database before running this action.') {
+            if (error.message === NO_DATABASE) {
                 void showInfo('Select a database first.');
             } else {
                 void showError(error.message);

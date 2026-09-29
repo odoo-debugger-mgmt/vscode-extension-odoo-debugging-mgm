@@ -7,6 +7,7 @@ import {
     launchTarget,
     localWorkspaceFilePath,
     readManagedLaunchConfig,
+    removeManagedLaunchConfigIn,
     removeManagedLaunchConfigs,
     updateManagedLaunchConfig,
     updateManagedLaunchConfigIn,
@@ -286,5 +287,39 @@ suite('Reading a launch entry back to start it', () => {
         for (const filePath of [noSection, broken, other, path.join(os.tmpdir(), 'no-such.code-workspace')]) {
             assert.strictEqual(await readManagedLaunchConfig({ kind: 'workspaceFile', filePath }, 'odoo:17.0'), undefined, filePath);
         }
+    });
+});
+
+suite('Removing an entry from a workspace file', () => {
+    test('only the named entry goes; comments, the user\'s entries and the file stay', async () => {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'odoo-launch-rm-'));
+        const filePath = path.join(dir, 'acme.code-workspace');
+        await fs.writeFile(filePath, `{
+    // mine
+    "folders": [],
+    "launch": { "configurations": [
+        { "name": "odoo:19.0" },
+        { "name": "pytest" },
+        { "name": "odoo:17.0" }
+    ] }
+}
+`, 'utf8');
+
+        const removed = await removeManagedLaunchConfigIn({ kind: 'workspaceFile', filePath }, new Set(['odoo:19.0']));
+
+        const raw = await fs.readFile(filePath, 'utf8');
+        assert.strictEqual(removed, 1);
+        assert.deepStrictEqual(parse(raw).launch.configurations.map((conf: any) => conf.name), ['pytest', 'odoo:17.0']);
+        assert.ok(raw.includes('// mine'));
+    });
+
+    test('a workspace file with nothing of ours is not rewritten', async () => {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'odoo-launch-rm-'));
+        const filePath = path.join(dir, 'acme.code-workspace');
+        const content = '{ "folders": [] }';
+        await fs.writeFile(filePath, content, 'utf8');
+
+        assert.strictEqual(await removeManagedLaunchConfigIn({ kind: 'workspaceFile', filePath }, new Set(['odoo:19.0'])), 0);
+        assert.strictEqual(await fs.readFile(filePath, 'utf8'), content);
     });
 });

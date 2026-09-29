@@ -2842,6 +2842,7 @@ exports.localWorkspaceFilePath = localWorkspaceFilePath;
 exports.launchTarget = launchTarget;
 exports.updateManagedLaunchConfigIn = updateManagedLaunchConfigIn;
 exports.readManagedLaunchConfig = readManagedLaunchConfig;
+exports.removeManagedLaunchConfigIn = removeManagedLaunchConfigIn;
 exports.removeManagedLaunchConfigs = removeManagedLaunchConfigs;
 exports.updateManagedLaunchConfig = updateManagedLaunchConfig;
 const fs = __importStar(__webpack_require__(20));
@@ -2940,6 +2941,45 @@ async function readManagedLaunchConfig(target, name) {
     const found = configurations.find(conf => conf && typeof conf === 'object' && conf.name === name);
     return found ? { ...found } : undefined;
 }
+/**
+ * Removes the configurations named in `names` from wherever `target` keeps
+ * them. A workspace file is never deleted; a folder's launch.json goes as
+ * removeManagedLaunchConfigs decides. Returns the number removed.
+ */
+async function removeManagedLaunchConfigIn(target, names) {
+    if (target.kind === 'folder') {
+        return removeManagedLaunchConfigs(target.folderPath, names);
+    }
+    let raw;
+    try {
+        raw = await fs.readFile(target.filePath, 'utf8');
+    }
+    catch {
+        return 0;
+    }
+    const configurations = (0, jsonc_parser_1.parse)(raw)?.launch?.configurations;
+    if (!Array.isArray(configurations)) {
+        return 0;
+    }
+    const indexes = matchingIndexes(configurations, names);
+    for (const index of indexes) {
+        raw = (0, jsonc_parser_1.applyEdits)(raw, (0, jsonc_parser_1.modify)(raw, ['launch', 'configurations', index], undefined, EDIT_OPTIONS));
+    }
+    if (indexes.length > 0) {
+        await fs.writeFile(target.filePath, raw, 'utf8');
+    }
+    return indexes.length;
+}
+/** Indexes of the configurations named in `names`, last first, for removal. */
+function matchingIndexes(configurations, names) {
+    return configurations
+        .map((conf, index) => {
+        const name = conf && typeof conf === 'object' ? conf.name : undefined;
+        return typeof name === 'string' && names.has(name) ? index : -1;
+    })
+        .filter(index => index >= 0)
+        .reverse();
+}
 /** The skeleton's own comment lines, which do not make a launch.json the user's. */
 const SKELETON_COMMENTS = new Set(EMPTY_LAUNCH_CONTENT.split('\n')
     .map(line => line.trim())
@@ -2965,11 +3005,7 @@ async function removeManagedLaunchConfigs(folderPath, names) {
     if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.configurations)) {
         return 0;
     }
-    const configurations = parsed.configurations;
-    const indexes = configurations
-        .map((conf, index) => (typeof conf?.name === 'string' && names.has(conf.name) ? index : -1))
-        .filter(index => index >= 0)
-        .reverse();
+    const indexes = matchingIndexes(parsed.configurations, names);
     if (indexes.length === 0) {
         return 0;
     }
@@ -10209,8 +10245,10 @@ const upgrade_1 = __webpack_require__(40);
 /**
  * Resolution order: the database the active upgrade pins to this version,
  * then the selected database when it belongs to this version, then the
- * database remembered for this version, then the selected database
- * regardless - which is the behaviour that existed before.
+ * database remembered for this version, then the selected database only when
+ * it belongs to no version at all (one from before databases had versions).
+ * A database of another version is never used: running 19.0 code against a
+ * 17.0 database is not a better default than asking for one.
  *
  * The selection comes before the memory so a window always launches the
  * database it shows as selected. The memory is for the other versions: the
@@ -10232,6 +10270,7 @@ function resolveDbForVersion(dbs, selectedDbByVersion, versionId, pinned) {
         if (remembered) {
             return remembered;
         }
+        return selected && !selected.versionId ? selected : undefined;
     }
     return selected;
 }
@@ -18141,6 +18180,8 @@ const customWorktree_1 = __webpack_require__(55);
 const setupState_1 = __webpack_require__(67);
 const environment_1 = __webpack_require__(49);
 const odooInstaller_1 = __webpack_require__(62);
+/** Why prepareArgs refuses: no database of that version is selected. */
+const NO_DATABASE = 'Select a database before running this action.';
 // Databases we already told the user about; prepareArgs re-runs on every
 // debounced sync, so without this the toast repeats until the DB is initialized.
 const baseInstallNotifiedDbs = new Set();
@@ -18237,6 +18278,8 @@ async function setupDebugger() {
     const setupRoot = (0, setupState_1.readSetupState)().provisioningRoot;
     const worktreeProblems = new Set();
     const worktreesNeedingResolution = new Set();
+    /** Versions whose entry is removed: no database of theirs is selected. */
+    const withoutDatabase = new Set();
     let activeConfig;
     for (const version of targets) {
         const settings = version.settings;
@@ -18256,12 +18299,17 @@ async function setupDebugger() {
             args = await prepareArgs(project, settings, { versionId: version.id });
         }
         catch (error) {
+            // No database of this version: the entry an earlier sync wrote
+            // still names the old one, so F5 would still launch it there.
+            if (error instanceof Error && error.message === NO_DATABASE) {
+                withoutDatabase.add(settings.debuggerName);
+            }
             // A version with no resolvable database is skipped rather than
             // failing the sync for every other version. Only the active one is
             // worth telling the user about.
             if (version.id === activeVersion?.id) {
                 logger_1.logger.warn('Could not prepare debugger launch arguments:', error);
-                if (error instanceof Error && error.message === 'Select a database before running this action.') {
+                if (error instanceof Error && error.message === NO_DATABASE) {
                     void (0, utils_1.showInfo)('Select a database before configuring the debugger.');
                 }
                 else {
@@ -18311,6 +18359,15 @@ async function setupDebugger() {
             void (0, utils_1.showWarning)(`Some repositories fell back to their source checkout — ${Array.from(worktreeProblems).join('; ')}`);
         }
     }
+    if (withoutDatabase.size > 0) {
+        const removed = await (0, launchConfig_1.removeManagedLaunchConfigIn)(target, withoutDatabase).catch(error => {
+            logger_1.logger.warn('[debugger] could not remove launch entries of versions without a database:', error);
+            return 0;
+        });
+        if (removed > 0) {
+            logger_1.logger.info(`[debugger] removed the launch entries of ${Array.from(withoutDatabase).join(', ')}: no database of that version is selected`);
+        }
+    }
     // Every version's name, not only the provisioned ones written above.
     await cleanUpFirstFolderLaunch(target, versionsService.getVersions()
         .map(version => version.settings.debuggerName)
@@ -18350,7 +18407,7 @@ async function prepareArgs(project, settings, options = {}) {
     }
     const db = (0, dbResolution_1.dbForVersion)(project, options.versionId);
     if (!db) {
-        throw new Error('Select a database before running this action.');
+        throw new Error(NO_DATABASE);
     }
     const projectModules = db.modules ?? [];
     // psae-internal directories: resolved through the shared service so the
@@ -18515,7 +18572,7 @@ async function buildOdooCommandLine(isShell = false) {
     }
     catch (error) {
         if (error instanceof Error) {
-            if (error.message === 'Select a database before running this action.') {
+            if (error.message === NO_DATABASE) {
                 void (0, utils_1.showInfo)('Select a database first.');
             }
             else {

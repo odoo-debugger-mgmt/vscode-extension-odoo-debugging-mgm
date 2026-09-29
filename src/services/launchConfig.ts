@@ -134,6 +134,46 @@ export async function readManagedLaunchConfig(target: LaunchTarget, name: string
     return found ? { ...found } : undefined;
 }
 
+/**
+ * Removes the configurations named in `names` from wherever `target` keeps
+ * them. A workspace file is never deleted; a folder's launch.json goes as
+ * removeManagedLaunchConfigs decides. Returns the number removed.
+ */
+export async function removeManagedLaunchConfigIn(target: LaunchTarget, names: ReadonlySet<string>): Promise<number> {
+    if (target.kind === 'folder') {
+        return removeManagedLaunchConfigs(target.folderPath, names);
+    }
+    let raw: string;
+    try {
+        raw = await fs.readFile(target.filePath, 'utf8');
+    } catch {
+        return 0;
+    }
+    const configurations = (parse(raw) as { launch?: { configurations?: unknown } } | undefined)?.launch?.configurations;
+    if (!Array.isArray(configurations)) {
+        return 0;
+    }
+    const indexes = matchingIndexes(configurations, names);
+    for (const index of indexes) {
+        raw = applyEdits(raw, modify(raw, ['launch', 'configurations', index], undefined, EDIT_OPTIONS));
+    }
+    if (indexes.length > 0) {
+        await fs.writeFile(target.filePath, raw, 'utf8');
+    }
+    return indexes.length;
+}
+
+/** Indexes of the configurations named in `names`, last first, for removal. */
+function matchingIndexes(configurations: unknown[], names: ReadonlySet<string>): number[] {
+    return configurations
+        .map((conf, index) => {
+            const name = conf && typeof conf === 'object' ? (conf as { name?: unknown }).name : undefined;
+            return typeof name === 'string' && names.has(name) ? index : -1;
+        })
+        .filter(index => index >= 0)
+        .reverse();
+}
+
 /** The skeleton's own comment lines, which do not make a launch.json the user's. */
 const SKELETON_COMMENTS = new Set(EMPTY_LAUNCH_CONTENT.split('\n')
     .map(line => line.trim())
@@ -160,11 +200,7 @@ export async function removeManagedLaunchConfigs(folderPath: string, names: Read
         return 0;
     }
 
-    const configurations = parsed.configurations as Array<{ name?: unknown } | null>;
-    const indexes = configurations
-        .map((conf, index) => (typeof conf?.name === 'string' && names.has(conf.name) ? index : -1))
-        .filter(index => index >= 0)
-        .reverse();
+    const indexes = matchingIndexes(parsed.configurations, names);
     if (indexes.length === 0) {
         return 0;
     }
