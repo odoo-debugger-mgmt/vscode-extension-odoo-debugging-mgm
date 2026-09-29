@@ -10,6 +10,43 @@ import { randomUUID } from 'node:crypto';
 import type { DebuggerData } from '../utils';
 import { projectKey } from './workspaceSelection';
 
+/**
+ * The stored shapes as this module handles them: loosely, because it reads
+ * data from other stores and other machines, where any field may be missing.
+ */
+interface LooseVersion {
+    id?: string;
+    odooVersion?: unknown;
+    isActive?: boolean;
+    settings?: Record<string, unknown>;
+}
+interface LooseDb {
+    id?: string;
+    versionId?: unknown;
+    sqlFilePath?: unknown;
+    projectRepoBranches?: Array<{ repoPath?: unknown }>;
+}
+interface LooseSide {
+    versionId?: unknown;
+}
+interface LooseProject {
+    uid?: string;
+    name?: string;
+    dbs?: LooseDb[];
+    repos?: Array<{ name?: unknown; path?: unknown }>;
+    tickets?: Array<{ id?: unknown }>;
+    selectedDbByVersion?: Record<string, unknown>;
+    upgradeConfig?: { from?: LooseSide; to?: LooseSide; repos?: Array<{ repoPath?: unknown }> };
+}
+interface LooseData {
+    settings?: Record<string, unknown>;
+    projects?: LooseProject[];
+    versions?: Record<string, LooseVersion>;
+    dbTemplates?: Array<{ name?: unknown }>;
+}
+
+const loose = (data: DebuggerData) => structuredClone(data) as unknown as LooseData;
+
 /** Version settings that hold a single path. */
 const VERSION_PATH_KEYS = ['odooPath', 'enterprisePath', 'designThemesPath', 'customAddonsPath', 'pythonPath', 'dumpsFolder'];
 
@@ -43,9 +80,9 @@ function absolutizeSettings(settings: Record<string, unknown> | undefined, root:
  * window that reads it.
  */
 export function absolutizePaths(data: DebuggerData, root: string): DebuggerData {
-    const copy = structuredClone(data) as any;
+    const copy = loose(data);
     absolutizeSettings(copy.settings, root);
-    for (const version of Object.values(copy.versions ?? {}) as any[]) {
+    for (const version of Object.values(copy.versions ?? {})) {
         absolutizeSettings(version?.settings, root);
     }
     for (const project of copy.projects ?? []) {
@@ -62,7 +99,7 @@ export function absolutizePaths(data: DebuggerData, root: string): DebuggerData 
             entry.repoPath = absolute(entry.repoPath, root);
         }
     }
-    return copy as DebuggerData;
+    return copy as unknown as DebuggerData;
 }
 
 export interface MergeSummary {
@@ -114,33 +151,33 @@ function addMissing<T>(target: T[], incoming: T[] | undefined, key: (item: T) =>
  * the same version: every reference to its id is pointed at the existing one.
  */
 export function mergeData(target: DebuggerData, incoming: DebuggerData): { data: DebuggerData; summary: MergeSummary } {
-    const data = structuredClone(target) as any;
-    const source = structuredClone(incoming) as any;
+    const data = loose(target);
+    const source = loose(incoming);
     const summary: MergeSummary = {
         projectsAdded: 0, projectsMerged: 0, databasesAdded: 0, versionsAdded: 0, versionsMatched: 0, templatesAdded: 0
     };
 
-    data.projects = Array.isArray(data.projects) ? data.projects : [];
-    data.versions = data.versions ?? {};
-    data.dbTemplates = Array.isArray(data.dbTemplates) ? data.dbTemplates : [];
+    const projects: LooseProject[] = data.projects = Array.isArray(data.projects) ? data.projects : [];
+    const versions: Record<string, LooseVersion> = data.versions = data.versions ?? {};
+    const templates = data.dbTemplates = Array.isArray(data.dbTemplates) ? data.dbTemplates : [];
 
     // 1. Versions, and how incoming ids map onto this store's.
     const idMap = new Map<string, string>();
-    for (const [id, version] of Object.entries(source.versions ?? {}) as Array<[string, any]>) {
+    for (const [id, version] of Object.entries(source.versions ?? {})) {
         const branch = String(version?.odooVersion ?? '').trim();
-        const match = Object.entries(data.versions).find(([, existing]: [string, any]) =>
+        const match = Object.entries(versions).find(([, existing]) =>
             String(existing?.odooVersion ?? '').trim() === branch && branch !== '');
         if (match) {
             idMap.set(id, match[0]);
             summary.versionsMatched += 1;
             continue;
         }
-        const newId = data.versions[id] ? randomUUID() : id;
+        const newId = versions[id] ? randomUUID() : id;
         idMap.set(id, newId);
-        data.versions[newId] = { ...version, id: newId, isActive: false };
+        versions[newId] = { ...version, id: newId, isActive: false };
         summary.versionsAdded += 1;
     }
-    const remap = (id: unknown) => (typeof id === 'string' && idMap.has(id) ? idMap.get(id) : id);
+    const remap = (id: unknown): unknown => (typeof id === 'string' && idMap.has(id) ? idMap.get(id) : id);
 
     // 2. References to those versions inside the incoming projects.
     for (const project of source.projects ?? []) {
@@ -149,21 +186,21 @@ export function mergeData(target: DebuggerData, incoming: DebuggerData): { data:
         }
         if (project?.selectedDbByVersion) {
             project.selectedDbByVersion = Object.fromEntries(
-                Object.entries(project.selectedDbByVersion).map(([versionId, dbId]) => [remap(versionId), dbId]));
+                Object.entries(project.selectedDbByVersion).map(([versionId, dbId]) => [String(remap(versionId)), dbId]));
         }
-        for (const side of ['from', 'to']) {
-            if (project?.upgradeConfig?.[side]) {
-                project.upgradeConfig[side].versionId = remap(project.upgradeConfig[side].versionId);
+        for (const side of [project?.upgradeConfig?.from, project?.upgradeConfig?.to]) {
+            if (side) {
+                side.versionId = remap(side.versionId);
             }
         }
     }
 
     // 3. Projects: new ones whole, existing ones completed.
-    const byKey = new Map(data.projects.map((project: any) => [projectKey(project), project]));
+    const byKey = new Map(projects.map(project => [projectKey(project), project]));
     for (const project of source.projects ?? []) {
-        const existing: any = byKey.get(projectKey(project));
+        const existing = byKey.get(projectKey(project));
         if (!existing) {
-            data.projects.push(project);
+            projects.push(project);
             byKey.set(projectKey(project), project);
             summary.projectsAdded += 1;
             summary.databasesAdded += (project.dbs ?? []).length;
@@ -173,22 +210,22 @@ export function mergeData(target: DebuggerData, incoming: DebuggerData): { data:
         existing.dbs = existing.dbs ?? [];
         existing.repos = existing.repos ?? [];
         existing.tickets = existing.tickets ?? [];
-        summary.databasesAdded += addMissing(existing.dbs, project.dbs, (db: any) => db?.id);
-        addMissing(existing.repos, project.repos, (repo: any) => String(repo?.name ?? '').toLowerCase());
-        addMissing(existing.tickets, project.tickets, (ticket: any) => ticket?.id);
+        summary.databasesAdded += addMissing(existing.dbs, project.dbs, db => db?.id);
+        addMissing(existing.repos, project.repos, repo => String(repo?.name ?? '').toLowerCase());
+        addMissing(existing.tickets, project.tickets, ticket => ticket?.id);
         existing.selectedDbByVersion = { ...(project.selectedDbByVersion ?? {}), ...(existing.selectedDbByVersion ?? {}) };
     }
 
     // 4. Templates, by name.
-    summary.templatesAdded = addMissing(data.dbTemplates, source.dbTemplates, (template: any) => template?.name);
+    summary.templatesAdded = addMissing(templates, source.dbTemplates, template => template?.name);
 
     // 5. A legacy settings block only means something to a store with no
     // versions yet: anywhere else it would be migrated into a duplicate.
-    if (source.settings && !data.settings && Object.keys(data.versions).length === 0) {
+    if (source.settings && !data.settings && Object.keys(versions).length === 0) {
         data.settings = source.settings;
     }
 
-    return { data, summary };
+    return { data: data as unknown as DebuggerData, summary };
 }
 
 /** What an import file holds: an export, or a raw data file. */

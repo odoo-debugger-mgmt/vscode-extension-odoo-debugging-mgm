@@ -13941,10 +13941,10 @@ function moveTestingStashToDatabase(data) {
     let moved = false;
     for (const project of (data.projects ?? [])) {
         const stash = project?.testingConfig?.savedModuleStates;
-        if (!Array.isArray(stash)) {
+        if (!Array.isArray(stash) || !project.testingConfig) {
             continue;
         }
-        const db = (project.dbs ?? []).find((entry) => entry?.isSelected);
+        const db = (project.dbs ?? []).find(entry => entry?.isSelected);
         if (!db) {
             continue;
         }
@@ -24401,6 +24401,7 @@ exports.buildExport = buildExport;
 const path = __importStar(__webpack_require__(4));
 const node_crypto_1 = __webpack_require__(59);
 const workspaceSelection_1 = __webpack_require__(29);
+const loose = (data) => structuredClone(data);
 /** Version settings that hold a single path. */
 const VERSION_PATH_KEYS = ['odooPath', 'enterprisePath', 'designThemesPath', 'customAddonsPath', 'pythonPath', 'dumpsFolder'];
 function absolute(value, root) {
@@ -24431,7 +24432,7 @@ function absolutizeSettings(settings, root) {
  * window that reads it.
  */
 function absolutizePaths(data, root) {
-    const copy = structuredClone(data);
+    const copy = loose(data);
     absolutizeSettings(copy.settings, root);
     for (const version of Object.values(copy.versions ?? {})) {
         absolutizeSettings(version?.settings, root);
@@ -24490,27 +24491,27 @@ function addMissing(target, incoming, key) {
  * the same version: every reference to its id is pointed at the existing one.
  */
 function mergeData(target, incoming) {
-    const data = structuredClone(target);
-    const source = structuredClone(incoming);
+    const data = loose(target);
+    const source = loose(incoming);
     const summary = {
         projectsAdded: 0, projectsMerged: 0, databasesAdded: 0, versionsAdded: 0, versionsMatched: 0, templatesAdded: 0
     };
-    data.projects = Array.isArray(data.projects) ? data.projects : [];
-    data.versions = data.versions ?? {};
-    data.dbTemplates = Array.isArray(data.dbTemplates) ? data.dbTemplates : [];
+    const projects = data.projects = Array.isArray(data.projects) ? data.projects : [];
+    const versions = data.versions = data.versions ?? {};
+    const templates = data.dbTemplates = Array.isArray(data.dbTemplates) ? data.dbTemplates : [];
     // 1. Versions, and how incoming ids map onto this store's.
     const idMap = new Map();
     for (const [id, version] of Object.entries(source.versions ?? {})) {
         const branch = String(version?.odooVersion ?? '').trim();
-        const match = Object.entries(data.versions).find(([, existing]) => String(existing?.odooVersion ?? '').trim() === branch && branch !== '');
+        const match = Object.entries(versions).find(([, existing]) => String(existing?.odooVersion ?? '').trim() === branch && branch !== '');
         if (match) {
             idMap.set(id, match[0]);
             summary.versionsMatched += 1;
             continue;
         }
-        const newId = data.versions[id] ? (0, node_crypto_1.randomUUID)() : id;
+        const newId = versions[id] ? (0, node_crypto_1.randomUUID)() : id;
         idMap.set(id, newId);
-        data.versions[newId] = { ...version, id: newId, isActive: false };
+        versions[newId] = { ...version, id: newId, isActive: false };
         summary.versionsAdded += 1;
     }
     const remap = (id) => (typeof id === 'string' && idMap.has(id) ? idMap.get(id) : id);
@@ -24520,20 +24521,20 @@ function mergeData(target, incoming) {
             db.versionId = remap(db.versionId);
         }
         if (project?.selectedDbByVersion) {
-            project.selectedDbByVersion = Object.fromEntries(Object.entries(project.selectedDbByVersion).map(([versionId, dbId]) => [remap(versionId), dbId]));
+            project.selectedDbByVersion = Object.fromEntries(Object.entries(project.selectedDbByVersion).map(([versionId, dbId]) => [String(remap(versionId)), dbId]));
         }
-        for (const side of ['from', 'to']) {
-            if (project?.upgradeConfig?.[side]) {
-                project.upgradeConfig[side].versionId = remap(project.upgradeConfig[side].versionId);
+        for (const side of [project?.upgradeConfig?.from, project?.upgradeConfig?.to]) {
+            if (side) {
+                side.versionId = remap(side.versionId);
             }
         }
     }
     // 3. Projects: new ones whole, existing ones completed.
-    const byKey = new Map(data.projects.map((project) => [(0, workspaceSelection_1.projectKey)(project), project]));
+    const byKey = new Map(projects.map(project => [(0, workspaceSelection_1.projectKey)(project), project]));
     for (const project of source.projects ?? []) {
         const existing = byKey.get((0, workspaceSelection_1.projectKey)(project));
         if (!existing) {
-            data.projects.push(project);
+            projects.push(project);
             byKey.set((0, workspaceSelection_1.projectKey)(project), project);
             summary.projectsAdded += 1;
             summary.databasesAdded += (project.dbs ?? []).length;
@@ -24543,19 +24544,19 @@ function mergeData(target, incoming) {
         existing.dbs = existing.dbs ?? [];
         existing.repos = existing.repos ?? [];
         existing.tickets = existing.tickets ?? [];
-        summary.databasesAdded += addMissing(existing.dbs, project.dbs, (db) => db?.id);
-        addMissing(existing.repos, project.repos, (repo) => String(repo?.name ?? '').toLowerCase());
-        addMissing(existing.tickets, project.tickets, (ticket) => ticket?.id);
+        summary.databasesAdded += addMissing(existing.dbs, project.dbs, db => db?.id);
+        addMissing(existing.repos, project.repos, repo => String(repo?.name ?? '').toLowerCase());
+        addMissing(existing.tickets, project.tickets, ticket => ticket?.id);
         existing.selectedDbByVersion = { ...(project.selectedDbByVersion ?? {}), ...(existing.selectedDbByVersion ?? {}) };
     }
     // 4. Templates, by name.
-    summary.templatesAdded = addMissing(data.dbTemplates, source.dbTemplates, (template) => template?.name);
+    summary.templatesAdded = addMissing(templates, source.dbTemplates, template => template?.name);
     // 5. A legacy settings block only means something to a store with no
     // versions yet: anywhere else it would be migrated into a duplicate.
-    if (source.settings && !data.settings && Object.keys(data.versions).length === 0) {
+    if (source.settings && !data.settings && Object.keys(versions).length === 0) {
         data.settings = source.settings;
     }
-    return { data, summary };
+    return { data: data, summary };
 }
 /** What an import file holds: an export, or a raw data file. */
 function readImportFile(parsed) {

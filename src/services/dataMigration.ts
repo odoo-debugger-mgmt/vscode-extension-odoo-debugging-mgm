@@ -118,12 +118,16 @@ export function applyBranchNameMigration(data: DebuggerData): { changed: boolean
  */
 export function moveTestingStashToDatabase(data: Partial<DebuggerData>): boolean {
     let moved = false;
-    for (const project of (data.projects ?? []) as any[]) {
+    type LegacyProject = {
+        testingConfig?: { savedModuleStates?: unknown };
+        dbs?: Array<{ isSelected?: boolean; testingModuleStates?: unknown }>;
+    };
+    for (const project of (data.projects ?? []) as unknown as LegacyProject[]) {
         const stash = project?.testingConfig?.savedModuleStates;
-        if (!Array.isArray(stash)) {
+        if (!Array.isArray(stash) || !project.testingConfig) {
             continue;
         }
-        const db = (project.dbs ?? []).find((entry: any) => entry?.isSelected);
+        const db = (project.dbs ?? []).find(entry => entry?.isSelected);
         if (!db) {
             continue;
         }
