@@ -64,7 +64,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // Before anything reads the data: the selection it applies is part of
     // what VersionsService reads while initializing.
     await SettingsStore.initialize(context);
-    offerToReopenByPath();
+    offerToReopenByPath(context);
 
     const sortPreferences = new SortPreferences(context.workspaceState);
 

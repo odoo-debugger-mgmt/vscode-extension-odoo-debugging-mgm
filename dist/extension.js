@@ -95,7 +95,7 @@ async function activate(context) {
     // Before anything reads the data: the selection it applies is part of
     // what VersionsService reads while initializing.
     await settingsStore_1.SettingsStore.initialize(context);
-    (0, projectWorkspace_1.offerToReopenByPath)();
+    (0, projectWorkspace_1.offerToReopenByPath)(context);
     const sortPreferences = new sortPreferences_1.SortPreferences(context.workspaceState);
     // Initialize version management service
     const versionsService = versionsService_1.VersionsService.getInstance();
@@ -21073,19 +21073,30 @@ async function openProjectWorkspace(context) {
     await settingsStore_1.SettingsStore.handOffSelection(context, target);
     await vscode.commands.executeCommand('vscode.openFolder', target, forceNewWindow);
 }
+const REOPEN_MESSAGE = 'This workspace was opened in a way that keeps the Python debugger from running. '
+    + 'Reopen it from its file to fix that.';
 /**
  * A project workspace opened by an earlier build - and reopened from the
- * Recent list since - still carries its vscode-userdata URI. Says once, in
- * that window, how to get the debugger working.
+ * Recent list since - still carries its vscode-userdata URI. Says so once, in
+ * that window, and keeps a status bar item up until it is reopened: the
+ * message alone hides itself before it can be clicked.
  */
-function offerToReopenByPath() {
+function offerToReopenByPath(context) {
     const workspaceFile = vscode.workspace.workspaceFile;
     if (workspaceFile?.scheme !== 'vscode-userdata') {
         return;
     }
-    void (0, utils_1.showInfo)('This workspace was opened in a way that keeps the Python debugger from running. Reopen it from its file to fix that.', 'Reopen It').then(choice => {
+    const reopen = () => vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(workspaceFile.fsPath), false);
+    const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    item.text = '$(warning) Reopen for debugger';
+    item.tooltip = REOPEN_MESSAGE;
+    item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    item.command = 'odt.workspace.reopenByPath';
+    item.show();
+    context.subscriptions.push(item, vscode.commands.registerCommand('odt.workspace.reopenByPath', reopen));
+    void (0, utils_1.showInfo)(REOPEN_MESSAGE, 'Reopen It').then(choice => {
         if (choice === 'Reopen It') {
-            void vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(workspaceFile.fsPath), false);
+            void reopen();
         }
     });
 }

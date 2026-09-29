@@ -162,22 +162,33 @@ export async function openProjectWorkspace(context: vscode.ExtensionContext): Pr
     await vscode.commands.executeCommand('vscode.openFolder', target, forceNewWindow);
 }
 
+const REOPEN_MESSAGE = 'This workspace was opened in a way that keeps the Python debugger from running. '
+    + 'Reopen it from its file to fix that.';
+
 /**
  * A project workspace opened by an earlier build - and reopened from the
- * Recent list since - still carries its vscode-userdata URI. Says once, in
- * that window, how to get the debugger working.
+ * Recent list since - still carries its vscode-userdata URI. Says so once, in
+ * that window, and keeps a status bar item up until it is reopened: the
+ * message alone hides itself before it can be clicked.
  */
-export function offerToReopenByPath(): void {
+export function offerToReopenByPath(context: vscode.ExtensionContext): void {
     const workspaceFile = vscode.workspace.workspaceFile;
     if (workspaceFile?.scheme !== 'vscode-userdata') {
         return;
     }
-    void showInfo(
-        'This workspace was opened in a way that keeps the Python debugger from running. Reopen it from its file to fix that.',
-        'Reopen It'
-    ).then(choice => {
+    const reopen = () => vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(workspaceFile.fsPath), false);
+
+    const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    item.text = '$(warning) Reopen for debugger';
+    item.tooltip = REOPEN_MESSAGE;
+    item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    item.command = 'odt.workspace.reopenByPath';
+    item.show();
+    context.subscriptions.push(item, vscode.commands.registerCommand('odt.workspace.reopenByPath', reopen));
+
+    void showInfo(REOPEN_MESSAGE, 'Reopen It').then(choice => {
         if (choice === 'Reopen It') {
-            void vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(workspaceFile.fsPath), false);
+            void reopen();
         }
     });
 }
