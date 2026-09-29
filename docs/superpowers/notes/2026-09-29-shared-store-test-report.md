@@ -5,7 +5,59 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds three runs, newest first. The earlier runs are kept unchanged.
+This file holds four runs, newest first. The earlier runs are kept unchanged.
+
+# Fourth run: the first-setup move-off list (`9405f86`)
+
+**Scope:** as asked:
+- the test suite;
+- one fresh, first-time upgrade setup, to check the "Move this checkout off"
+  list.
+
+**Setup:** a new throwaway profile (`HOME=/tmp/claude/bj`), so there was no
+remembered upgrade, no copies under `~/odoo-dev` and no window state.
+- Window A read its own `.vscode/odoo-debugger-data.json`, reset to the seed.
+  That seed has no `upgradeConfig`, no `branchMode` and no
+  `projectRepoBranches`.
+- The acme copies from the third run were removed, and the acme clone was put
+  back on `17.0-dev`. Its branches were `17.0-dev`, `main` and `parking`.
+
+## Verdict (fourth run)
+
+**Finding 11 is fixed.** On a first setup, "Move this checkout off" offered
+only `parking`. The setup then finished and built both copies.
+
+## Test suite: matched
+
+- VS Code 1.139.1: **430 passing, 0 failing, 0 pending**.
+- The new test `the branch the other side of an upgrade needs is not offered
+  to move onto` ran and passed.
+
+## First-time upgrade setup: matched
+
+1. **Set Up an Upgrade** asked for the source database, with no pair filled
+   in. I picked acme-db1 (17.0) as the source and acme-db19 (19.0) as the
+   target.
+2. **The branch for 19.0:** the list offered `main` and `parking`. I picked
+   `main`.
+3. **The plan** read acme-db1 → acme-db19, acme from `17.0-dev` to `main`. The
+   confirmation named two new copies: `…/odoo-dev/acme@17.0-dev` and
+   `…/odoo-dev/acme@main`. I clicked Set It Up.
+4. **The modal:** "Your checkout of "acme" is on "17.0-dev". …" I chose Move
+   to Another Branch.
+5. **"Move this checkout off "17.0-dev"" listed `parking` and nothing else.**
+   `main` was left out, and so was `17.0-dev`, the branch being freed.
+6. **After I picked `parking`:**
+   - the log says "[worktree] moved /tmp/odt-brief/repos/acme to parking to
+     free 17.0-dev";
+   - the toast "Upgrade set up: 17.0 → 19.0." appeared, with Start Both
+     Servers;
+   - `git worktree list` shows the source on `[parking]`, plus
+     `acme@17.0-dev [17.0-dev]` and `acme@main [main]`;
+   - no problem was reported.
+7. **The log** had no errors. Its warnings come from the fixture, as in the
+   earlier runs: no real PostgreSQL databases, a fake Odoo source that is not
+   a git repository, and no Python extension to set the interpreter.
 
 # Third run: the second round of fixes (`e8741b9`)
 
