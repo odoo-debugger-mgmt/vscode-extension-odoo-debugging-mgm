@@ -9026,6 +9026,7 @@ exports.branchSatisfiesTarget = branchSatisfiesTarget;
 exports.parseWorktreeList = parseWorktreeList;
 exports.findWorktreeForBranch = findWorktreeForBranch;
 exports.classifyBranchConflict = classifyBranchConflict;
+exports.branchesHeldByWorktrees = branchesHeldByWorktrees;
 exports.ensureWorktree = ensureWorktree;
 exports.worktreeAlreadySatisfies = worktreeAlreadySatisfies;
 exports.ensureRealBranchWorktree = ensureRealBranchWorktree;
@@ -9097,6 +9098,11 @@ function classifyBranchConflict(entries, managedBranch, destPath, exists) {
 async function listWorktrees(repoPath) {
     const { stdout } = await (0, process_1.runCommand)('git', ['worktree', 'list', '--porcelain'], { cwd: repoPath });
     return parseWorktreeList(stdout);
+}
+/** Branches checked out in any worktree of the repository, its own included. */
+async function branchesHeldByWorktrees(repoPath) {
+    const entries = await listWorktrees(repoPath);
+    return new Set(entries.map(entry => entry.branch).filter((branch) => !!branch));
 }
 async function hasRef(repoPath, ref) {
     try {
@@ -9460,6 +9466,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.branchesToMoveTo = branchesToMoveTo;
 exports.ensureCustomWorktrees = ensureCustomWorktrees;
 /**
  * Creates the worktrees a set of resolved repositories needs, resolving the
@@ -9479,11 +9486,33 @@ async function dirtyFiles(repoPath) {
     const stdout = await (0, process_1.tryRunCommand)('git', ['status', '--porcelain'], { cwd: repoPath });
     return stdout === undefined ? [] : (0, sourceConflict_1.parsePorcelainStatus)(stdout);
 }
-/** Branches the source could move to, excluding the one being freed. */
-async function pickOtherBranch(sourcePath, exclude) {
-    const names = (await (0, gitService_1.listAllBranches)(sourcePath)).filter(name => name !== exclude);
+/**
+ * The branches a source checkout can move to: not the one being freed, not
+ * one another worktree holds (git refuses a second checkout of it), and not
+ * one this run is about to give its own worktree. A remote-only branch is
+ * offered by its short name, which `git switch` turns into a tracking branch.
+ */
+function branchesToMoveTo(names, exclude, held, reserved) {
+    const local = new Set(names.filter(name => !name.includes('/')));
+    const offered = [];
+    for (const name of names) {
+        const slash = name.indexOf('/');
+        const short = slash < 0 ? name : name.slice(slash + 1);
+        if (slash >= 0 && (short === 'HEAD' || !short || local.has(short))) {
+            continue;
+        }
+        if (short === exclude || held.has(short) || reserved.has(short) || offered.includes(short)) {
+            continue;
+        }
+        offered.push(short);
+    }
+    return offered;
+}
+async function pickOtherBranch(sourcePath, exclude, reserved) {
+    const names = branchesToMoveTo(await (0, gitService_1.listAllBranches)(sourcePath), exclude, await (0, worktree_1.branchesHeldByWorktrees)(sourcePath), reserved);
     if (names.length === 0) {
-        void (0, notifications_1.showWarning)(`"${sourcePath}" has no other branch to move to. Detach it instead, or create a branch first.`);
+        void (0, notifications_1.showWarning)(`"${sourcePath}" has no free branch to move to: the others are checked out in worktrees, `
+            + 'or needed by this one. Detach it instead, or create a branch first.');
         return undefined;
     }
     return vscode.window.showQuickPick(names, {
@@ -9502,7 +9531,7 @@ async function pickOtherBranch(sourcePath, exclude) {
  * running `git switch` in a directory they own is worse. Non-interactive
  * callers report the conflict instead and leave the decision to the offer.
  */
-async function freeBranch(sourcePath, repoName, branch, interactive) {
+async function freeBranch(sourcePath, repoName, branch, interactive, reserved) {
     const conflict = (0, sourceConflict_1.classifySourceConflict)(await (0, branches_1.getRepoBranch)(sourcePath), branch, await dirtyFiles(sourcePath));
     if (conflict.kind === 'none') {
         return true;
@@ -9522,7 +9551,7 @@ async function freeBranch(sourcePath, repoName, branch, interactive) {
     // works and tooling that rejects a detached HEAD keeps working.
     const choice = await (0, notifications_1.showModalWarning)(message, 'Move to Another Branch', 'Detach It');
     if (choice === 'Move to Another Branch') {
-        const target = await pickOtherBranch(sourcePath, branch);
+        const target = await pickOtherBranch(sourcePath, branch, reserved);
         if (!target) {
             return false;
         }
@@ -9565,7 +9594,11 @@ async function ensureCustomWorktrees(resolved, token, options = {}) {
             // anyway is how a correctly built set of copies kept raising the
             // "using the source checkout" modal on every refresh.
             const satisfied = await (0, worktree_1.worktreeAlreadySatisfies)(sourcePath, entry.branch, entry.path);
-            if (!satisfied && !(await freeBranch(sourcePath, entry.repo.name, entry.branch, interactive))) {
+            // The branches this run gives other copies of the same repository.
+            const reserved = new Set(resolved
+                .filter(other => other.isWorktree && other.branch && other.repo.path === sourcePath)
+                .map(other => other.branch));
+            if (!satisfied && !(await freeBranch(sourcePath, entry.repo.name, entry.branch, interactive, reserved))) {
                 problems.push(`${entry.repo.name}: could not free "${entry.branch}" from its source checkout`);
                 needsResolution.push(entry.repo.name);
                 ready.push({ ...entry, path: sourcePath, isWorktree: false });

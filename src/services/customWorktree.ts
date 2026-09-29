@@ -8,7 +8,7 @@ import { runCommand, tryRunCommand } from './process';
 import { logger, errorMessage } from './logger';
 import { showModalWarning, showWarning } from './notifications';
 import { getRepoBranch } from './branches';
-import { ensureRealBranchWorktree, worktreeAlreadySatisfies } from './worktree';
+import { branchesHeldByWorktrees, ensureRealBranchWorktree, worktreeAlreadySatisfies } from './worktree';
 import { invalidateGitBranchCache } from './runtimeCache';
 import { listAllBranches } from './gitService';
 import { classifySourceConflict, describeSourceConflict, parsePorcelainStatus } from './sourceConflict';
@@ -19,11 +19,46 @@ async function dirtyFiles(repoPath: string): Promise<string[]> {
     return stdout === undefined ? [] : parsePorcelainStatus(stdout);
 }
 
-/** Branches the source could move to, excluding the one being freed. */
-async function pickOtherBranch(sourcePath: string, exclude: string): Promise<string | undefined> {
-    const names = (await listAllBranches(sourcePath)).filter(name => name !== exclude);
+/**
+ * The branches a source checkout can move to: not the one being freed, not
+ * one another worktree holds (git refuses a second checkout of it), and not
+ * one this run is about to give its own worktree. A remote-only branch is
+ * offered by its short name, which `git switch` turns into a tracking branch.
+ */
+export function branchesToMoveTo(
+    names: string[],
+    exclude: string,
+    held: ReadonlySet<string>,
+    reserved: ReadonlySet<string>
+): string[] {
+    const local = new Set(names.filter(name => !name.includes('/')));
+    const offered: string[] = [];
+    for (const name of names) {
+        const slash = name.indexOf('/');
+        const short = slash < 0 ? name : name.slice(slash + 1);
+        if (slash >= 0 && (short === 'HEAD' || !short || local.has(short))) {
+            continue;
+        }
+        if (short === exclude || held.has(short) || reserved.has(short) || offered.includes(short)) {
+            continue;
+        }
+        offered.push(short);
+    }
+    return offered;
+}
+
+async function pickOtherBranch(sourcePath: string, exclude: string, reserved: ReadonlySet<string>): Promise<string | undefined> {
+    const names = branchesToMoveTo(
+        await listAllBranches(sourcePath),
+        exclude,
+        await branchesHeldByWorktrees(sourcePath),
+        reserved
+    );
     if (names.length === 0) {
-        void showWarning(`"${sourcePath}" has no other branch to move to. Detach it instead, or create a branch first.`);
+        void showWarning(
+            `"${sourcePath}" has no free branch to move to: the others are checked out in worktrees, `
+            + 'or needed by this one. Detach it instead, or create a branch first.'
+        );
         return undefined;
     }
     return vscode.window.showQuickPick(names, {
@@ -47,7 +82,8 @@ async function freeBranch(
     sourcePath: string,
     repoName: string,
     branch: string,
-    interactive: boolean
+    interactive: boolean,
+    reserved: ReadonlySet<string>
 ): Promise<boolean> {
     const conflict = classifySourceConflict(
         await getRepoBranch(sourcePath),
@@ -76,7 +112,7 @@ async function freeBranch(
     // works and tooling that rejects a detached HEAD keeps working.
     const choice = await showModalWarning(message, 'Move to Another Branch', 'Detach It');
     if (choice === 'Move to Another Branch') {
-        const target = await pickOtherBranch(sourcePath, branch);
+        const target = await pickOtherBranch(sourcePath, branch, reserved);
         if (!target) {
             return false;
         }
@@ -129,7 +165,11 @@ export async function ensureCustomWorktrees(
             // "using the source checkout" modal on every refresh.
             const satisfied = await worktreeAlreadySatisfies(sourcePath, entry.branch, entry.path);
 
-            if (!satisfied && !(await freeBranch(sourcePath, entry.repo.name, entry.branch, interactive))) {
+            // The branches this run gives other copies of the same repository.
+            const reserved = new Set(resolved
+                .filter(other => other.isWorktree && other.branch && other.repo.path === sourcePath)
+                .map(other => other.branch!));
+            if (!satisfied && !(await freeBranch(sourcePath, entry.repo.name, entry.branch, interactive, reserved))) {
                 problems.push(`${entry.repo.name}: could not free "${entry.branch}" from its source checkout`);
                 needsResolution.push(entry.repo.name);
                 ready.push({ ...entry, path: sourcePath, isWorktree: false });

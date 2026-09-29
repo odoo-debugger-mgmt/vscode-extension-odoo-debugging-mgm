@@ -108,6 +108,12 @@ async function listWorktrees(repoPath: string): Promise<WorktreeEntry[]> {
     return parseWorktreeList(stdout);
 }
 
+/** Branches checked out in any worktree of the repository, its own included. */
+export async function branchesHeldByWorktrees(repoPath: string): Promise<Set<string>> {
+    const entries = await listWorktrees(repoPath);
+    return new Set(entries.map(entry => entry.branch).filter((branch): branch is string => !!branch));
+}
+
 async function hasRef(repoPath: string, ref: string): Promise<boolean> {
     try {
         await runCommand('git', ['rev-parse', '--verify', '--quiet', ref], { cwd: repoPath });
