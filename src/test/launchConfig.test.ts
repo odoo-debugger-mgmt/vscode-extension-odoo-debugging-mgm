@@ -6,6 +6,7 @@ import { parse } from 'jsonc-parser';
 import {
     launchTarget,
     localWorkspaceFilePath,
+    readManagedLaunchConfig,
     removeManagedLaunchConfigs,
     updateManagedLaunchConfig,
     updateManagedLaunchConfigIn,
@@ -248,5 +249,42 @@ suite('Taking our entries back out of a repository', () => {
 
         assert.strictEqual(await removeManagedLaunchConfigs(dir, new Set(['odoo:17.0'])), 0);
         assert.strictEqual(await fs.readFile(path.join(dir, '.vscode', 'launch.json'), 'utf8'), content);
+    });
+});
+
+suite('Reading a launch entry back to start it', () => {
+    async function file(name: string, content: string): Promise<string> {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'odoo-launch-read-'));
+        const full = path.join(dir, name);
+        await fs.mkdir(path.dirname(full), { recursive: true });
+        await fs.writeFile(full, content, 'utf8');
+        return full;
+    }
+
+    test('finds our entry in a workspace file\'s launch section', async () => {
+        // Start Server passes it as itself: VS Code does not look a name up there.
+        const filePath = await file('acme.code-workspace',
+            '{ "folders": [], "launch": { "configurations": [{ "name": "odoo:17.0", "args": ["-d", "db1"] }] } }');
+
+        const entry = await readManagedLaunchConfig({ kind: 'workspaceFile', filePath }, 'odoo:17.0');
+
+        assert.deepStrictEqual(entry, { name: 'odoo:17.0', args: ['-d', 'db1'] });
+    });
+
+    test('finds it in a folder\'s launch.json too', async () => {
+        const filePath = await file('.vscode/launch.json', '{ "configurations": [{ "name": "odoo:17.0" }] }');
+        const target = { kind: 'folder' as const, folderPath: path.dirname(path.dirname(filePath)), filePath };
+
+        assert.strictEqual((await readManagedLaunchConfig(target, 'odoo:17.0'))?.name, 'odoo:17.0');
+    });
+
+    test('nothing to start: a missing name, section or file, or one that does not parse', async () => {
+        const noSection = await file('a.code-workspace', '{ "folders": [] }');
+        const broken = await file('b.code-workspace', '{ "launch": ');
+        const other = await file('c.code-workspace', '{ "launch": { "configurations": [{ "name": "pytest" }] } }');
+
+        for (const filePath of [noSection, broken, other, path.join(os.tmpdir(), 'no-such.code-workspace')]) {
+            assert.strictEqual(await readManagedLaunchConfig({ kind: 'workspaceFile', filePath }, 'odoo:17.0'), undefined, filePath);
+        }
     });
 });

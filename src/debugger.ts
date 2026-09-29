@@ -14,7 +14,13 @@ import { VersionsService } from './versionsService';
 import { ensureTestingConfigModel } from './models/testing';
 import { getInstalledModuleNames, databaseHasModuleTable } from './services/database';
 import { logger, errorMessage } from './services/logger';
-import { launchTarget, removeManagedLaunchConfigs, updateManagedLaunchConfigIn, type LaunchTarget } from './services/launchConfig';
+import {
+    launchTarget,
+    readManagedLaunchConfig,
+    removeManagedLaunchConfigs,
+    updateManagedLaunchConfigIn,
+    type LaunchTarget
+} from './services/launchConfig';
 import { currentDataLocation } from './services/dataLocation';
 import { getSessionByName, runningDebuggerNames, resolveStopTarget } from './services/debugSessions';
 import { dbForVersion } from './services/dbResolution';
@@ -611,25 +617,38 @@ export async function startServerForVersion(
         return { ok: false, message };
     }
 
+    const notWritten = () => {
+        const message = `Could not start "${settings.debuggerName}". Its launch entry may not be written yet.`;
+        if (!options.quiet) {
+            void showError(message);
+        }
+        return { ok: false, message };
+    };
+
+    // Found before anything is stopped: a start that cannot happen must not
+    // take the running server of this version down with it.
+    const target = currentLaunchTarget();
+    const entry = target ? await readManagedLaunchConfig(target, settings.debuggerName) : undefined;
+    if (!target || !entry) {
+        return notWritten();
+    }
+
     // Restarting this version stops only this version's session; other
     // versions running side by side must survive.
     const existingSession = getSessionByName(settings.debuggerName);
     if (existingSession) {
         await vscode.debug.stopDebugging(existingSession);
     }
-    // Configurations in a workspace file belong to no folder: VS Code only
-    // finds them when no folder is given.
+    // VS Code looks a configuration up by name only in a folder's
+    // launch.json, so an entry in a workspace file is passed as itself. Its
+    // name is the session's name either way, which Stop and Restart rely on.
     const started = await vscode.debug.startDebugging(
-        currentLaunchTarget()?.kind === 'workspaceFile' ? undefined : workspaceFolders[0],
-        settings.debuggerName,
+        workspaceFolders[0],
+        target.kind === 'workspaceFile' ? entry as vscode.DebugConfiguration : settings.debuggerName,
         { noDebug: options.noDebug === true }
     );
     if (!started) {
-        const message = `Could not start "${settings.debuggerName}". Its launch entry may not be written yet.`;
-        if (!options.quiet) {
-            void showError(message);
-        }
-        return { ok: false, message };
+        return notWritten();
     }
     return { ok: true };
 }

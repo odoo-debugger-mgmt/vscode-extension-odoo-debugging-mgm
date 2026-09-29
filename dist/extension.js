@@ -2841,6 +2841,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.localWorkspaceFilePath = localWorkspaceFilePath;
 exports.launchTarget = launchTarget;
 exports.updateManagedLaunchConfigIn = updateManagedLaunchConfigIn;
+exports.readManagedLaunchConfig = readManagedLaunchConfig;
 exports.removeManagedLaunchConfigs = removeManagedLaunchConfigs;
 exports.updateManagedLaunchConfig = updateManagedLaunchConfig;
 const fs = __importStar(__webpack_require__(20));
@@ -2918,6 +2919,26 @@ async function updateManagedLaunchConfigIn(target, managedConfig) {
     const { text, merged } = upsertIn(raw, ['launch', 'configurations'], parsed.launch, managedConfig);
     await fs.writeFile(target.filePath, text, 'utf8');
     return merged;
+}
+/**
+ * The launch configuration named `name`, as `target` holds it, or undefined
+ * when it is not there (yet) or the file cannot be read.
+ */
+async function readManagedLaunchConfig(target, name) {
+    let raw;
+    try {
+        raw = await fs.readFile(target.filePath, 'utf8');
+    }
+    catch {
+        return undefined;
+    }
+    const parsed = (0, jsonc_parser_1.parse)(raw);
+    const configurations = target.kind === 'folder' ? parsed?.configurations : parsed?.launch?.configurations;
+    if (!Array.isArray(configurations)) {
+        return undefined;
+    }
+    const found = configurations.find(conf => conf && typeof conf === 'object' && conf.name === name);
+    return found ? { ...found } : undefined;
 }
 /** The skeleton's own comment lines, which do not make a launch.json the user's. */
 const SKELETON_COMMENTS = new Set(EMPTY_LAUNCH_CONTENT.split('\n')
@@ -18624,21 +18645,32 @@ async function startServerForVersion(versionId, options = {}) {
         }
         return { ok: false, message };
     }
+    const notWritten = () => {
+        const message = `Could not start "${settings.debuggerName}". Its launch entry may not be written yet.`;
+        if (!options.quiet) {
+            void (0, utils_1.showError)(message);
+        }
+        return { ok: false, message };
+    };
+    // Found before anything is stopped: a start that cannot happen must not
+    // take the running server of this version down with it.
+    const target = currentLaunchTarget();
+    const entry = target ? await (0, launchConfig_1.readManagedLaunchConfig)(target, settings.debuggerName) : undefined;
+    if (!target || !entry) {
+        return notWritten();
+    }
     // Restarting this version stops only this version's session; other
     // versions running side by side must survive.
     const existingSession = (0, debugSessions_1.getSessionByName)(settings.debuggerName);
     if (existingSession) {
         await vscode.debug.stopDebugging(existingSession);
     }
-    // Configurations in a workspace file belong to no folder: VS Code only
-    // finds them when no folder is given.
-    const started = await vscode.debug.startDebugging(currentLaunchTarget()?.kind === 'workspaceFile' ? undefined : workspaceFolders[0], settings.debuggerName, { noDebug: options.noDebug === true });
+    // VS Code looks a configuration up by name only in a folder's
+    // launch.json, so an entry in a workspace file is passed as itself. Its
+    // name is the session's name either way, which Stop and Restart rely on.
+    const started = await vscode.debug.startDebugging(workspaceFolders[0], target.kind === 'workspaceFile' ? entry : settings.debuggerName, { noDebug: options.noDebug === true });
     if (!started) {
-        const message = `Could not start "${settings.debuggerName}". Its launch entry may not be written yet.`;
-        if (!options.quiet) {
-            void (0, utils_1.showError)(message);
-        }
-        return { ok: false, message };
+        return notWritten();
     }
     return { ok: true };
 }

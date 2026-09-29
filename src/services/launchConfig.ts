@@ -114,6 +114,26 @@ export async function updateManagedLaunchConfigIn(target: LaunchTarget, managedC
     return merged;
 }
 
+/**
+ * The launch configuration named `name`, as `target` holds it, or undefined
+ * when it is not there (yet) or the file cannot be read.
+ */
+export async function readManagedLaunchConfig(target: LaunchTarget, name: string): Promise<Record<string, unknown> | undefined> {
+    let raw: string;
+    try {
+        raw = await fs.readFile(target.filePath, 'utf8');
+    } catch {
+        return undefined;
+    }
+    const parsed = parse(raw) as { configurations?: unknown; launch?: { configurations?: unknown } } | undefined;
+    const configurations = target.kind === 'folder' ? parsed?.configurations : parsed?.launch?.configurations;
+    if (!Array.isArray(configurations)) {
+        return undefined;
+    }
+    const found = configurations.find(conf => conf && typeof conf === 'object' && conf.name === name);
+    return found ? { ...found } : undefined;
+}
+
 /** The skeleton's own comment lines, which do not make a launch.json the user's. */
 const SKELETON_COMMENTS = new Set(EMPTY_LAUNCH_CONTENT.split('\n')
     .map(line => line.trim())
