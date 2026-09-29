@@ -548,7 +548,9 @@ Each step ships on its own and leaves the extension working.
      toggled from another window (the selection now comes before the memory);
      a refused save read as a command crash; two views still raised "No
      project is selected."; and the move-off picker offered a branch another
-     worktree held.
+     worktree held. A third run confirmed those, except that a first upgrade setup
+     still offered the branch its other side was about to use; both sides
+     are now resolved before either is built.
 3. **Per-version repo locations**, workspace binding and the registry.
 4. **The upgrade plan** only copies shared directories; Start This Side; Open
    the Other Side.
