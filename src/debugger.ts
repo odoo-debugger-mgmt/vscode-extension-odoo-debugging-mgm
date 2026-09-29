@@ -14,7 +14,8 @@ import { VersionsService } from './versionsService';
 import { ensureTestingConfigModel } from './models/testing';
 import { getInstalledModuleNames, databaseHasModuleTable } from './services/database';
 import { logger, errorMessage } from './services/logger';
-import { updateManagedLaunchConfig } from './services/launchConfig';
+import { launchTarget, removeManagedLaunchConfigs, updateManagedLaunchConfigIn, type LaunchTarget } from './services/launchConfig';
+import { currentDataLocation } from './services/dataLocation';
 import { getSessionByName, runningDebuggerNames, resolveStopTarget } from './services/debugSessions';
 import { dbForVersion } from './services/dbResolution';
 import { isVersionProvisioned } from './services/provisioning';
@@ -59,11 +60,52 @@ async function selectPythonInterpreter(pythonPath: string): Promise<void> {
     }
 }
 
+/** Where this window's launch configurations live (see launchTarget). */
+export function currentLaunchTarget(): LaunchTarget | undefined {
+    return launchTarget(
+        vscode.workspace.workspaceFile,
+        (vscode.workspace.workspaceFolders ?? []).map(folder => folder.uri.fsPath)
+    );
+}
+
+/**
+ * The directory Odoo runs in: the workspace the data belongs to. In a folder
+ * window that is the folder; in a generated project workspace, whose first
+ * folder is a repository, it is the workspace the data came from.
+ */
+function runDirectory(workspacePath: string): string {
+    return currentDataLocation()?.root ?? workspacePath;
+}
+
+/** Workspace files whose first folder has already been cleaned this session. */
+const cleanedFirstFolders = new Set<string>();
+
+/**
+ * Takes our entries back out of a multi-root workspace's first folder, where
+ * earlier builds wrote them - usually the user's own repository.
+ */
+async function cleanUpFirstFolderLaunch(target: LaunchTarget, names: string[]): Promise<void> {
+    if (target.kind !== 'workspaceFile' || !target.firstFolderPath || cleanedFirstFolders.has(target.filePath)) {
+        return;
+    }
+    cleanedFirstFolders.add(target.filePath);
+    try {
+        const removed = await removeManagedLaunchConfigs(target.firstFolderPath, new Set(names));
+        if (removed > 0) {
+            logger.info(`[debugger] moved ${removed} launch entr${removed === 1 ? 'y' : 'ies'} out of ${target.firstFolderPath} into ${target.filePath}`);
+        }
+    } catch (error) {
+        logger.warn(`[debugger] could not clean up ${target.firstFolderPath}/.vscode/launch.json:`, error);
+    }
+}
+
 export async function setupDebugger(): Promise<any> {
     const workspacePath = getWorkspacePath();
-    if (!workspacePath) {
+    const target = currentLaunchTarget();
+    if (!workspacePath || !target) {
         return undefined;
     }
+    const cwd = runDirectory(workspacePath);
     // Silent: this runs from every refresh, and an install with no projects
     // yet must not be told to create one by a sync it did not request.
     const result = await SettingsStore.peekSelectedProject();
@@ -141,11 +183,11 @@ export async function setupDebugger(): Promise<any> {
         try {
             // Only the extension's own entries in launch.json are rewritten;
             // user comments and other configurations are preserved.
-            const config = await updateManagedLaunchConfig(workspacePath, {
+            const config = await updateManagedLaunchConfigIn(target, {
                 name: settings.debuggerName,
                 type: 'debugpy',
                 request: 'launch',
-                cwd: workspacePath,
+                cwd,
                 program: `${normalizedOdooPath}/odoo-bin`,
                 python: normalizedPythonPath,
                 console: 'integratedTerminal',
@@ -179,6 +221,10 @@ export async function setupDebugger(): Promise<any> {
         }
     }
 
+    // Every version's name, not only the provisioned ones written above.
+    await cleanUpFirstFolderLaunch(target, versionsService.getVersions()
+        .map(version => version.settings.debuggerName)
+        .filter(name => !!name));
     await selectPythonInterpreter(activeSettings.pythonPath);
 
     return activeConfig;
@@ -453,7 +499,7 @@ export async function startDebugShell(): Promise<void> {
     }
     const terminal = vscode.window.createTerminal({
         name: 'Odoo Shell',
-        cwd: workspacePath,
+        cwd: runDirectory(workspacePath),
         isTransient: true
     });
     terminal.show();
@@ -571,8 +617,10 @@ export async function startServerForVersion(
     if (existingSession) {
         await vscode.debug.stopDebugging(existingSession);
     }
+    // Configurations in a workspace file belong to no folder: VS Code only
+    // finds them when no folder is given.
     const started = await vscode.debug.startDebugging(
-        workspaceFolders[0],
+        currentLaunchTarget()?.kind === 'workspaceFile' ? undefined : workspaceFolders[0],
         settings.debuggerName,
         { noDebug: options.noDebug === true }
     );

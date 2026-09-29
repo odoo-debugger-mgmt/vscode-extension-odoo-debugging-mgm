@@ -17891,6 +17891,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.currentLaunchTarget = currentLaunchTarget;
 exports.setupDebugger = setupDebugger;
 exports.buildOdooCommandLine = buildOdooCommandLine;
 exports.startDebugShell = startDebugShell;
@@ -17913,6 +17914,7 @@ const testing_1 = __webpack_require__(80);
 const database_1 = __webpack_require__(46);
 const logger_1 = __webpack_require__(12);
 const launchConfig_1 = __webpack_require__(89);
+const dataLocation_1 = __webpack_require__(17);
 const debugSessions_1 = __webpack_require__(75);
 const dbResolution_1 = __webpack_require__(58);
 const provisioning_1 = __webpack_require__(62);
@@ -17952,11 +17954,46 @@ async function selectPythonInterpreter(pythonPath) {
         logger_1.logger.warn(`Failed to set Python interpreter to "${pythonPath}":`, error);
     }
 }
+/** Where this window's launch configurations live (see launchTarget). */
+function currentLaunchTarget() {
+    return (0, launchConfig_1.launchTarget)(vscode.workspace.workspaceFile, (vscode.workspace.workspaceFolders ?? []).map(folder => folder.uri.fsPath));
+}
+/**
+ * The directory Odoo runs in: the workspace the data belongs to. In a folder
+ * window that is the folder; in a generated project workspace, whose first
+ * folder is a repository, it is the workspace the data came from.
+ */
+function runDirectory(workspacePath) {
+    return (0, dataLocation_1.currentDataLocation)()?.root ?? workspacePath;
+}
+/** Workspace files whose first folder has already been cleaned this session. */
+const cleanedFirstFolders = new Set();
+/**
+ * Takes our entries back out of a multi-root workspace's first folder, where
+ * earlier builds wrote them - usually the user's own repository.
+ */
+async function cleanUpFirstFolderLaunch(target, names) {
+    if (target.kind !== 'workspaceFile' || !target.firstFolderPath || cleanedFirstFolders.has(target.filePath)) {
+        return;
+    }
+    cleanedFirstFolders.add(target.filePath);
+    try {
+        const removed = await (0, launchConfig_1.removeManagedLaunchConfigs)(target.firstFolderPath, new Set(names));
+        if (removed > 0) {
+            logger_1.logger.info(`[debugger] moved ${removed} launch entr${removed === 1 ? 'y' : 'ies'} out of ${target.firstFolderPath} into ${target.filePath}`);
+        }
+    }
+    catch (error) {
+        logger_1.logger.warn(`[debugger] could not clean up ${target.firstFolderPath}/.vscode/launch.json:`, error);
+    }
+}
 async function setupDebugger() {
     const workspacePath = (0, utils_1.getWorkspacePath)();
-    if (!workspacePath) {
+    const target = currentLaunchTarget();
+    if (!workspacePath || !target) {
         return undefined;
     }
+    const cwd = runDirectory(workspacePath);
     // Silent: this runs from every refresh, and an install with no projects
     // yet must not be told to create one by a sync it did not request.
     const result = await settingsStore_1.SettingsStore.peekSelectedProject();
@@ -18021,11 +18058,11 @@ async function setupDebugger() {
         try {
             // Only the extension's own entries in launch.json are rewritten;
             // user comments and other configurations are preserved.
-            const config = await (0, launchConfig_1.updateManagedLaunchConfig)(workspacePath, {
+            const config = await (0, launchConfig_1.updateManagedLaunchConfigIn)(target, {
                 name: settings.debuggerName,
                 type: 'debugpy',
                 request: 'launch',
-                cwd: workspacePath,
+                cwd,
                 program: `${normalizedOdooPath}/odoo-bin`,
                 python: normalizedPythonPath,
                 console: 'integratedTerminal',
@@ -18056,6 +18093,10 @@ async function setupDebugger() {
             void (0, utils_1.showWarning)(`Some repositories fell back to their source checkout — ${Array.from(worktreeProblems).join('; ')}`);
         }
     }
+    // Every version's name, not only the provisioned ones written above.
+    await cleanUpFirstFolderLaunch(target, versionsService.getVersions()
+        .map(version => version.settings.debuggerName)
+        .filter(name => !!name));
     await selectPythonInterpreter(activeSettings.pythonPath);
     return activeConfig;
 }
@@ -18286,7 +18327,7 @@ async function startDebugShell() {
     }
     const terminal = vscode.window.createTerminal({
         name: 'Odoo Shell',
-        cwd: workspacePath,
+        cwd: runDirectory(workspacePath),
         isTransient: true
     });
     terminal.show();
@@ -18392,7 +18433,9 @@ async function startServerForVersion(versionId, options = {}) {
     if (existingSession) {
         await vscode.debug.stopDebugging(existingSession);
     }
-    const started = await vscode.debug.startDebugging(workspaceFolders[0], settings.debuggerName, { noDebug: options.noDebug === true });
+    // Configurations in a workspace file belong to no folder: VS Code only
+    // finds them when no folder is given.
+    const started = await vscode.debug.startDebugging(currentLaunchTarget()?.kind === 'workspaceFile' ? undefined : workspaceFolders[0], settings.debuggerName, { noDebug: options.noDebug === true });
     if (!started) {
         const message = `Could not start "${settings.debuggerName}". Its launch entry may not be written yet.`;
         if (!options.quiet) {
@@ -18446,6 +18489,9 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.launchTarget = launchTarget;
+exports.updateManagedLaunchConfigIn = updateManagedLaunchConfigIn;
+exports.removeManagedLaunchConfigs = removeManagedLaunchConfigs;
 exports.updateManagedLaunchConfig = updateManagedLaunchConfig;
 const fs = __importStar(__webpack_require__(20));
 const path = __importStar(__webpack_require__(3));
@@ -18464,6 +18510,102 @@ const EMPTY_LAUNCH_CONTENT = `{
     "configurations": []
 }
 `;
+function launchTarget(workspaceFile, folderPaths) {
+    // An untitled multi-root workspace has no file to write to yet.
+    if (workspaceFile?.scheme === 'file') {
+        return { kind: 'workspaceFile', filePath: workspaceFile.fsPath, firstFolderPath: folderPaths[0] };
+    }
+    const folderPath = folderPaths[0];
+    return folderPath
+        ? { kind: 'folder', folderPath, filePath: path.join(folderPath, '.vscode', 'launch.json') }
+        : undefined;
+}
+const EDIT_OPTIONS = { formattingOptions: { tabSize: 4, insertSpaces: true } };
+/** Inserts or updates `managedConfig` in the configurations array at `at`, in `raw`. */
+function upsertIn(raw, at, section, managedConfig) {
+    const existingIndex = section.configurations.findIndex(conf => conf?.name === managedConfig.name);
+    const existing = existingIndex >= 0 ? section.configurations[existingIndex] : undefined;
+    const merged = { ...existing, ...managedConfig };
+    const edits = existingIndex >= 0
+        ? (0, jsonc_parser_1.modify)(raw, [...at, existingIndex], merged, EDIT_OPTIONS)
+        : (0, jsonc_parser_1.modify)(raw, [...at, 0], merged, { ...EDIT_OPTIONS, isArrayInsertion: true });
+    return { text: (0, jsonc_parser_1.applyEdits)(raw, edits), merged: merged };
+}
+/**
+ * Updates (or inserts at the top) the launch configuration named
+ * `managedConfig.name`, wherever `target` keeps them.
+ */
+async function updateManagedLaunchConfigIn(target, managedConfig) {
+    if (target.kind === 'folder') {
+        return updateManagedLaunchConfig(target.folderPath, managedConfig);
+    }
+    // The workspace file is the user's: a file that does not parse is left
+    // alone rather than replaced by a skeleton, as launch.json would be.
+    let raw = await fs.readFile(target.filePath, 'utf8');
+    let parsed = (0, jsonc_parser_1.parse)(raw);
+    if (!parsed || typeof parsed !== 'object') {
+        throw new Error(`${target.filePath} is not valid JSON; its launch configurations were not updated`);
+    }
+    if (!parsed.launch || typeof parsed.launch !== 'object' || !Array.isArray(parsed.launch.configurations)) {
+        const launch = { version: '0.2.0', ...(typeof parsed.launch === 'object' ? parsed.launch : {}), configurations: [] };
+        raw = (0, jsonc_parser_1.applyEdits)(raw, (0, jsonc_parser_1.modify)(raw, ['launch'], launch, EDIT_OPTIONS));
+        parsed = (0, jsonc_parser_1.parse)(raw);
+    }
+    const { text, merged } = upsertIn(raw, ['launch', 'configurations'], parsed.launch, managedConfig);
+    await fs.writeFile(target.filePath, text, 'utf8');
+    return merged;
+}
+/** The skeleton's own comment lines, which do not make a launch.json the user's. */
+const SKELETON_COMMENTS = new Set(EMPTY_LAUNCH_CONTENT.split('\n')
+    .map(line => line.trim())
+    .filter(line => line.startsWith('//')));
+/**
+ * Removes the configurations named in `names` from `<folderPath>/.vscode/launch.json`:
+ * what an earlier build wrote into a multi-root workspace's first folder. The
+ * file, and an empty `.vscode`, go too when nothing of the user's is left.
+ *
+ * Returns the number of configurations removed.
+ */
+async function removeManagedLaunchConfigs(folderPath, names) {
+    const vscodeDir = path.join(folderPath, '.vscode');
+    const launchPath = path.join(vscodeDir, 'launch.json');
+    let raw;
+    try {
+        raw = await fs.readFile(launchPath, 'utf8');
+    }
+    catch {
+        return 0;
+    }
+    const parsed = (0, jsonc_parser_1.parse)(raw);
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.configurations)) {
+        return 0;
+    }
+    const configurations = parsed.configurations;
+    const indexes = configurations
+        .map((conf, index) => (typeof conf?.name === 'string' && names.has(conf.name) ? index : -1))
+        .filter(index => index >= 0)
+        .reverse();
+    if (indexes.length === 0) {
+        return 0;
+    }
+    for (const index of indexes) {
+        raw = (0, jsonc_parser_1.applyEdits)(raw, (0, jsonc_parser_1.modify)(raw, ['configurations', index], undefined, EDIT_OPTIONS));
+    }
+    const left = (0, jsonc_parser_1.parse)(raw);
+    const onlySkeleton = Object.keys(left).every(key => key === 'version' || key === 'configurations')
+        && Array.isArray(left.configurations) && left.configurations.length === 0
+        && raw.split('\n').map(line => line.trim()).filter(line => line.startsWith('//'))
+            .every(line => SKELETON_COMMENTS.has(line));
+    if (onlySkeleton) {
+        await fs.rm(launchPath);
+        // Only when empty: anything else in .vscode is the user's.
+        await fs.rmdir(vscodeDir).catch(() => undefined);
+    }
+    else {
+        await fs.writeFile(launchPath, raw, 'utf8');
+    }
+    return indexes.length;
+}
 /**
  * Updates (or inserts at the top) the launch configuration named
  * `managedConfig.name`, keeping any extra user-added keys on that entry and
@@ -18481,15 +18623,8 @@ async function updateManagedLaunchConfig(workspacePath, managedConfig) {
         raw = EMPTY_LAUNCH_CONTENT;
         parsed = (0, jsonc_parser_1.parse)(raw);
     }
-    const configurations = parsed.configurations;
-    const existingIndex = configurations.findIndex(conf => conf?.name === managedConfig.name);
-    const existing = existingIndex >= 0 ? configurations[existingIndex] : undefined;
-    const merged = { ...existing, ...managedConfig };
-    const options = { formattingOptions: { tabSize: 4, insertSpaces: true } };
-    const edits = existingIndex >= 0
-        ? (0, jsonc_parser_1.modify)(raw, ['configurations', existingIndex], merged, options)
-        : (0, jsonc_parser_1.modify)(raw, ['configurations', 0], merged, { ...options, isArrayInsertion: true });
-    await fs.writeFile(launchPath, (0, jsonc_parser_1.applyEdits)(raw, edits), 'utf8');
+    const { text, merged } = upsertIn(raw, ['configurations'], parsed, managedConfig);
+    await fs.writeFile(launchPath, text, 'utf8');
     return merged;
 }
 
@@ -20769,6 +20904,7 @@ exports.quickSwitchProjectWorkspace = quickSwitchProjectWorkspace;
  * (open/rebuild/quick-switch).
  */
 const vscode = __importStar(__webpack_require__(1));
+const jsonc_parser_1 = __webpack_require__(21);
 const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const versionsService_1 = __webpack_require__(31);
@@ -20838,13 +20974,28 @@ async function buildWorkspaceFile(context, project) {
     if (dataLocation) {
         settings['odooDebugger.dataStore.path'] = dataLocation;
     }
+    // Rebuilding keeps the launch configurations the debugger sync wrote into
+    // this file: they are this workspace's, and live nowhere else.
     const workspaceData = {
         folders,
         settings
     };
+    const previousLaunch = await readLaunchSection(workspaceFile);
+    if (previousLaunch !== undefined) {
+        workspaceData.launch = previousLaunch;
+    }
     const content = Buffer.from(JSON.stringify(workspaceData, null, 2), 'utf8');
     await vscode.workspace.fs.writeFile(workspaceFile, content);
     return workspaceFile;
+}
+async function readLaunchSection(workspaceFile) {
+    try {
+        const parsed = (0, jsonc_parser_1.parse)(Buffer.from(await vscode.workspace.fs.readFile(workspaceFile)).toString('utf8'));
+        return parsed && typeof parsed === 'object' ? parsed.launch : undefined;
+    }
+    catch {
+        return undefined;
+    }
 }
 async function rebuildProjectWorkspace(context) {
     const selection = await getActiveProjectOrPrompt();

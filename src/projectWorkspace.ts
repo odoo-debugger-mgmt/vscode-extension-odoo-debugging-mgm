@@ -3,6 +3,7 @@
  * (open/rebuild/quick-switch).
  */
 import * as vscode from 'vscode';
+import { parse } from 'jsonc-parser';
 import { SettingsStore } from './settingsStore';
 import { ProjectModel } from './models/project';
 import { RepoModel } from './models/repo';
@@ -103,14 +104,29 @@ async function buildWorkspaceFile(context: vscode.ExtensionContext, project: Pro
         settings['odooDebugger.dataStore.path'] = dataLocation;
     }
 
-    const workspaceData = {
+    // Rebuilding keeps the launch configurations the debugger sync wrote into
+    // this file: they are this workspace's, and live nowhere else.
+    const workspaceData: Record<string, unknown> = {
         folders,
         settings
     };
+    const previousLaunch = await readLaunchSection(workspaceFile);
+    if (previousLaunch !== undefined) {
+        workspaceData.launch = previousLaunch;
+    }
 
     const content = Buffer.from(JSON.stringify(workspaceData, null, 2), 'utf8');
     await vscode.workspace.fs.writeFile(workspaceFile, content);
     return workspaceFile;
+}
+
+async function readLaunchSection(workspaceFile: vscode.Uri): Promise<unknown> {
+    try {
+        const parsed = parse(Buffer.from(await vscode.workspace.fs.readFile(workspaceFile)).toString('utf8'));
+        return parsed && typeof parsed === 'object' ? (parsed as { launch?: unknown }).launch : undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 export async function rebuildProjectWorkspace(context: vscode.ExtensionContext): Promise<vscode.Uri | undefined> {

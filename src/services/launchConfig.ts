@@ -31,6 +31,128 @@ export interface ManagedLaunchConfig {
 }
 
 /**
+ * Where this window's launch configurations live.
+ *
+ * A folder window keeps them in `<folder>/.vscode/launch.json`. A saved
+ * multi-root workspace has no `.vscode` of its own - its first folder is
+ * usually a project repository, and writing there put our file in the user's
+ * git repository and shared it with every workspace listing that repository
+ * first. Its own place is the `launch` section of the `.code-workspace` file.
+ */
+export type LaunchTarget =
+    | { kind: 'folder'; folderPath: string; filePath: string }
+    | { kind: 'workspaceFile'; filePath: string; firstFolderPath?: string };
+
+export function launchTarget(
+    workspaceFile: { scheme: string; fsPath: string } | undefined,
+    folderPaths: readonly string[]
+): LaunchTarget | undefined {
+    // An untitled multi-root workspace has no file to write to yet.
+    if (workspaceFile?.scheme === 'file') {
+        return { kind: 'workspaceFile', filePath: workspaceFile.fsPath, firstFolderPath: folderPaths[0] };
+    }
+    const folderPath = folderPaths[0];
+    return folderPath
+        ? { kind: 'folder', folderPath, filePath: path.join(folderPath, '.vscode', 'launch.json') }
+        : undefined;
+}
+
+const EDIT_OPTIONS = { formattingOptions: { tabSize: 4, insertSpaces: true } };
+
+type LaunchSection = { configurations: Array<Record<string, unknown> | null> };
+
+/** Inserts or updates `managedConfig` in the configurations array at `at`, in `raw`. */
+function upsertIn(raw: string, at: Array<string | number>, section: LaunchSection, managedConfig: ManagedLaunchConfig) {
+    const existingIndex = section.configurations.findIndex(conf => conf?.name === managedConfig.name);
+    const existing = existingIndex >= 0 ? section.configurations[existingIndex] : undefined;
+    const merged = { ...existing, ...managedConfig };
+    const edits = existingIndex >= 0
+        ? modify(raw, [...at, existingIndex], merged, EDIT_OPTIONS)
+        : modify(raw, [...at, 0], merged, { ...EDIT_OPTIONS, isArrayInsertion: true });
+    return { text: applyEdits(raw, edits), merged: merged as ManagedLaunchConfig };
+}
+
+/**
+ * Updates (or inserts at the top) the launch configuration named
+ * `managedConfig.name`, wherever `target` keeps them.
+ */
+export async function updateManagedLaunchConfigIn(target: LaunchTarget, managedConfig: ManagedLaunchConfig): Promise<ManagedLaunchConfig> {
+    if (target.kind === 'folder') {
+        return updateManagedLaunchConfig(target.folderPath, managedConfig);
+    }
+
+    // The workspace file is the user's: a file that does not parse is left
+    // alone rather than replaced by a skeleton, as launch.json would be.
+    let raw = await fs.readFile(target.filePath, 'utf8');
+    let parsed = parse(raw) as { launch?: { configurations?: unknown } } | undefined;
+    if (!parsed || typeof parsed !== 'object') {
+        throw new Error(`${target.filePath} is not valid JSON; its launch configurations were not updated`);
+    }
+    if (!parsed.launch || typeof parsed.launch !== 'object' || !Array.isArray(parsed.launch.configurations)) {
+        const launch = { version: '0.2.0', ...(typeof parsed.launch === 'object' ? parsed.launch : {}), configurations: [] };
+        raw = applyEdits(raw, modify(raw, ['launch'], launch, EDIT_OPTIONS));
+        parsed = parse(raw);
+    }
+
+    const { text, merged } = upsertIn(raw, ['launch', 'configurations'], parsed!.launch as LaunchSection, managedConfig);
+    await fs.writeFile(target.filePath, text, 'utf8');
+    return merged;
+}
+
+/** The skeleton's own comment lines, which do not make a launch.json the user's. */
+const SKELETON_COMMENTS = new Set(EMPTY_LAUNCH_CONTENT.split('\n')
+    .map(line => line.trim())
+    .filter(line => line.startsWith('//')));
+
+/**
+ * Removes the configurations named in `names` from `<folderPath>/.vscode/launch.json`:
+ * what an earlier build wrote into a multi-root workspace's first folder. The
+ * file, and an empty `.vscode`, go too when nothing of the user's is left.
+ *
+ * Returns the number of configurations removed.
+ */
+export async function removeManagedLaunchConfigs(folderPath: string, names: ReadonlySet<string>): Promise<number> {
+    const vscodeDir = path.join(folderPath, '.vscode');
+    const launchPath = path.join(vscodeDir, 'launch.json');
+    let raw: string;
+    try {
+        raw = await fs.readFile(launchPath, 'utf8');
+    } catch {
+        return 0;
+    }
+    const parsed = parse(raw) as { configurations?: unknown } | undefined;
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.configurations)) {
+        return 0;
+    }
+
+    const configurations = parsed.configurations as Array<{ name?: unknown } | null>;
+    const indexes = configurations
+        .map((conf, index) => (typeof conf?.name === 'string' && names.has(conf.name) ? index : -1))
+        .filter(index => index >= 0)
+        .reverse();
+    if (indexes.length === 0) {
+        return 0;
+    }
+    for (const index of indexes) {
+        raw = applyEdits(raw, modify(raw, ['configurations', index], undefined, EDIT_OPTIONS));
+    }
+
+    const left = parse(raw) as Record<string, unknown>;
+    const onlySkeleton = Object.keys(left).every(key => key === 'version' || key === 'configurations')
+        && Array.isArray(left.configurations) && left.configurations.length === 0
+        && raw.split('\n').map(line => line.trim()).filter(line => line.startsWith('//'))
+            .every(line => SKELETON_COMMENTS.has(line));
+    if (onlySkeleton) {
+        await fs.rm(launchPath);
+        // Only when empty: anything else in .vscode is the user's.
+        await fs.rmdir(vscodeDir).catch(() => undefined);
+    } else {
+        await fs.writeFile(launchPath, raw, 'utf8');
+    }
+    return indexes.length;
+}
+
+/**
  * Updates (or inserts at the top) the launch configuration named
  * `managedConfig.name`, keeping any extra user-added keys on that entry and
  * leaving the rest of launch.json untouched.
@@ -50,16 +172,7 @@ export async function updateManagedLaunchConfig(workspacePath: string, managedCo
         parsed = parse(raw);
     }
 
-    const configurations = (parsed as { configurations: Array<Record<string, unknown> | null> }).configurations;
-    const existingIndex = configurations.findIndex(conf => conf?.name === managedConfig.name);
-    const existing = existingIndex >= 0 ? configurations[existingIndex] : undefined;
-    const merged = { ...existing, ...managedConfig };
-
-    const options = { formattingOptions: { tabSize: 4, insertSpaces: true } };
-    const edits = existingIndex >= 0
-        ? modify(raw, ['configurations', existingIndex], merged, options)
-        : modify(raw, ['configurations', 0], merged, { ...options, isArrayInsertion: true });
-
-    await fs.writeFile(launchPath, applyEdits(raw, edits), 'utf8');
-    return merged as ManagedLaunchConfig;
+    const { text, merged } = upsertIn(raw, ['configurations'], parsed as LaunchSection, managedConfig);
+    await fs.writeFile(launchPath, text, 'utf8');
+    return merged;
 }
