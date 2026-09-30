@@ -4,7 +4,7 @@
 import * as vscode from 'vscode';
 import type { CommandDeps } from './index';
 import type { ProjectModel } from '../models/project';
-import { SettingsStore } from '../settingsStore';
+import { SettingsStore, isStoreReadError } from '../settingsStore';
 import { showError } from '../services/notifications';
 import { logger, errorMessage } from '../services/logger';
 import {
@@ -53,7 +53,9 @@ export function registerDbCommands(deps: CommandDeps): void {
             }
             await refreshAll();
         } catch (err) {
-            void showError(errorMessage(err));
+            if (!isStoreReadError(err)) {
+                void showError(errorMessage(err));
+            }
         }
     }));
 

@@ -1566,17 +1566,27 @@
       },
       {
         "view": "projectSelector",
-        "when": "odoo-debugger.is_active && !odoo-debugger.is_configured",
+        "when": "odoo-debugger.is_active && !odoo-debugger.is_configured && !odoo-debugger.store_unreadable",
         "contents": "Start here: tell Odoo DevTools where your Odoo repository lives.\n[Set Up Odoo DevTools](command:odoo.setup)"
       },
       {
         "view": "projectSelector",
-        "when": "odoo-debugger.is_active && odoo-debugger.is_configured",
+        "when": "odoo-debugger.is_active && odoo-debugger.store_unreadable",
+        "contents": "The data store could not be read, so nothing is shown. Nothing is saved to it until it reads again.\n[Choose Data Store…](command:odoo.chooseDataStore)"
+      },
+      {
+        "view": "projectSelector",
+        "when": "odoo-debugger.is_active && odoo-debugger.is_configured && !odoo-debugger.store_unreadable",
         "contents": "No projects yet. A project groups your repositories, databases and settings.\n[Create Project](command:projectSelector.create)"
       },
       {
         "view": "dbSelector",
-        "when": "odoo-debugger.is_active",
+        "when": "odoo-debugger.is_active && odoo-debugger.store_unreadable",
+        "contents": "The data store could not be read.\n[Choose Data Store…](command:odoo.chooseDataStore)"
+      },
+      {
+        "view": "dbSelector",
+        "when": "odoo-debugger.is_active && !odoo-debugger.store_unreadable",
         "contents": "No databases to show. Select a project, then create or link a database.\n[Create Database](command:dbSelector.create)"
       },
       {

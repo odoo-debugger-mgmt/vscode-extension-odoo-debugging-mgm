@@ -110,6 +110,20 @@ export function toDocuments(data: DebuggerData): Map<string, StoredDocument> {
     return docs;
 }
 
+/**
+ * A stored document, parsed; a broken one names itself. "Unexpected
+ * non-whitespace character after JSON at position 3" said nothing about
+ * which of a store's documents to fix (fifteenth run).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function parseDocument(kind: string, key: string, raw: unknown): any {
+    try {
+        return JSON.parse(String(raw));
+    } catch (error) {
+        throw new Error(`its ${kind} "${key}" is not valid JSON (${error instanceof Error ? error.message : String(error)})`);
+    }
+}
+
 /** Everything that is not a document, e.g. a legacy `settings` block awaiting migration. */
 export function extraOf(data: DebuggerData): string {
     return stableStringify(Object.fromEntries(
@@ -235,7 +249,7 @@ export class SqliteMainStore implements MainStore {
             const data: DebuggerData = { ...(extra ? JSON.parse(extra.value) : {}), projects: [], versions: {}, dbTemplates: [] };
             const revs = new Map<string, number>();
             for (const row of rows) {
-                const doc = JSON.parse(row.doc);
+                const doc = parseDocument(row.kind, row.key, row.doc);
                 revs.set(docId(row.kind, row.key), Number(row.rev));
                 if (row.kind === 'project') {
                     data.projects.push(doc);

@@ -9,7 +9,7 @@ import { ProjectModel } from "./models/project";
 import { SettingsModel } from "./models/settings";
 import { getWorkspacePath, normalizePath, resolveOptionalPath, showError, showInfo, showWarning, showAutoInfo } from './utils';
 import { collectModuleDiscovery, resolvePsaeDirectories } from './services/psaeInternal';
-import { SettingsStore } from './settingsStore';
+import { SettingsStore, isStoreReadError } from './settingsStore';
 import { VersionsService } from './versionsService';
 import { ensureTestingConfigModel } from './models/testing';
 import { getInstalledModuleNames, databaseHasModuleTable } from './services/database';
@@ -185,7 +185,7 @@ export async function setupDebugger(): Promise<any> {
                 logger.warn('Could not prepare debugger launch arguments:', error);
                 if (error instanceof Error && error.message === NO_DATABASE) {
                     void showInfo('Select a database before configuring the debugger.');
-                } else {
+                } else if (!isStoreReadError(error)) {
                     void showError(error instanceof Error ? error.message : 'Could not prepare debugger launch arguments.');
                 }
             } else {
@@ -497,7 +497,7 @@ export async function buildOdooCommandLine(isShell = false): Promise<string | un
         if (error instanceof Error) {
             if (error.message === NO_DATABASE) {
                 void showInfo('Select a database first.');
-            } else {
+            } else if (!isStoreReadError(error)) {
                 void showError(error.message);
             }
         } else {

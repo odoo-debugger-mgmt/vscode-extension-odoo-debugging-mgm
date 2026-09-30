@@ -9,6 +9,7 @@ import { pickStep, runWizard, step } from '../services/wizard';
 import { normalizePath } from '../utils';
 import { showError } from '../services/notifications';
 import { errorMessage } from '../services/logger';
+import { isStoreReadError } from '../settingsStore';
 import {
     createProject,
     selectProject,
@@ -126,7 +127,9 @@ export function registerProjectCommands(deps: CommandDeps): void {
             }
             await refreshAll();
         } catch (err) {
-            void showError(errorMessage(err));
+            if (!isStoreReadError(err)) {
+                void showError(errorMessage(err));
+            }
         }
     }));
 

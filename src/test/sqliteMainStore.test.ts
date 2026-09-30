@@ -7,7 +7,7 @@ import { fork } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { SqliteMainStore, StoreReadOnlyError, loadSqlite } from '../services/sqliteMainStore';
+import { SqliteMainStore, StoreReadOnlyError, loadSqlite, parseDocument } from '../services/sqliteMainStore';
 import type { DebuggerData } from '../utils';
 
 const sqlite = loadSqlite();
@@ -199,5 +199,12 @@ const counterOf = (data: DebuggerData, dbId: string) =>
         assert.strictEqual(counterOf(final, 'a19'), iterations);
         // Each saw the other's commits come and go.
         assert.ok(first.seenVersions > 1 && second.seenVersions > 1);
+    });
+});
+
+suite('A broken stored document', () => {
+    test('names itself in the read error', () => {
+        assert.deepStrictEqual(parseDocument('version', 'v17', '{"id":"v17"}'), { id: 'v17' });
+        assert.throws(() => parseDocument('version', 'ver-17-0001', '{}x'), /its version "ver-17-0001" is not valid JSON/);
     });
 });

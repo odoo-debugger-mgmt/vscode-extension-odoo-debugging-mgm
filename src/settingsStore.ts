@@ -60,6 +60,29 @@ export class StoreUnreadableError extends Error {
     }
 }
 
+/**
+ * The store could not be read. Said once, with Choose Data Store…, where it
+ * happens; callers that show errors leave this one out rather than repeat it
+ * without the way out (fifteenth run).
+ */
+export class StoreReadError extends Error {
+    constructor(readonly location: string, reason: string) {
+        super(`Could not read the data store ${location}: ${reason}`);
+        this.name = 'StoreReadError';
+    }
+}
+
+/** A failed read, already said. A refused save (StoreUnreadableError) is not: it is news. */
+export function isStoreReadError(error: unknown): boolean {
+    return error instanceof StoreReadError;
+}
+
+/** Views show "could not be read" instead of an empty store's invitations. */
+function setUnreadableContext(unreadable: boolean): void {
+    void Promise.resolve(vscode.commands.executeCommand('setContext', 'odoo-debugger.store_unreadable', unreadable))
+        .catch(() => undefined);
+}
+
 export class SettingsStore {
     /** Keyed by store location, so a re-pointed store never serves the old cache. */
     private static readonly cache = new Map<string, CachedFileEntry>();
@@ -298,9 +321,14 @@ export class SettingsStore {
                     }
                 });
             }
-            throw new Error(`Could not read the data store ${store.location}: ${reason}`);
+            if (first) {
+                setUnreadableContext(true);
+            }
+            throw new StoreReadError(store.location, reason);
         }
-        this.unreadable.delete(store.location);
+        if (this.unreadable.delete(store.location)) {
+            setUnreadableContext(false);
+        }
         const snapshot: StoreRead = { ...read, data: this.cloneData(read.data) };
         this.cache.set(store.location, { mtimeMs: read.mtimeMs, read: snapshot });
         this.announceReadOnly(store);
