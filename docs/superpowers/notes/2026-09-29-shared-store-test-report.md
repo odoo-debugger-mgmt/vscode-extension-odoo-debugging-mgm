@@ -5,7 +5,118 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds six runs, newest first. The earlier runs are kept unchanged.
+This file holds seven runs, newest first. The earlier runs are kept unchanged.
+
+# Seventh run: the reopen item, and one database version per entry (`f29f37c`)
+
+**Scope:** as asked:
+- the test suite;
+- a generated workspace an earlier build opened, reopened from Recent: the
+  status bar item appears and stays, and clicking it reopens the window;
+- a folder window where only 17.0 databases are chosen:
+  - no 19.0 entry;
+  - Start Server on 19.0 asks for a database;
+  - choosing a 19.0 database brings the entry back, naming it;
+- with an upgrade set up, both entries name the upgrade's databases.
+
+**Setup:**
+- **Profile:** a new throwaway profile (`HOME=/tmp/claude/bm`), with the
+  Python extensions and the stub `odoo-bin`.
+- **Builds:** `a106206` and `f29f37c`, packaged and installed as in the sixth
+  run.
+- **Data:** A's data file reset to the seed: acme-db1 and acme-db2 on 17.0,
+  acme-db19 on 19.0, acme-db1 selected, 17.0 active. No upgrade.
+- **"Only 17.0 databases"** is read as the brief's 7b step 6: the window has
+  chosen only 17.0 databases. The project does have a 19.0 database
+  (acme-db19), which the window had never chosen, so that there is one to
+  pick.
+
+## Verdict (seventh run)
+
+**Everything asked for matched.** Two small observations:
+- the status bar pairs 19.0 with a 17.0 database;
+- Recent lists the generated workspace twice, under one label.
+
+## Test suite: matched
+
+- VS Code 1.139.1: **449 passing, 0 failing, 0 pending**.
+
+## Reopening from Recent: matched
+
+1. **The Recent entry:** with `a106206` installed, Open Project Workspace →
+   New window left the Recent entry
+   `vscode-userdata:/tmp/claude/bm/.config/Code/User/globalStorage/ahmadmansour.odoo-devtools-vscode/workspaces/acme-uid-0001.code-workspace`.
+2. **Reopening:** with `f29f37c` installed, I opened A, then File: Open Recent
+   and "acme-uid-0001 (Workspace)".
+3. **The item:** at about 30 seconds the toast was gone and **"⚠ Reopen for
+   debugger"** was at the left of the status bar, on a warning background.
+   - It was still there about 1.5 minutes later.
+   - Its tooltip is the full message: "This workspace was opened in a way that
+     keeps the Python debugger from running. Reopen it from its file to fix
+     that."
+4. **Clicking it** reopened the window from its file: a new workspace-storage
+   entry for `file:///…/acme-uid-0001.code-workspace`. The item was gone
+   afterwards.
+
+**Observation, low:** File: Open Recent now lists "acme-uid-0001 (Workspace)"
+twice, once for the old `vscode-userdata:` entry and once for the new `file:`
+one. The labels are identical and the paths are cut off at the same point, so
+someone can keep picking the old one. Each time, the item comes back and a
+click fixes it, so nothing breaks. Removing the old entry would need VS Code's
+own API; that call is yours.
+
+## A window with only 17.0 databases chosen: matched
+
+1. **Switching A to acme-db2** wrote `A/.vscode/launch.json` with only
+   `odoo-debugger` (acme-db2). The log says:
+
+   > Skipping launch entry for "Odoo 19.0": Select a database before running
+   > this action.
+2. **A stale entry is removed:** I added an `odoo-debugger-19` entry naming
+   acme-db2, as earlier builds wrote them, and switched to acme-db1.
+   - It was **removed**, and the log says "[debugger] removed the launch
+     entries of odoo-debugger-19: no database of that version is selected".
+   - `odoo-debugger` names acme-db1.
+3. **Switch Active Version → Odoo 19.0:** `launch.json` still has no 19.0
+   entry.
+4. **Start Server:**
+   - it showed "No database is selected for "Odoo 19.0"." with **Select
+     Database**, and nothing started;
+   - Select Database opened the database search, where I chose acme-db19;
+   - `odoo-debugger-19` came back with `-p 8079 -d acme-db19`.
+     `odoo-debugger` kept `-d acme-db1`.
+5. **Start Server again** started the 19.0 server: `-p 8079 … -d acme-db19 -i
+   base -u acme_crm`, `cwd` `/tmp/odt-brief/A`, under debugpy.
+
+**Observations, low:**
+- **The status bar:** while 19.0 was active and no 19.0 database was chosen, it
+  read "acme · acme-db1 · 19.0 :8079". That pairs a 17.0 database with 19.0,
+  which 19.0 will no longer launch. The status bar and `launch.json` disagreed
+  until a 19.0 database was chosen.
+- **The database search** opened from "No database is selected for "Odoo
+  19.0"" lists every database, 17.0 ones included. Picking a 17.0 one there
+  would not answer the question. I did not try it.
+
+## With an upgrade set up: matched
+
+1. **The upgrade:** Set Up an Upgrade from acme-db2 (17.0) to acme-db19 (19.0),
+   with `main` for 19.0.
+   - The source was acme-db2 on purpose: this window remembered acme-db1 for
+     17.0.
+   - "Move this checkout off "17.0-dev"" offered only `parking`.
+   - The result: "Upgrade set up: 17.0 → 19.0."
+2. **The launch entries:**
+   - `odoo-debugger`: `-d acme-db2`, with addons from
+     `/tmp/claude/bm/odoo-dev/acme@17.0-dev`;
+   - `odoo-debugger-19`: `-d acme-db19`, with addons from
+     `/tmp/claude/bm/odoo-dev/acme@main`.
+3. **Start Both Upgrade Servers** started both sides, under debugpy with `cwd`
+   A:
+   - 17.0 on 8069 with acme-db2;
+   - 19.0 on 8079 with acme-db19, 31 s later.
+
+   The gap is the command waiting up to 30 s for 8069 to open, which the stub
+   never does. A real server binds sooner.
 
 # Sixth run: the fifth run's fixes (`e5fae52`)
 
