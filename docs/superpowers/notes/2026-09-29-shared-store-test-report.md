@@ -5,7 +5,71 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds ten runs, newest first. The earlier runs are kept unchanged.
+This file holds eleven runs, newest first. The earlier runs are kept unchanged.
+
+# Eleventh run: finding 15 re-tested (`8523354`)
+
+**Scope:** as asked:
+- the test suite;
+- items 13.1–13.3 again: no Git pop-up, and the branches still change;
+- `v17/acme` opened as a folder in the window, then a switch back to
+  acme-db1: its branch in the Source Control view should still update.
+
+**Setup:** the tenth run's fixture, reset.
+- `v17/acme` on `17.0-dev` and `v19/acme-19` on `19.0-dev`;
+- 17.0 finds addons in `v17` and 19.0 in `v19`;
+- acme-db1 maps `acme` to `17.0-alt`, acme-db2 to `17.0-dev`, and acme-db19
+  to `19.0-alt`;
+- a new throwaway profile (`HOME=/tmp/claude/bq`), in an Extension Development
+  Host.
+
+After each switch I captured the screen every 1 or 2 seconds, for 8 to 10
+seconds, and compared the area where the modal appeared in the tenth run.
+
+## Verdict (eleventh run)
+
+**Finding 15 is fixed.** No switch raised the Git modal, and the branches
+changed as before. With the clone open in the window, Source Control follows
+the switch.
+
+## Test suite: matched
+
+- VS Code 1.139.1: **472 passing, 0 failing, 0 pending**.
+
+## 13.1–13.3 again, folder window A: matched
+
+1. **acme-db1 → acme-db19:**
+   - `v19/acme-19` went to `19.0-alt`, and `v17/acme` stayed on `17.0-dev`;
+   - Repos showed `acme-19 19.0-alt`, and Modules listed `acme_nineteen`;
+   - `odoo-debugger-19` names `v19/acme-19`, and `odoo-debugger` names
+     `v17/acme`;
+   - **no modal in any of five frames over 10 s**. The only toast was the
+     fixture's "environment switch finished with issues".
+2. **acme-db19 → acme-db1:**
+   - `v17/acme` went to `17.0-alt`, and `v19/acme-19` stayed on `19.0-alt`;
+   - Repos and Modules went back to the 17.0 clone;
+   - **no modal**.
+
+## With `v17/acme` open in the window: matched
+
+1. **Adding the folder:** Workspaces: Add Folder to Workspace… with
+   `/tmp/odt-brief/v17/acme`. The window became "Untitled (Workspace)", with A
+   still first, so the data and the launch file stayed A's. The status bar's
+   branch item showed `17.0-alt`.
+2. **Switch to acme-db2**, so that the switch back has something to change:
+   - `v17/acme` went to `17.0-dev`;
+   - Source Control showed **`17.0-dev`** in the status bar, the commit box
+     ("commit on "17…") and the Graph;
+   - no modal.
+3. **Switch back to acme-db1:**
+   - `v17/acme` went to `17.0-alt`;
+   - Source Control showed **`17.0-alt`** in the status bar and the Graph,
+     already in the first frame, within 1 s;
+   - no modal.
+
+**Not seen:** whether the checkout went through the Git API or the command
+line followed by the targeted refresh. The log does not say, and the result
+is the same.
 
 # Tenth run: item 13, per-version repository locations (`c6f48f5`)
 
