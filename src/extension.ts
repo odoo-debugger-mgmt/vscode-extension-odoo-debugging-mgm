@@ -48,6 +48,7 @@ import { offerToReopenByPath } from './projectWorkspace';
 import { initializeBinding } from './services/workspaceBinding';
 import { initializeRegistry, registerThisWorkspace } from './services/workspaceRegistry';
 import { offerWorkspaceBinding } from './commands/bindingCommand';
+import { describeGone, selectionFacts } from './services/goneElsewhere';
 
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext(): Promise<void> {
@@ -253,16 +254,35 @@ export async function activate(context: vscode.ExtensionContext) {
     // re-read everything. Debounced, because one save elsewhere can touch
     // several documents and each is its own change.
     let storeChangeTimer: NodeJS.Timeout | undefined;
+    const goneAlreadySaid = new Set<string>();
     const onStoreChanged = () => {
         if (storeChangeTimer) {
             clearTimeout(storeChangeTimer);
         }
         storeChangeTimer = setTimeout(() => {
             storeChangeTimer = undefined;
-            SettingsStore.invalidate();
-            void versionsService.refresh()
-                .then(() => refreshAll({ reason: 'all' }))
-                .catch(error => logger.warn('Refreshing after a data store change failed:', error));
+            void (async () => {
+                // What this window had, to say so if another window deleted it.
+                // From the data read before this change, and the versions not
+                // yet reloaded: the store already holds the other window's edit.
+                const before = selectionFacts(
+                    SettingsStore.lastRead()?.projects?.find(project => project.isSelected),
+                    versionsService.getActiveVersion()
+                );
+                SettingsStore.invalidate();
+                await versionsService.refresh();
+                const data = await SettingsStore.get().catch(() => undefined);
+                const keys = (data?.projects ?? []).map(project => project.uid || `name:${project.name ?? ''}`);
+                const sameProject = (data?.projects ?? []).find(project =>
+                    (project.uid || `name:${project.name ?? ''}`) === before.projectKey);
+                describeGone(before, {
+                    projectKeys: keys,
+                    dbIds: (sameProject?.dbs ?? []).map(db => db.id),
+                    versionIds: versionsService.getVersions().map(version => version.id),
+                    activeVersionName: versionsService.getActiveVersion()?.name
+                }, goneAlreadySaid).forEach(message => void showInfo(message));
+                await refreshAll({ reason: 'all' });
+            })().catch(error => logger.warn('Refreshing after a data store change failed:', error));
         }, 300);
     };
     let storeSubscription: { dispose(): void } | undefined;

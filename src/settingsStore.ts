@@ -68,6 +68,23 @@ export class SettingsStore {
      */
     private static readonly baseOf = new WeakMap<object, StoreRead>();
 
+    /**
+     * The last data this window read, with its selection applied, without
+     * going back to the store - so a change another window just made is not
+     * in it yet. For telling what that change took away.
+     */
+    static lastRead(): DebuggerData | undefined {
+        const store = this.resolveStore();
+        const cached = store ? this.cache.get(store.location) : undefined;
+        const memento = this.selectionState;
+        if (!cached) {
+            return undefined;
+        }
+        const data = this.cloneData(cached.read.data);
+        const selection = memento ? readSelection(memento) : undefined;
+        return selection ? applySelection(data, selection) : data;
+    }
+
     /** Forgets every cached read; the next `get()` goes to the store. */
     static invalidate(): void {
         this.cache.clear();
