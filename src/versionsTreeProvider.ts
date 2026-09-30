@@ -104,6 +104,10 @@ export class VersionTreeItem extends vscode.TreeItem {
         if (settings.customAddonsPath) {
             lines.push(`**Custom Addons:** ${settings.customAddonsPath}`);
         }
+        // Only the ones set by hand: the rest are found under Custom Addons.
+        for (const [repoName, repoPath] of Object.entries(settings.repoPaths ?? {})) {
+            lines.push(`**${repoName}:** ${repoPath} (set by hand)`);
+        }
         return new vscode.MarkdownString(lines.join('\n\n'));
     }
 }
@@ -204,6 +208,11 @@ export class VersionsTreeProvider extends BaseTreeProvider<VersionTreeItem | Ver
             const settingItems: VersionSettingTreeItem[] = [];
 
             Object.entries(settings).forEach(([key, value]) => {
+                // Not a value to edit inline: Set Repository Location for a
+                // Version… edits it, and the version's tooltip lists it.
+                if (key === 'repoPaths') {
+                    return;
+                }
                 settingItems.push(new VersionSettingTreeItem(key, value, element.version.id));
             });
 

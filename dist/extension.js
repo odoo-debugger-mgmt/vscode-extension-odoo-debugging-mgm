@@ -6648,8 +6648,10 @@ class VersionsService {
             const settings = version.settings;
             // Update all settings in configuration
             for (const [key, value] of Object.entries(settings)) {
-                // No configuration keys exist for derived identity.
-                if ((0, versionIdentity_1.isDerivedSetting)(key)) {
+                // No configuration keys exist for derived identity, nor for
+                // what belongs to this version's own directories: writing an
+                // unregistered key throws, and failed the whole command.
+                if ((0, versionIdentity_1.isDerivedSetting)(key) || key === 'managedPaths' || key === 'repoPaths') {
                     continue;
                 }
                 await config.update(key, value, vscode.ConfigurationTarget.Workspace);
@@ -19339,6 +19341,10 @@ class VersionTreeItem extends vscode.TreeItem {
         if (settings.customAddonsPath) {
             lines.push(`**Custom Addons:** ${settings.customAddonsPath}`);
         }
+        // Only the ones set by hand: the rest are found under Custom Addons.
+        for (const [repoName, repoPath] of Object.entries(settings.repoPaths ?? {})) {
+            lines.push(`**${repoName}:** ${repoPath} (set by hand)`);
+        }
         return new vscode.MarkdownString(lines.join('\n\n'));
     }
 }
@@ -19437,6 +19443,11 @@ class VersionsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
             const settings = element.version.settings;
             const settingItems = [];
             Object.entries(settings).forEach(([key, value]) => {
+                // Not a value to edit inline: Set Repository Location for a
+                // Version… edits it, and the version's tooltip lists it.
+                if (key === 'repoPaths') {
+                    return;
+                }
                 settingItems.push(new VersionSettingTreeItem(key, value, element.version.id));
             });
             return Promise.resolve(settingItems);

@@ -815,8 +815,10 @@ export class VersionsService {
 
             // Update all settings in configuration
             for (const [key, value] of Object.entries(settings)) {
-                // No configuration keys exist for derived identity.
-                if (isDerivedSetting(key)) {
+                // No configuration keys exist for derived identity, nor for
+                // what belongs to this version's own directories: writing an
+                // unregistered key throws, and failed the whole command.
+                if (isDerivedSetting(key) || key === 'managedPaths' || key === 'repoPaths') {
                     continue;
                 }
                 await config.update(key, value, vscode.ConfigurationTarget.Workspace);
