@@ -795,7 +795,10 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
             // Switching each side's own checkout to its branch is touching disk
             // too: the user sees which checkouts before it happens.
             const createsSomething = plan.reposToWorktree.length > 0
-                || await switchesOwnCheckouts(plan, input)
+                // Setting up is the one place that names each side's
+                // checkout, so it is shown even when none has to move;
+                // resuming asks only when one does.
+                || plan.reposOnOwnCheckouts.length > 0
                 || plan.versionsToCreate.length > 0
                 || !draft.toDb;
             if (createsSomething) {
