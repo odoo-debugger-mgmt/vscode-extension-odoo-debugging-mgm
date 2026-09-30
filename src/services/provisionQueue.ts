@@ -14,6 +14,8 @@
 import type * as vscode from 'vscode';
 import { logger } from './logger';
 import { showInfo } from './notifications';
+import { acquireLease, HEARTBEAT_MS } from './provisionLease';
+import { readSetupState } from './setupState';
 
 export interface QueuedVersion {
     branch: string;
@@ -155,6 +157,7 @@ export function setQueueProvisioner(fn: QueueProvisioner): void {
 }
 
 let draining = false;
+let retryTimer: NodeJS.Timeout | undefined;
 
 async function persist(
     context: vscode.ExtensionContext,
@@ -178,7 +181,24 @@ export async function drainProvisionQueue(
     if (draining || !provisioner) {
         return;
     }
+    // Another window may be building: only the lease holder drains, and it
+    // reads the shared queue each round, so it builds what was queued here
+    // too. Asked again later, for anything queued after its drain ended.
+    const lease = acquireLease(readSetupState().provisioningRoot);
+    if (!lease) {
+        logger.info('[queue] another window is building versions; waiting for it');
+        if (!retryTimer && readQueue(context).pending.length > 0) {
+            retryTimer = setTimeout(() => {
+                retryTimer = undefined;
+                void drainProvisionQueue(context, onProgress);
+            }, HEARTBEAT_MS);
+            retryTimer.unref?.();
+        }
+        return;
+    }
     draining = true;
+    const heartbeat = setInterval(() => lease.renew(), HEARTBEAT_MS);
+    heartbeat.unref?.();
 
     const succeeded: string[] = [];
     const failed: string[] = [];
@@ -203,6 +223,8 @@ export async function drainProvisionQueue(
             await persist(context, finishActive(readQueue(context)), onProgress);
         }
     } finally {
+        clearInterval(heartbeat);
+        lease.release();
         draining = false;
     }
 
