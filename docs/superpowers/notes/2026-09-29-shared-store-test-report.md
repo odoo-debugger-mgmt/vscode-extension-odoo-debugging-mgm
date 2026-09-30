@@ -5,7 +5,108 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds seven runs, newest first. The earlier runs are kept unchanged.
+This file holds eight runs, newest first. The earlier runs are kept unchanged.
+
+# Eighth run: the status bar per version, and Recent once (`5269f35`)
+
+**Scope:** as asked:
+- the test suite;
+- with 19.0 active and no 19.0 database chosen:
+  - the status bar says so;
+  - clicking it lists only 19.0 databases;
+  - picking one updates the status bar and `launch.json`;
+- Start Server on 19.0, then Select Database, lists only 19.0 databases;
+- reopening an old-style workspace from Recent, then clicking the status bar
+  item: Recent lists the workspace once afterwards.
+
+**Setup:**
+- **Profile:** a new throwaway profile (`HOME=/tmp/claude/bn`), with the
+  Python extensions and the stub `odoo-bin`.
+- **Builds:** `a106206` and `5269f35`, packaged and installed as in the sixth
+  run.
+- **Data:** A's data file reset to the seed: acme-db1 and acme-db2 on 17.0,
+  acme-db19 on 19.0, acme-db1 selected, 17.0 active, no `selectedDbByVersion`,
+  no upgrade.
+
+## Verdict (seventh run's follow-ups)
+
+- **Everything asked for matched.**
+- **A new finding, 14 (moderate):** picking a 19.0 database in a window whose
+  17.0 database was never picked in this build drops 17.0's database. Its
+  launch entry is removed, and switching back to 17.0 shows "no 17.0
+  database".
+
+## Test suite: matched
+
+- VS Code 1.139.1: **454 passing, 0 failing, 0 pending**.
+
+## 19.0 active, no 19.0 database chosen: matched
+
+1. **Before:** A opened on "acme · acme-db1 · 17.0 :8069".
+2. **Switch Active Version → Odoo 19.0:**
+   - the status bar read **"no 19.0 database"** on a warning background;
+   - its tooltip: "No database of Odoo 19.0 is selected - click to choose
+     one";
+   - `launch.json` had only `odoo-debugger`.
+3. **Start Server:** "No database is selected for "Odoo 19.0"." with Select
+   Database. Nothing started.
+   - **Select Database** opened **"Database for Odoo 19.0"**, listing only
+     **acme-db19**.
+   - I closed it without picking.
+4. **Clicking the status bar item** opened the same "Database for Odoo 19.0"
+   list, again only acme-db19. I picked it. Then:
+   - the status bar read **"acme-db19 · 19.0 :8079"**, without the warning
+     background;
+   - `launch.json` gained `odoo-debugger-19` with `-p 8079 -d acme-db19`.
+
+## Reopening from Recent: matched
+
+1. **The Recent entry:** with `a106206` installed, Open Project Workspace →
+   New window left a `vscode-userdata:` Recent entry.
+2. **Reopening:** with `5269f35` installed, File: Open Recent listed A and
+   "acme-uid-0001 (Workspace)". Opening the latter showed **"⚠ Reopen for
+   debugger"** in the status bar, still there at 30 seconds.
+3. **Clicking it** reopened the window from its file, on a `file:` workspace
+   storage entry. The item was gone.
+4. **Recent once:** File: Open Recent in the reopened window listed
+   "acme-uid-0001 (Workspace)" **once**, plus A. After quitting, the saved list
+   (`history.recentlyOpenedPathsList`) holds the workspace only as
+   `file:///…/acme-uid-0001.code-workspace`, plus A. The
+   `vscode-userdata:` entry is gone.
+
+## Findings (eighth run)
+
+### 14. Picking another version's database drops this version's database (moderate)
+
+**Steps:**
+1. Use a window whose 17.0 database is selected but was never picked in this
+   build. Here that is the seed: acme-db1 is `isSelected` and
+   `selectedDbByVersion` is empty. A 1.3 user's data has the same shape.
+2. Switch Active Version → 19.0, and pick acme-db19. Asking for exactly that is
+   the point of the status bar item.
+3. Switch Active Version → 17.0.
+
+**Expected:** 17.0 still launches acme-db1, as it did a minute earlier.
+
+**Happened:**
+- right after the pick, `launch.json` lost its `odoo-debugger` entry. Only
+  `odoo-debugger-19` (acme-db19) is left;
+- back on 17.0, the status bar reads **"no 17.0 database"**;
+- the window now remembers only `{"ver-19-0002": "acme-db19"}`.
+
+**Why:** in `resolveDbForVersion` (`src/services/dbResolution.ts:45-53`), the
+selection only counts for its own version, and the memory is written only
+when a database is picked (`rememberDbForVersion`). A selection that was never
+picked in this build is not in the memory. Once the selection moves to a 19.0
+database, 17.0 has nothing.
+
+In the seventh run this did not show, because I had switched databases on
+17.0 first, which filled the memory.
+
+One way to fix it: when the selection moves to a database of another version,
+remember the one it leaves under its own version. Seeding the memory from the
+current selection on load would also cover data written before per-version
+memory existed.
 
 # Seventh run: the reopen item, and one database version per entry (`f29f37c`)
 
