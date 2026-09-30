@@ -573,8 +573,15 @@ Each step ships on its own and leaves the extension working.
      read on demand and cached, not stored. The upgrade setup and the
      wrong-copy guard deal only in per-branch copies, so they were left as
      they are until step 4.
-   - **3b, binding a workspace to a version,** and **3c, the registry:**
-     next.
+   - **3b, binding a workspace to a version — implemented.** The binding
+     lives in `workspaceState` under its own key (`services/workspaceBinding.ts`),
+     not in the selection overlay, which is rebuilt from the data on every
+     save. `proposeWorkspaceVersion` decides through the data, then the branch
+     name; `shouldOfferBinding` asks only on a shared store with more than one
+     version, once. Choosing activates the version through Switch Active
+     Version. The bound window's folders are searched first for that
+     version's checkouts (`extraRootsFor` in `services/versionRepos.ts`).
+   - **3c, the registry:** next.
 4. **The upgrade plan** only copies shared directories; Start This Side; Open
    the Other Side.
 5. **Cross-window guards** (§9). The provisioning lease can come first, since it

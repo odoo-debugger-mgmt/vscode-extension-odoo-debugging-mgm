@@ -330,6 +330,32 @@ a different branch.
 6. **Save All as Default** on a provisioned version now succeeds (it failed
    before on `managedPaths`); `repoPaths` is not written as a setting.
 
+## 14 · Binding a workspace to a version (step 3b)
+
+Setup: item 13's origin, and two new folders, each a clone of it opened as a
+workspace of its own: `/tmp/odt-brief/W17/acme` on `staging` and
+`/tmp/odt-brief/W19/acme` on `main` (branches that name no series). In the
+shared store: 17.0 and 19.0 exist, acme-db1 (17.0) maps `acme` to `staging`,
+acme-db19 (19.0) to `main`. Use a fresh profile, so neither window was asked.
+
+1. **Open `W19/acme`** on the shared store. **Expect**, once: "Use Odoo 19.0
+   in this workspace? (acme here is on main, which acme-db19 runs.)" with
+   Use It, Choose Another…, Not Now. Quote it.
+2. **Use It.** **Expect** 19.0 active ("This workspace runs Odoo 19.0."), the
+   version status bar tooltip saying "Bound to this workspace", and the 19.0
+   launch entry's addons path naming `W19/acme` — the workspace's own clone,
+   with nothing configured.
+3. **Open `W17/acme`** in a second window. **Expect** the proposal for 17.0,
+   through `staging`. Choose **Not Now**; reload the window; **expect** no
+   question.
+4. **Bind This Workspace to a Version…** in `W17/acme`: the list shows the
+   proposal's reason on 17.0; choose it. **Expect** 17.0 active, and its entry
+   naming `W17/acme`. `W19/acme`'s window keeps 19.0.
+5. **A folder that says nothing:** open an empty folder on the shared store.
+   **Expect** "Which version does this workspace run? …" with Choose a
+   Version… and Not Now.
+6. **A workspace on its own file** (no shared store): **expect** no question.
+
 ## 12 · A store from the future
 
 1. With every window closed, open `/tmp/odt-brief/shared.db` in the `sqlite3`

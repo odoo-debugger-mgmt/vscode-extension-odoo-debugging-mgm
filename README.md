@@ -254,6 +254,15 @@ left as it is. The Projects view shows which shared store it is reading.
   The preview says exactly what a merge adds, or that it adds nothing. Versions
   are matched by branch, so importing from another machine does not duplicate
   them.
+- **Each workspace runs its own version.** The first time a workspace opens a
+  shared store with several versions, it is asked once which version it runs,
+  with a proposal from what it holds — "Use Odoo 19.0 in this workspace?
+  (acme here is on main, which acme-db19 runs.)" — found through the
+  databases' branch mappings, so `main`/`staging`/`dev` branches work, or else
+  a branch named after a series. Choosing activates that version, and the
+  workspace's own folders become its code: a clone the workspace opens is what
+  that version runs, with nothing to configure. **Bind This Workspace to a
+  Version…** changes it later; switching the active version works as always.
 - A store written by a newer Odoo DevTools opens read-only, and says so.
 - Keep the store on a local disk: SQLite's locking is unreliable over network
   shares.
