@@ -6,8 +6,10 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
+import { parse as parseJsonc } from 'jsonc-parser';
 import { currentMainStore } from './mainStore';
 import { localWorkspaceFilePath } from './launchConfig';
 import { boundVersionId } from './workspaceBinding';
@@ -121,6 +123,42 @@ export async function refreshRegistry(): Promise<WorkspaceRow[]> {
         logger.debug('[registry] could not read the registry:', error);
     }
     return cached;
+}
+
+/**
+ * The folders a registry row's workspace holds: a folder row is the folder;
+ * a `.code-workspace` row's folders are read from the file, relative to it.
+ */
+export function rootsOfRegistryRow(uri: string, readFile: (file: string) => string | undefined): string[] {
+    let fsPath: string;
+    try {
+        fsPath = fileURLToPath(uri);
+    } catch {
+        // Not a file: URI - nothing on this machine's disk to search.
+        return [];
+    }
+    if (!fsPath.endsWith('.code-workspace')) {
+        return [fsPath];
+    }
+    const parsed = parseJsonc(readFile(fsPath) ?? '') as { folders?: Array<{ path?: unknown }> } | undefined;
+    return (parsed?.folders ?? [])
+        .map(folder => (typeof folder?.path === 'string' ? path.resolve(path.dirname(fsPath), folder.path) : undefined))
+        .filter((folder): folder is string => !!folder);
+}
+
+/**
+ * The folders of the other workspaces bound to `versionId`, as last read:
+ * where that version's code lives, seen from a window that does not hold it.
+ */
+export function otherWorkspaceRootsFor(versionId: string): string[] {
+    const read = (file: string) => {
+        try {
+            return fs.readFileSync(file, 'utf8');
+        } catch {
+            return undefined;
+        }
+    };
+    return otherWorkspacesFor(versionId).flatMap(row => rootsOfRegistryRow(row.uri, read));
 }
 
 /** Other workspaces bound to `versionId`, as last read. */

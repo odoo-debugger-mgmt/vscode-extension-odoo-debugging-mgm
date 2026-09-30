@@ -16,15 +16,24 @@ import { projectReposForVersion } from './repoLocations';
 import { resolveProjectRepos, type ResolvedRepo } from './repoPaths';
 import { readSetupState } from './setupState';
 import { boundVersionId } from './workspaceBinding';
+import { otherWorkspaceRootsFor } from './workspaceRegistry';
 
 /**
- * The folders of this window, when it is bound to `version`: searched first
- * for that version's checkouts (see locateRepoCheckouts).
+ * Where to look first for `version`'s checkouts (see locateRepoCheckouts):
+ * this window's folders when it is bound to that version, and the folders of
+ * the other workspaces the shared store's registry has bound to it. The
+ * second is how a 17.0 window finds the 19.0 side of an upgrade in the 19.0
+ * workspace's clone, rather than in a same-remote clone under Custom Addons.
+ * The registry is read as last refreshed (refreshRegistry).
  */
 export function extraRootsFor(version: { id?: string } | undefined): string[] {
-    return version?.id && version.id === boundVersionId()
+    if (!version?.id) {
+        return [];
+    }
+    const own = version.id === boundVersionId()
         ? (vscode.workspace.workspaceFolders ?? []).map(folder => folder.uri.fsPath)
         : [];
+    return [...new Set([...own, ...otherWorkspaceRootsFor(version.id)])];
 }
 
 /** The database's own version, or the active one when it has none. */

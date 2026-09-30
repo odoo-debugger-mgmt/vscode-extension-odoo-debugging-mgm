@@ -45,11 +45,12 @@ import { RepoModel, normalizeBranchMode } from '../models/repo';
 import type { DatabaseModel } from '../models/db';
 import type { ProjectModel } from '../models/project';
 import type { UpgradeConfigModel } from '../models/upgrade';
-import type { VersionsService } from '../versionsService';
+import { VersionsService } from '../versionsService';
 import { registerCommand } from './registerCommand';
 import * as path from 'node:path';
 import { locateRepoCheckouts } from '../services/repoLocations';
 import { extraRootsFor } from '../services/versionRepos';
+import { refreshRegistry } from '../services/workspaceRegistry';
 
 /** Everything the wizard collects, filled in as it goes. */
 interface SetupDraft {
@@ -146,9 +147,28 @@ async function branchesOf(repoPath: string): Promise<string[]> {
  * one, so a repository with no branch on either side simply drops out.
  */
 async function repoIsInvolved(repo: RepoModel, fromSeries: string, toSeries: string): Promise<boolean> {
-    const branches = await branchesOf(normalizePath(repo.path));
-    return proposeBranchForSeries(branches, fromSeries).candidates.length > 0
-        || proposeBranchForSeries(branches, toSeries).candidates.length > 0;
+    const [fromBranches, toBranches] = await Promise.all([
+        branchesOf(await checkoutForSeries(repo, fromSeries)),
+        branchesOf(await checkoutForSeries(repo, toSeries))
+    ]);
+    return proposeBranchForSeries(fromBranches, fromSeries).candidates.length > 0
+        || proposeBranchForSeries(toBranches, toSeries).candidates.length > 0;
+}
+
+/**
+ * The checkout a side of the upgrade runs `repo` from, whose branches are
+ * the ones to offer: with a folder or a workspace per version, the other
+ * side's clone has branches this one does not. The repository's own path
+ * when the series has no version yet, or the repository keeps copies.
+ */
+async function checkoutForSeries(repo: RepoModel, series: string): Promise<string> {
+    const version = VersionsService.getInstance().getVersions().find(entry => entry.odooVersion.trim() === series);
+    if (!version || normalizeBranchMode(repo.branchMode) === 'worktree') {
+        return normalizePath(repo.path);
+    }
+    await refreshRegistry();
+    const located = await locateRepoCheckouts([repo], version, undefined, extraRootsFor(version));
+    return normalizePath(located.get(repo.name)?.path ?? repo.path);
 }
 
 /**
@@ -164,7 +184,7 @@ async function resolveRepoBranch(
     exclude: string | undefined,
     canGoBack: boolean
 ): Promise<StepResult<string>> {
-    const repoPath = normalizePath(repo.path);
+    const repoPath = await checkoutForSeries(repo, series);
     const proposal = proposeBranchForSeries(await branchesOf(repoPath), series);
 
     if (proposal.branch && proposal.branch !== exclude) {
@@ -204,6 +224,8 @@ async function ownCheckoutsFor(
     const fromVersion = bySeries(fromSeries);
     const toVersion = bySeries(toSeries);
     const own: Record<string, { from: string; to: string }> = {};
+    // Which workspace runs which version, for finding the other side's clone.
+    await refreshRegistry();
     const candidates = repos.filter(repo => normalizeBranchMode(repo.branchMode) === 'checkout');
     if (!fromVersion || !toVersion || candidates.length === 0) {
         return own;
@@ -399,7 +421,7 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
         };
         const plan = buildUpgradePlan(input);
 
-        if (plan.reposToWorktree.length > 0 || plan.versionsToCreate.length > 0) {
+        if (plan.reposToWorktree.length > 0 || plan.reposOnOwnCheckouts.length > 0 || plan.versionsToCreate.length > 0) {
             const confirmed = await showModalInfo(describeUpgradePlan(plan, input), 'Resume');
             if (confirmed !== 'Resume') {
                 return;
@@ -725,7 +747,7 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
                 const entry = draft.branches.get(repo.name) ?? {};
                 const side = picked.edit === 'from-branch' ? 'from' : 'to';
                 const changed = await pickRepoBranch(
-                    normalizePath(repo.path),
+                    await checkoutForSeries(repo, side === 'from' ? draft.fromSeries! : draft.toSeries!),
                     `Upgrading ${side} — ${repo.name}`,
                     `Which branch of ${repo.name} runs Odoo ${side === 'from' ? draft.fromSeries : draft.toSeries}?`,
                     side === 'from' ? entry.from : entry.to,
@@ -742,7 +764,10 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
             const plan = buildUpgradePlan(input);
 
             // ---- The one blocking dialog, and only when disk is touched --------
+            // Switching each side's own checkout to its branch is touching disk
+            // too: the user sees which checkouts before it happens.
             const createsSomething = plan.reposToWorktree.length > 0
+                || plan.reposOnOwnCheckouts.length > 0
                 || plan.versionsToCreate.length > 0
                 || !draft.toDb;
             if (createsSomething) {
