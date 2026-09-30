@@ -24,6 +24,7 @@ import { inputStep, isBack, multiPickStep, StepResult } from './services/wizard'
 import { getRepoBranch } from './services/branches';
 import { readModuleManifest, extractTicketIdsFromBranch } from './services/manifest';
 import { collectModuleDiscovery } from './services/psaeInternal';
+import { reposSeenByDatabase } from './services/versionRepos';
 
 let projectMetadataMigrationCompleted = false;
 
@@ -354,7 +355,7 @@ export async function selectProject(projectUid: string) {
         const selectedDb = selectedProject.dbs?.find((db: DatabaseModel) => db.isSelected);
         if (selectedDb) {
             await alignEnvironment(
-                buildDatabaseEnvironmentTarget(selectedDb, selectedProject.repos ?? []),
+                buildDatabaseEnvironmentTarget(selectedDb, await reposSeenByDatabase(selectedProject, selectedDb)),
                 { label: `Project "${selectedProject.name}"` }
             );
         }

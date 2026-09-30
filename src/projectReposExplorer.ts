@@ -17,6 +17,7 @@ import { getRepoBranch } from './services/branches';
 import { resolveProjectRepos, ResolvedRepo } from './services/repoPaths';
 import { resolveProjectRepoBranchAssignments } from './services/environment';
 import { readSetupState } from './services/setupState';
+import { resolveReposForDatabase } from './services/versionRepos';
 import { pathExists as fsPathExists } from './services/dumpImport';
 import { ensureUpgradeConfigModel, UpgradeConfigModel } from './models/upgrade';
 
@@ -214,8 +215,9 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
             // version's worktrees, so a file opened from it - and every command
             // that acts on the row's uri - belongs to the version being run.
             // An upgrade runs two versions, so it gets both of their copies.
-            const resolved = this.resolveRepos(project);
-            const resolvedByRepo = new Map(resolved.map(entry => [entry.repo, entry]));
+            const resolved = await this.resolveRepos(project);
+            // By name: the version's own checkout is a copy of the repo model.
+            const resolvedByName = new Map(resolved.map(entry => [entry.repo.name, entry]));
             const pairCopies = resolveUpgradePairCopies(
                 project,
                 ensureUpgradeConfigModel(project.upgradeConfig),
@@ -233,7 +235,7 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
                 const pair = pairCopies.get(repo);
                 return pair
                     ? [{ repo, entry: pair.from, side: 'from' as const }, { repo, entry: pair.to, side: 'to' as const }]
-                    : [{ repo, entry: resolvedByRepo.get(repo) }];
+                    : [{ repo, entry: resolvedByName.get(repo.name) }];
             });
             return Promise.all(roots.map(async ({ repo, entry, side }) => {
                 const repoPath = entry?.path ?? normalizePath(repo.path);
@@ -283,14 +285,9 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
         return 0;
     }
 
-    /** The active version's directory for each project repo. */
-    private resolveRepos(project: ProjectModel): ResolvedRepo[] {
-        const db = project.dbs?.find(entry => entry.isSelected);
-        return resolveProjectRepos(
-            project.repos ?? [],
-            db ? resolveProjectRepoBranchAssignments(db, project.repos ?? []) : [],
-            readSetupState().provisioningRoot
-        );
+    /** The selected database's version's directory for each project repo. */
+    private resolveRepos(project: ProjectModel): Promise<ResolvedRepo[]> {
+        return resolveReposForDatabase(project, project.dbs?.find(entry => entry.isSelected));
     }
 
     private resetWatchers(repoPaths: string[]) {

@@ -19,14 +19,12 @@ import { getInstalledModuleNames, getInstalledModules } from './services/databas
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { VersionsService } from './versionsService';
-import { resolveProjectRepos } from './services/repoPaths';
-import { resolveProjectRepoBranchAssignments } from './services/environment';
-import { readSetupState } from './services/setupState';
 import { showModalWarning } from './services/notifications';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 import { runCommand, tryRunCommand } from './services/process';
 import { errorMessage } from './services/logger';
 import { readModuleManifest } from './services/manifest';
+import { resolveReposForDatabase } from './services/versionRepos';
 
 /**
  * Whether module selections may be edited right now. Both refusals were
@@ -122,7 +120,7 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
         const isTestingEnabled = !!(project.testingConfig && project.testingConfig.isEnabled);
 
-        const { modules: allModules, psaeDirectories } = collectModuleDiscovery(project);
+        const { modules: allModules, psaeDirectories } = collectModuleDiscovery(project, await resolveReposForDatabase(project, db));
         this.knownModuleNames = new Set(allModules.map(module => module.name));
         const installedModuleNames = await getInstalledModuleNames(db.id);
         const dbModulesByName = new Map(modules.map(module => [module.name, module]));
@@ -432,7 +430,7 @@ export async function quickConfigureModules(): Promise<void> {
             return undefined;
         }
 
-        const { modules } = collectModuleDiscovery(project);
+        const { modules } = collectModuleDiscovery(project, await resolveReposForDatabase(project, db));
         const statesByName = new Map((db.modules ?? []).map(module => [module.name, module.state]));
         let installedNames = new Set<string>();
         try {
@@ -575,13 +573,10 @@ export async function createModuleFromScaffold(): Promise<void> {
     // Resolved once: in worktree mode the source checkout is not what any
     // version runs, so scaffolding into it would put the module nowhere useful.
     const selectedDb = targetProject.dbs?.find(entry => entry.isSelected);
-    const resolvedRepos = resolveProjectRepos(
-        projectRepos,
-        selectedDb ? resolveProjectRepoBranchAssignments(selectedDb, projectRepos) : [],
-        readSetupState().provisioningRoot
-    );
+    const resolvedRepos = await resolveReposForDatabase(targetProject, selectedDb);
+    // By name: each version sees its own copy of the repository model.
     const resolvedPathFor = (repo: RepoModel): string =>
-        resolvedRepos.find(entry => entry.repo === repo)?.path ?? normalizePath(repo.path);
+        resolvedRepos.find(entry => entry.repo.name === repo.name)?.path ?? normalizePath(repo.path);
 
     let targetRepo: RepoModel | undefined;
     if (projectRepos.length === 1) {
@@ -807,7 +802,7 @@ export async function updateAllModules(): Promise<void> {
         return;
     }
 
-    const { modules: allModules } = collectModuleDiscovery(project);
+    const { modules: allModules } = collectModuleDiscovery(project, await resolveReposForDatabase(project, db));
 
     const availableModules = allModules.filter(m => !PSAE_INTERNAL_REGEX.test(m.name));
 
@@ -907,7 +902,7 @@ export async function installAllModules(): Promise<void> {
         return;
     }
 
-    const { modules: allModules } = collectModuleDiscovery(project);
+    const { modules: allModules } = collectModuleDiscovery(project, await resolveReposForDatabase(project, db));
 
     const availableModules = allModules.filter(m => !PSAE_INTERNAL_REGEX.test(m.name));
 

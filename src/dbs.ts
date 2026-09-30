@@ -51,6 +51,7 @@ import {
     resolveProjectRepoCheckouts,
     sanitizeProjectRepoBranchAssignments
 } from './services/environment';
+import { reposSeenByDatabase } from './services/versionRepos';
 
 /**
  * Database UI flows: creation wizard, selection, deletion, restore, version
@@ -1005,7 +1006,7 @@ export async function selectDatabase(event: unknown) {
     // branches) to the database through the single switch pipeline.
     try {
         await alignEnvironment(
-            buildDatabaseEnvironmentTarget(selectedDatabase, project.repos ?? []),
+            buildDatabaseEnvironmentTarget(selectedDatabase, await reposSeenByDatabase(project, selectedDatabase)),
             { label: `Database "${databaseLabel}"` }
         );
     } catch (error) {
@@ -1334,7 +1335,7 @@ export async function changeDatabaseVersion(event: unknown) {
         // If this is the currently selected database, align the workbench to the new version.
         if (db.isSelected && selectedChoice.versionId) {
             await alignEnvironment(
-                buildDatabaseEnvironmentTarget(project.dbs[dbIndex], project.repos ?? []),
+                buildDatabaseEnvironmentTarget(project.dbs[dbIndex], await reposSeenByDatabase(project, project.dbs[dbIndex])),
                 { label: `Database "${dbNameForMessage}"` }
             );
         }
@@ -1393,7 +1394,7 @@ export async function changeDatabaseProjectRepoBranches(event: unknown): Promise
         if (project.dbs[dbIndex].isSelected && updatedAssignments.length > 0) {
             // The user explicitly configured this mapping; apply it right away.
             await alignEnvironment(
-                { repoAssignments: resolveProjectRepoCheckouts(project.dbs[dbIndex], project.repos ?? []) },
+                { repoAssignments: resolveProjectRepoCheckouts(project.dbs[dbIndex], await reposSeenByDatabase(project, project.dbs[dbIndex])) },
                 { label: `Database "${dbLabel}"`, behavior: 'auto' }
             );
         }

@@ -25,11 +25,10 @@ import {
 import { currentDataLocation } from './services/dataLocation';
 import { getSessionByName, runningDebuggerNames, resolveStopTarget } from './services/debugSessions';
 import { dbForVersion } from './services/dbResolution';
+import { resolveReposForDatabase } from './services/versionRepos';
 import { isVersionProvisioned } from './services/provisioning';
-import { resolveProjectRepos } from './services/repoPaths';
 import { ensureCustomWorktrees } from './services/customWorktree';
 import { readSetupState } from './services/setupState';
-import { resolveProjectRepoBranchAssignments } from './services/environment';
 import { provisionExistingVersion } from './odooInstaller';
 
 /** Why prepareArgs refuses: no database of that version is selected. */
@@ -160,11 +159,7 @@ export async function setupDebugger(): Promise<any> {
             // almost every command, so it creates the worktrees that need no
             // arbitration and reports the rest instead of raising a modal.
             const { problems, needsResolution } = await ensureCustomWorktrees(
-                resolveProjectRepos(
-                    project.repos ?? [],
-                    resolveProjectRepoBranchAssignments(versionDb, project.repos ?? []),
-                    setupRoot
-                ),
+                await resolveReposForDatabase(project, versionDb, { version, root: setupRoot }),
                 undefined,
                 { interactive: false }
             );
@@ -307,11 +302,9 @@ async function prepareArgs(
     // Modules tree and the launch args always agree on what is included.
     // Resolve every project repo to the directory this version runs from, so
     // two versions on different branches never share one copy of the code.
-    const resolvedRepos = resolveProjectRepos(
-        project.repos ?? [],
-        resolveProjectRepoBranchAssignments(db, project.repos ?? []),
-        readSetupState().provisioningRoot
-    );
+    const resolvedRepos = await resolveReposForDatabase(project, db, {
+        version: options.versionId ? VersionsService.getInstance().getVersion(options.versionId) : undefined
+    });
     const discovery = collectModuleDiscovery(project, resolvedRepos);
 
     const containerPathMap = new Map<string, string>();
