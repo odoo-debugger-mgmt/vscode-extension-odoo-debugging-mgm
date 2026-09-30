@@ -52,6 +52,22 @@ export async function checkoutBranchViaSourceControl(repoPath: string, branch: s
     }
 }
 
+/**
+ * Refreshes the Source Control view for `repoPath` after a change made on the
+ * command line - only when this window has that repository open. The global
+ * `git.refresh` command answers a window with no open repository with a
+ * modal "There are no available repositories", and a version's own clone is
+ * usually not open in the window that switches it.
+ */
+export async function refreshRepositoryViaSourceControl(repoPath: string): Promise<void> {
+    try {
+        const repo = await getRepository(repoPath);
+        await repo?.status();
+    } catch (error) {
+        logger.debug(`Git API refresh failed for ${repoPath}:`, error);
+    }
+}
+
 export async function getCurrentBranchViaSourceControl(repoPath: string): Promise<string | null> {
     try {
         const repo = await getRepository(repoPath);

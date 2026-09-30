@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { normalizePath } from '../utils';
 import { SettingsModel } from '../models/settings';
-import { checkoutBranchViaSourceControl } from './gitService';
+import { checkoutBranchViaSourceControl, refreshRepositoryViaSourceControl } from './gitService';
 import { invalidateGitBranchCache } from './runtimeCache';
 
 const checkoutHooksOutput = vscode.window.createOutputChannel('Odoo Debugger: Branch Hooks');
@@ -187,11 +187,7 @@ export async function checkoutRepoBranch(repoPath: string, branch: string): Prom
     const result = await runGitCheckoutCli(repoPath, branch);
     if (result.ok) {
         invalidateGitBranchCache(repoPath);
-        try {
-            await vscode.commands.executeCommand('git.refresh');
-        } catch {
-            // Best-effort SCM refresh after external checkout.
-        }
+        await refreshRepositoryViaSourceControl(repoPath);
     }
     return result;
 }
