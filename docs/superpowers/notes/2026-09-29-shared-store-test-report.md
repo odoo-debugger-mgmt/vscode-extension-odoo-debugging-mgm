@@ -5,7 +5,47 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds eight runs, newest first. The earlier runs are kept unchanged.
+This file holds nine runs, newest first. The earlier runs are kept unchanged.
+
+# Ninth run: finding 14 replayed (`ec04b14`)
+
+**Scope:** as asked:
+- the test suite;
+- finding 14 replayed on the seed.
+
+**Setup:**
+- **Profile:** a new throwaway profile (`HOME=/tmp/claude/bo`), running as an
+  Extension Development Host; nothing here involves Recent.
+- **Data:** A's data file reset to the seed: acme-db1 selected (`isSelected`),
+  `selectedDbByVersion` absent, 17.0 active. A had no `launch.json`.
+
+## Verdict (ninth run)
+
+**Finding 14 is fixed.**
+
+## Test suite: matched
+
+- VS Code 1.139.1: **459 passing, 0 failing, 0 pending**.
+
+## Finding 14 replayed: matched
+
+1. **Start:** A opened on "acme · acme-db1 · 17.0 :8069". acme-db1 had never
+   been picked in this window.
+2. **Switch Active Version → Odoo 19.0:**
+   - the status bar read "no 19.0 database";
+   - `launch.json` held only `odoo-debugger`, `-d acme-db1`.
+3. **The status bar item** listed only acme-db19, under "Database for Odoo
+   19.0". I picked it. `launch.json` then held **both**:
+   - `odoo-debugger-19`, `-p 8079 -d acme-db19`;
+   - `odoo-debugger`, `-p 8069 -d acme-db1`.
+
+   The status bar read "acme-db19 · 19.0 :8079".
+4. **Switch Active Version → Odoo 17.0:**
+   - the status bar read **"acme · acme-db1 · 17.0 :8069"**;
+   - `launch.json` is unchanged, with both entries.
+   - The data now remembers
+     `{"ver-19-0002": "acme-db19", "ver-17-0001": "acme-db1"}`. The selection
+     flag stays on acme-db19, and 17.0 resolves acme-db1 through the memory.
 
 # Eighth run: the status bar per version, and Recent once (`5269f35`)
 
