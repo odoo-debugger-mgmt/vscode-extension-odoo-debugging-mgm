@@ -77,14 +77,16 @@ suite('When a workspace is asked', () => {
 });
 
 suite('Leaving the version a workspace is bound to', () => {
-    test('selecting another version\'s database does, and is said first', () => {
-        assert.strictEqual(leavesBoundVersion('v19', 'v17', false), true);
+    test('switching to another version\'s database, or to the version itself, does, and is said first', () => {
+        assert.strictEqual(leavesBoundVersion('v19', 'v17', 'v19', false), true);
     });
 
-    test('its own version, no binding, a database with no version, or an upgrade: it does not', () => {
-        assert.strictEqual(leavesBoundVersion('v19', 'v19', false), false);
-        assert.strictEqual(leavesBoundVersion(undefined, 'v17', false), false);
-        assert.strictEqual(leavesBoundVersion('v19', undefined, false), false);
-        assert.strictEqual(leavesBoundVersion('v19', 'v17', true), false, 'selecting a side of an upgrade switches nothing');
+    test('its own version, no binding, no version, already switched, or an upgrade: it does not', () => {
+        assert.strictEqual(leavesBoundVersion('v19', 'v19', 'v19', false), false);
+        assert.strictEqual(leavesBoundVersion(undefined, 'v17', 'v19', false), false);
+        assert.strictEqual(leavesBoundVersion('v19', undefined, 'v19', false), false);
+        // Thirteenth run: already on 17.0, it still said "switches this window to 17.0".
+        assert.strictEqual(leavesBoundVersion('v19', 'v17', 'v17', false), false);
+        assert.strictEqual(leavesBoundVersion('v19', 'v17', 'v19', true), false, 'selecting a side of an upgrade switches nothing');
     });
 });

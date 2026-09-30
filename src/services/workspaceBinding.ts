@@ -137,13 +137,21 @@ export function proposeWorkspaceVersion(
 }
 
 /**
- * Whether selecting a database of `dbVersionId` takes this window off the
- * version it is bound to. Not during an upgrade - selecting a side there
- * chooses whose modules to edit, and switches nothing - and not for a
- * database linked to no version.
+ * Whether switching this window to `targetVersionId` - by selecting one of
+ * its databases, or directly - takes it off the version it is bound to. Not
+ * when the window already runs that version (it has left already, and asking
+ * again is noise), not during an upgrade - selecting a side there chooses
+ * whose modules to edit, and switches nothing - and not for a database
+ * linked to no version.
  */
-export function leavesBoundVersion(bound: string | undefined, dbVersionId: string | undefined, upgradeActive: boolean): boolean {
-    return !!bound && !!dbVersionId && dbVersionId !== bound && !upgradeActive;
+export function leavesBoundVersion(
+    bound: string | undefined,
+    targetVersionId: string | undefined,
+    activeVersionId: string | undefined,
+    upgradeActive: boolean
+): boolean {
+    return !!bound && !!targetVersionId && targetVersionId !== bound
+        && targetVersionId !== activeVersionId && !upgradeActive;
 }
 
 // ---------------------------------------------------------------------------

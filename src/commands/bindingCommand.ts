@@ -9,7 +9,7 @@ import { currentMainStore } from '../services/mainStore';
 import { getRepoBranch } from '../services/branches';
 import { remoteOf } from '../services/repoLocations';
 import { logger } from '../services/logger';
-import { showInfo } from '../services/notifications';
+import { showInfo, showModalWarning } from '../services/notifications';
 import { normalizePath } from '../utils';
 import { refreshRegistry, registerThisWorkspace, thisWorkspaceId } from '../services/workspaceRegistry';
 import { extractVersionId } from './args';
@@ -176,6 +176,37 @@ export async function offerWorkspaceBinding(): Promise<void> {
     } catch (error) {
         logger.warn('Offering to bind the workspace to a version failed:', error);
     }
+}
+
+/**
+ * Asked before this window leaves the version it is bound to (see
+ * leavesBoundVersion). Resolves false when cancelled; true to go ahead,
+ * after rebinding when the user chose to run the other version here.
+ */
+export async function confirmLeavingBoundVersion(targetVersionId: string, subject?: string): Promise<boolean> {
+    const versions = VersionsService.getInstance();
+    const bound = readBinding().versionId;
+    const boundName = bound ? versions.getVersion(bound)?.name : undefined;
+    const targetName = versions.getVersion(targetVersionId)?.name;
+    if (!boundName || !targetName) {
+        return true;
+    }
+    const consequence = subject
+        ? `${subject} belongs to ${targetName}, so selecting it switches this window to ${targetName}.`
+        : `Switching makes this window run ${targetName}.`;
+    const choice = await showModalWarning(
+        `This workspace runs ${boundName}. ${consequence}`,
+        'Switch for Now',
+        `Run ${targetName} Here From Now On`
+    );
+    if (!choice) {
+        return false;
+    }
+    if (choice !== 'Switch for Now') {
+        await writeBinding({ versionId: targetVersionId, asked: true });
+        void registerThisWorkspace();
+    }
+    return true;
 }
 
 /**

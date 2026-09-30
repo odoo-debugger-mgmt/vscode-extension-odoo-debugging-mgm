@@ -52,8 +52,8 @@ import {
     sanitizeProjectRepoBranchAssignments
 } from './services/environment';
 import { reposSeenByDatabase } from './services/versionRepos';
-import { boundVersionId, leavesBoundVersion, writeBinding } from './services/workspaceBinding';
-import { registerThisWorkspace } from './services/workspaceRegistry';
+import { boundVersionId, leavesBoundVersion } from './services/workspaceBinding';
+import { confirmLeavingBoundVersion } from './commands/bindingCommand';
 
 /**
  * Database UI flows: creation wizard, selection, deletion, restore, version
@@ -971,26 +971,18 @@ export async function selectDatabase(event: unknown) {
     }
 
     // A window bound to 19.0 selecting a 17.0 database switches the window to
-    // 17.0; say so first, and offer to make that the window's version.
-    const bound = boundVersionId();
-    if (leavesBoundVersion(bound, database.versionId, upgradeConfig.isActive())) {
-        const versions = VersionsService.getInstance();
-        const boundName = versions.getVersion(bound!)?.name;
-        const dbVersionName = versions.getVersion(database.versionId!)?.name;
-        if (boundName && dbVersionName) {
-            const choice = await showModalWarning(
-                `This workspace runs ${boundName}. "${databaseLabel}" belongs to ${dbVersionName}, `
-                + `so selecting it switches this window to ${dbVersionName}.`,
-                'Switch for Now',
-                `Run ${dbVersionName} Here From Now On`
-            );
-            if (!choice) {
-                return;
-            }
-            if (choice !== 'Switch for Now') {
-                await writeBinding({ versionId: database.versionId, asked: true });
-                void registerThisWorkspace();
-            }
+    // 17.0; say so first, and offer to make that the window's version. Not
+    // for the database already selected, nor when the window runs that
+    // version already.
+    const alreadySelected = project.dbs.find((db: DatabaseModel) => db.isSelected)?.id === database.id;
+    if (!alreadySelected && database.versionId && leavesBoundVersion(
+        boundVersionId(),
+        database.versionId,
+        VersionsService.getInstance().getActiveVersion()?.id,
+        upgradeConfig.isActive()
+    )) {
+        if (!await confirmLeavingBoundVersion(database.versionId, `"${databaseLabel}"`)) {
+            return;
         }
     }
 

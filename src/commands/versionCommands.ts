@@ -23,6 +23,8 @@ import { readSetupState } from '../services/setupState';
 import { diagnoseVersion, needsAttention } from '../services/versionMigration';
 import { currentUpgradeConfig, refuseDuringUpgrade } from '../upgrade';
 import { registerCommand } from './registerCommand';
+import { boundVersionId, leavesBoundVersion } from '../services/workspaceBinding';
+import { confirmLeavingBoundVersion } from './bindingCommand';
 
 export function registerVersionCommands(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
@@ -289,6 +291,12 @@ export function registerVersionCommands(deps: CommandDeps): void {
             if (upgradeConfig.isActive() && !upgradeConfig.sideForVersion(versionId)) {
                 const name = versionsService.getVersion(versionId)?.name ?? 'That version';
                 refuseDuringUpgrade(upgradeConfig, `"${name}" is not part of this upgrade, so it cannot be activated`);
+                return;
+            }
+            // Switching a window off the version it is bound to asks first,
+            // as selecting one of another version's databases does.
+            if (leavesBoundVersion(boundVersionId(), versionId, versionsService.getActiveVersion()?.id, upgradeConfig.isActive())
+                && !await confirmLeavingBoundVersion(versionId)) {
                 return;
             }
 
