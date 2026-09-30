@@ -5,6 +5,7 @@ import { getDatabaseLabel } from '../utils';
 import { logger } from '../services/logger';
 import { getRunningInstances } from '../services/runningState';
 import { statusBarDatabase } from '../services/dbResolution';
+import { boundVersionId } from '../services/workspaceBinding';
 
 /**
  * Status bar indicators for the active project, database and version.
@@ -90,6 +91,7 @@ export class StatusBarIndicators implements vscode.Disposable {
                     `Active version: ${version.name} (${version.odooVersion})`,
                     port ? `Server: http://localhost:${port}` : undefined,
                     running ? 'Currently running' : 'Not running',
+                    boundVersionId() === version.id ? 'Bound to this workspace' : undefined,
                     'Click to switch'
                 ].filter(Boolean).join('\n');
                 this.versionItem.show();

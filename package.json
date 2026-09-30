@@ -479,6 +479,12 @@
         "icon": "$(repo)"
       },
       {
+        "command": "odoo.bindWorkspaceVersion",
+        "title": "Bind This Workspace to a Version…",
+        "category": "Odoo DevTools",
+        "icon": "$(pin)"
+      },
+      {
         "command": "odoo.openVersionInBrowser",
         "title": "Open Server in Browser",
         "category": "Odoo DevTools",

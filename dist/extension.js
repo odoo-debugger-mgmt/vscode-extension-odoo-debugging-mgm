@@ -75,8 +75,10 @@ const setupState_1 = __webpack_require__(67);
 const notifications_1 = __webpack_require__(16);
 const utils_1 = __webpack_require__(8);
 const statusBar_1 = __webpack_require__(100);
-const commands_1 = __webpack_require__(101);
-const projectWorkspace_1 = __webpack_require__(105);
+const commands_1 = __webpack_require__(102);
+const projectWorkspace_1 = __webpack_require__(106);
+const workspaceBinding_1 = __webpack_require__(101);
+const bindingCommand_1 = __webpack_require__(127);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -95,6 +97,7 @@ async function activate(context) {
     // Before anything reads the data: the selection it applies is part of
     // what VersionsService reads while initializing.
     await settingsStore_1.SettingsStore.initialize(context);
+    (0, workspaceBinding_1.initializeBinding)(context.workspaceState);
     (0, projectWorkspace_1.offerToReopenByPath)(context);
     const sortPreferences = new sortPreferences_1.SortPreferences(context.workspaceState);
     // Initialize version management service
@@ -147,6 +150,7 @@ async function activate(context) {
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('odooDebugger.statusBar.enabled')) {
             void statusBar.update();
+            void (0, bindingCommand_1.offerWorkspaceBinding)();
         }
     }));
     // One-time v1.2 migrations: fold legacy per-DB odooVersion into versions,
@@ -284,6 +288,8 @@ async function activate(context) {
             (0, mainStore_1.closeOtherMainStores)();
             watchStore();
             onStoreChanged();
+            // A workspace that just joined a shared store is asked then.
+            void (0, bindingCommand_1.offerWorkspaceBinding)();
         }
     }));
     context.subscriptions.push({
@@ -20621,6 +20627,7 @@ const utils_1 = __webpack_require__(8);
 const logger_1 = __webpack_require__(12);
 const runningState_1 = __webpack_require__(77);
 const dbResolution_1 = __webpack_require__(59);
+const workspaceBinding_1 = __webpack_require__(101);
 /**
  * Status bar indicators for the active project, database and version.
  * Clicking each opens the corresponding quick-switch picker, so the current
@@ -20700,6 +20707,7 @@ class StatusBarIndicators {
                     `Active version: ${version.name} (${version.odooVersion})`,
                     port ? `Server: http://localhost:${port}` : undefined,
                     running ? 'Currently running' : 'Not running',
+                    (0, workspaceBinding_1.boundVersionId)() === version.id ? 'Bound to this workspace' : undefined,
                     'Click to switch'
                 ].filter(Boolean).join('\n');
                 this.versionItem.show();
@@ -20733,22 +20741,134 @@ exports.StatusBarIndicators = StatusBarIndicators;
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BINDING_STATE_KEY = void 0;
+exports.normalizeBinding = normalizeBinding;
+exports.shouldOfferBinding = shouldOfferBinding;
+exports.proposeWorkspaceVersion = proposeWorkspaceVersion;
+exports.initializeBinding = initializeBinding;
+exports.readBinding = readBinding;
+exports.writeBinding = writeBinding;
+exports.boundVersionId = boundVersionId;
+const versionProposal_1 = __webpack_require__(58);
+exports.BINDING_STATE_KEY = 'odt.workspaceBinding';
+const NOT_BOUND = { asked: false };
+function normalizeBinding(raw) {
+    if (!raw || typeof raw !== 'object') {
+        return { versionId: undefined, asked: NOT_BOUND.asked };
+    }
+    const value = raw;
+    return {
+        versionId: typeof value.versionId === 'string' && value.versionId ? value.versionId : undefined,
+        asked: value.asked === true
+    };
+}
+/**
+ * Whether to ask this window which version it runs: only on a shared store,
+ * where workspaces per version are the point - a workspace on its own file
+ * notices nothing - only when there is more than one version to choose
+ * from, and only once.
+ */
+function shouldOfferBinding(storeKind, versionCount, binding) {
+    return storeKind === 'sqlite' && versionCount > 1 && !binding.asked;
+}
+/**
+ * Which version this workspace most likely runs, from what it holds.
+ *
+ * Through the data first: a folder that is a checkout of a project repository
+ * (same remote, else same name) on branch B, and a database mapping that
+ * repository to B, give that database's version. That works for `main`,
+ * `staging` and `dev`, whose names say nothing. Then through a branch named
+ * after a series, when exactly one version has that series. Anything
+ * ambiguous proposes nothing, and the user is asked.
+ */
+function proposeWorkspaceVersion(folders, projects, versions, remoteOfRepo = () => undefined) {
+    const known = new Set(versions.map(version => version.id));
+    const throughData = new Map();
+    for (const folder of folders) {
+        if (!folder.branch) {
+            continue;
+        }
+        for (const project of projects) {
+            const repo = (project.repos ?? []).find(candidate => {
+                const remote = remoteOfRepo(candidate);
+                return (folder.remote && remote && folder.remote === remote)
+                    || candidate.name.toLowerCase() === folder.name.toLowerCase();
+            });
+            if (!repo) {
+                continue;
+            }
+            for (const db of project.dbs ?? []) {
+                const maps = (db.projectRepoBranches ?? []).some(entry => entry.repoName?.toLowerCase() === repo.name.toLowerCase() && entry.branch === folder.branch);
+                if (maps && db.versionId && known.has(db.versionId) && !throughData.has(db.versionId)) {
+                    throughData.set(db.versionId, `${folder.name} here is on ${folder.branch}, which ${db.name || db.id} runs`);
+                }
+            }
+        }
+    }
+    if (throughData.size === 1) {
+        const [[versionId, because]] = [...throughData];
+        return { versionId, reason: 'data', because };
+    }
+    if (throughData.size > 1) {
+        return undefined;
+    }
+    const bySeries = new Map();
+    for (const folder of folders) {
+        const series = folder.branch ? (0, versionProposal_1.branchToSeries)(folder.branch) : undefined;
+        const matching = series ? versions.filter(version => version.odooVersion === series) : [];
+        if (matching.length === 1) {
+            bySeries.set(matching[0].id, folder);
+        }
+    }
+    if (bySeries.size === 1) {
+        const [[versionId, folder]] = [...bySeries];
+        return { versionId, reason: 'branch', because: `${folder.name} here is on ${folder.branch}` };
+    }
+    return undefined;
+}
+// ---------------------------------------------------------------------------
+// vscode-backed accessors
+// ---------------------------------------------------------------------------
+let memento;
+/** Called once on activation with the window's workspaceState. */
+function initializeBinding(workspaceState) {
+    memento = workspaceState;
+}
+function readBinding() {
+    return normalizeBinding(memento?.get(exports.BINDING_STATE_KEY));
+}
+async function writeBinding(binding) {
+    await memento?.update(exports.BINDING_STATE_KEY, binding);
+}
+/** The version this window is bound to, if any. */
+function boundVersionId() {
+    return readBinding().versionId;
+}
+
+
+/***/ }),
+/* 102 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(102);
-const projectCommands_1 = __webpack_require__(104);
-const repoCommands_1 = __webpack_require__(110);
-const dbCommands_1 = __webpack_require__(111);
-const moduleCommands_1 = __webpack_require__(112);
-const testingCommands_1 = __webpack_require__(113);
-const versionCommands_1 = __webpack_require__(114);
-const debugCommands_1 = __webpack_require__(117);
-const reposExplorerCommands_1 = __webpack_require__(118);
-const editorCommands_1 = __webpack_require__(119);
-const helpCommands_1 = __webpack_require__(120);
-const upgradeCommand_1 = __webpack_require__(121);
+const viewCommands_1 = __webpack_require__(103);
+const projectCommands_1 = __webpack_require__(105);
+const repoCommands_1 = __webpack_require__(111);
+const dbCommands_1 = __webpack_require__(112);
+const moduleCommands_1 = __webpack_require__(113);
+const testingCommands_1 = __webpack_require__(114);
+const versionCommands_1 = __webpack_require__(115);
+const debugCommands_1 = __webpack_require__(118);
+const reposExplorerCommands_1 = __webpack_require__(119);
+const editorCommands_1 = __webpack_require__(120);
+const helpCommands_1 = __webpack_require__(121);
+const upgradeCommand_1 = __webpack_require__(122);
 const customAddonsCommand_1 = __webpack_require__(84);
-const dataStoreCommands_1 = __webpack_require__(123);
-const repoLocationCommand_1 = __webpack_require__(125);
+const dataStoreCommands_1 = __webpack_require__(124);
+const repoLocationCommand_1 = __webpack_require__(126);
+const bindingCommand_1 = __webpack_require__(127);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -20766,11 +20886,12 @@ function registerAllCommands(deps) {
     (0, customAddonsCommand_1.registerCustomAddonsCommand)(deps);
     (0, dataStoreCommands_1.registerDataStoreCommands)(deps);
     (0, repoLocationCommand_1.registerRepoLocationCommand)(deps);
+    (0, bindingCommand_1.registerBindingCommand)(deps);
 }
 
 
 /***/ }),
-/* 102 */
+/* 103 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20810,7 +20931,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(103);
+const quickSearch_1 = __webpack_require__(104);
 const versionsService_1 = __webpack_require__(32);
 const sortOptions_1 = __webpack_require__(37);
 const notifications_1 = __webpack_require__(16);
@@ -20958,7 +21079,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 103 */
+/* 104 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21082,7 +21203,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 104 */
+/* 105 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21133,12 +21254,12 @@ const logger_1 = __webpack_require__(12);
 const project_1 = __webpack_require__(80);
 const dbs_1 = __webpack_require__(60);
 const odooInstaller_1 = __webpack_require__(62);
-const projectWorkspace_1 = __webpack_require__(105);
-const setupFlow_1 = __webpack_require__(107);
+const projectWorkspace_1 = __webpack_require__(106);
+const setupFlow_1 = __webpack_require__(108);
 const setupState_1 = __webpack_require__(67);
 const context_1 = __webpack_require__(41);
 const versionProposal_1 = __webpack_require__(58);
-const versionPick_1 = __webpack_require__(109);
+const versionPick_1 = __webpack_require__(110);
 const gitService_1 = __webpack_require__(11);
 const provisionQueue_1 = __webpack_require__(92);
 const registerCommand_1 = __webpack_require__(85);
@@ -21303,7 +21424,7 @@ function registerProjectCommands(deps) {
 
 
 /***/ }),
-/* 105 */
+/* 106 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21356,7 +21477,7 @@ const logger_1 = __webpack_require__(12);
 const versionRepos_1 = __webpack_require__(75);
 const utils_1 = __webpack_require__(8);
 const versionsService_1 = __webpack_require__(32);
-const workspaceFolders_1 = __webpack_require__(106);
+const workspaceFolders_1 = __webpack_require__(107);
 async function getActiveProjectOrPrompt() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
@@ -21530,7 +21651,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 106 */
+/* 107 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -21590,7 +21711,7 @@ function repoFolderEntries(resolved, existingPaths) {
 
 
 /***/ }),
-/* 107 */
+/* 108 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21644,7 +21765,7 @@ const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const branches_1 = __webpack_require__(50);
 const customAddonsCommand_1 = __webpack_require__(84);
-const setupDetection_1 = __webpack_require__(108);
+const setupDetection_1 = __webpack_require__(109);
 const setupState_1 = __webpack_require__(67);
 /** The per-version key that every repository-discovery site already reads. */
 const CUSTOM_ADDONS_KEY = 'defaultVersion.customAddonsPath';
@@ -21826,7 +21947,7 @@ async function runSetup(options) {
 
 
 /***/ }),
-/* 108 */
+/* 109 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22043,7 +22164,7 @@ function detectCustomAddonsRoot(roots) {
 
 
 /***/ }),
-/* 109 */
+/* 110 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22192,14 +22313,14 @@ async function collectRepoBranches() {
 
 
 /***/ }),
-/* 110 */
+/* 111 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerRepoCommands = registerRepoCommands;
 const repos_1 = __webpack_require__(88);
-const projectWorkspace_1 = __webpack_require__(105);
+const projectWorkspace_1 = __webpack_require__(106);
 const registerCommand_1 = __webpack_require__(85);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
@@ -22212,7 +22333,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 111 */
+/* 112 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22461,7 +22582,7 @@ function registerDbCommands(deps) {
 
 
 /***/ }),
-/* 112 */
+/* 113 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22597,7 +22718,7 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 113 */
+/* 114 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -22654,7 +22775,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 114 */
+/* 115 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22698,12 +22819,12 @@ exports.registerVersionCommands = registerVersionCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
-const args_1 = __webpack_require__(115);
+const args_1 = __webpack_require__(116);
 const utils_1 = __webpack_require__(8);
 const versionIdentity_1 = __webpack_require__(35);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(116);
+const branchPick_1 = __webpack_require__(117);
 const runtimeCache_1 = __webpack_require__(15);
 const environment_1 = __webpack_require__(49);
 const odooInstaller_1 = __webpack_require__(62);
@@ -23324,7 +23445,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 115 */
+/* 116 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23417,7 +23538,7 @@ function extractUri(arg) {
 
 
 /***/ }),
-/* 116 */
+/* 117 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23627,7 +23748,7 @@ async function pickRepoBranch(repoPath, title, placeHolder, current, exclude, ca
 
 
 /***/ }),
-/* 117 */
+/* 118 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23765,7 +23886,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 118 */
+/* 119 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23813,7 +23934,7 @@ exports.registerReposExplorerCommands = registerReposExplorerCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
-const args_1 = __webpack_require__(115);
+const args_1 = __webpack_require__(116);
 const notifications_1 = __webpack_require__(16);
 const customWorktree_1 = __webpack_require__(55);
 const notifications_2 = __webpack_require__(16);
@@ -24058,7 +24179,7 @@ function registerReposExplorerCommands(deps) {
 
 
 /***/ }),
-/* 119 */
+/* 120 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24166,7 +24287,7 @@ function registerEditorCommands(deps) {
 
 
 /***/ }),
-/* 120 */
+/* 121 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24254,7 +24375,7 @@ function registerHelpCommands(deps) {
 
 
 /***/ }),
-/* 121 */
+/* 122 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24312,8 +24433,8 @@ const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(116);
-const upgradePlan_1 = __webpack_require__(122);
+const branchPick_1 = __webpack_require__(117);
+const upgradePlan_1 = __webpack_require__(123);
 const upgradeApply_1 = __webpack_require__(42);
 const upgradeSetup_1 = __webpack_require__(57);
 const provisionQueue_1 = __webpack_require__(92);
@@ -24827,7 +24948,7 @@ function registerUpgradeCommand(deps) {
 
 
 /***/ }),
-/* 122 */
+/* 123 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24937,7 +25058,7 @@ function describeUpgradePlan(plan, input) {
 
 
 /***/ }),
-/* 123 */
+/* 124 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24998,7 +25119,7 @@ const setupState_1 = __webpack_require__(67);
 const dataLocation_1 = __webpack_require__(17);
 const mainStore_1 = __webpack_require__(27);
 const workspaceSelection_1 = __webpack_require__(30);
-const dataImport_1 = __webpack_require__(124);
+const dataImport_1 = __webpack_require__(125);
 const registerCommand_1 = __webpack_require__(85);
 const SHARED_STORE_FILE = 'odoo-devtools.db';
 /** This window's data as the store holds it: no selection, absolute paths. */
@@ -25272,7 +25393,7 @@ function registerDataStoreCommands(deps) {
 
 
 /***/ }),
-/* 124 */
+/* 125 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25529,7 +25650,7 @@ function buildExport(data, exportedAt = new Date()) {
 
 
 /***/ }),
-/* 125 */
+/* 126 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25571,7 +25692,7 @@ exports.registerRepoLocationCommand = registerRepoLocationCommand;
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
-const args_1 = __webpack_require__(115);
+const args_1 = __webpack_require__(116);
 const registerCommand_1 = __webpack_require__(85);
 const settingsStore_1 = __webpack_require__(6);
 const notifications_1 = __webpack_require__(16);
@@ -25681,6 +25802,171 @@ function registerRepoLocationCommand(deps) {
             ? `${version.name} finds "${repo.name}" automatically again.`
             : `${version.name} now uses ${next[repo.name]} for "${repo.name}".`);
         await refreshAll();
+    }));
+}
+
+
+/***/ }),
+/* 127 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.offerWorkspaceBinding = offerWorkspaceBinding;
+exports.registerBindingCommand = registerBindingCommand;
+const fs = __importStar(__webpack_require__(2));
+const path = __importStar(__webpack_require__(3));
+const vscode = __importStar(__webpack_require__(1));
+const registerCommand_1 = __webpack_require__(85);
+const settingsStore_1 = __webpack_require__(6);
+const versionsService_1 = __webpack_require__(32);
+const mainStore_1 = __webpack_require__(27);
+const branches_1 = __webpack_require__(50);
+const repoLocations_1 = __webpack_require__(76);
+const logger_1 = __webpack_require__(12);
+const notifications_1 = __webpack_require__(16);
+const utils_1 = __webpack_require__(8);
+const workspaceBinding_1 = __webpack_require__(101);
+/** This window's folders, with the branch and remote of those that are git checkouts. */
+async function folderFacts() {
+    return Promise.all((vscode.workspace.workspaceFolders ?? []).map(async (folder) => {
+        const folderPath = folder.uri.fsPath;
+        const isCheckout = fs.existsSync(path.join(folderPath, '.git'));
+        return {
+            path: folderPath,
+            name: path.basename(folderPath),
+            branch: isCheckout ? (await (0, branches_1.getRepoBranch)(folderPath)) ?? undefined : undefined,
+            remote: isCheckout ? await (0, repoLocations_1.remoteOf)(folderPath) : undefined
+        };
+    }));
+}
+async function propose() {
+    const data = await settingsStore_1.SettingsStore.get().catch(() => undefined);
+    const projects = data?.projects ?? [];
+    const repoRemotes = new Map();
+    for (const project of projects) {
+        for (const repo of project.repos ?? []) {
+            const key = (0, utils_1.normalizePath)(repo.path);
+            if (!repoRemotes.has(key)) {
+                repoRemotes.set(key, await (0, repoLocations_1.remoteOf)(key));
+            }
+        }
+    }
+    return (0, workspaceBinding_1.proposeWorkspaceVersion)(await folderFacts(), projects, versionsService_1.VersionsService.getInstance().getVersions(), repo => repoRemotes.get((0, utils_1.normalizePath)(repo.path)));
+}
+/** Binds this window to `versionId` and makes it the active version. */
+async function bindTo(versionId) {
+    await (0, workspaceBinding_1.writeBinding)({ versionId, asked: true });
+    const versions = versionsService_1.VersionsService.getInstance();
+    if (versions.getActiveVersion()?.id !== versionId) {
+        // The command, not the service: it carries the upgrade guard and the
+        // environment alignment a version switch needs.
+        await vscode.commands.executeCommand('odoo.setActiveVersion', versionId);
+    }
+    void (0, notifications_1.showInfo)(`This workspace runs ${versions.getVersion(versionId)?.name ?? 'that version'}.`);
+}
+/** The version pick, with the proposal first; undefined when dismissed. */
+async function pickVersion(proposal) {
+    const versions = versionsService_1.VersionsService.getInstance().getVersions();
+    const bound = (0, workspaceBinding_1.readBinding)().versionId;
+    const items = versions
+        .map(version => ({
+        label: version.name,
+        description: version.odooVersion,
+        detail: [
+            version.id === bound ? '$(pin) Bound to this workspace' : undefined,
+            version.id === proposal?.versionId ? `$(lightbulb) ${proposal.because}` : undefined
+        ].filter(Boolean).join('  ') || undefined,
+        versionId: version.id
+    }))
+        .sort((a, b) => Number(b.versionId === proposal?.versionId) - Number(a.versionId === proposal?.versionId));
+    items.push({ label: '$(add) Create Version…', versionId: 'create' });
+    const picked = await vscode.window.showQuickPick(items, {
+        title: 'Bind This Workspace to a Version',
+        placeHolder: 'Which version does this workspace run?'
+    });
+    return picked?.versionId;
+}
+async function chooseAndBind(proposal) {
+    const choice = await pickVersion(proposal);
+    if (choice === 'create') {
+        await vscode.commands.executeCommand('odoo.createVersion');
+        return;
+    }
+    if (choice) {
+        await bindTo(choice);
+    }
+}
+/**
+ * Asks a new window on a shared store which version it runs, once. With a
+ * proposal from what the workspace holds, one click accepts it.
+ */
+async function offerWorkspaceBinding() {
+    try {
+        const versions = versionsService_1.VersionsService.getInstance();
+        await versions.initialize();
+        if (!(0, workspaceBinding_1.shouldOfferBinding)((0, mainStore_1.currentMainStore)()?.kind, versions.getVersions().length, (0, workspaceBinding_1.readBinding)())) {
+            return;
+        }
+        const proposal = await propose();
+        const name = proposal ? versions.getVersion(proposal.versionId)?.name : undefined;
+        const choice = proposal && name
+            ? await (0, notifications_1.showInfo)(`Use ${name} in this workspace? (${proposal.because}.)`, 'Use It', 'Choose Another…', 'Not Now')
+            : await (0, notifications_1.showInfo)('Which version does this workspace run? It is asked once; the store has several.', 'Choose a Version…', 'Not Now');
+        if (choice === 'Use It' && proposal) {
+            await bindTo(proposal.versionId);
+        }
+        else if (choice === 'Choose Another…' || choice === 'Choose a Version…') {
+            await (0, workspaceBinding_1.writeBinding)({ ...(0, workspaceBinding_1.readBinding)(), asked: true });
+            await chooseAndBind(proposal);
+        }
+        else if (choice === 'Not Now') {
+            await (0, workspaceBinding_1.writeBinding)({ ...(0, workspaceBinding_1.readBinding)(), asked: true });
+        }
+        // Dismissed without a choice: asked again next time.
+    }
+    catch (error) {
+        logger_1.logger.warn('Offering to bind the workspace to a version failed:', error);
+    }
+}
+function registerBindingCommand(deps) {
+    deps.context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.bindWorkspaceVersion', async () => {
+        await versionsService_1.VersionsService.getInstance().initialize();
+        await chooseAndBind(await propose());
+        await deps.refreshAll();
     }));
 }
 

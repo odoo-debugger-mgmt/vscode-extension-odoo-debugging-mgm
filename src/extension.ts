@@ -45,6 +45,8 @@ import { getDefaultVersionSettings, normalizePath, resolveOptionalPath } from '.
 import { StatusBarIndicators } from './views/statusBar';
 import { registerAllCommands, RefreshReason } from './commands';
 import { offerToReopenByPath } from './projectWorkspace';
+import { initializeBinding } from './services/workspaceBinding';
+import { offerWorkspaceBinding } from './commands/bindingCommand';
 
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext(): Promise<void> {
@@ -64,6 +66,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // Before anything reads the data: the selection it applies is part of
     // what VersionsService reads while initializing.
     await SettingsStore.initialize(context);
+    initializeBinding(context.workspaceState);
     offerToReopenByPath(context);
 
     const sortPreferences = new SortPreferences(context.workspaceState);
@@ -126,6 +129,7 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('odooDebugger.statusBar.enabled')) {
             void statusBar.update();
+    void offerWorkspaceBinding();
         }
     }));
 
@@ -276,6 +280,8 @@ export async function activate(context: vscode.ExtensionContext) {
             closeOtherMainStores();
             watchStore();
             onStoreChanged();
+            // A workspace that just joined a shared store is asked then.
+            void offerWorkspaceBinding();
         }
     }));
     context.subscriptions.push({
