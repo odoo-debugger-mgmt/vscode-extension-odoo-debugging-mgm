@@ -31,6 +31,7 @@ import { ensureCustomWorktrees } from './services/customWorktree';
 import { readSetupState } from './services/setupState';
 import { provisionExistingVersion } from './odooInstaller';
 import { buildServerUrl, isPortOpen } from './services/server';
+import { excludeLaunchFromGit } from './services/gitExclude';
 
 /** Why prepareArgs refuses: no database of that version is selected. */
 const NO_DATABASE = 'Select a database before running this action.';
@@ -244,6 +245,10 @@ export async function setupDebugger(): Promise<any> {
         }
     }
 
+    // A folder window that is itself a clone: keep launch.json out of git status.
+    if (target.kind === 'folder') {
+        await excludeLaunchFromGit(target.folderPath);
+    }
     // Every version's name, not only the provisioned ones written above.
     await cleanUpFirstFolderLaunch(target, versionsService.getVersions()
         .map(version => version.settings.debuggerName)

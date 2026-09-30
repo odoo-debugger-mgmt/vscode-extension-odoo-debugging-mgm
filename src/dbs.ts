@@ -979,7 +979,7 @@ export async function selectDatabase(event: unknown) {
         const dbVersionName = versions.getVersion(database.versionId!)?.name;
         if (boundName && dbVersionName) {
             const choice = await showModalWarning(
-                `This workspace runs ${boundName}. "${databaseLabel}" is a ${dbVersionName} database, `
+                `This workspace runs ${boundName}. "${databaseLabel}" belongs to ${dbVersionName}, `
                 + `so selecting it switches this window to ${dbVersionName}.`,
                 'Switch for Now',
                 `Run ${dbVersionName} Here From Now On`
