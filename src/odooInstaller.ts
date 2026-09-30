@@ -228,12 +228,7 @@ export async function provisionAndCreateVersion(
         cancellable: true
     }, async (progress, token) => {
         try {
-            // One build at a time across windows: a build started here waits
-            // for another window's to finish rather than run beside it.
-            return await withLease(spec.root, () => executeProvision(spec, progress, token), {
-                onWait: () => progress.report({ message: 'Waiting for another window to finish building…' }),
-                isCancelled: () => token.isCancellationRequested
-            });
+            return await buildUnderLease(spec, progress, token, branch);
         } catch (error) {
             if (token.isCancellationRequested) {
                 void showInfo('Provisioning cancelled. Run it again to resume where it stopped.');
@@ -271,6 +266,56 @@ export async function provisionAndCreateVersion(
     }
 
     return version;
+}
+
+/**
+ * Builds `spec` holding the provisioning lease: one build at a time across
+ * windows, so a build started here waits for another window's rather than
+ * run beside it. Undefined when there is nothing to record - cancelled while
+ * waiting, or the lease was lost mid-build: this window stalled past the
+ * stale limit and another took over, and building on would build the same
+ * branch into the same directory twice (fourteenth run). The build is
+ * cancelled then, and the window that took over finishes it.
+ */
+async function buildUnderLease(
+    spec: ProvisionSpec,
+    progress: vscode.Progress<{ message?: string; increment?: number }>,
+    token: vscode.CancellationToken,
+    what: string
+): Promise<Awaited<ReturnType<typeof executeProvision>> | undefined> {
+    const build = new vscode.CancellationTokenSource();
+    const forward = token.onCancellationRequested(() => build.cancel());
+    let waited = false;
+    let lost = false;
+    try {
+        const result = await withLease(spec.root, () => executeProvision(spec, progress, build.token), {
+            onWait: () => {
+                waited = true;
+                progress.report({ message: 'Waiting for another window to finish building…' });
+            },
+            isCancelled: () => token.isCancellationRequested,
+            onLost: () => {
+                lost = true;
+                build.cancel();
+            }
+        }).catch(error => {
+            if (lost) {
+                return undefined;
+            }
+            throw error;
+        });
+        if (lost) {
+            logger.info(`[queue] another window took over building; stopping here (${what})`);
+            return undefined;
+        }
+        if (result === undefined && waited && token.isCancellationRequested) {
+            void showInfo('Cancelled; another window was still building.');
+        }
+        return result;
+    } finally {
+        forward.dispose();
+        build.dispose();
+    }
 }
 
 /**
@@ -327,12 +372,7 @@ export async function provisionExistingVersion(
         cancellable: true
     }, async (progress, token) => {
         try {
-            // One build at a time across windows: a build started here waits
-            // for another window's to finish rather than run beside it.
-            return await withLease(spec.root, () => executeProvision(spec, progress, token), {
-                onWait: () => progress.report({ message: 'Waiting for another window to finish building…' }),
-                isCancelled: () => token.isCancellationRequested
-            });
+            return await buildUnderLease(spec, progress, token, version.name);
         } catch (error) {
             if (!token.isCancellationRequested) {
                 logger.error('Re-provisioning failed:', error);

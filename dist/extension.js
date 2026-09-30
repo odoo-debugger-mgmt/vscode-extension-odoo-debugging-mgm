@@ -12683,12 +12683,7 @@ async function provisionAndCreateVersion(branch, name, options = {}) {
         cancellable: true
     }, async (progress, token) => {
         try {
-            // One build at a time across windows: a build started here waits
-            // for another window's to finish rather than run beside it.
-            return await (0, provisionLease_1.withLease)(spec.root, () => (0, provisioning_1.executeProvision)(spec, progress, token), {
-                onWait: () => progress.report({ message: 'Waiting for another window to finish building…' }),
-                isCancelled: () => token.isCancellationRequested
-            });
+            return await buildUnderLease(spec, progress, token, branch);
         }
         catch (error) {
             if (token.isCancellationRequested) {
@@ -12725,6 +12720,51 @@ async function provisionAndCreateVersion(branch, name, options = {}) {
         }
     }
     return version;
+}
+/**
+ * Builds `spec` holding the provisioning lease: one build at a time across
+ * windows, so a build started here waits for another window's rather than
+ * run beside it. Undefined when there is nothing to record - cancelled while
+ * waiting, or the lease was lost mid-build: this window stalled past the
+ * stale limit and another took over, and building on would build the same
+ * branch into the same directory twice (fourteenth run). The build is
+ * cancelled then, and the window that took over finishes it.
+ */
+async function buildUnderLease(spec, progress, token, what) {
+    const build = new vscode.CancellationTokenSource();
+    const forward = token.onCancellationRequested(() => build.cancel());
+    let waited = false;
+    let lost = false;
+    try {
+        const result = await (0, provisionLease_1.withLease)(spec.root, () => (0, provisioning_1.executeProvision)(spec, progress, build.token), {
+            onWait: () => {
+                waited = true;
+                progress.report({ message: 'Waiting for another window to finish building…' });
+            },
+            isCancelled: () => token.isCancellationRequested,
+            onLost: () => {
+                lost = true;
+                build.cancel();
+            }
+        }).catch(error => {
+            if (lost) {
+                return undefined;
+            }
+            throw error;
+        });
+        if (lost) {
+            logger_1.logger.info(`[queue] another window took over building; stopping here (${what})`);
+            return undefined;
+        }
+        if (result === undefined && waited && token.isCancellationRequested) {
+            void (0, utils_1.showInfo)('Cancelled; another window was still building.');
+        }
+        return result;
+    }
+    finally {
+        forward.dispose();
+        build.dispose();
+    }
 }
 /**
  * Clones the Odoo repositories and returns the path of the odoo checkout, so
@@ -12774,12 +12814,7 @@ async function provisionExistingVersion(versionId, options = {}) {
         cancellable: true
     }, async (progress, token) => {
         try {
-            // One build at a time across windows: a build started here waits
-            // for another window's to finish rather than run beside it.
-            return await (0, provisionLease_1.withLease)(spec.root, () => (0, provisioning_1.executeProvision)(spec, progress, token), {
-                onWait: () => progress.report({ message: 'Waiting for another window to finish building…' }),
-                isCancelled: () => token.isCancellationRequested
-            });
+            return await buildUnderLease(spec, progress, token, version.name);
         }
         catch (error) {
             if (!token.isCancellationRequested) {
@@ -13842,14 +13877,27 @@ async function withLease(root, work, options = {}) {
         await new Promise(resolve => setTimeout(resolve, options.pollMs ?? 5000));
         lease = acquireLease(root);
     }
-    const heartbeat = setInterval(() => lease.renew(), exports.HEARTBEAT_MS);
+    const held = lease;
+    const heartbeat = setInterval(() => held.renew(), exports.HEARTBEAT_MS);
     heartbeat.unref?.();
+    // Checked more often than the heartbeat: a window that resumes after
+    // stalling past STALE_MS stops within seconds, rather than build on
+    // beside the window that took over (fourteenth run).
+    let lost = false;
+    const watch = setInterval(() => {
+        if (!lost && !held.held()) {
+            lost = true;
+            options.onLost?.();
+        }
+    }, options.pollMs ?? 5000);
+    watch.unref?.();
     try {
-        return await work(lease);
+        return await work(held);
     }
     finally {
         clearInterval(heartbeat);
-        lease.release();
+        clearInterval(watch);
+        held.release();
     }
 }
 /** This window's id as a lease owner. */
@@ -13889,6 +13937,8 @@ function pidAlive(pid) {
         return error.code === 'EPERM';
     }
 }
+/** How many holders in this process each lease file has, per owner. */
+const holders = new Map();
 /**
  * Takes the lease in `root`, or returns undefined when another live window
  * holds it. Taking over a stale lease rewrites it; a race between two
@@ -13915,9 +13965,6 @@ function acquireLease(root, owner = exports.OWNER_ID, now = Date.now) {
     if (!mayTakeLease(before, owner, now(), pidAlive)) {
         return undefined;
     }
-    // Already this window's - the queue holds it while a foreground build
-    // asks too: the inner holder renews but leaves releasing to the outer.
-    const nested = before?.owner === owner;
     try {
         write();
     }
@@ -13927,6 +13974,12 @@ function acquireLease(root, owner = exports.OWNER_ID, now = Date.now) {
     if (read()?.owner !== owner) {
         return undefined;
     }
+    // Already this window's - the queue holds it while a foreground build
+    // asks too: only the last holder in this window removes the file, so a
+    // missing file always means the lease was lost.
+    const key = `${file}\0${owner}`;
+    holders.set(key, (holders.get(key) ?? 0) + 1);
+    let released = false;
     return {
         renew: () => {
             if (read()?.owner === owner) {
@@ -13938,23 +13991,21 @@ function acquireLease(root, owner = exports.OWNER_ID, now = Date.now) {
                 }
             }
         },
-        held: () => {
-            const current = read();
-            if (!current) {
-                // Released by a nested holder in this window, or removed:
-                // nobody has it, so it is still this window's to keep.
-                try {
-                    write();
-                }
-                catch {
-                    return false;
-                }
-                return read()?.owner === owner;
-            }
-            return current.owner === owner;
-        },
+        // Gone or someone else's: another window took over - and, if the
+        // file is gone, has already finished. Not taken back either way.
+        held: () => read()?.owner === owner,
         release: () => {
-            if (!nested && read()?.owner === owner) {
+            if (released) {
+                return;
+            }
+            released = true;
+            const left = (holders.get(key) ?? 1) - 1;
+            if (left > 0) {
+                holders.set(key, left);
+                return;
+            }
+            holders.delete(key);
+            if (read()?.owner === owner) {
                 try {
                     fs.rmSync(file, { force: true });
                 }
@@ -20907,14 +20958,21 @@ async function drainProvisionQueue(context, onProgress = () => undefined) {
             }
             const entry = next.active;
             await persist(context, next, onProgress);
+            let built = false;
             try {
-                const built = await provisioner(entry.branch, entry.name);
-                (built ? succeeded : failed).push(entry.branch);
+                built = await provisioner(entry.branch, entry.name);
             }
             catch (error) {
                 logger_1.logger.warn(`[queue] provisioning ${entry.branch} failed:`, error);
-                failed.push(entry.branch);
             }
+            // Lost mid-build: the build was stopped, and the window that
+            // took over owns this entry now - finishing it here would drop
+            // whatever that window is building instead.
+            if (!lease.held()) {
+                logger_1.logger.info('[queue] another window took over building; stopping here');
+                break;
+            }
+            (built ? succeeded : failed).push(entry.branch);
             await persist(context, finishActive(readQueue(context)), onProgress);
         }
     }

@@ -33,7 +33,7 @@ export interface Lease {
 export async function withLease<T>(
     root: string,
     work: (lease: HeldLease) => Promise<T>,
-    options: { onWait?: () => void; isCancelled?: () => boolean; pollMs?: number } = {}
+    options: { onWait?: () => void; isCancelled?: () => boolean; onLost?: () => void; pollMs?: number } = {}
 ): Promise<T | undefined> {
     let lease = acquireLease(root);
     let waited = false;
@@ -48,13 +48,26 @@ export async function withLease<T>(
         await new Promise(resolve => setTimeout(resolve, options.pollMs ?? 5000));
         lease = acquireLease(root);
     }
-    const heartbeat = setInterval(() => lease!.renew(), HEARTBEAT_MS);
+    const held = lease;
+    const heartbeat = setInterval(() => held.renew(), HEARTBEAT_MS);
     heartbeat.unref?.();
+    // Checked more often than the heartbeat: a window that resumes after
+    // stalling past STALE_MS stops within seconds, rather than build on
+    // beside the window that took over (fourteenth run).
+    let lost = false;
+    const watch = setInterval(() => {
+        if (!lost && !held.held()) {
+            lost = true;
+            options.onLost?.();
+        }
+    }, options.pollMs ?? 5000);
+    watch.unref?.();
     try {
-        return await work(lease);
+        return await work(held);
     } finally {
         clearInterval(heartbeat);
-        lease.release();
+        clearInterval(watch);
+        held.release();
     }
 }
 
@@ -97,6 +110,9 @@ function pidAlive(pid: number): boolean {
     }
 }
 
+/** How many holders in this process each lease file has, per owner. */
+const holders = new Map<string, number>();
+
 export interface HeldLease {
     /** Says the holder is still alive. */
     renew(): void;
@@ -134,9 +150,6 @@ export function acquireLease(root: string, owner: string = OWNER_ID, now: () => 
     if (!mayTakeLease(before, owner, now(), pidAlive)) {
         return undefined;
     }
-    // Already this window's - the queue holds it while a foreground build
-    // asks too: the inner holder renews but leaves releasing to the outer.
-    const nested = before?.owner === owner;
     try {
         write();
     } catch {
@@ -145,6 +158,12 @@ export function acquireLease(root: string, owner: string = OWNER_ID, now: () => 
     if (read()?.owner !== owner) {
         return undefined;
     }
+    // Already this window's - the queue holds it while a foreground build
+    // asks too: only the last holder in this window removes the file, so a
+    // missing file always means the lease was lost.
+    const key = `${file}\0${owner}`;
+    holders.set(key, (holders.get(key) ?? 0) + 1);
+    let released = false;
     return {
         renew: () => {
             if (read()?.owner === owner) {
@@ -155,22 +174,21 @@ export function acquireLease(root: string, owner: string = OWNER_ID, now: () => 
                 }
             }
         },
-        held: () => {
-            const current = read();
-            if (!current) {
-                // Released by a nested holder in this window, or removed:
-                // nobody has it, so it is still this window's to keep.
-                try {
-                    write();
-                } catch {
-                    return false;
-                }
-                return read()?.owner === owner;
-            }
-            return current.owner === owner;
-        },
+        // Gone or someone else's: another window took over - and, if the
+        // file is gone, has already finished. Not taken back either way.
+        held: () => read()?.owner === owner,
         release: () => {
-            if (!nested && read()?.owner === owner) {
+            if (released) {
+                return;
+            }
+            released = true;
+            const left = (holders.get(key) ?? 1) - 1;
+            if (left > 0) {
+                holders.set(key, left);
+                return;
+            }
+            holders.delete(key);
+            if (read()?.owner === owner) {
                 try {
                     fs.rmSync(file, { force: true });
                 } catch {

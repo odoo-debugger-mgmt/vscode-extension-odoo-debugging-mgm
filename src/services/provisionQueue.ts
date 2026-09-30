@@ -218,13 +218,20 @@ export async function drainProvisionQueue(
             const entry = next.active;
             await persist(context, next, onProgress);
 
+            let built = false;
             try {
-                const built = await provisioner(entry.branch, entry.name);
-                (built ? succeeded : failed).push(entry.branch);
+                built = await provisioner(entry.branch, entry.name);
             } catch (error) {
                 logger.warn(`[queue] provisioning ${entry.branch} failed:`, error);
-                failed.push(entry.branch);
             }
+            // Lost mid-build: the build was stopped, and the window that
+            // took over owns this entry now - finishing it here would drop
+            // whatever that window is building instead.
+            if (!lease.held()) {
+                logger.info('[queue] another window took over building; stopping here');
+                break;
+            }
+            (built ? succeeded : failed).push(entry.branch);
 
             await persist(context, finishActive(readQueue(context)), onProgress);
         }

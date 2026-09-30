@@ -84,6 +84,53 @@ suite('The provisioning lease', () => {
         }
     });
 
+    test('a stalled holder resumed after the other window finished knows it lost the lease', () => {
+        // Fourteenth run: the lease file was gone, so held() took it back and
+        // the resumed window reported the build it no longer owned.
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'odt-lease-'));
+        try {
+            const frozen = acquireLease(root, 'window-a', () => 1000);
+            const other = acquireLease(root, 'window-b', () => 1000 + STALE_MS + 1);
+            other!.release();
+            assert.strictEqual(frozen!.held(), false);
+            assert.ok(!fs.existsSync(path.join(root, LEASE_FILE)), 'not taken back');
+            frozen!.release();
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    test('whichever of this window\'s holders releases first, the other still holds it', () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'odt-lease-'));
+        try {
+            const byHand = acquireLease(root, 'window-a');
+            const queue = acquireLease(root, 'window-a');
+            byHand!.release();
+            byHand!.release();
+            assert.strictEqual(queue!.held(), true);
+            queue!.release();
+            assert.ok(!fs.existsSync(path.join(root, LEASE_FILE)));
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    test('a build that loses the lease is told, so it can stop', async () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'odt-lease-'));
+        try {
+            let lost = 0;
+            await withLease(root, async () => {
+                // Another window takes over while this one builds.
+                fs.writeFileSync(path.join(root, LEASE_FILE), JSON.stringify({ owner: 'another-window', pid: process.pid, heartbeat: Date.now() }));
+                await new Promise(resolve => setTimeout(resolve, 60));
+            }, { onLost: () => lost++, pollMs: 10 });
+            assert.strictEqual(lost, 1);
+            assert.ok(fs.existsSync(path.join(root, LEASE_FILE)), 'the other window\'s lease is left alone');
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     test('a build by hand waits while another window builds, then runs', async () => {
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'odt-lease-'));
         try {
