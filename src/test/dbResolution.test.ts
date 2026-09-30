@@ -1,5 +1,12 @@
 import * as assert from 'assert';
-import { dbForVersion, resolveDbForVersion, rememberDbForVersion, upgradePins, VersionScopedDb } from '../services/dbResolution';
+import {
+    dbForVersion,
+    resolveDbForVersion,
+    rememberDbForVersion,
+    statusBarDatabase,
+    upgradePins,
+    VersionScopedDb
+} from '../services/dbResolution';
 
 const DBS: VersionScopedDb[] = [
     { id: 'shop-17', versionId: 'v17' },
@@ -96,5 +103,26 @@ suite('Per-version database resolution', () => {
         // No active version: nothing to key the memory on.
         assert.deepStrictEqual(rememberDbForVersion({ v17: 'shop-17' }, undefined, 'x'), { v17: 'shop-17' });
         assert.deepStrictEqual(rememberDbForVersion(undefined, 'v17', 'shop-17'), { v17: 'shop-17' });
+    });
+});
+
+suite('What the status bar shows for the active version', () => {
+    const dbs: VersionScopedDb[] = [
+        { id: 'acme-db1', versionId: 'v17', isSelected: true },
+        { id: 'acme-db19', versionId: 'v19' }
+    ];
+
+    test('the database the version launches', () => {
+        assert.deepStrictEqual(statusBarDatabase({ dbs }, 'v17'), { db: dbs[0] });
+    });
+
+    test('a version with none of its own says so, rather than naming another version\'s', () => {
+        // The test run: "acme · acme-db1 · 19.0", while 19.0 would not launch acme-db1.
+        assert.deepStrictEqual(statusBarDatabase({ dbs }, 'v19'), { missingFor: 'v19' });
+    });
+
+    test('a project with no databases shows nothing', () => {
+        assert.strictEqual(statusBarDatabase({ dbs: [] }, 'v19'), undefined);
+        assert.strictEqual(statusBarDatabase(undefined, 'v19'), undefined);
     });
 });

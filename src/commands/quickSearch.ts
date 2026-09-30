@@ -16,6 +16,18 @@ export function getTreeItemLabel(item: vscode.TreeItem): string {
     return '';
 }
 
+/**
+ * The database rows a search for `versionId` offers: that version's own, and
+ * legacy databases linked to no version, which still resolve for it. Without
+ * a version, every row.
+ */
+export function databasesForVersion<T extends { database?: { versionId?: string } }>(items: T[], versionId?: string): T[] {
+    if (!versionId) {
+        return items;
+    }
+    return items.filter(item => !item.database?.versionId || item.database.versionId === versionId);
+}
+
 function getTreeItemDescription(item: vscode.TreeItem): string | undefined {
     return typeof item.description === 'string' ? item.description : undefined;
 }

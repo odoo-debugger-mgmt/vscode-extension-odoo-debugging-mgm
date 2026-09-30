@@ -633,7 +633,7 @@ export async function startServerForVersion(
         }
         const choice = await showError(message, 'Select Database');
         if (choice === 'Select Database') {
-            await vscode.commands.executeCommand('dbSelector.quickSearch');
+            await vscode.commands.executeCommand('dbSelector.quickSearch', { versionId: version.id });
         }
         return { ok: false, message };
     }

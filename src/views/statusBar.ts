@@ -4,6 +4,7 @@ import { VersionsService } from '../versionsService';
 import { getDatabaseLabel } from '../utils';
 import { logger } from '../services/logger';
 import { getRunningInstances } from '../services/runningState';
+import { statusBarDatabase } from '../services/dbResolution';
 
 /**
  * Status bar indicators for the active project, database and version.
@@ -41,8 +42,11 @@ export class StatusBarIndicators implements vscode.Disposable {
             // Read without getSelectedProject(): no project selected must not toast.
             const data = await SettingsStore.get('odoo-debugger-data.json');
             const project = data.projects?.find(p => p.isSelected);
-            const db = project?.dbs?.find(candidate => candidate.isSelected);
             const version = VersionsService.getInstance().getActiveVersion();
+            // What the active version launches, as Start Server and
+            // launch.json resolve it - not merely the selected database,
+            // which can belong to another version.
+            const shown = statusBarDatabase(project, version?.id);
 
             if (project) {
                 this.projectItem.text = `$(folder-library) ${project.name}`;
@@ -52,9 +56,21 @@ export class StatusBarIndicators implements vscode.Disposable {
                 this.projectItem.hide();
             }
 
-            if (db) {
-                this.dbItem.text = `$(database) ${getDatabaseLabel(db)}`;
-                this.dbItem.tooltip = `Selected database: ${db.id} - click to switch`;
+            if (shown && 'db' in shown) {
+                this.dbItem.text = `$(database) ${getDatabaseLabel(shown.db)}`;
+                this.dbItem.tooltip = `Selected database: ${shown.db.id} - click to switch`;
+                this.dbItem.backgroundColor = undefined;
+                this.dbItem.command = 'dbSelector.quickSearch';
+                this.dbItem.show();
+            } else if (shown && version) {
+                this.dbItem.text = `$(database) no ${version.odooVersion} database`;
+                this.dbItem.tooltip = `No database of ${version.name} is selected - click to choose one`;
+                this.dbItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+                this.dbItem.command = {
+                    title: 'Choose a database',
+                    command: 'dbSelector.quickSearch',
+                    arguments: [{ versionId: shown.missingFor }]
+                };
                 this.dbItem.show();
             } else {
                 this.dbItem.hide();

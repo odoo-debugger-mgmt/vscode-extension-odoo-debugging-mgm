@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { CommandDeps } from './index';
-import { quickSearchTreeItems, getTreeItemLabel } from './quickSearch';
+import { quickSearchTreeItems, getTreeItemLabel, databasesForVersion } from './quickSearch';
+import { VersionsService } from '../versionsService';
 import { getSortOptions, getDefaultSortOption, SortableViewId } from '../sortOptions';
 import { showInfo } from '../services/notifications';
 import { setModuleToInstall, setModuleToUpgrade, clearModuleState } from '../module';
@@ -59,13 +60,28 @@ export function registerViewCommands(deps: CommandDeps): void {
         });
     }));
 
-    context.subscriptions.push(registerCommand('dbSelector.quickSearch', async () => {
-        const items = ((await providers.db.getChildren()) ?? [])
+    // `versionId`, when given, limits the search to databases that version
+    // can launch: "No database is selected for 19.0" is not answered by a
+    // 17.0 one.
+    context.subscriptions.push(registerCommand('dbSelector.quickSearch', async (options?: { versionId?: string }) => {
+        const versionId = typeof options?.versionId === 'string' ? options.versionId : undefined;
+        const rows = ((await providers.db.getChildren()) ?? [])
             .filter(item => item.contextValue === 'database' && !!item.command);
+        const items = databasesForVersion(rows as Array<vscode.TreeItem & { database?: { versionId?: string } }>, versionId);
+        const version = versionId ? VersionsService.getInstance().getVersion(versionId) : undefined;
+        const versionName = version?.name ?? 'this version';
+
+        if (versionId && items.length === 0) {
+            const choice = await showInfo(`No database belongs to ${versionName} yet.`, 'Create Database');
+            if (choice === 'Create Database') {
+                await vscode.commands.executeCommand('dbSelector.create');
+            }
+            return;
+        }
 
         await quickSearchTreeItems(items, {
             placeHolder: 'Search databases...',
-            title: 'Database Search',
+            title: versionId ? `Database for ${versionName}` : 'Database Search',
             emptyMessage: 'No databases available to search.'
         });
     }));

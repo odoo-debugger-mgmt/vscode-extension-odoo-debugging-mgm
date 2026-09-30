@@ -85,6 +85,22 @@ export function upgradePins(upgradeConfig: unknown): Record<string, string> {
     return pins;
 }
 
+/**
+ * What the status bar shows for the active version: the database it
+ * launches, or that it has none of its own while the project has databases.
+ * Nothing when the project has no databases at all.
+ */
+export function statusBarDatabase<T extends VersionScopedDb>(
+    project: { dbs?: T[]; selectedDbByVersion?: Record<string, string>; upgradeConfig?: unknown } | undefined,
+    versionId: string | undefined
+): { db: T } | { missingFor: string } | undefined {
+    const db = dbForVersion(project, versionId);
+    if (db) {
+        return { db };
+    }
+    return versionId && (project?.dbs?.length ?? 0) > 0 ? { missingFor: versionId } : undefined;
+}
+
 /** The database `versionId` launches against in this window, for a project as SettingsStore returns it. */
 export function dbForVersion<T extends VersionScopedDb>(
     project: { dbs?: T[]; selectedDbByVersion?: Record<string, string>; upgradeConfig?: unknown } | undefined,

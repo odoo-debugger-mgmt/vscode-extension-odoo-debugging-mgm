@@ -10230,6 +10230,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.resolveDbForVersion = resolveDbForVersion;
 exports.rememberDbForVersion = rememberDbForVersion;
 exports.upgradePins = upgradePins;
+exports.statusBarDatabase = statusBarDatabase;
 exports.dbForVersion = dbForVersion;
 /**
  * Which database a version launches against. Selection used to be one flag
@@ -10296,6 +10297,18 @@ function upgradePins(upgradeConfig) {
         }
     }
     return pins;
+}
+/**
+ * What the status bar shows for the active version: the database it
+ * launches, or that it has none of its own while the project has databases.
+ * Nothing when the project has no databases at all.
+ */
+function statusBarDatabase(project, versionId) {
+    const db = dbForVersion(project, versionId);
+    if (db) {
+        return { db };
+    }
+    return versionId && (project?.dbs?.length ?? 0) > 0 ? { missingFor: versionId } : undefined;
 }
 /** The database `versionId` launches against in this window, for a project as SettingsStore returns it. */
 function dbForVersion(project, versionId) {
@@ -18698,7 +18711,7 @@ async function startServerForVersion(versionId, options = {}) {
         }
         const choice = await (0, utils_1.showError)(message, 'Select Database');
         if (choice === 'Select Database') {
-            await vscode.commands.executeCommand('dbSelector.quickSearch');
+            await vscode.commands.executeCommand('dbSelector.quickSearch', { versionId: version.id });
         }
         return { ok: false, message };
     }
@@ -20328,6 +20341,7 @@ const versionsService_1 = __webpack_require__(32);
 const utils_1 = __webpack_require__(8);
 const logger_1 = __webpack_require__(12);
 const runningState_1 = __webpack_require__(75);
+const dbResolution_1 = __webpack_require__(59);
 /**
  * Status bar indicators for the active project, database and version.
  * Clicking each opens the corresponding quick-switch picker, so the current
@@ -20359,8 +20373,11 @@ class StatusBarIndicators {
             // Read without getSelectedProject(): no project selected must not toast.
             const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
             const project = data.projects?.find(p => p.isSelected);
-            const db = project?.dbs?.find(candidate => candidate.isSelected);
             const version = versionsService_1.VersionsService.getInstance().getActiveVersion();
+            // What the active version launches, as Start Server and
+            // launch.json resolve it - not merely the selected database,
+            // which can belong to another version.
+            const shown = (0, dbResolution_1.statusBarDatabase)(project, version?.id);
             if (project) {
                 this.projectItem.text = `$(folder-library) ${project.name}`;
                 this.projectItem.tooltip = `Odoo project: ${project.name} - click to switch`;
@@ -20369,9 +20386,22 @@ class StatusBarIndicators {
             else {
                 this.projectItem.hide();
             }
-            if (db) {
-                this.dbItem.text = `$(database) ${(0, utils_1.getDatabaseLabel)(db)}`;
-                this.dbItem.tooltip = `Selected database: ${db.id} - click to switch`;
+            if (shown && 'db' in shown) {
+                this.dbItem.text = `$(database) ${(0, utils_1.getDatabaseLabel)(shown.db)}`;
+                this.dbItem.tooltip = `Selected database: ${shown.db.id} - click to switch`;
+                this.dbItem.backgroundColor = undefined;
+                this.dbItem.command = 'dbSelector.quickSearch';
+                this.dbItem.show();
+            }
+            else if (shown && version) {
+                this.dbItem.text = `$(database) no ${version.odooVersion} database`;
+                this.dbItem.tooltip = `No database of ${version.name} is selected - click to choose one`;
+                this.dbItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+                this.dbItem.command = {
+                    title: 'Choose a database',
+                    command: 'dbSelector.quickSearch',
+                    arguments: [{ versionId: shown.missingFor }]
+                };
                 this.dbItem.show();
             }
             else {
@@ -20500,6 +20530,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
 const quickSearch_1 = __webpack_require__(101);
+const versionsService_1 = __webpack_require__(32);
 const sortOptions_1 = __webpack_require__(37);
 const notifications_1 = __webpack_require__(16);
 const module_1 = __webpack_require__(87);
@@ -20550,12 +20581,26 @@ function registerViewCommands(deps) {
             emptyMessage: 'No repositories available to search.'
         });
     }));
-    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.quickSearch', async () => {
-        const items = ((await providers.db.getChildren()) ?? [])
+    // `versionId`, when given, limits the search to databases that version
+    // can launch: "No database is selected for 19.0" is not answered by a
+    // 17.0 one.
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.quickSearch', async (options) => {
+        const versionId = typeof options?.versionId === 'string' ? options.versionId : undefined;
+        const rows = ((await providers.db.getChildren()) ?? [])
             .filter(item => item.contextValue === 'database' && !!item.command);
+        const items = (0, quickSearch_1.databasesForVersion)(rows, versionId);
+        const version = versionId ? versionsService_1.VersionsService.getInstance().getVersion(versionId) : undefined;
+        const versionName = version?.name ?? 'this version';
+        if (versionId && items.length === 0) {
+            const choice = await (0, notifications_1.showInfo)(`No database belongs to ${versionName} yet.`, 'Create Database');
+            if (choice === 'Create Database') {
+                await vscode.commands.executeCommand('dbSelector.create');
+            }
+            return;
+        }
         await (0, quickSearch_1.quickSearchTreeItems)(items, {
             placeHolder: 'Search databases...',
-            title: 'Database Search',
+            title: versionId ? `Database for ${versionName}` : 'Database Search',
             emptyMessage: 'No databases available to search.'
         });
     }));
@@ -20671,6 +20716,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getTreeItemLabel = getTreeItemLabel;
+exports.databasesForVersion = databasesForVersion;
 exports.quickSearchTreeItems = quickSearchTreeItems;
 const vscode = __importStar(__webpack_require__(1));
 const notifications_1 = __webpack_require__(16);
@@ -20686,6 +20732,17 @@ function getTreeItemLabel(item) {
         return item.label.label;
     }
     return '';
+}
+/**
+ * The database rows a search for `versionId` offers: that version's own, and
+ * legacy databases linked to no version, which still resolve for it. Without
+ * a version, every row.
+ */
+function databasesForVersion(items, versionId) {
+    if (!versionId) {
+        return items;
+    }
+    return items.filter(item => !item.database?.versionId || item.database.versionId === versionId);
 }
 function getTreeItemDescription(item) {
     return typeof item.description === 'string' ? item.description : undefined;
