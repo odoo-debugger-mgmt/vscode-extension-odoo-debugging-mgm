@@ -7,7 +7,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { LAUNCH_EXCLUDE_LINE, excludeLaunchFromGit, withExcludeLine } from '../services/gitExclude';
+import { LAUNCH_EXCLUDE_LINE, excludeDataFileFromGit, excludeFromGit, excludeLaunchFromGit, withExcludeLine } from '../services/gitExclude';
 
 function git(cwd: string, ...args: string[]): string {
     return execFileSync('git', args, {
@@ -57,6 +57,31 @@ suite('Keeping launch.json out of a clone\'s git status', () => {
             const excludeFile = path.join(tracked, '.git', 'info', 'exclude');
             const exclude = fs.existsSync(excludeFile) ? fs.readFileSync(excludeFile, 'utf8') : '';
             assert.doesNotMatch(exclude, /Odoo DevTools/);
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    test('a clone moved to its own data file keeps it, and its settings, out of git status', async function () {
+        // Fifteenth run: This workspace only left two untracked files in the clone.
+        this.timeout(30000);
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'odt-exclude-'));
+        try {
+            const clone = path.join(root, 'acme');
+            fs.mkdirSync(path.join(clone, '.vscode'), { recursive: true });
+            git(clone, 'init', '-q', '-b', 'main');
+            fs.writeFileSync(path.join(clone, 'README.md'), '# acme\n');
+            git(clone, 'add', 'README.md');
+            git(clone, 'commit', '-q', '-m', 'initial');
+            const dataFile = path.join(clone, '.vscode', 'odoo-debugger-data.json');
+            fs.writeFileSync(dataFile, '{}');
+            fs.writeFileSync(path.join(clone, '.vscode', 'settings.json'), '{}');
+
+            await excludeDataFileFromGit(dataFile);
+            await excludeFromGit(clone, '/.vscode/settings.json', 'settings');
+            assert.strictEqual(git(clone, 'status', '--porcelain'), '');
+            // A data file anywhere but a .vscode folder is not a clone's business.
+            await excludeDataFileFromGit(path.join(root, 'elsewhere.json'));
         } finally {
             fs.rmSync(root, { recursive: true, force: true });
         }

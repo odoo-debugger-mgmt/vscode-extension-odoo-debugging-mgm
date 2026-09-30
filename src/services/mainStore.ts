@@ -20,6 +20,7 @@ import { showError, showInfo } from './notifications';
 import { DataLocation, StoreKind, currentDataLocation, workspaceDataLocation } from './dataLocation';
 import { SqliteMainStore, loadSqlite, type WorkspaceRow } from './sqliteMainStore';
 import { logger } from './logger';
+import { excludeDataFileFromGit } from './gitExclude';
 
 export interface StoreRead {
     data: DebuggerData;
@@ -90,6 +91,7 @@ export class JsonFileMainStore implements MainStore {
             void showInfo(`Creating ${path.basename(this.location)} file...`);
             await fs.mkdir(path.dirname(this.location), { recursive: true });
             await fs.writeFile(this.location, INITIAL_CONTENT, 'utf-8');
+            void excludeDataFileFromGit(this.location);
             // The legacy `settings` block is what VersionsService migrates
             // into the first version, so a new store starts with the
             // configured defaults rather than the empty object on disk.
@@ -115,6 +117,7 @@ export class JsonFileMainStore implements MainStore {
     async commit(_base: StoreRead | undefined, next: DebuggerData): Promise<CommitResult> {
         await fs.mkdir(path.dirname(this.location), { recursive: true });
         await fs.writeFile(this.location, JSON.stringify(next, null, 4), 'utf-8');
+        void excludeDataFileFromGit(this.location);
         return { merged: [] };
     }
 

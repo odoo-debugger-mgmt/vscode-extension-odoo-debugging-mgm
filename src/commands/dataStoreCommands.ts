@@ -31,6 +31,7 @@ import { openMainStore } from '../services/mainStore';
 import { stripSelection } from '../services/workspaceSelection';
 import { MergeSummary, absolutizePaths, buildExport, describeMerge, mergeData, readImportFile } from '../services/dataImport';
 import { registerCommand } from './registerCommand';
+import { excludeFromGit } from '../services/gitExclude';
 
 const SHARED_STORE_FILE = 'odoo-devtools.db';
 
@@ -215,6 +216,7 @@ async function chooseDataStore(): Promise<void> {
             sharedForEveryone ? `.vscode/${DATA_FILE_NAME}` : undefined,
             vscode.ConfigurationTarget.Workspace
         );
+        excludeWorkspaceSettings();
         void showInfo('This workspace now uses its own data file.');
         return;
     }
@@ -252,8 +254,21 @@ async function chooseDataStore(): Promise<void> {
         }
     } else {
         await config.update(DATA_STORE_SETTING, file, vscode.ConfigurationTarget.Workspace);
+        excludeWorkspaceSettings();
     }
     void showInfo(`Now using the shared store ${file}.`);
+}
+
+/**
+ * A folder window keeps workspace settings in `<folder>/.vscode/settings.json`:
+ * in a clone, that file stays out of its git status unless the repository
+ * tracks one (fifteenth run).
+ */
+function excludeWorkspaceSettings(): void {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!vscode.workspace.workspaceFile && folder?.uri.scheme === 'file') {
+        void excludeFromGit(folder.uri.fsPath, '/.vscode/settings.json', 'Odoo DevTools records this workspace\'s data store here');
+    }
 }
 
 async function exportData(): Promise<void> {
