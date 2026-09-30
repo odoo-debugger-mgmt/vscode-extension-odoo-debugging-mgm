@@ -24,19 +24,19 @@ behaviour. Anything that behaves differently from it is a finding.
 
 ## The final run: what is left to test
 
-Everything else has been run and matched. After the thirteenth run's fixes,
+Everything else has been run and matched. After the fourteenth run's fixes,
 in this order:
 
-1. `npm test` — with your usual git config; the exclude test no longer needs
-   `.git/info` (finding 23).
-2. **Item 16.1 and 16.3** — the upgrade across two workspaces, now finding the
-   other side through the registry (finding 19).
-3. **Item 17.1** — both paths: the queue (as last time) and **Create Version**
-   in both windows, which now waits for the lease (finding 21); and the
-   `kill -STOP` repro (finding 20).
-4. **Item 19** — the thirteenth run's other findings and observations.
-5. **Regression spot checks:** item 6 (no ping-pong), item 14's question on
-   open, item 15.1 (registry rows), and 17.3 (deleted in another window).
+1. `npm test`.
+2. **Item 19.2** — a window opened on an unreadable store now activates
+   (finding 24).
+3. **Item 16.1** — the branch pickers' "current branch" and default row
+   (finding 25).
+4. **Item 17.1's freeze** — both ways: resumed while the other window is
+   still building, and after it finished (finding 26).
+5. **Item 20** — the fourteenth run's smaller observations.
+6. **Regression spot checks:** 16.3 (Start This Side), 17.1's Create Version
+   waiting, and 19.1 (versions created at once).
 
 Report findings in the same format; anything not reached, say so.
 
@@ -405,7 +405,11 @@ Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
 
 1. **In `W17`, Set Up an Upgrade** acme-db2 → acme-db19, `staging` → `main`.
    **Expect** the branch pickers to list `W17/acme`'s branches for 17.0 and
-   `W19/acme`'s for 19.0 (so `staging` and `main` are offered, not typed).
+   `W19/acme`'s for 19.0 (so `staging` and `main` are offered, not typed),
+   each opening on the branch that side's checkout is on, marked "current
+   branch": `staging` for 17.0, `main` for 19.0 — not `17.0-alt`/`19.0-alt`.
+   A branch the picker proposes but the checkout is not on reads
+   "suggested".
    **Expect** the confirmation to say "Each version already has its own
    checkout of these, so no copies are made:" with `acme: …/W17/acme (Odoo
    17.0), …/W19/acme (Odoo 19.0)`, and to name **no** `acme@…` directories.
@@ -440,10 +444,14 @@ Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
    `<provisioning root>/.odt-provision.lease` present during the build and
    gone after. Kill the building window mid-build (`kill -9` its extension
    host); **expect** the other window to take over within about 90 s of its
-   next try. **Freeze** the builder instead (`kill -STOP`), let the other take
-   over and finish, then resume it (`kill -CONT`): **expect** its log to say
-   "another window took over building; stopping here", and **one** version
-   per series — no second "Odoo 9.0". Say if this could not be arranged.
+   next try. **Freeze** the builder instead (`kill -STOP`) and let the other take
+   over. Resume it (`kill -CONT`) twice over: once while the other is still
+   building, once after it finished. **Expect** both times, within about 5 s
+   of resuming, its log to say "another window took over building; stopping
+   here", no "Provisioned …" from it, its build of the interrupted series
+   stopped (no second `uv`/`pip` run into that directory after the resume),
+   and **one** version per series — no second "Odoo 9.0". Say if this could
+   not be arranged.
 2. **Already running elsewhere.** Start Odoo 19.0 in `W19`. In `W17`, run
    Start Server on 19.0 (Switch Active Version to 19.0, or right-click → start
    if offered). **Expect** a warning: '"Odoo 19.0" is already running on port
@@ -485,10 +493,14 @@ Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
    **Expect** both in the store (`SELECT key FROM documents WHERE
    kind='version'`) and in both windows' Versions views. Then switch the
    active version in one window: **expect** both still there.
-2. **An unreadable store (finding 18b).** With every window closed, corrupt
-   one version document the way the run did (a BLOB), open a window: **expect**
-   the read error, and **no** new "Default Version" in the store; any save
-   in that window warns that nothing was saved. Restore the store after.
+2. **An unreadable store (findings 18b, 24).** With every window closed,
+   corrupt one version document the way the run did (a BLOB), open a window:
+   **expect** the extension to activate (views populated, commands found),
+   one error "Could not read the data store <path>: <reason>. Nothing is
+   saved to it until it reads again." with **Choose Data Store…**, and
+   **no** new "Default Version" in the store; any save in that window warns
+   that nothing was saved. Choose Data Store… moves the window to another
+   store. Restore the store after.
 3. **A binding to a deleted version (finding 22).** Bind an empty-folder
    window to a throwaway version, delete that version from another window:
    **expect** the "was deleted in another window" notice, then the version
@@ -502,6 +514,14 @@ Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
    server, without running Start Server again.
 6. **Stop Both Servers** (Upgrade view, or palette) after Start Both Servers
    stops both sides; "Stopped Odoo 17.0 and Odoo 19.0."
+
+## 20 · The fourteenth run's smaller observations
+
+1. **Resuming an upgrade** (toggle it off and on) with both own checkouts
+   already on their branches: **expect** no confirmation. Move `W17/acme` to
+   another branch first: **expect** the confirmation.
+2. **Cancel a build that waits for another window** (17.1's Create Version):
+   **expect** "Cancelled; another window was still building."
 
 ## 12 · A store from the future
 

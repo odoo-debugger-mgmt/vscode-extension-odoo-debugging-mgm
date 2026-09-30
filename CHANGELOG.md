@@ -75,6 +75,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Fixed
 
+- **A window opened on an unreadable store still starts**, with Choose Data Store… to move it off; the read error names the store and the reason once. The upgrade's branch pickers mark the branch each side's checkout is on as current, and propose it; resuming an upgrade confirms only when a checkout has to switch. A build that lost the lease to another window stops rather than build beside it, and cancelling a build that was waiting says so.
 - **Two windows creating versions at the same moment no longer lose one.** Saving versions keeps the ones another window created; a build into a directory a version already runs from reuses it. An unreadable store is no longer written to.
 - **Upgrades across two workspaces run the other side from the other workspace's clone**, found through the store's list of workspaces; the wizard offers each side's own branches, and shows which checkouts it will switch.
 - **One build at a time, including builds started by hand**, and a window that stalled stops once another took over. A workspace bound to a deleted version is asked again.
