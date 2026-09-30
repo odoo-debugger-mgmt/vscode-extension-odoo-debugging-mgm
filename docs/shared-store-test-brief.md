@@ -338,13 +338,15 @@ workspace of its own: `/tmp/odt-brief/W17/acme` on `staging` and
 shared store: 17.0 and 19.0 exist, acme-db1 (17.0) maps `acme` to `staging`,
 acme-db19 (19.0) to `main`. Use a fresh profile, so neither window was asked.
 
-1. **Open `W19/acme`** on the shared store. **Expect**, once: "Use Odoo 19.0
+1. **Open `W19/acme`** on the shared store. **Expect**, once, **on open** —
+   without toggling any setting: "Use Odoo 19.0
    in this workspace? (acme here is on main, which acme-db19 runs.)" with
    Use It, Choose Another…, Not Now. Quote it.
 2. **Use It.** **Expect** 19.0 active ("This workspace runs Odoo 19.0."), the
    version status bar tooltip saying "Bound to this workspace", and the 19.0
    launch entry's addons path naming `W19/acme` — the workspace's own clone,
-   with nothing configured.
+   with nothing configured. The **Repos** view lists `acme` at `W19/acme` on
+   `main`, marked in the project, and no `acme-19` row.
 3. **Open `W17/acme`** in a second window. **Expect** the proposal for 17.0,
    through `staging`. Choose **Not Now**; reload the window; **expect** no
    question.
