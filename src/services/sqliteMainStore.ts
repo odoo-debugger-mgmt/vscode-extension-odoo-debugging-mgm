@@ -59,6 +59,22 @@ const DOCUMENT_KEYS = new Set(['projects', 'versions', 'dbTemplates', 'activeVer
  * inside "Failed to …: <message>", and VS Code adds one of its own.
  */
 
+/**
+ * One workspace that has opened this store (design §3): for discovery only -
+ * "which workspace runs 19.0?" - never for state that drives behaviour.
+ */
+export interface WorkspaceRow {
+    /** Stable per workspace, kept in its workspaceState. */
+    id: string;
+    name: string;
+    /** What reopens it: its .code-workspace file, or its folder. */
+    uri: string;
+    /** The version it is bound to, if any. */
+    versionId?: string;
+    /** Milliseconds since the epoch. */
+    lastSeen: number;
+}
+
 export class StoreBusyError extends Error {
     constructor(location: string) {
         super(`The data store ${location} stayed locked by another window; the change was not saved`);
@@ -176,6 +192,13 @@ export class SqliteMainStore implements MainStore {
                         rev INTEGER NOT NULL,
                         doc TEXT NOT NULL,
                         PRIMARY KEY (kind, key)
+                    );
+                    CREATE TABLE IF NOT EXISTS workspaces (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        uri TEXT NOT NULL,
+                        version_id TEXT,
+                        last_seen INTEGER NOT NULL
                     );
                 `);
                 this.db.prepare('INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)')
@@ -303,6 +326,50 @@ export class SqliteMainStore implements MainStore {
             }
             return result;
         });
+    }
+
+    /** Every workspace that has opened this store, most recently seen first. */
+    async listWorkspaces(): Promise<WorkspaceRow[]> {
+        await this.ensureReady();
+        return this.withRetry(() => (this.db.prepare(
+            'SELECT id, name, uri, version_id, last_seen FROM workspaces ORDER BY last_seen DESC'
+        ).all() as Array<{ id: string; name: string; uri: string; version_id: string | null; last_seen: number }>)
+            .map(row => ({
+                id: row.id,
+                name: row.name,
+                uri: row.uri,
+                versionId: row.version_id ?? undefined,
+                lastSeen: Number(row.last_seen)
+            })));
+    }
+
+    /**
+     * Records a workspace, or updates it. A read-only store records nothing:
+     * the registry is for discovery, and a newer schema may shape it
+     * differently.
+     */
+    async recordWorkspace(row: WorkspaceRow): Promise<void> {
+        await this.ensureReady();
+        if (this.readOnlyVersion !== undefined) {
+            return;
+        }
+        await this.withRetry(() => this.db.prepare(`
+            INSERT INTO workspaces (id, name, uri, version_id, last_seen) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                name = excluded.name, uri = excluded.uri, version_id = excluded.version_id, last_seen = excluded.last_seen
+        `).run(row.id, row.name, row.uri, row.versionId ?? null, row.lastSeen));
+    }
+
+    /** Removes workspaces from the registry. */
+    async forgetWorkspaces(ids: string[]): Promise<void> {
+        await this.ensureReady();
+        if (this.readOnlyVersion !== undefined || ids.length === 0) {
+            return;
+        }
+        await this.withRetry(() => this.transaction('IMMEDIATE', () => {
+            const remove = this.db.prepare('DELETE FROM workspaces WHERE id = ?');
+            ids.forEach(id => remove.run(id));
+        }));
     }
 
     readOnlyReason(): string | undefined {

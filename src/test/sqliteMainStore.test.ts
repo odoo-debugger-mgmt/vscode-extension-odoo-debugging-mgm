@@ -139,6 +139,39 @@ const counterOf = (data: DebuggerData, dbId: string) =>
         await assert.rejects(newer.commit(base, { ...base.data, projects: [] }), StoreReadOnlyError);
     });
 
+    test('the workspace registry: recorded, updated, seen by another window, forgotten', async () => {
+        const a = open();
+        const b = open();
+        await a.recordWorkspace({ id: 'w17', name: 'W17', uri: 'file:///W17/acme', versionId: 'v17', lastSeen: 1000 });
+        await b.recordWorkspace({ id: 'w19', name: 'W19', uri: 'file:///W19/acme', lastSeen: 2000 });
+        // Binding W19 later updates its row in place.
+        await b.recordWorkspace({ id: 'w19', name: 'W19', uri: 'file:///W19/acme', versionId: 'v19', lastSeen: 3000 });
+
+        assert.deepStrictEqual(await a.listWorkspaces(), [
+            { id: 'w19', name: 'W19', uri: 'file:///W19/acme', versionId: 'v19', lastSeen: 3000 },
+            { id: 'w17', name: 'W17', uri: 'file:///W17/acme', versionId: 'v17', lastSeen: 1000 }
+        ]);
+        // Discovery only: never part of the data every window reads.
+        assert.ok(!('workspaces' in (await a.read()).data));
+
+        await a.forgetWorkspaces(['w17']);
+        assert.deepStrictEqual((await b.listWorkspaces()).map(row => row.id), ['w19']);
+    });
+
+    test('a read-only store records no workspace', async () => {
+        const store = open();
+        await store.read();
+        store.dispose();
+        opened.splice(opened.indexOf(store), 1);
+        const raw = new sqlite!.DatabaseSync(file);
+        raw.prepare('UPDATE meta SET value = ? WHERE key = ?').run('99', 'schema_version');
+        raw.close();
+
+        const newer = open();
+        await newer.recordWorkspace({ id: 'w', name: 'W', uri: 'file:///w', lastSeen: 1 });
+        assert.deepStrictEqual(await newer.listWorkspaces(), []);
+    });
+
     test('two processes committing at once lose no update to their own databases', async () => {
         const store = open();
         await store.commit(await store.read(), sampleData());

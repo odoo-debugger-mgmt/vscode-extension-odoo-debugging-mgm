@@ -18,7 +18,7 @@ import { SettingsModel } from '../models/settings';
 import { getDefaultVersionSettings, type DebuggerData } from '../utils';
 import { showError, showInfo } from './notifications';
 import { DataLocation, StoreKind, currentDataLocation, workspaceDataLocation } from './dataLocation';
-import { SqliteMainStore, loadSqlite } from './sqliteMainStore';
+import { SqliteMainStore, loadSqlite, type WorkspaceRow } from './sqliteMainStore';
 import { logger } from './logger';
 
 export interface StoreRead {
@@ -57,6 +57,10 @@ export interface MainStore {
     onDidChange?(listener: () => void): Disposable;
     /** Why saves to this store will fail, when they will; known once it has been read. */
     readOnlyReason?(): string | undefined;
+    /** The workspace registry (design §3): only a shared store has one. */
+    listWorkspaces?(): Promise<WorkspaceRow[]>;
+    recordWorkspace?(row: WorkspaceRow): Promise<void>;
+    forgetWorkspaces?(ids: string[]): Promise<void>;
     dispose(): void;
 }
 
