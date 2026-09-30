@@ -309,7 +309,10 @@ clone, in single-checkout mode. A 17.0 and a 19.0 database each map `acme` to
 a different branch.
 
 1. **Switch to the 19.0 database.** **Expect** the checkout in
-   `v19/acme-19` only; `git -C v17/acme branch --show-current` unchanged.
+   `v19/acme-19` only; `git -C v17/acme branch --show-current` unchanged;
+   and no "Git: There are no available repositories" modal. With `v17/acme`
+   open as a folder in the window, a switch back still updates its branch
+   in the Source Control view.
 2. **Expect** the 19.0 launch entry's `--addons-path` to name `v19/acme-19`,
    the 17.0 entry's `v17/acme`; Modules and Project Repos to show the 19.0
    clone while a 19.0 database is selected.
