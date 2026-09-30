@@ -104,7 +104,7 @@ suite('Data import', () => {
                 repos: [{ name: 'acme', path: 'addons/acme' }],
                 dbs: [{ id: 'd', sqlFilePath: 'dumps/d.sql', projectRepoBranches: [{ repoPath: 'addons/acme', branch: 'main' }] }]
             }],
-            versions: { v: { settings: { odooPath: '/abs/odoo', pythonPath: './venv/bin/python', subModulesPaths: 'a, /b', enterprisePath: '' } } }
+            versions: { v: { settings: { odooPath: '/abs/odoo', pythonPath: './venv/bin/python', subModulesPaths: 'a, /b', enterprisePath: '', repoPaths: { acme: '../v19/acme', lib: '/abs/lib' } } } }
         } as never, '/work/v17');
         const version = (data.versions as any).v.settings;
         const project = data.projects[0] as any;
@@ -114,6 +114,7 @@ suite('Data import', () => {
         assert.strictEqual(version.pythonPath, path.resolve('/work/v17', 'venv/bin/python'));
         assert.strictEqual(version.subModulesPaths, `${path.resolve('/work/v17', 'a')},/b`);
         assert.strictEqual(version.enterprisePath, '');
+        assert.deepStrictEqual(version.repoPaths, { acme: path.resolve('/work/v17', '../v19/acme'), lib: '/abs/lib' });
         assert.strictEqual(project.repos[0].path, path.resolve('/work/v17', 'addons/acme'));
         assert.strictEqual(project.dbs[0].sqlFilePath, path.resolve('/work/v17', 'dumps/d.sql'));
         assert.strictEqual(project.dbs[0].projectRepoBranches[0].repoPath, path.resolve('/work/v17', 'addons/acme'));

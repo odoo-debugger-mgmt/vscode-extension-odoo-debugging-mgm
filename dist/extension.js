@@ -20725,6 +20725,7 @@ const helpCommands_1 = __webpack_require__(120);
 const upgradeCommand_1 = __webpack_require__(121);
 const customAddonsCommand_1 = __webpack_require__(84);
 const dataStoreCommands_1 = __webpack_require__(123);
+const repoLocationCommand_1 = __webpack_require__(125);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -20741,6 +20742,7 @@ function registerAllCommands(deps) {
     (0, upgradeCommand_1.registerUpgradeCommand)(deps);
     (0, customAddonsCommand_1.registerCustomAddonsCommand)(deps);
     (0, dataStoreCommands_1.registerDataStoreCommands)(deps);
+    (0, repoLocationCommand_1.registerRepoLocationCommand)(deps);
 }
 
 
@@ -25324,6 +25326,11 @@ function absolutizeSettings(settings, root) {
             .map(entry => absolute(entry, root))
             .join(',');
     }
+    // Per-version repository locations, set by hand.
+    if (settings.repoPaths && typeof settings.repoPaths === 'object') {
+        settings.repoPaths = Object.fromEntries(Object.entries(settings.repoPaths)
+            .map(([name, value]) => [name, absolute(value, root)]));
+    }
 }
 /**
  * A copy of `data` with every workspace-relative path made absolute against
@@ -25495,6 +25502,163 @@ function readImportFile(parsed) {
 exports.EXPORT_SCHEMA_VERSION = 1;
 function buildExport(data, exportedAt = new Date()) {
     return { schemaVersion: exports.EXPORT_SCHEMA_VERSION, exportedAt: exportedAt.toISOString(), data };
+}
+
+
+/***/ }),
+/* 125 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerRepoLocationCommand = registerRepoLocationCommand;
+const fs = __importStar(__webpack_require__(2));
+const path = __importStar(__webpack_require__(3));
+const vscode = __importStar(__webpack_require__(1));
+const args_1 = __webpack_require__(115);
+const registerCommand_1 = __webpack_require__(85);
+const settingsStore_1 = __webpack_require__(6);
+const notifications_1 = __webpack_require__(16);
+const repoLocations_1 = __webpack_require__(76);
+const utils_1 = __webpack_require__(8);
+const DESCRIBE_SOURCE = {
+    override: 'set by hand',
+    remote: 'found by its remote',
+    name: 'found by its folder name',
+    default: "the repository's own path"
+};
+/**
+ * Odoo DevTools: Set Repository Location for a Version…
+ *
+ * For the layout where one repository has a different home per version that
+ * the custom addons folder cannot find: another name and another remote, or a
+ * folder outside it.
+ */
+function registerRepoLocationCommand(deps) {
+    const { context, versionsService, refreshAll } = deps;
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.setRepoLocation', async (versionIdOrTreeItem) => {
+        await versionsService.initialize();
+        let versionId = (0, args_1.extractVersionId)(versionIdOrTreeItem);
+        if (!versionId) {
+            const active = versionsService.getActiveVersion();
+            const picked = await vscode.window.showQuickPick(versionsService.getVersions()
+                .map(version => ({
+                label: version.name,
+                description: version.odooVersion,
+                detail: version.id === active?.id ? '$(check) Active' : undefined,
+                versionId: version.id
+            }))
+                .sort((a, b) => Number(b.versionId === active?.id) - Number(a.versionId === active?.id)), { title: 'Set Repository Location', placeHolder: 'Which version?' });
+            versionId = picked?.versionId;
+        }
+        const version = versionId ? versionsService.getVersion(versionId) : undefined;
+        if (!version) {
+            return;
+        }
+        const result = await settingsStore_1.SettingsStore.getSelectedProject();
+        const repos = result?.project.repos ?? [];
+        if (repos.length === 0) {
+            void (0, notifications_1.showInfo)('The selected project has no repositories yet.');
+            return;
+        }
+        const located = await (0, repoLocations_1.locateRepoCheckouts)(repos, version);
+        const repoPick = await vscode.window.showQuickPick(repos.map(repo => {
+            const at = located.get(repo.name);
+            return {
+                label: repo.name,
+                description: at?.path,
+                detail: at ? DESCRIBE_SOURCE[at.source] : undefined,
+                repo
+            };
+        }), { title: `Repository location for ${version.name}`, placeHolder: 'Which repository?' });
+        if (!repoPick) {
+            return;
+        }
+        const repo = repoPick.repo;
+        const current = version.settings.repoPaths ?? {};
+        const actions = [
+            { label: '$(folder-opened) Choose a Folder…', action: 'choose' }
+        ];
+        if (current[repo.name]) {
+            actions.push({ label: '$(discard) Use the Default', action: 'clear' });
+        }
+        const action = await vscode.window.showQuickPick(actions, {
+            title: `${repo.name} for ${version.name}`,
+            placeHolder: current[repo.name]
+                ? `Set by hand: ${current[repo.name]}`
+                : 'Found automatically; choose a folder to set it by hand'
+        });
+        if (!action) {
+            return;
+        }
+        const next = { ...current };
+        if (action.action === 'clear') {
+            delete next[repo.name];
+        }
+        else {
+            const folder = await vscode.window.showOpenDialog({
+                canSelectFiles: false,
+                canSelectFolders: true,
+                canSelectMany: false,
+                openLabel: `Use for ${version.name}`,
+                defaultUri: vscode.Uri.file(located.get(repo.name)?.path ?? (0, utils_1.normalizePath)(repo.path))
+            });
+            const chosen = folder?.[0]?.fsPath;
+            if (!chosen) {
+                return;
+            }
+            if (!fs.existsSync(path.join(chosen, '.git'))) {
+                void (0, notifications_1.showInfo)(`${chosen} is not a git checkout, so it was not set.`);
+                return;
+            }
+            const [chosenRemote, repoRemote] = await Promise.all([(0, repoLocations_1.remoteOf)(chosen), (0, repoLocations_1.remoteOf)((0, utils_1.normalizePath)(repo.path))]);
+            if (chosenRemote && repoRemote && chosenRemote !== repoRemote) {
+                const confirmed = await (0, notifications_1.showModalWarning)(`${chosen} is a clone of ${chosenRemote}, not of ${repoRemote} like "${repo.name}". Use it for ${version.name} anyway?`, 'Use It');
+                if (confirmed !== 'Use It') {
+                    return;
+                }
+            }
+            next[repo.name] = chosen;
+        }
+        await versionsService.updateVersion(version.id, { settings: { ...version.settings, repoPaths: next } });
+        void (0, notifications_1.showInfo)(action.action === 'clear'
+            ? `${version.name} finds "${repo.name}" automatically again.`
+            : `${version.name} now uses ${next[repo.name]} for "${repo.name}".`);
+        await refreshAll();
+    }));
 }
 
 

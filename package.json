@@ -473,6 +473,12 @@
         "icon": "$(copy)"
       },
       {
+        "command": "odoo.setRepoLocation",
+        "title": "Set Repository Location for a Version…",
+        "category": "Odoo DevTools",
+        "icon": "$(repo)"
+      },
+      {
         "command": "odoo.openVersionInBrowser",
         "title": "Open Server in Browser",
         "category": "Odoo DevTools",
@@ -1212,6 +1218,11 @@
           "command": "odoo.cloneVersion",
           "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
           "group": "1_version@2"
+        },
+        {
+          "command": "odoo.setRepoLocation",
+          "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
+          "group": "1_version@3"
         },
         {
           "command": "odoo.deleteVersion",

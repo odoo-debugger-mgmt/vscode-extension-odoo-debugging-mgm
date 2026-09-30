@@ -71,6 +71,11 @@ function absolutizeSettings(settings: Record<string, unknown> | undefined, root:
             .map(entry => absolute(entry, root))
             .join(',');
     }
+    // Per-version repository locations, set by hand.
+    if (settings.repoPaths && typeof settings.repoPaths === 'object') {
+        settings.repoPaths = Object.fromEntries(Object.entries(settings.repoPaths as Record<string, unknown>)
+            .map(([name, value]) => [name, absolute(value, root)]));
+    }
 }
 
 /**

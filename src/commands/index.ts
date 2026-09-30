@@ -23,6 +23,7 @@ import { registerHelpCommands } from './helpCommands';
 import { registerUpgradeCommand } from './upgradeCommand';
 import { registerCustomAddonsCommand } from './customAddonsCommand';
 import { registerDataStoreCommands } from './dataStoreCommands';
+import { registerRepoLocationCommand } from './repoLocationCommand';
 
 export type RefreshReason = 'ui' | 'debugger' | 'all';
 
@@ -70,4 +71,5 @@ export function registerAllCommands(deps: CommandDeps): void {
     registerUpgradeCommand(deps);
     registerCustomAddonsCommand(deps);
     registerDataStoreCommands(deps);
+    registerRepoLocationCommand(deps);
 }
