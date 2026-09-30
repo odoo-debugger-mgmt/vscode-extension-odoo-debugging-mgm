@@ -611,6 +611,12 @@ Each step ships on its own and leaves the extension working.
    window asks before leaving its version, the version question stays in the
    status bar, and a folder window that is a clone excludes its
    `launch.json` in `info/exclude`.
+   After the thirteenth run: versions are saved by merging with the store
+   (a window's map lost versions another window had just created), and a
+   build into a version's directory reuses it; a store whose read failed
+   refuses writes; `extraRootsFor` also reads the registry, so the other side
+   of an upgrade is found in the other workspace; foreground builds take the
+   lease (`withLease`), and a holder that lost it stops.
 
 ## Testing
 

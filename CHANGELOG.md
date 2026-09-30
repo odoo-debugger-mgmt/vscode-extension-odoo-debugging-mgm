@@ -75,6 +75,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Fixed
 
+- **Two windows creating versions at the same moment no longer lose one.** Saving versions keeps the ones another window created; a build into a directory a version already runs from reuses it. An unreadable store is no longer written to.
+- **Upgrades across two workspaces run the other side from the other workspace's clone**, found through the store's list of workspaces; the wizard offers each side's own branches, and shows which checkouts it will switch.
+- **One build at a time, including builds started by hand**, and a window that stalled stops once another took over. A workspace bound to a deleted version is asked again.
+- Switch Active Version asks before a bound window leaves its version; Start Server continues after Select Database; **Stop Both Servers** stops an upgrade's two servers.
 - **A workspace bound to one version asks before leaving it**, the version question stays in the status bar until answered, and `launch.json` in a clone opened as a workspace no longer shows in its git status.
 - **In a shared store, a window launched the database another window had selected.** The database each version last ran against was shared, and preferred over the window's own selection, so F5 and Copy Odoo Command followed whichever window picked last. It is per window now; only an active upgrade's two databases are the same everywhere.
 - **After another window turned an upgrade on and off, a window showed one database and launched another.** The selection moved onto the upgrade pair and the window's per-version memory stayed behind. The selected database now decides what its own version launches; the memory only decides the versions beside it.

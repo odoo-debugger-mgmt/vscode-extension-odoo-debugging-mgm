@@ -24,18 +24,19 @@ behaviour. Anything that behaves differently from it is a finding.
 
 ## The final run: what is left to test
 
-Everything up to item 14 has been run and matched. What has not run in real
-windows yet, in this order:
+Everything else has been run and matched. After the thirteenth run's fixes,
+in this order:
 
-1. `npm test`.
-2. **Item 14 again, briefly:** asked on open (no toggle), the Repos view
-   showing the bound workspace's clone — plus the new status bar item (18.3).
-3. **Item 15** — workspaces find each other.
-4. **Item 16** — an upgrade across two workspaces.
-5. **Item 17** — guards between windows.
-6. **Item 18** — the twelfth run's follow-ups.
-7. **Regression spot checks:** item 6 (no ping-pong while idle, now that
-   windows also write the registry), item 7b step 5, and item 13.1–13.3.
+1. `npm test` — with your usual git config; the exclude test no longer needs
+   `.git/info` (finding 23).
+2. **Item 16.1 and 16.3** — the upgrade across two workspaces, now finding the
+   other side through the registry (finding 19).
+3. **Item 17.1** — both paths: the queue (as last time) and **Create Version**
+   in both windows, which now waits for the lease (finding 21); and the
+   `kill -STOP` repro (finding 20).
+4. **Item 19** — the thirteenth run's other findings and observations.
+5. **Regression spot checks:** item 6 (no ping-pong), item 14's question on
+   open, item 15.1 (registry rows), and 17.3 (deleted in another window).
 
 Report findings in the same format; anything not reached, say so.
 
@@ -403,6 +404,8 @@ Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
 `shared14.db`; acme-db2 (17.0) and acme-db19 (19.0). No upgrade yet.
 
 1. **In `W17`, Set Up an Upgrade** acme-db2 → acme-db19, `staging` → `main`.
+   **Expect** the branch pickers to list `W17/acme`'s branches for 17.0 and
+   `W19/acme`'s for 19.0 (so `staging` and `main` are offered, not typed).
    **Expect** the confirmation to say "Each version already has its own
    checkout of these, so no copies are made:" with `acme: …/W17/acme (Odoo
    17.0), …/W19/acme (Odoo 19.0)`, and to name **no** `acme@…` directories.
@@ -426,14 +429,21 @@ Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
 
 ## 17 · Guards between windows (step 5)
 
-1. **One builder.** In `W17` and `W19`, queue a version each (Create Version,
-   two different series) at nearly the same time. **Expect** one window's log
+1. **One builder.** **Create Version** (Provision) in both windows, two
+   different series, within a second: **expect** the second to show "Waiting
+   for another window to finish building…" in its progress and build only
+   after the first finishes; Cancel while waiting builds nothing. **Then the
+   queue:** queue versions in both windows (Set Up, several picks) at nearly
+   the same time. **Expect** one window's log
    to say "[queue] another window is building versions; waiting for it", the
    other window to build **both** versions, one after the other, and
    `<provisioning root>/.odt-provision.lease` present during the build and
    gone after. Kill the building window mid-build (`kill -9` its extension
    host); **expect** the other window to take over within about 90 s of its
-   next try. Say if this could not be arranged.
+   next try. **Freeze** the builder instead (`kill -STOP`), let the other take
+   over and finish, then resume it (`kill -CONT`): **expect** its log to say
+   "another window took over building; stopping here", and **one** version
+   per series — no second "Odoo 9.0". Say if this could not be arranged.
 2. **Already running elsewhere.** Start Odoo 19.0 in `W19`. In `W17`, run
    Start Server on 19.0 (Switch Active Version to 19.0, or right-click → start
    if offered). **Expect** a warning: '"Odoo 19.0" is already running on port
@@ -467,6 +477,31 @@ Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
    **expect** "$(question) Which version here?" in the status bar next to the
    question, still there after the toast hides; clicking it opens Bind This
    Workspace to a Version…; choosing, or Not Now, removes it.
+
+## 19 · The thirteenth run's other findings
+
+1. **Versions created at once (finding 18).** In two windows, Create Version
+   → Profile only, confirmed within half a second (two different series).
+   **Expect** both in the store (`SELECT key FROM documents WHERE
+   kind='version'`) and in both windows' Versions views. Then switch the
+   active version in one window: **expect** both still there.
+2. **An unreadable store (finding 18b).** With every window closed, corrupt
+   one version document the way the run did (a BLOB), open a window: **expect**
+   the read error, and **no** new "Default Version" in the store; any save
+   in that window warns that nothing was saved. Restore the store after.
+3. **A binding to a deleted version (finding 22).** Bind an empty-folder
+   window to a throwaway version, delete that version from another window:
+   **expect** the "was deleted in another window" notice, then the version
+   question again (and the "Which version here?" item).
+4. **Switch Active Version in a bound window** asks the same question as
+   selecting a database: 'This workspace runs Odoo 17.0. Switching makes this
+   window run Odoo 19.0.' Cancel keeps 17.0. It is **not** asked again when
+   the window already runs that version, nor for the database already
+   selected.
+5. **Start Server → Select Database** picks a database and **starts** the
+   server, without running Start Server again.
+6. **Stop Both Servers** (Upgrade view, or palette) after Start Both Servers
+   stops both sides; "Stopped Odoo 17.0 and Odoo 19.0."
 
 ## 12 · A store from the future
 
