@@ -24,19 +24,18 @@ behaviour. Anything that behaves differently from it is a finding.
 
 ## The final run: what is left to test
 
-Everything else has been run and matched. After the fourteenth run's fixes,
+Everything else has been run and matched. After the fifteenth run's fixes,
 in this order:
 
 1. `npm test`.
-2. **Item 19.2** — a window opened on an unreadable store now activates
-   (finding 24).
-3. **Item 16.1** — the branch pickers' "current branch" and default row
-   (finding 25).
-4. **Item 17.1's freeze** — both ways: resumed while the other window is
-   still building, and after it finished (finding 26).
-5. **Item 20** — the fourteenth run's smaller observations.
-6. **Regression spot checks:** 16.3 (Start This Side), 17.1's Create Version
-   waiting, and 19.1 (versions created at once).
+2. **Item 19.2** again, with finding 27's steps: the window keeps its
+   binding, one error naming the broken document, the views say the store
+   could not be read, and no Migrate offer (findings 27, 28).
+3. **Item 16.1's confirmation** at Set Up, with both checkouts already on
+   their branches (finding 29).
+4. **Item 21** — This workspace only in a clone.
+5. **Regression spot checks:** 20.1 (resume asks only when a checkout
+   moves), 17.1's freeze once, and 14's question on a fresh window.
 
 Report findings in the same format; anything not reached, say so.
 
@@ -410,7 +409,9 @@ Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
    branch": `staging` for 17.0, `main` for 19.0 — not `17.0-alt`/`19.0-alt`.
    A branch the picker proposes but the checkout is not on reads
    "suggested".
-   **Expect** the confirmation to say "Each version already has its own
+   **Expect** the confirmation even though both checkouts are already on
+   their branches (setting up is where each side's checkout is named), to
+   say "Each version already has its own
    checkout of these, so no copies are made:" with `acme: …/W17/acme (Odoo
    17.0), …/W19/acme (Odoo 19.0)`, and to name **no** `acme@…` directories.
    Quote it. After Set It Up: no `~/odoo-dev/acme@…` directories, `acme`
@@ -448,7 +449,8 @@ Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
    over. Resume it (`kill -CONT`) twice over: once while the other is still
    building, once after it finished. **Expect** both times, within about 5 s
    of resuming, its log to say "another window took over building; stopping
-   here", no "Provisioned …" from it, its build of the interrupted series
+   here", no "Provisioned …" from it for the interrupted series (an entry it
+   finished before the freeze is still reported), its build of the interrupted series
    stopped (no second `uv`/`pip` run into that directory after the resume),
    and **one** version per series — no second "Odoo 9.0". Say if this could
    not be arranged.
@@ -495,12 +497,17 @@ Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
    active version in one window: **expect** both still there.
 2. **An unreadable store (findings 18b, 24).** With every window closed,
    corrupt one version document the way the run did (a BLOB), open a window:
-   **expect** the extension to activate (views populated, commands found),
-   one error "Could not read the data store <path>: <reason>. Nothing is
-   saved to it until it reads again." with **Choose Data Store…**, and
-   **no** new "Default Version" in the store; any save in that window warns
+   **expect** the extension to activate (commands found), **one** error —
+   also after opening the Odoo DevTools view — "Could not read the data
+   store <path>: its version "<key>" is not valid JSON (…). Nothing is saved
+   to it until it reads again." with **Choose Data Store…**; Projects and
+   Databases saying "The data store could not be read…" with Choose Data
+   Store… (not "No projects yet"); no Migrate offer; and **no** new "Default
+   Version" in the store; any save in that window warns
    that nothing was saved. Choose Data Store… moves the window to another
-   store. Restore the store after.
+   store. Restore the store after. **Then finding 27's steps:** with the
+   document restored, open the same bound window again: **expect** it still
+   bound (no "Which version here?", its registry row's `version_id` set).
 3. **A binding to a deleted version (finding 22).** Bind an empty-folder
    window to a throwaway version, delete that version from another window:
    **expect** the "was deleted in another window" notice, then the version
@@ -522,6 +529,14 @@ Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
    another branch first: **expect** the confirmation.
 2. **Cancel a build that waits for another window** (17.1's Create Version):
    **expect** "Cancelled; another window was still building."
+
+## 21 · This workspace only, in a clone
+
+In `W17/acme` (a folder window on the clone) on the shared store, Choose
+Data Store… → This workspace only. **Expect** `git status` in the clone
+clean: `.git/info/exclude` gains `/.vscode/odoo-debugger-data.json` and
+`/.vscode/settings.json` under "Odoo DevTools" comments. Choose the shared
+store again afterwards, and remove the two files.
 
 ## 12 · A store from the future
 

@@ -75,6 +75,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Fixed
 
+- **A window on an unreadable store keeps its version binding**, says the read error once, naming the broken document, and its views say the store could not be read, with Choose Data Store…, instead of inviting a new project. Set Up an Upgrade again names each side's own checkout. A clone moved to its own data file keeps that file and its settings out of git status.
 - **A window opened on an unreadable store still starts**, with Choose Data Store… to move it off; the read error names the store and the reason once. The upgrade's branch pickers mark the branch each side's checkout is on as current, and propose it; resuming an upgrade confirms only when a checkout has to switch. A build that lost the lease to another window stops rather than build beside it, and cancelling a build that was waiting says so.
 - **Two windows creating versions at the same moment no longer lose one.** Saving versions keeps the ones another window created; a build into a directory a version already runs from reuses it. An unreadable store is no longer written to.
 - **Upgrades across two workspaces run the other side from the other workspace's clone**, found through the store's list of workspaces; the wizard offers each side's own branches, and shows which checkouts it will switch.
