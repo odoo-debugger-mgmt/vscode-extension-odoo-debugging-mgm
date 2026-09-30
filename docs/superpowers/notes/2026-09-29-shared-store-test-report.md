@@ -5,7 +5,203 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds eleven runs, newest first. The earlier runs are kept unchanged.
+This file holds twelve runs, newest first. The earlier runs are kept unchanged.
+
+# Twelfth run: item 14, binding a workspace to a version (`d75bd3d`)
+
+**Scope:** as asked:
+- the test suite;
+- brief item 14, all six steps.
+
+**Setup:** as item 14 describes, all under `/tmp/odt-brief`.
+- **Origin:** item 13's, plus `staging` (from `17.0-dev`) and `main` (from
+  `19.0-dev`).
+- **Two new clones:** `W17/acme` on `staging` (`git@github.com:org/acme.git`)
+  and `W19/acme` on `main` (`https://github.com/org/acme.git`).
+- **A new store, `shared14.db`,** set as the user-level
+  `odooDebugger.dataStore.path` of a new throwaway profile
+  (`HOME=/tmp/claude/br`):
+  - 17.0 and 19.0, with Custom Addons `v17` and `v19` from item 13. So the
+    19.0 entry has to prefer `W19/acme` over `v19/acme-19`, which has the same
+    remote;
+  - `acme` points at `v17/acme`;
+  - acme-db1 (17.0) → `staging`, acme-db2 → `17.0-dev`, acme-db19 (19.0) →
+    `main`; no upgrade.
+- **The build:** `d75bd3d`, packaged and installed, not a dev host, so that
+  second windows open from the command line and can be closed and reopened.
+
+## Verdict (twelfth run)
+
+- **Finding 16 (serious):** no window is asked on open. The startup call to
+  `offerWorkspaceBinding()` sits inside a configuration-change handler
+  (`src/extension.ts:132`), so it only runs when `odooDebugger.statusBar.enabled`
+  or `odooDebugger.dataStore.path` changes.
+- **Everything else in item 14 matched, when triggered by hand.** I triggered
+  the offer by toggling `odooDebugger.statusBar.enabled` in the user settings,
+  which runs it in every open window.
+- **Finding 17 (moderate):** the Repos view ignores the bound workspace's own
+  clone and shows the Custom Addons clone. Launch entries and checkouts use the
+  workspace's own clone.
+
+## Test suite: matched
+
+- VS Code 1.139.1: **482 passing, 0 failing, 0 pending**.
+
+## 14.1 Open `W19/acme`: not matched (finding 16), wording matched
+
+1. **On open:** there was no question in 30 s. The notification center held
+   only "2 version(s) were built before provisioning and can be migrated.",
+   and the log had no proposal.
+2. **Triggered by hand:** after toggling `statusBar.enabled`, the question
+   read, **exactly as the brief expects**:
+
+   > Use Odoo 19.0 in this workspace? (acme here is on main, which acme-db19
+   > runs.)
+
+   It offered **Use It**, **Choose Another…** and **Not Now**.
+
+## 14.2 Use It: matched
+
+1. **My first click missed:** the toast had hidden itself. Nothing was
+   recorded, and the question came again on the next toggle. So a dismissed
+   question is asked again, as the code intends.
+2. **Use It**, the second time:
+   - "This workspace runs Odoo 19.0.", and the status bar showed `19.0 :8079`;
+   - the version item's tooltip: "Active version: Odoo 19.0 (19.0) / Server:
+     http://localhost:8079 / Not running / **Bound to this workspace** / Click
+     to switch".
+3. **The launch entry:** this window had no project selected, since selection
+   is per window and the profile is new. I selected acme and then acme-db19.
+   - `odoo-debugger-19`: `-d acme-db19`, with addons from
+     **`/tmp/odt-brief/W19/acme`**, the workspace's own clone, with nothing
+     configured.
+   - This is although 19.0's Custom Addons holds `v19/acme-19`, a clone of the
+     same remote.
+4. **Checkouts use it too:** I moved `W19/acme` to `19.0-dev` by hand, then
+   selected acme-db1 and acme-db19 again.
+   - `main` was checked out **in `W19/acme`**, and `v19/acme-19` was not
+     touched. `v19/acme-19` has no `main`, so the target is unambiguous.
+   - For the unbound 17.0 side, acme-db1's checkout went to `v17/acme`, as it
+     should. It failed there only because that older clone has no `staging`
+     branch, which is a fixture gap.
+
+## 14.3 Open `W17/acme`, Not Now, reload: matched, except finding 16
+
+1. **On open:** no question (finding 16).
+2. **Triggered by hand:**
+
+   > Use Odoo 17.0 in this workspace? (acme here is on staging, which acme-db1
+   > runs.)
+
+   I chose **Not Now**. The window's state now holds
+   `odt.workspaceBinding: {"asked": true}`. `W19`'s holds
+   `{"versionId": "ver-19-0002", "asked": true}`.
+   - `W19`'s window, already answered, was **not** asked again on that toggle.
+3. **Reload:** I closed `W17`'s window and reopened it. There was no question
+   on open, but that is finding 16. On a further toggle there was **still no
+   question** in either window.
+
+## 14.4 Bind This Workspace to a Version…: matched
+
+1. **In `W17/acme`,** the list "Bind This Workspace to a Version" showed:
+   - **Odoo 17.0** first, with "💡 acme here is on staging, which acme-db1
+     runs";
+   - then Odoo 19.0 and Create Version….
+2. **Choosing 17.0:** "This workspace runs Odoo 17.0.", and 17.0 became active.
+3. **The entry:** after selecting acme and acme-db1 in that window,
+   `odoo-debugger` names `-d acme-db1` with addons from
+   **`/tmp/odt-brief/W17/acme`**.
+4. **Running it again:** 17.0 is marked "Bound to this workspace", next to the
+   reason.
+5. **`W19`'s window kept 19.0:** after binding `W17` to 17.0 again, `W19`'s
+   status bar still read "acme · acme-db19 · 19.0 :8079".
+
+## 14.5 An empty folder: matched, when triggered (finding 16)
+
+In a window on `/tmp/odt-brief/empty`, the question on the toggle was:
+
+> Which version does this workspace run? It is asked once; the store has
+> several.
+
+It offered **Choose a Version…** and **Not Now**.
+
+## 14.6 A workspace on its own file: matched
+
+- **The window:** A, in the same profile, but pinned to its own file by a
+  workspace setting:
+  `"odooDebugger.dataStore.path": ".vscode/odoo-debugger-data.json"`.
+- **What it showed:** the Projects header has no "shared:" label, unlike the
+  other windows ("shared: shared14.db").
+- **No question** on the toggle, while the empty folder was asked on the same
+  toggle.
+
+## Also seen (twelfth run)
+
+- **A bound window moves to another version without a word.** Selecting
+  acme-db1 (17.0) in the 19.0-bound `W19` window, done by mistake, then on
+  purpose, made 17.0 active there: the status bar read "17.0 :8069". The
+  binding stayed 19.0, and nothing said the window was leaving its version.
+  - Whether that should ask is a design call.
+  - The status bar then shows 17.0 while the tooltip's binding is 19.0.
+- **`launch.json` lands in the workspace's clone.** In a workspace that is the
+  clone, as here, the launch entries go into `W19/acme/.vscode/launch.json`.
+  Source Control then shows `main*` with an untracked `.vscode/`. It is a
+  folder window, so that follows the fifth run's rule. But for the "one
+  workspace per version, opened on the clone" layout this item sets up, it
+  means the user's repository.
+- **Most clicks need the notification center.** Like the reopen message in the
+  sixth run, the question is an ordinary toast that hides itself after a few
+  seconds. The code asks again after a dismissal without a choice, which
+  softens it.
+
+## Findings (twelfth run)
+
+### 16. No window is asked on open (serious)
+
+**Steps:** open `W19/acme`, `W17/acme` or an empty folder on the shared store,
+in a profile that has never answered.
+
+**Expected:** the question, once, on open.
+
+**Happened:** no question. The log has no proposal.
+
+**Why:** in `activate` (`src/extension.ts`, around line 132), the call landed
+inside the `odooDebugger.statusBar.enabled` handler:
+
+```ts
+context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+    if (event.affectsConfiguration('odooDebugger.statusBar.enabled')) {
+        void statusBar.update();
+    void offerWorkspaceBinding();
+    }
+}));
+```
+
+The call is under-indented, which suggests it was meant to follow the
+`push(...)`. It came in with `f15fbf8`, and the bundle has the same.
+
+The only other caller is the `odooDebugger.dataStore.path` change handler. So
+a window is asked only when one of those two settings changes while it is
+open.
+
+### 17. The Repos view shows the Custom Addons clone, not the bound workspace's (moderate)
+
+**Steps:** in `W19/acme`, bound to 19.0, with acme-db19 selected.
+
+**Happened:**
+- the Repos view lists **`acme-19 19.0-alt`**, with the tooltip "Path:
+  /tmp/odt-brief/v19/acme-19";
+- the launch entry and the checkout use `W19/acme`, which was on `main`.
+
+It is the same in `W17`: Repos shows `acme 17.0-alt` (`v17/acme`), while the
+entry uses `W17/acme` on `staging`.
+
+So the view names another clone, on another branch, than the one that runs.
+The Modules view cannot tell the two apart here, because both clones hold the
+same modules.
+
+The workspace's folders seem to be passed as extra roots only on the launch
+and checkout paths, not to the Repos view.
 
 # Eleventh run: finding 15 re-tested (`8523354`)
 
