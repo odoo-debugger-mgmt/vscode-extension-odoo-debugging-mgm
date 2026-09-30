@@ -83,6 +83,92 @@ export function resolveProjectRepos(
     });
 }
 
+// ---------------------------------------------------------------------------
+// Which checkout serves a repository for a version
+// ---------------------------------------------------------------------------
+
+/**
+ * A remote URL reduced to host and path, so the forms one repository is cloned
+ * by compare equal: `git@host:org/acme.git`, `ssh://git@host/org/acme` and
+ * `https://host/org/acme.git` all become `host/org/acme`.
+ */
+export function normalizeRemote(url: string | undefined): string | undefined {
+    let value = url?.trim();
+    if (!value) {
+        return undefined;
+    }
+    // scp-like syntax: user@host:path (no scheme).
+    const scp = /^[^/@\s]+@([^:/\s]+):(.+)$/.exec(value);
+    if (scp && !value.includes('://')) {
+        value = `${scp[1]}/${scp[2]}`;
+    } else {
+        value = value.replace(/^[a-z+]+:\/\//i, '').replace(/^[^@/]+@/, '').replace(/:\d+(?=\/)/, '');
+    }
+    return value
+        .replace(/\.git$/i, '')
+        .replace(/\/+$/, '')
+        .toLowerCase();
+}
+
+/** A git checkout found on disk, for choosing a version's copy of a repository. */
+export interface CheckoutCandidate {
+    path: string;
+    /** The folder name. */
+    name: string;
+    /** `origin`, normalised with normalizeRemote. */
+    remote?: string;
+}
+
+export type RepoLocationSource = 'override' | 'remote' | 'name' | 'default';
+
+/**
+ * Which checkout serves `repo` for a version, in order: the version's manual
+ * override, a checkout under its custom addons folder with the same remote,
+ * one there with the same folder name, and `repo.path` - the behaviour before
+ * versions had their own. With one custom addons folder for every version,
+ * that finds the one clone for all of them, so that layout is unchanged.
+ */
+export function pickRepoCheckout(
+    repo: { name: string; path: string },
+    repoRemote: string | undefined,
+    override: string | undefined,
+    candidates: CheckoutCandidate[]
+): { path: string; source: RepoLocationSource } {
+    if (override?.trim()) {
+        return { path: override.trim(), source: 'override' };
+    }
+    if (repoRemote) {
+        const byRemote = candidates.find(candidate => candidate.remote === repoRemote);
+        if (byRemote) {
+            return { path: byRemote.path, source: 'remote' };
+        }
+    }
+    const byName = candidates.find(candidate => candidate.name.toLowerCase() === repo.name.toLowerCase());
+    if (byName) {
+        return { path: byName.path, source: 'name' };
+    }
+    return { path: repo.path, source: 'default' };
+}
+
+/**
+ * The project's repositories as `version` sees them: a repository in checkout
+ * mode points at that version's checkout (`located`, by repository name).
+ *
+ * One in "one copy per branch" mode keeps `repo.path`: that is the source its
+ * copies are cut from, and they already give every branch its own directory.
+ * Names are kept, so branch assignments recorded against `repo.path` still
+ * apply by name.
+ */
+export function reposForVersion(repos: RepoModel[], located: ReadonlyMap<string, string>): RepoModel[] {
+    return repos.map(repo => {
+        const at = located.get(repo.name);
+        if (!at || normalizeBranchMode(repo.branchMode) === 'worktree' || at === repo.path) {
+            return repo;
+        }
+        return Object.assign(Object.create(Object.getPrototypeOf(repo)), repo, { path: at }) as RepoModel;
+    });
+}
+
 /**
  * Resolved repos in the shape `discoverModulesInRepos` expects, so module
  * discovery and the addons path see worktrees rather than source checkouts

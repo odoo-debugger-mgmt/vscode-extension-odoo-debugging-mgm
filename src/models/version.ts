@@ -32,6 +32,11 @@ export interface VersionSettings {
     postSwitchCommands: string[];
     /** Absolute paths this extension created while provisioning. */
     managedPaths: string[];
+    /**
+     * Repository name -> the checkout this version uses for it, when set by
+     * hand. Otherwise the checkout is found under `customAddonsPath`.
+     */
+    repoPaths?: Record<string, string>;
 }
 
 export class VersionModel {
