@@ -5,6 +5,7 @@
  * (repoPaths.ts). Everything that needs "where does this code live for this
  * database" goes through here, so the answer is the same everywhere.
  */
+import * as vscode from 'vscode';
 import type { DatabaseModel } from '../models/db';
 import type { ProjectModel } from '../models/project';
 import type { VersionModel } from '../models/version';
@@ -14,6 +15,17 @@ import { resolveProjectRepoBranchAssignments } from './environment';
 import { projectReposForVersion } from './repoLocations';
 import { resolveProjectRepos, type ResolvedRepo } from './repoPaths';
 import { readSetupState } from './setupState';
+import { boundVersionId } from './workspaceBinding';
+
+/**
+ * The folders of this window, when it is bound to `version`: searched first
+ * for that version's checkouts (see locateRepoCheckouts).
+ */
+export function extraRootsFor(version: { id?: string } | undefined): string[] {
+    return version?.id && version.id === boundVersionId()
+        ? (vscode.workspace.workspaceFolders ?? []).map(folder => folder.uri.fsPath)
+        : [];
+}
 
 /** The database's own version, or the active one when it has none. */
 export function versionOfDatabase(db: { versionId?: string } | undefined): VersionModel | undefined {
@@ -30,7 +42,8 @@ export function reposSeenByDatabase(
     project: Pick<ProjectModel, 'repos'>,
     db: { versionId?: string } | undefined
 ): Promise<RepoModel[]> {
-    return projectReposForVersion(project.repos, versionOfDatabase(db));
+    const version = versionOfDatabase(db);
+    return projectReposForVersion(project.repos, version, undefined, extraRootsFor(version));
 }
 
 export async function resolveReposForDatabase(
@@ -38,7 +51,8 @@ export async function resolveReposForDatabase(
     db: DatabaseModel | undefined,
     options: { version?: VersionModel; root?: string } = {}
 ): Promise<ResolvedRepo[]> {
-    const repos = await projectReposForVersion(project.repos, options.version ?? versionOfDatabase(db));
+    const version = options.version ?? versionOfDatabase(db);
+    const repos = await projectReposForVersion(project.repos, version, undefined, extraRootsFor(version));
     return resolveProjectRepos(
         repos,
         db ? resolveProjectRepoBranchAssignments(db, repos) : [],

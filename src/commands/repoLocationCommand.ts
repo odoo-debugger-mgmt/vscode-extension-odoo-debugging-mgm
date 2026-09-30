@@ -7,6 +7,7 @@ import { registerCommand } from './registerCommand';
 import { SettingsStore } from '../settingsStore';
 import { showInfo, showModalWarning } from '../services/notifications';
 import { locateRepoCheckouts, remoteOf } from '../services/repoLocations';
+import { extraRootsFor } from '../services/versionRepos';
 import { normalizePath } from '../utils';
 
 const DESCRIBE_SOURCE: Record<string, string> = {
@@ -56,7 +57,7 @@ export function registerRepoLocationCommand(deps: CommandDeps): void {
             return;
         }
 
-        const located = await locateRepoCheckouts(repos, version);
+        const located = await locateRepoCheckouts(repos, version, undefined, extraRootsFor(version));
         const repoPick = await vscode.window.showQuickPick(
             repos.map(repo => {
                 const at = located.get(repo.name);

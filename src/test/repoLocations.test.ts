@@ -154,6 +154,34 @@ suite('Finding each version\'s clone against real git', function () {
         assert.strictEqual(seen, repos[0], 'the single-clone layout must come back unchanged');
     });
 
+    test('a workspace folder that is itself the clone is found for the version it is bound to', async () => {
+        // The 19.0 workspace opened ~/work/acme directly: no custom addons
+        // folder holds it, but it is that version's code.
+        const workspaceClone = path.join(root, 'work', 'acme-main');
+        fs.mkdirSync(path.dirname(workspaceClone));
+        cloneAs(path.join(root, 'origin'), workspaceClone, 'git@github.com:acme/addons.git');
+        const repos = [new RepoModel('acme', path.join(root, 'v17', 'acme'))];
+        const v19 = { settings: { customAddonsPath: path.join(root, 'nothing-here') } };
+
+        const bound = await locateRepoCheckouts(repos, v19, list, [workspaceClone]);
+        assert.deepStrictEqual(bound.get('acme'), { path: workspaceClone, source: 'remote' });
+
+        // Without the binding, the same version falls back to the repository.
+        const unbound = await locateRepoCheckouts(repos, v19, list);
+        assert.deepStrictEqual(unbound.get('acme'), { path: path.join(root, 'v17', 'acme'), source: 'default' });
+    });
+
+    test('the workspace\'s folders are searched before the custom addons folder', async () => {
+        const workspaceClone = path.join(root, 'work', 'acme');
+        fs.mkdirSync(path.dirname(workspaceClone));
+        cloneAs(path.join(root, 'origin'), workspaceClone, 'https://github.com/acme/addons');
+        const repos = [new RepoModel('acme', path.join(root, 'v17', 'acme'))];
+        const v19 = { settings: { customAddonsPath: path.join(root, 'v19') } };
+
+        const located = await locateRepoCheckouts(repos, v19, list, [path.dirname(workspaceClone)]);
+        assert.strictEqual(located.get('acme')?.path, workspaceClone);
+    });
+
     test('a manual override wins, and a missing custom addons folder falls back to the repository', async () => {
         const repos = [new RepoModel('acme', path.join(root, 'v17', 'acme'))];
 

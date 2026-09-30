@@ -41,7 +41,7 @@ export function invalidateRemoteCache(): void {
     remotes.clear();
 }
 
-async function candidatesUnder(root: string | undefined, list: CheckoutLister): Promise<CheckoutCandidate[]> {
+async function candidatesUnder(root: string | undefined, list: CheckoutLister, includeRoot = false): Promise<CheckoutCandidate[]> {
     if (!root || !fs.existsSync(root)) {
         return [];
     }
@@ -50,6 +50,10 @@ async function candidatesUnder(root: string | undefined, list: CheckoutLister): 
         found = list(root);
     } catch {
         return [];
+    }
+    // A workspace folder is often the clone itself, not a folder of clones.
+    if (includeRoot && fs.existsSync(path.join(root, '.git'))) {
+        found = [{ path: root, name: path.basename(root) }, ...found];
     }
     return Promise.all(found.map(async entry => ({
         path: entry.path,
@@ -67,11 +71,17 @@ export interface LocatedRepo {
  * Where each repository lives for `version`, by repository name, with how it
  * was found. `list` is injectable for tests; the extension uses the same
  * repository discovery as the Repos view.
+ *
+ * `extraRoots` are searched before the custom addons folder: the folders of a
+ * workspace bound to this version, each of which may be a clone itself or
+ * hold clones. That is how the code a version's workspace holds becomes that
+ * version's code.
  */
 export async function locateRepoCheckouts(
     repos: RepoModel[],
     version: VersionLike | undefined,
-    list: CheckoutLister = root => findRepositories(root)
+    list: CheckoutLister = root => findRepositories(root),
+    extraRoots: string[] = []
 ): Promise<Map<string, LocatedRepo>> {
     const located = new Map<string, LocatedRepo>();
     if (repos.length === 0) {
@@ -79,7 +89,20 @@ export async function locateRepoCheckouts(
     }
     const rawRoot = version?.settings?.customAddonsPath;
     const root = rawRoot ? normalizePath(rawRoot) : undefined;
-    const candidates = await candidatesUnder(root, list);
+    const candidates: CheckoutCandidate[] = [];
+    const seen = new Set<string>();
+    for (const batch of [
+        ...(await Promise.all(extraRoots.map(extra => candidatesUnder(extra, list, true)))),
+        await candidatesUnder(root, list)
+    ]) {
+        for (const candidate of batch) {
+            const key = path.resolve(candidate.path);
+            if (!seen.has(key)) {
+                seen.add(key);
+                candidates.push(candidate);
+            }
+        }
+    }
     const overrides = version?.settings?.repoPaths ?? {};
 
     for (const repo of repos) {
@@ -100,9 +123,10 @@ export async function locateRepoCheckouts(
 export async function projectReposForVersion(
     repos: RepoModel[] | undefined,
     version: VersionLike | undefined,
-    list?: CheckoutLister
+    list?: CheckoutLister,
+    extraRoots: string[] = []
 ): Promise<RepoModel[]> {
     const all = repos ?? [];
-    const located = await locateRepoCheckouts(all, version, list);
+    const located = await locateRepoCheckouts(all, version, list, extraRoots);
     return reposForVersion(all, new Map([...located].map(([name, entry]) => [name, entry.path])));
 }
