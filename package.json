@@ -485,6 +485,12 @@
         "icon": "$(pin)"
       },
       {
+        "command": "odoo.openVersionWorkspace",
+        "title": "Open the Workspace for a Version…",
+        "category": "Odoo DevTools",
+        "icon": "$(multiple-windows)"
+      },
+      {
         "command": "odoo.openVersionInBrowser",
         "title": "Open Server in Browser",
         "category": "Odoo DevTools",
@@ -1229,6 +1235,11 @@
           "command": "odoo.setRepoLocation",
           "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
           "group": "1_version@3"
+        },
+        {
+          "command": "odoo.openVersionWorkspace",
+          "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/",
+          "group": "1_version@4"
         },
         {
           "command": "odoo.deleteVersion",

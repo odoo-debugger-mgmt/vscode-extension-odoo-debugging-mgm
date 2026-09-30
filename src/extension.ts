@@ -46,6 +46,7 @@ import { StatusBarIndicators } from './views/statusBar';
 import { registerAllCommands, RefreshReason } from './commands';
 import { offerToReopenByPath } from './projectWorkspace';
 import { initializeBinding } from './services/workspaceBinding';
+import { initializeRegistry, registerThisWorkspace } from './services/workspaceRegistry';
 import { offerWorkspaceBinding } from './commands/bindingCommand';
 
 /** Syncs the testing context key with the selected project's testing state. */
@@ -67,6 +68,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // what VersionsService reads while initializing.
     await SettingsStore.initialize(context);
     initializeBinding(context.workspaceState);
+    initializeRegistry(context.workspaceState);
     offerToReopenByPath(context);
 
     const sortPreferences = new SortPreferences(context.workspaceState);
@@ -279,7 +281,8 @@ export async function activate(context: vscode.ExtensionContext) {
             closeOtherMainStores();
             watchStore();
             onStoreChanged();
-            // A workspace that just joined a shared store is asked then.
+            // A workspace that just joined a shared store is recorded and asked then.
+            void registerThisWorkspace();
             void offerWorkspaceBinding();
         }
     }));
@@ -292,7 +295,9 @@ export async function activate(context: vscode.ExtensionContext) {
     registerWrongCopyGuard(context);
 
     void statusBar.update();
-    // Once per window, on a shared store: which version does it run?
+    // On a shared store: record this window for the others to find, and
+    // ask once which version it runs.
+    void registerThisWorkspace();
     void offerWorkspaceBinding();
 
     // The queue builds versions one at a time and survives a reload, so a

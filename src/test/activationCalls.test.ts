@@ -37,5 +37,6 @@ suite('Activation runs what it must on open', () => {
         const outside = withoutConfigurationHandlers(fs.readFileSync(EXTENSION, 'utf8'));
         assert.ok(outside.includes('offerWorkspaceBinding()'), 'offerWorkspaceBinding() only runs when a setting changes');
         assert.ok(outside.includes('offerToReopenByPath(context)'));
+        assert.ok(outside.includes('registerThisWorkspace()'), 'a window must be recorded on open, not only when a setting changes');
     });
 });

@@ -15,6 +15,7 @@ import { BaseTreeProvider } from './views/baseTreeProvider';
 import { isDerivedSetting } from './services/versionIdentity';
 import { currentQueueSnapshot, queueLabel } from './services/provisionQueue';
 import { currentUpgradeConfig } from './upgrade';
+import { otherWorkspacesFor, refreshRegistry } from './services/workspaceRegistry';
 
 /** Provisioned state for the tree description, from the shared predicate. */
 function provisioningLabel(version: VersionModel): string {
@@ -35,12 +36,14 @@ export class VersionTreeItem extends vscode.TreeItem {
         public override readonly collapsibleState: vscode.TreeItemCollapsibleState,
         public readonly running?: RunningInstance,
         /** Which side of a running upgrade this version is, if either. */
-        public readonly upgradeSide?: 'from' | 'to'
+        public readonly upgradeSide?: 'from' | 'to',
+        /** Other workspaces on the shared store bound to this version. */
+        workspaces: string[] = []
     ) {
         super(version.name, collapsibleState);
 
         this.id = version.id;
-        this.tooltip = VersionTreeItem.buildTooltip(version, running);
+        this.tooltip = VersionTreeItem.buildTooltip(version, running, workspaces);
         // The port is always visible: with several versions runnable at once,
         // knowing which localhost to open is the first thing you need.
         const parts = [version.odooVersion];
@@ -80,11 +83,14 @@ export class VersionTreeItem extends vscode.TreeItem {
         };
     }
 
-    private static buildTooltip(version: VersionModel, running?: RunningInstance): vscode.MarkdownString {
+    private static buildTooltip(version: VersionModel, running?: RunningInstance, workspaces: string[] = []): vscode.MarkdownString {
         const lines: string[] = [
             `**${version.name}**${version.isActive ? ' (active)' : ''}`,
             `**Odoo Version:** ${version.odooVersion}`
         ];
+        if (workspaces.length > 0) {
+            lines.push(`**Also runs in:** ${workspaces.join(', ')} (Open the Workspace for a Version…)`);
+        }
         const settings = version.settings ?? {};
         if (running) {
             lines.push(`**Status:** running${running.dbName ? ` on \`${running.dbName}\`` : ''}`);
@@ -191,12 +197,14 @@ export class VersionsTreeProvider extends BaseTreeProvider<VersionTreeItem | Ver
                         .map(instance => [instance.versionId!, instance])
                 );
                 const upgradeConfig = await currentUpgradeConfig();
+                await refreshRegistry();
                 return versions.map(version =>
                     new VersionTreeItem(
                         version,
                         vscode.TreeItemCollapsibleState.Collapsed,
                         running.get(version.id),
-                        upgradeConfig.sideForVersion(version.id))
+                        upgradeConfig.sideForVersion(version.id),
+                        otherWorkspacesFor(version.id).map(row => row.name))
                 );
             }).catch(error => {
                 logger.error('Failed to load versions for tree view:', error);

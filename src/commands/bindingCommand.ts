@@ -11,6 +11,8 @@ import { remoteOf } from '../services/repoLocations';
 import { logger } from '../services/logger';
 import { showInfo } from '../services/notifications';
 import { normalizePath } from '../utils';
+import { refreshRegistry, registerThisWorkspace, thisWorkspaceId } from '../services/workspaceRegistry';
+import { extractVersionId } from './args';
 import {
     BindingProposal,
     WorkspaceFolderFacts,
@@ -57,6 +59,7 @@ async function propose(): Promise<BindingProposal | undefined> {
 /** Binds this window to `versionId` and makes it the active version. */
 async function bindTo(versionId: string): Promise<void> {
     await writeBinding({ versionId, asked: true });
+    void registerThisWorkspace();
     const versions = VersionsService.getInstance();
     if (versions.getActiveVersion()?.id !== versionId) {
         // The command, not the service: it carries the upgrade guard and the
@@ -131,7 +134,43 @@ export async function offerWorkspaceBinding(): Promise<void> {
     }
 }
 
+/**
+ * Opens another workspace on this shared store, from the registry: the one
+ * that runs a version (from a version's context menu), or any of them.
+ */
+async function openVersionWorkspace(versionIdOrTreeItem?: unknown): Promise<void> {
+    if (!currentMainStore()?.listWorkspaces) {
+        void showInfo('Only a shared data store keeps a list of the workspaces that use it. Choose one with Choose Data Store….');
+        return;
+    }
+    const versions = VersionsService.getInstance();
+    await versions.initialize();
+    const versionId = extractVersionId(versionIdOrTreeItem);
+    const own = thisWorkspaceId();
+    const rows = (await refreshRegistry())
+        .filter(row => row.id !== own && (!versionId || row.versionId === versionId));
+    if (rows.length === 0) {
+        const name = versionId ? versions.getVersion(versionId)?.name : undefined;
+        void showInfo(name
+            ? `No other workspace on this store runs ${name} yet. Open one, and bind it with Bind This Workspace to a Version….`
+            : 'No other workspace has opened this store yet.');
+        return;
+    }
+    const picked = rows.length === 1 && versionId
+        ? rows[0]
+        : (await vscode.window.showQuickPick(rows.map(row => ({
+            label: row.name,
+            description: row.versionId ? versions.getVersion(row.versionId)?.name ?? 'a removed version' : 'no version chosen',
+            detail: vscode.Uri.parse(row.uri).fsPath,
+            row
+        })), { title: 'Open the Workspace for a Version', placeHolder: 'Which workspace?' }))?.row;
+    if (picked) {
+        await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.parse(picked.uri), { forceNewWindow: true });
+    }
+}
+
 export function registerBindingCommand(deps: CommandDeps): void {
+    deps.context.subscriptions.push(registerCommand('odoo.openVersionWorkspace', openVersionWorkspace));
     deps.context.subscriptions.push(registerCommand('odoo.bindWorkspaceVersion', async () => {
         await VersionsService.getInstance().initialize();
         await chooseAndBind(await propose());
