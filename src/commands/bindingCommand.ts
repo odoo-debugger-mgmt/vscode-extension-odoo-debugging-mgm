@@ -59,6 +59,7 @@ async function propose(): Promise<BindingProposal | undefined> {
 /** Binds this window to `versionId` and makes it the active version. */
 async function bindTo(versionId: string): Promise<void> {
     await writeBinding({ versionId, asked: true });
+    answered();
     void registerThisWorkspace();
     const versions = VersionsService.getInstance();
     if (versions.getActiveVersion()?.id !== versionId) {
@@ -104,6 +105,29 @@ async function chooseAndBind(proposal: BindingProposal | undefined): Promise<voi
 }
 
 /**
+ * The question as a status bar item, until it is answered: the message hides
+ * itself after a few seconds, and was usually gone before it was read.
+ */
+let pendingItem: vscode.StatusBarItem | undefined;
+
+function showPendingItem(): void {
+    if (pendingItem) {
+        return;
+    }
+    pendingItem = vscode.window.createStatusBarItem('odooDevtools.bindWorkspace', vscode.StatusBarAlignment.Left, 97);
+    pendingItem.name = 'Odoo DevTools: Workspace Version';
+    pendingItem.text = '$(question) Which version here?';
+    pendingItem.tooltip = 'Which Odoo version does this workspace run? Click to choose; it is asked once.';
+    pendingItem.command = 'odoo.bindWorkspaceVersion';
+    pendingItem.show();
+}
+
+function answered(): void {
+    pendingItem?.dispose();
+    pendingItem = undefined;
+}
+
+/**
  * Asks a new window on a shared store which version it runs, once. With a
  * proposal from what the workspace holds, one click accepts it.
  */
@@ -114,6 +138,7 @@ export async function offerWorkspaceBinding(): Promise<void> {
         if (!shouldOfferBinding(currentMainStore()?.kind, versions.getVersions().length, readBinding())) {
             return;
         }
+        showPendingItem();
         const proposal = await propose();
         const name = proposal ? versions.getVersion(proposal.versionId)?.name : undefined;
         const choice = proposal && name
@@ -127,6 +152,9 @@ export async function offerWorkspaceBinding(): Promise<void> {
             await chooseAndBind(proposal);
         } else if (choice === 'Not Now') {
             await writeBinding({ ...readBinding(), asked: true });
+        }
+        if (readBinding().asked) {
+            answered();
         }
         // Dismissed without a choice: asked again next time.
     } catch (error) {

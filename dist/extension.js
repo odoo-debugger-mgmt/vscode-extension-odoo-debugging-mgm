@@ -26751,6 +26751,7 @@ async function propose() {
 /** Binds this window to `versionId` and makes it the active version. */
 async function bindTo(versionId) {
     await (0, workspaceBinding_1.writeBinding)({ versionId, asked: true });
+    answered();
     void (0, workspaceRegistry_1.registerThisWorkspace)();
     const versions = versionsService_1.VersionsService.getInstance();
     if (versions.getActiveVersion()?.id !== versionId) {
@@ -26793,6 +26794,26 @@ async function chooseAndBind(proposal) {
     }
 }
 /**
+ * The question as a status bar item, until it is answered: the message hides
+ * itself after a few seconds, and was usually gone before it was read.
+ */
+let pendingItem;
+function showPendingItem() {
+    if (pendingItem) {
+        return;
+    }
+    pendingItem = vscode.window.createStatusBarItem('odooDevtools.bindWorkspace', vscode.StatusBarAlignment.Left, 97);
+    pendingItem.name = 'Odoo DevTools: Workspace Version';
+    pendingItem.text = '$(question) Which version here?';
+    pendingItem.tooltip = 'Which Odoo version does this workspace run? Click to choose; it is asked once.';
+    pendingItem.command = 'odoo.bindWorkspaceVersion';
+    pendingItem.show();
+}
+function answered() {
+    pendingItem?.dispose();
+    pendingItem = undefined;
+}
+/**
  * Asks a new window on a shared store which version it runs, once. With a
  * proposal from what the workspace holds, one click accepts it.
  */
@@ -26803,6 +26824,7 @@ async function offerWorkspaceBinding() {
         if (!(0, workspaceBinding_1.shouldOfferBinding)((0, mainStore_1.currentMainStore)()?.kind, versions.getVersions().length, (0, workspaceBinding_1.readBinding)())) {
             return;
         }
+        showPendingItem();
         const proposal = await propose();
         const name = proposal ? versions.getVersion(proposal.versionId)?.name : undefined;
         const choice = proposal && name
@@ -26817,6 +26839,9 @@ async function offerWorkspaceBinding() {
         }
         else if (choice === 'Not Now') {
             await (0, workspaceBinding_1.writeBinding)({ ...(0, workspaceBinding_1.readBinding)(), asked: true });
+        }
+        if ((0, workspaceBinding_1.readBinding)().asked) {
+            answered();
         }
         // Dismissed without a choice: asked again next time.
     }
