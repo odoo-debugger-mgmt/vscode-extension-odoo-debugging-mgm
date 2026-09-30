@@ -47,6 +47,9 @@ import type { ProjectModel } from '../models/project';
 import type { UpgradeConfigModel } from '../models/upgrade';
 import type { VersionsService } from '../versionsService';
 import { registerCommand } from './registerCommand';
+import * as path from 'node:path';
+import { locateRepoCheckouts } from '../services/repoLocations';
+import { extraRootsFor } from '../services/versionRepos';
 
 /** Everything the wizard collects, filled in as it goes. */
 interface SetupDraft {
@@ -185,6 +188,40 @@ interface ReviewRow extends vscode.QuickPickItem {
     confirm?: boolean;
 }
 
+/**
+ * Each version's own checkout of each repository, where the two sides were
+ * found in different directories (design §7): those need no per-branch
+ * copies. A side whose version is not built yet cannot be located, so its
+ * repositories are left to the copies, as before.
+ */
+async function ownCheckoutsFor(
+    repos: RepoModel[],
+    versions: VersionsService,
+    fromSeries: string,
+    toSeries: string
+): Promise<Record<string, { from: string; to: string }>> {
+    const bySeries = (series: string) => versions.getVersions().find(version => version.odooVersion.trim() === series);
+    const fromVersion = bySeries(fromSeries);
+    const toVersion = bySeries(toSeries);
+    const own: Record<string, { from: string; to: string }> = {};
+    const candidates = repos.filter(repo => normalizeBranchMode(repo.branchMode) === 'checkout');
+    if (!fromVersion || !toVersion || candidates.length === 0) {
+        return own;
+    }
+    const [from, to] = await Promise.all([
+        locateRepoCheckouts(candidates, fromVersion, undefined, extraRootsFor(fromVersion)),
+        locateRepoCheckouts(candidates, toVersion, undefined, extraRootsFor(toVersion))
+    ]);
+    for (const repo of candidates) {
+        const fromPath = from.get(repo.name)?.path;
+        const toPath = to.get(repo.name)?.path;
+        if (fromPath && toPath && path.resolve(normalizePath(fromPath)) !== path.resolve(normalizePath(toPath))) {
+            own[repo.name] = { from: normalizePath(fromPath), to: normalizePath(toPath) };
+        }
+    }
+    return own;
+}
+
 export function registerUpgradeCommand(deps: CommandDeps): void {
     const { context, versionsService, refreshAll } = deps;
 
@@ -214,7 +251,8 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
             root,
             plan,
             previous: extra.previous,
-            resume: extra.resume
+            resume: extra.resume,
+            ownCheckouts: input.ownCheckouts
         };
     };
 
@@ -356,7 +394,8 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
             worktreeRepos: repos
                 .filter(repo => normalizeBranchMode(repo.branchMode) === 'worktree')
                 .map(repo => repo.name),
-            root
+            root,
+            ownCheckouts: await ownCheckoutsFor(repos, versionsService, remembered.from!.series, remembered.to!.series)
         };
         const plan = buildUpgradePlan(input);
 
@@ -605,6 +644,9 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
             const toDbId = draft.toDb?.id ?? draft.newTargetName!;
 
             // ---- Review ---------------------------------------------------------
+            // Located once: which repositories each side already has its own
+            // checkout of, so the plan copies only the shared ones.
+            const ownCheckouts = await ownCheckoutsFor(repos, versionsService, draft.fromSeries!, draft.toSeries!);
             const buildInput = (): UpgradeInput => ({
                 repos: repos.map(repo => ({
                     name: repo.name,
@@ -620,7 +662,8 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
                 worktreeRepos: repos
                     .filter(repo => normalizeBranchMode(repo.branchMode) === 'worktree')
                     .map(repo => repo.name),
-                root
+                root,
+                ownCheckouts
             });
 
             for (;;) {

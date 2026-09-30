@@ -7821,6 +7821,8 @@ const environment_1 = __webpack_require__(49);
 const logger_1 = __webpack_require__(12);
 const repoPaths_1 = __webpack_require__(54);
 const customWorktree_1 = __webpack_require__(55);
+const branches_1 = __webpack_require__(50);
+const checkout_1 = __webpack_require__(51);
 const upgradeSetup_1 = __webpack_require__(57);
 /**
  * The addons a version can install, or undefined when it is not built yet.
@@ -7888,9 +7890,11 @@ async function applyUpgradeSetup(project, setup, versionSettingsFor, token) {
     const sourceDb = findDb(setup.fromDbId);
     const targetDb = findDb(setup.toDbId);
     // 2. Per-branch copies. Mode first: resolveProjectRepos reads it to decide
-    //    which directory each repository's branch lives in.
+    //    which directory each repository's branch lives in. Only for the
+    //    repositories whose two sides would share one directory: one that each
+    //    version already has its own checkout of stays as it is.
     const repos = project.repos ?? [];
-    const involved = new Set(setup.repos.map(entry => entry.repoName.toLowerCase()));
+    const involved = new Set(setup.plan.reposToWorktree.map(name => name.toLowerCase()));
     for (const repo of repos) {
         if (involved.has(repo.name.toLowerCase())) {
             repo.branchMode = 'worktree';
@@ -7927,6 +7931,30 @@ async function applyUpgradeSetup(project, setup, versionSettingsFor, token) {
         catch (error) {
             logger_1.logger.error('[upgrade] building per-branch copies failed:', error);
             problems.push((0, logger_1.errorMessage)(error));
+        }
+    }
+    // 4b. Each side's own checkout on its branch, for the repositories that
+    //     need no copies. Only when it is on another branch, and never forced:
+    //     a checkout that refuses (uncommitted changes) is reported.
+    for (const name of setup.plan.reposOnOwnCheckouts ?? []) {
+        const own = setup.ownCheckouts?.[name];
+        const pair = setup.repos.find(entry => entry.repoName.toLowerCase() === name.toLowerCase());
+        if (!own || !pair || token?.isCancellationRequested) {
+            continue;
+        }
+        for (const [dir, branch] of [[own.from, pair.fromBranch], [own.to, pair.toBranch]]) {
+            try {
+                if ((await (0, branches_1.getRepoBranch)(dir)) === branch) {
+                    continue;
+                }
+                const outcome = await (0, checkout_1.checkoutRepoBranch)(dir, branch);
+                if (!outcome.ok) {
+                    problems.push(`${name}: ${outcome.message}`);
+                }
+            }
+            catch (error) {
+                problems.push(`${name}: ${(0, logger_1.errorMessage)(error)}`);
+            }
         }
     }
     // 5. The module set: what the source runs, rebuilt on the target.
@@ -24787,6 +24815,9 @@ const upgrade_1 = __webpack_require__(39);
 const wizard_1 = __webpack_require__(68);
 const repo_1 = __webpack_require__(45);
 const registerCommand_1 = __webpack_require__(86);
+const path = __importStar(__webpack_require__(3));
+const repoLocations_1 = __webpack_require__(76);
+const versionRepos_1 = __webpack_require__(75);
 /** How a database is described in the picker, without probing every one. */
 function describeDatabase(db, versionsService) {
     const version = db.versionId ? versionsService.getVersion(db.versionId) : undefined;
@@ -24872,6 +24903,34 @@ async function resolveRepoBranch(repo, series, side, exclude, canGoBack) {
     }
     return (0, branchPick_1.pickRepoBranch)(repoPath, `Upgrading ${side} — ${repo.name}`, `Which branch of ${repo.name} runs Odoo ${series}?`, proposal.candidates.find(candidate => candidate !== exclude), exclude, canGoBack);
 }
+/**
+ * Each version's own checkout of each repository, where the two sides were
+ * found in different directories (design §7): those need no per-branch
+ * copies. A side whose version is not built yet cannot be located, so its
+ * repositories are left to the copies, as before.
+ */
+async function ownCheckoutsFor(repos, versions, fromSeries, toSeries) {
+    const bySeries = (series) => versions.getVersions().find(version => version.odooVersion.trim() === series);
+    const fromVersion = bySeries(fromSeries);
+    const toVersion = bySeries(toSeries);
+    const own = {};
+    const candidates = repos.filter(repo => (0, repo_1.normalizeBranchMode)(repo.branchMode) === 'checkout');
+    if (!fromVersion || !toVersion || candidates.length === 0) {
+        return own;
+    }
+    const [from, to] = await Promise.all([
+        (0, repoLocations_1.locateRepoCheckouts)(candidates, fromVersion, undefined, (0, versionRepos_1.extraRootsFor)(fromVersion)),
+        (0, repoLocations_1.locateRepoCheckouts)(candidates, toVersion, undefined, (0, versionRepos_1.extraRootsFor)(toVersion))
+    ]);
+    for (const repo of candidates) {
+        const fromPath = from.get(repo.name)?.path;
+        const toPath = to.get(repo.name)?.path;
+        if (fromPath && toPath && path.resolve((0, utils_1.normalizePath)(fromPath)) !== path.resolve((0, utils_1.normalizePath)(toPath))) {
+            own[repo.name] = { from: (0, utils_1.normalizePath)(fromPath), to: (0, utils_1.normalizePath)(toPath) };
+        }
+    }
+    return own;
+}
 function registerUpgradeCommand(deps) {
     const { context, versionsService, refreshAll } = deps;
     /** The resolved setup, with each side's version looked up by series. */
@@ -24894,7 +24953,8 @@ function registerUpgradeCommand(deps) {
             root,
             plan,
             previous: extra.previous,
-            resume: extra.resume
+            resume: extra.resume,
+            ownCheckouts: input.ownCheckouts
         };
     };
     /**
@@ -25010,7 +25070,8 @@ function registerUpgradeCommand(deps) {
             worktreeRepos: repos
                 .filter(repo => (0, repo_1.normalizeBranchMode)(repo.branchMode) === 'worktree')
                 .map(repo => repo.name),
-            root
+            root,
+            ownCheckouts: await ownCheckoutsFor(repos, versionsService, remembered.from.series, remembered.to.series)
         };
         const plan = (0, upgradePlan_1.buildUpgradePlan)(input);
         if (plan.reposToWorktree.length > 0 || plan.versionsToCreate.length > 0) {
@@ -25187,6 +25248,9 @@ function registerUpgradeCommand(deps) {
             }
             const toDbId = draft.toDb?.id ?? draft.newTargetName;
             // ---- Review ---------------------------------------------------------
+            // Located once: which repositories each side already has its own
+            // checkout of, so the plan copies only the shared ones.
+            const ownCheckouts = await ownCheckoutsFor(repos, versionsService, draft.fromSeries, draft.toSeries);
             const buildInput = () => ({
                 repos: repos.map(repo => ({
                     name: repo.name,
@@ -25202,7 +25266,8 @@ function registerUpgradeCommand(deps) {
                 worktreeRepos: repos
                     .filter(repo => (0, repo_1.normalizeBranchMode)(repo.branchMode) === 'worktree')
                     .map(repo => repo.name),
-                root
+                root,
+                ownCheckouts
             });
             for (;;) {
                 const input = buildInput();
@@ -25349,6 +25414,9 @@ function buildUpgradePlan(input) {
     const versionsToCreate = [input.fromSeries, input.toSeries]
         .filter(series => series.trim() && !existing.has(series.trim()));
     const alreadyWorktree = new Set((input.worktreeRepos ?? []).map(name => name.toLowerCase()));
+    const ownCheckouts = new Set(Object.keys(input.ownCheckouts ?? {}).map(name => name.toLowerCase()));
+    // Only a repository both sides would run from one directory needs copies.
+    const needsCopies = (name) => !alreadyWorktree.has(name.toLowerCase()) && !ownCheckouts.has(name.toLowerCase());
     const assignments = [];
     const worktreeDirs = [];
     for (const repo of input.repos) {
@@ -25356,14 +25424,17 @@ function buildUpgradePlan(input) {
         // a version existing yet, which is the whole point of naming the
         // databases up front.
         assignments.push({ dbId: input.fromDbId, repoName: repo.name, repoPath: repo.path, branch: repo.fromBranch }, { dbId: input.toDbId, repoName: repo.name, repoPath: repo.path, branch: repo.toBranch });
-        if (input.root && !alreadyWorktree.has(repo.name.toLowerCase())) {
+        if (input.root && needsCopies(repo.name)) {
             worktreeDirs.push(path.join(input.root, (0, repoPaths_1.worktreeDirName)(repo.name, repo.fromBranch)), path.join(input.root, (0, repoPaths_1.worktreeDirName)(repo.name, repo.toBranch)));
         }
     }
     return {
         versionsToCreate,
         reposToWorktree: input.repos
-            .filter(repo => !alreadyWorktree.has(repo.name.toLowerCase()))
+            .filter(repo => needsCopies(repo.name))
+            .map(repo => repo.name),
+        reposOnOwnCheckouts: input.repos
+            .filter(repo => !alreadyWorktree.has(repo.name.toLowerCase()) && ownCheckouts.has(repo.name.toLowerCase()))
             .map(repo => repo.name),
         assignments,
         worktreeDirs
@@ -25390,6 +25461,16 @@ function describeUpgradePlan(plan, input) {
         // One line per repository: a single joined line was unreadable past two
         // repositories, and this is shown in a modal that can hold the lines.
         lines.push('Branches', ...input.repos.map(repo => `    ${repo.name}: ${repo.fromBranch} → Odoo ${input.fromSeries}, ${repo.toBranch} → Odoo ${input.toSeries}`));
+    }
+    if (plan.reposOnOwnCheckouts.length > 0) {
+        lines.push('', 'Each version already has its own checkout of these, so no copies are made:');
+        for (const name of plan.reposOnOwnCheckouts) {
+            const own = Object.entries(input.ownCheckouts ?? {})
+                .find(([repoName]) => repoName.toLowerCase() === name.toLowerCase())?.[1];
+            if (own) {
+                lines.push(`    ${name}: ${own.from} (Odoo ${input.fromSeries}), ${own.to} (Odoo ${input.toSeries})`);
+            }
+        }
     }
     if (plan.reposToWorktree.length > 0 && plan.worktreeDirs.length > 0) {
         lines.push('', `${plan.reposToWorktree.join(', ')} will keep one copy per branch. These directories`, 'will be created, and this is where you will edit that branch\'s code:', ...plan.worktreeDirs.map(dir => `    ${dir}`), '', 'The original checkouts become sources only: they stay yours to switch', 'freely, and nothing that happens to them changes what a version runs.');

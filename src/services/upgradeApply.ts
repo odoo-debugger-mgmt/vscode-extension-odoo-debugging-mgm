@@ -19,6 +19,8 @@ import { sanitizeProjectRepoBranchAssignments } from './environment';
 import { errorMessage, logger } from './logger';
 import { resolveProjectRepos } from './repoPaths';
 import { ensureCustomWorktrees } from './customWorktree';
+import { getRepoBranch } from './branches';
+import { checkoutRepoBranch } from './checkout';
 import { collectAvailableModules, coreAddonsPaths, splitStagedModules } from './upgradeSetup';
 import { UpgradePlan } from './upgradePlan';
 
@@ -45,6 +47,8 @@ export interface UpgradeSetup {
     previous?: UpgradeConfigModel;
     /** Turning a remembered upgrade back on: its module set is reused, not re-read. */
     resume?: boolean;
+    /** Each side's own checkout, for repositories that need no copies (see UpgradeInput). */
+    ownCheckouts?: Record<string, { from: string; to: string }>;
 }
 
 export interface UpgradeApplyResult {
@@ -141,9 +145,11 @@ export async function applyUpgradeSetup(
     const targetDb = findDb(setup.toDbId);
 
     // 2. Per-branch copies. Mode first: resolveProjectRepos reads it to decide
-    //    which directory each repository's branch lives in.
+    //    which directory each repository's branch lives in. Only for the
+    //    repositories whose two sides would share one directory: one that each
+    //    version already has its own checkout of stays as it is.
     const repos: RepoModel[] = project.repos ?? [];
-    const involved = new Set(setup.repos.map(entry => entry.repoName.toLowerCase()));
+    const involved = new Set(setup.plan.reposToWorktree.map(name => name.toLowerCase()));
     for (const repo of repos) {
         if (involved.has(repo.name.toLowerCase())) {
             repo.branchMode = 'worktree';
@@ -185,6 +191,30 @@ export async function applyUpgradeSetup(
         } catch (error) {
             logger.error('[upgrade] building per-branch copies failed:', error);
             problems.push(errorMessage(error));
+        }
+    }
+
+    // 4b. Each side's own checkout on its branch, for the repositories that
+    //     need no copies. Only when it is on another branch, and never forced:
+    //     a checkout that refuses (uncommitted changes) is reported.
+    for (const name of setup.plan.reposOnOwnCheckouts ?? []) {
+        const own = setup.ownCheckouts?.[name];
+        const pair = setup.repos.find(entry => entry.repoName.toLowerCase() === name.toLowerCase());
+        if (!own || !pair || token?.isCancellationRequested) {
+            continue;
+        }
+        for (const [dir, branch] of [[own.from, pair.fromBranch], [own.to, pair.toBranch]] as const) {
+            try {
+                if ((await getRepoBranch(dir)) === branch) {
+                    continue;
+                }
+                const outcome = await checkoutRepoBranch(dir, branch);
+                if (!outcome.ok) {
+                    problems.push(`${name}: ${outcome.message}`);
+                }
+            } catch (error) {
+                problems.push(`${name}: ${errorMessage(error)}`);
+            }
         }
     }
 

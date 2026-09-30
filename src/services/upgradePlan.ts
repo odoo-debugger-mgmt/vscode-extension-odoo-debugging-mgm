@@ -34,12 +34,22 @@ export interface UpgradeInput {
     worktreeRepos?: string[];
     /** Where per-branch copies are built, for naming them in the confirmation. */
     root?: string;
+    /**
+     * Each version's own checkout of a repository, when the two sides were
+     * found in different directories (design §7): a folder per version needs
+     * no copies, since each side already has its own. Omitted for a
+     * repository whose sides share one directory, or whose target version is
+     * not built yet - those get per-branch copies, as before.
+     */
+    ownCheckouts?: Record<string, { from: string; to: string }>;
 }
 
 export interface UpgradePlan {
     versionsToCreate: string[];
     /** Repositories that must switch to one copy per branch. */
     reposToWorktree: string[];
+    /** Repositories each version already has its own checkout of: no copies. */
+    reposOnOwnCheckouts: string[];
     assignments: Array<{ dbId: string; repoName: string; repoPath: string; branch: string }>;
     /**
      * Absolute directories the copies of the repositories switching to one
@@ -55,6 +65,9 @@ export function buildUpgradePlan(input: UpgradeInput): UpgradePlan {
         .filter(series => series.trim() && !existing.has(series.trim()));
 
     const alreadyWorktree = new Set((input.worktreeRepos ?? []).map(name => name.toLowerCase()));
+    const ownCheckouts = new Set(Object.keys(input.ownCheckouts ?? {}).map(name => name.toLowerCase()));
+    // Only a repository both sides would run from one directory needs copies.
+    const needsCopies = (name: string) => !alreadyWorktree.has(name.toLowerCase()) && !ownCheckouts.has(name.toLowerCase());
 
     const assignments: UpgradePlan['assignments'] = [];
     const worktreeDirs: string[] = [];
@@ -66,7 +79,7 @@ export function buildUpgradePlan(input: UpgradeInput): UpgradePlan {
             { dbId: input.fromDbId, repoName: repo.name, repoPath: repo.path, branch: repo.fromBranch },
             { dbId: input.toDbId, repoName: repo.name, repoPath: repo.path, branch: repo.toBranch }
         );
-        if (input.root && !alreadyWorktree.has(repo.name.toLowerCase())) {
+        if (input.root && needsCopies(repo.name)) {
             worktreeDirs.push(
                 path.join(input.root, worktreeDirName(repo.name, repo.fromBranch)),
                 path.join(input.root, worktreeDirName(repo.name, repo.toBranch))
@@ -77,7 +90,10 @@ export function buildUpgradePlan(input: UpgradeInput): UpgradePlan {
     return {
         versionsToCreate,
         reposToWorktree: input.repos
-            .filter(repo => !alreadyWorktree.has(repo.name.toLowerCase()))
+            .filter(repo => needsCopies(repo.name))
+            .map(repo => repo.name),
+        reposOnOwnCheckouts: input.repos
+            .filter(repo => !alreadyWorktree.has(repo.name.toLowerCase()) && ownCheckouts.has(repo.name.toLowerCase()))
             .map(repo => repo.name),
         assignments,
         worktreeDirs
@@ -111,6 +127,17 @@ export function describeUpgradePlan(plan: UpgradePlan, input: UpgradeInput): str
             ...input.repos.map(repo =>
                 `    ${repo.name}: ${repo.fromBranch} → Odoo ${input.fromSeries}, ${repo.toBranch} → Odoo ${input.toSeries}`)
         );
+    }
+
+    if (plan.reposOnOwnCheckouts.length > 0) {
+        lines.push('', 'Each version already has its own checkout of these, so no copies are made:');
+        for (const name of plan.reposOnOwnCheckouts) {
+            const own = Object.entries(input.ownCheckouts ?? {})
+                .find(([repoName]) => repoName.toLowerCase() === name.toLowerCase())?.[1];
+            if (own) {
+                lines.push(`    ${name}: ${own.from} (Odoo ${input.fromSeries}), ${own.to} (Odoo ${input.toSeries})`);
+            }
+        }
     }
 
     if (plan.reposToWorktree.length > 0 && plan.worktreeDirs.length > 0) {

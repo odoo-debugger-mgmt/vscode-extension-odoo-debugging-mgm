@@ -34,6 +34,32 @@ suite('Upgrade plan', () => {
         );
     });
 
+    test('a repository each version already has its own checkout of gets no copies', () => {
+        // A folder per version: ~/v17/acme and ~/v19/acme are each side's code already.
+        const withOwn = input({
+            root: '/dev',
+            ownCheckouts: { 'psae-internal': { from: '/v17/psae-internal', to: '/v19/psae-internal' } }
+        });
+        const plan = buildUpgradePlan(withOwn);
+
+        assert.deepStrictEqual(plan.reposToWorktree, []);
+        assert.deepStrictEqual(plan.worktreeDirs, []);
+        assert.deepStrictEqual(plan.reposOnOwnCheckouts, ['psae-internal']);
+        // Each database still gets its branch.
+        assert.strictEqual(plan.assignments.length, 2);
+
+        const text = describeUpgradePlan(plan, withOwn);
+        assert.match(text, /own checkout of these, so no copies are made/);
+        assert.match(text, /psae-internal: \/v17\/psae-internal \(Odoo 17\.0\), \/v19\/psae-internal \(Odoo 19\.0\)/);
+        assert.doesNotMatch(text, /will keep one copy per branch/);
+    });
+
+    test('a repository both sides share still gets its copies', () => {
+        const plan = buildUpgradePlan(input({ root: '/dev', ownCheckouts: {} }));
+        assert.deepStrictEqual(plan.reposToWorktree, ['psae-internal']);
+        assert.deepStrictEqual(plan.reposOnOwnCheckouts, []);
+    });
+
     test('each database is assigned its own side of the upgrade', () => {
         assert.deepStrictEqual(buildUpgradePlan(input()).assignments, [
             { dbId: 'crm-17', repoName: 'psae-internal', repoPath: '/src/psae-internal', branch: '17.0-bunka' },
