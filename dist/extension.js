@@ -899,7 +899,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.SettingsStore = void 0;
+exports.SettingsStore = exports.StoreUnreadableError = void 0;
 /**
  * The extension's data, as callers see it: the main store (services/mainStore.ts)
  * with this window's selection applied on top.
@@ -919,6 +919,14 @@ const mainStore_1 = __webpack_require__(27);
 const mergeDocuments_1 = __webpack_require__(29);
 const workspaceSelection_1 = __webpack_require__(30);
 const WRITE_DEBOUNCE_MS = 25;
+/** A save refused because the store could not be read: its data here would be empty. */
+class StoreUnreadableError extends Error {
+    constructor(location) {
+        super(`The data store ${location} could not be read, so nothing was saved to it`);
+        this.name = 'StoreUnreadableError';
+    }
+}
+exports.StoreUnreadableError = StoreUnreadableError;
 class SettingsStore {
     /** Keyed by store location, so a re-pointed store never serves the old cache. */
     static cache = new Map();
@@ -1087,6 +1095,8 @@ class SettingsStore {
         }
     }
     static announcedReadOnly = new Set();
+    /** Stores whose last read failed; see readStored. */
+    static unreadable = new Set();
     /**
      * Says once, when a read-only store is opened, that it is - not only when
      * the first save fails. Selecting still works: it is this window's.
@@ -1113,9 +1123,15 @@ class SettingsStore {
             read = await store.read();
         }
         catch (error) {
+            // Until it reads again, nothing is written to it: a caller that
+            // swallowed this error holds empty data, and saving that would
+            // replace everything - or, as a test run found, add a Default
+            // Version to a shared store every window then sees.
+            this.unreadable.add(store.location);
             void (0, utils_1.showError)(`Failed to read ${store.location}: ${error}`);
             throw new Error(`Error reading file: ${store.location}`);
         }
+        this.unreadable.delete(store.location);
         const snapshot = { ...read, data: this.cloneData(read.data) };
         this.cache.set(store.location, { mtimeMs: read.mtimeMs, read: snapshot });
         this.announceReadOnly(store);
@@ -1151,6 +1167,9 @@ class SettingsStore {
         const store = this.resolveStore();
         if (!store) {
             return;
+        }
+        if (this.unreadable.has(store.location)) {
+            throw new StoreUnreadableError(store.location);
         }
         const base = (data.projects && this.baseOf.get(data.projects))
             ?? this.cache.get(store.location)?.read;
@@ -6052,12 +6071,14 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VersionsService = void 0;
+exports.findSameEnvironment = findSameEnvironment;
 /**
  * Version management singleton: stores version profiles (settings + target
  * branch) in the workspace data file, tracks the active version, and applies
  * default-value operations against odooDebugger.defaultVersion.*.
  */
 const vscode = __importStar(__webpack_require__(1));
+const path = __importStar(__webpack_require__(3));
 const version_1 = __webpack_require__(33);
 const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
@@ -6077,11 +6098,32 @@ function defaultsTarget() {
 function defaultsWhere() {
     return (0, mainStore_1.currentMainStore)()?.kind === 'sqlite' ? ' for every workspace (user settings)' : ' for this workspace';
 }
+/**
+ * A version of `odooVersion` whose Odoo source is `odooPath`, when both name
+ * a real, managed directory - a profile-only version on the default path is
+ * not "the same environment" as another one.
+ */
+function findSameEnvironment(versions, odooVersion, odooPath) {
+    if (!odooPath || !path.isAbsolute(odooPath)) {
+        return undefined;
+    }
+    const target = path.resolve(odooPath);
+    return versions.find(version => version.odooVersion === odooVersion
+        && !!version.settings.odooPath
+        && path.isAbsolute(version.settings.odooPath)
+        && path.resolve(version.settings.odooPath) === target);
+}
 class VersionsService {
     static instance;
     versions = new Map();
     activeVersionId;
     initialized = false;
+    /**
+     * Versions this window deleted and has not saved yet. Every other stored
+     * version this window does not know is kept on save: on a shared store,
+     * another window may have just created it.
+     */
+    deletedIds = new Set();
     constructor() {
         // Initialization will be done via initialize() method
     }
@@ -6162,6 +6204,7 @@ class VersionsService {
     async saveVersions() {
         try {
             const data = await settingsStore_1.SettingsStore.load();
+            this.adoptStoredVersions(data.versions);
             const versionsData = {};
             this.versions.forEach((version, id) => {
                 versionsData[id] = version.toJSON();
@@ -6169,11 +6212,30 @@ class VersionsService {
             data.versions = versionsData;
             data.activeVersion = this.activeVersionId;
             await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
+            this.deletedIds.clear();
             logger_1.logger.debug(`Saved ${this.versions.size} versions successfully`);
         }
         catch (error) {
             logger_1.logger.error('Failed to save versions:', error);
             throw error; // Re-throw to propagate error up the chain
+        }
+    }
+    /**
+     * Takes in the stored versions this window does not know yet - created in
+     * another window since it last loaded - so saving its map does not delete
+     * them. Two windows creating a version within a second of each other lost
+     * one that way. Versions this window deleted stay deleted.
+     */
+    adoptStoredVersions(stored) {
+        for (const [id, raw] of Object.entries(stored ?? {})) {
+            if (this.versions.has(id) || this.deletedIds.has(id)) {
+                continue;
+            }
+            const version = version_1.VersionModel.fromJSON(raw);
+            if (version) {
+                version.isActive = false;
+                this.versions.set(id, version);
+            }
         }
     }
     /**
@@ -6345,6 +6407,15 @@ class VersionsService {
         // sharing a debuggerName would overwrite each other in launch.json.
         const identity = await this.deriveFreshIdentity(odooVersion);
         const mergedSettings = { ...defaultSettings, ...settingsOverrides, ...identity };
+        // Built into a directory a version already runs from - another
+        // window's build of the same branch, or a stalled window finishing one
+        // after another took over - is that version, not a second one.
+        this.adoptStoredVersions((await settingsStore_1.SettingsStore.load()).versions);
+        const existing = findSameEnvironment([...this.versions.values()], odooVersion, mergedSettings.odooPath);
+        if (existing) {
+            logger_1.logger.info(`[versions] ${odooVersion} at ${mergedSettings.odooPath} is already "${existing.name}"; not adding another`);
+            return existing;
+        }
         const version = new version_1.VersionModel(name, odooVersion, mergedSettings);
         this.versions.set(version.id, version);
         await this.saveVersions();
@@ -6389,6 +6460,7 @@ class VersionsService {
         // Clean up any database references to this version before deleting
         await this.cleanupDatabaseVersionReferences(id);
         this.versions.delete(id);
+        this.deletedIds.add(id);
         // If this was the active version, switch to another one
         if (this.activeVersionId === id) {
             this.activeVersionId = this.versions.keys().next().value;
@@ -16799,9 +16871,10 @@ exports.registerCommand = registerCommand;
 const vscode = __importStar(__webpack_require__(1));
 const sqliteMainStore_1 = __webpack_require__(28);
 const notifications_1 = __webpack_require__(16);
+const settingsStore_1 = __webpack_require__(6);
 /** Whether `error` is the store refusing a change, rather than a failure. */
 function isStoreRefusal(error) {
-    return error instanceof sqliteMainStore_1.StoreReadOnlyError || error instanceof sqliteMainStore_1.StoreBusyError;
+    return error instanceof sqliteMainStore_1.StoreReadOnlyError || error instanceof sqliteMainStore_1.StoreBusyError || error instanceof settingsStore_1.StoreUnreadableError;
 }
 /** Runs `handler`, turning a store refusal into a warning. */
 async function reportingStoreRefusals(handler) {

@@ -4,6 +4,7 @@
  * default-value operations against odooDebugger.defaultVersion.*.
  */
 import * as vscode from 'vscode';
+import * as path from 'node:path';
 import { VersionModel, VersionSettings } from './models/version';
 import { SettingsStore } from './settingsStore';
 import { getDefaultVersionSettings, stripSettings, getDatabaseLabel } from './utils';
@@ -34,11 +35,37 @@ function defaultsWhere(): string {
     return currentMainStore()?.kind === 'sqlite' ? ' for every workspace (user settings)' : ' for this workspace';
 }
 
+/**
+ * A version of `odooVersion` whose Odoo source is `odooPath`, when both name
+ * a real, managed directory - a profile-only version on the default path is
+ * not "the same environment" as another one.
+ */
+export function findSameEnvironment<T extends { odooVersion: string; settings: { odooPath?: string } }>(
+    versions: T[],
+    odooVersion: string,
+    odooPath: string | undefined
+): T | undefined {
+    if (!odooPath || !path.isAbsolute(odooPath)) {
+        return undefined;
+    }
+    const target = path.resolve(odooPath);
+    return versions.find(version => version.odooVersion === odooVersion
+        && !!version.settings.odooPath
+        && path.isAbsolute(version.settings.odooPath)
+        && path.resolve(version.settings.odooPath) === target);
+}
+
 export class VersionsService {
     private static instance: VersionsService;
     private readonly versions: Map<string, VersionModel> = new Map();
     private activeVersionId: string | undefined;
     private initialized: boolean = false;
+    /**
+     * Versions this window deleted and has not saved yet. Every other stored
+     * version this window does not know is kept on save: on a shared store,
+     * another window may have just created it.
+     */
+    private readonly deletedIds = new Set<string>();
 
     private constructor() {
         // Initialization will be done via initialize() method
@@ -133,6 +160,7 @@ export class VersionsService {
     private async saveVersions(): Promise<void> {
         try {
             const data = await SettingsStore.load();
+            this.adoptStoredVersions(data.versions);
             const versionsData: any = {};
 
             this.versions.forEach((version, id) => {
@@ -142,10 +170,30 @@ export class VersionsService {
             data.versions = versionsData;
             data.activeVersion = this.activeVersionId;
             await SettingsStore.saveWithoutComments(stripSettings(data));
+            this.deletedIds.clear();
             logger.debug(`Saved ${this.versions.size} versions successfully`);
         } catch (error) {
             logger.error('Failed to save versions:', error);
             throw error; // Re-throw to propagate error up the chain
+        }
+    }
+
+    /**
+     * Takes in the stored versions this window does not know yet - created in
+     * another window since it last loaded - so saving its map does not delete
+     * them. Two windows creating a version within a second of each other lost
+     * one that way. Versions this window deleted stay deleted.
+     */
+    private adoptStoredVersions(stored: Record<string, unknown> | undefined): void {
+        for (const [id, raw] of Object.entries(stored ?? {})) {
+            if (this.versions.has(id) || this.deletedIds.has(id)) {
+                continue;
+            }
+            const version = VersionModel.fromJSON(raw);
+            if (version) {
+                version.isActive = false;
+                this.versions.set(id, version);
+            }
         }
     }
 
@@ -341,6 +389,16 @@ export class VersionsService {
         const identity = await this.deriveFreshIdentity(odooVersion);
         const mergedSettings = { ...defaultSettings, ...settingsOverrides, ...identity };
 
+        // Built into a directory a version already runs from - another
+        // window's build of the same branch, or a stalled window finishing one
+        // after another took over - is that version, not a second one.
+        this.adoptStoredVersions((await SettingsStore.load()).versions);
+        const existing = findSameEnvironment([...this.versions.values()], odooVersion, mergedSettings.odooPath);
+        if (existing) {
+            logger.info(`[versions] ${odooVersion} at ${mergedSettings.odooPath} is already "${existing.name}"; not adding another`);
+            return existing;
+        }
+
         const version = new VersionModel(name, odooVersion, mergedSettings);
         this.versions.set(version.id, version);
 
@@ -400,6 +458,7 @@ export class VersionsService {
         await this.cleanupDatabaseVersionReferences(id);
 
         this.versions.delete(id);
+        this.deletedIds.add(id);
 
         // If this was the active version, switch to another one
         if (this.activeVersionId === id) {

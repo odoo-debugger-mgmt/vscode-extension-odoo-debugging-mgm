@@ -52,6 +52,14 @@ interface PendingWrite {
 
 const WRITE_DEBOUNCE_MS = 25;
 
+/** A save refused because the store could not be read: its data here would be empty. */
+export class StoreUnreadableError extends Error {
+    constructor(location: string) {
+        super(`The data store ${location} could not be read, so nothing was saved to it`);
+        this.name = 'StoreUnreadableError';
+    }
+}
+
 export class SettingsStore {
     /** Keyed by store location, so a re-pointed store never serves the old cache. */
     private static readonly cache = new Map<string, CachedFileEntry>();
@@ -238,6 +246,9 @@ export class SettingsStore {
 
     private static readonly announcedReadOnly = new Set<string>();
 
+    /** Stores whose last read failed; see readStored. */
+    private static readonly unreadable = new Set<string>();
+
     /**
      * Says once, when a read-only store is opened, that it is - not only when
      * the first save fails. Selecting still works: it is this window's.
@@ -268,9 +279,15 @@ export class SettingsStore {
         try {
             read = await store.read();
         } catch (error) {
+            // Until it reads again, nothing is written to it: a caller that
+            // swallowed this error holds empty data, and saving that would
+            // replace everything - or, as a test run found, add a Default
+            // Version to a shared store every window then sees.
+            this.unreadable.add(store.location);
             void showError(`Failed to read ${store.location}: ${error}`);
             throw new Error(`Error reading file: ${store.location}`);
         }
+        this.unreadable.delete(store.location);
         const snapshot: StoreRead = { ...read, data: this.cloneData(read.data) };
         this.cache.set(store.location, { mtimeMs: read.mtimeMs, read: snapshot });
         this.announceReadOnly(store);
@@ -309,6 +326,10 @@ export class SettingsStore {
         const store = this.resolveStore();
         if (!store) {
             return;
+        }
+
+        if (this.unreadable.has(store.location)) {
+            throw new StoreUnreadableError(store.location);
         }
 
         const base = (data.projects && this.baseOf.get(data.projects))

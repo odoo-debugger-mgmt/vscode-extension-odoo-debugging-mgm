@@ -10,10 +10,11 @@
 import * as vscode from 'vscode';
 import { StoreBusyError, StoreReadOnlyError } from '../services/sqliteMainStore';
 import { showWarning } from '../services/notifications';
+import { StoreUnreadableError } from '../settingsStore';
 
 /** Whether `error` is the store refusing a change, rather than a failure. */
 export function isStoreRefusal(error: unknown): error is Error {
-    return error instanceof StoreReadOnlyError || error instanceof StoreBusyError;
+    return error instanceof StoreReadOnlyError || error instanceof StoreBusyError || error instanceof StoreUnreadableError;
 }
 
 /** Runs `handler`, turning a store refusal into a warning. */
