@@ -105,7 +105,11 @@ async function activate(context) {
     const sortPreferences = new sortPreferences_1.SortPreferences(context.workspaceState);
     // Initialize version management service
     const versionsService = versionsService_1.VersionsService.getInstance();
-    await versionsService.initialize();
+    // Never fatal: a window on an unreadable store still needs its views and
+    // commands - Choose Data Store… above all - to move off it.
+    await versionsService.initialize().catch(error => {
+        logger_1.logger.warn('Loading versions failed; continuing without them:', error);
+    });
     // Migrate existing settings to version management for backwards compatibility
     // Wait for migration to complete to ensure proper initialization order
     await versionsService.migrateFromLegacySettings().catch(error => {
@@ -1129,9 +1133,19 @@ class SettingsStore {
             // swallowed this error holds empty data, and saving that would
             // replace everything - or, as a test run found, add a Default
             // Version to a shared store every window then sees.
+            const first = !this.unreadable.has(store.location);
             this.unreadable.add(store.location);
-            void (0, utils_1.showError)(`Failed to read ${store.location}: ${error}`);
-            throw new Error(`Error reading file: ${store.location}`);
+            const reason = error instanceof Error ? error.message : String(error);
+            // Once while it stays unreadable: every view reads on refresh.
+            if (first) {
+                void (0, utils_1.showError)(`Could not read the data store ${store.location}: ${reason}. `
+                    + 'Nothing is saved to it until it reads again.', 'Choose Data Store…').then(choice => {
+                    if (choice) {
+                        void vscode.commands.executeCommand('odoo.chooseDataStore');
+                    }
+                });
+            }
+            throw new Error(`Could not read the data store ${store.location}: ${reason}`);
         }
         this.unreadable.delete(store.location);
         const snapshot = { ...read, data: this.cloneData(read.data) };
@@ -6126,6 +6140,11 @@ class VersionsService {
      * another window may have just created it.
      */
     deletedIds = new Set();
+    /**
+     * The last load could not read the store: the versions in memory are a
+     * stand-in, never saved, and the next initialize() reads again.
+     */
+    readFailed = false;
     constructor() {
         // Initialization will be done via initialize() method
     }
@@ -6142,13 +6161,16 @@ class VersionsService {
         if (!this.initialized) {
             await this.loadVersions();
             await this.validateAndRepairVersions();
-            this.initialized = true;
+            // A store that could not be read is read again next time, rather
+            // than served from the stand-in until the window reloads.
+            this.initialized = !this.readFailed;
         }
     }
     /**
      * Load versions from odoo-debugger-data.json
      */
     async loadVersions() {
+        this.readFailed = false;
         try {
             const data = await settingsStore_1.SettingsStore.load();
             const versionsData = data.versions || {};
@@ -6193,7 +6215,11 @@ class VersionsService {
         }
         catch (error) {
             logger_1.logger.error('Failed to load versions:', error);
-            // Create default version on error
+            // A stand-in, in memory only: saving it is refused, and letting
+            // that refusal escape initialize() ended activation, leaving the
+            // window without even Choose Data Store….
+            this.readFailed = true;
+            this.versions.clear();
             const defaultVersion = new version_1.VersionModel('Default Version', '17.0', (0, utils_1.getDefaultVersionSettings)());
             defaultVersion.isActive = true;
             this.versions.set(defaultVersion.id, defaultVersion);
@@ -6605,8 +6631,8 @@ class VersionsService {
             version.settings = { ...version.settings, ...patch.identity };
             needsRepair = true;
         }
-        // Save if repairs were needed
-        if (needsRepair) {
+        // Save if repairs were needed - never over a store that was not read.
+        if (needsRepair && !this.readFailed) {
             logger_1.logger.debug('Version data repaired, saving...');
             await this.saveVersions();
         }

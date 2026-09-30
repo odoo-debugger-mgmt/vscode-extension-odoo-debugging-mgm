@@ -76,7 +76,11 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Initialize version management service
     const versionsService = VersionsService.getInstance();
-    await versionsService.initialize();
+    // Never fatal: a window on an unreadable store still needs its views and
+    // commands - Choose Data Store… above all - to move off it.
+    await versionsService.initialize().catch(error => {
+        logger.warn('Loading versions failed; continuing without them:', error);
+    });
 
     // Migrate existing settings to version management for backwards compatibility
     // Wait for migration to complete to ensure proper initialization order

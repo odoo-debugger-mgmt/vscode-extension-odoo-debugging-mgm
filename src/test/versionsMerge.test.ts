@@ -128,3 +128,54 @@ suite('An unreadable store is not written to', () => {
         }
     });
 });
+
+(sqlite ? suite : suite.skip)('A window opened on an unreadable store', function () {
+    this.timeout(20000);
+
+    test('loading versions does not fail, saves nothing, and reads again once it can', async () => {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'odt-unreadable-'));
+        const real = new SqliteMainStore(path.join(dir, 'shared.db'), dir, sqlite!);
+        await real.commit(await real.read(), {
+            projects: [],
+            versions: { v19: { id: 'v19', name: 'Odoo 19.0', odooVersion: '19.0', settings: { portNumber: 8079 }, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' } },
+            activeVersion: 'v19',
+            dbTemplates: []
+        } as never);
+        let readable = false;
+        let commits = 0;
+        let stat = 0;
+        const flaky: MainStore = {
+            kind: 'sqlite',
+            location: real.location,
+            root: dir,
+            stat: async () => ++stat,
+            read: async () => {
+                if (!readable) {
+                    throw new Error('file is not a database');
+                }
+                return real.read();
+            },
+            commit: async (base, next) => {
+                commits += 1;
+                return real.commit(base, next);
+            },
+            dispose: () => undefined
+        };
+        SettingsStore.useForTesting(flaky, memento());
+        const service = VersionsService.getInstance();
+        (service as unknown as { initialized: boolean }).initialized = false;
+        try {
+            // Fourteenth run: the refused save escaped initialize() and ended activation.
+            await service.initialize();
+            assert.strictEqual(commits, 0);
+
+            readable = true;
+            await service.initialize();
+            assert.deepStrictEqual(service.getVersions().map(version => version.odooVersion), ['19.0']);
+        } finally {
+            SettingsStore.useForTesting(undefined);
+            real.dispose();
+            await fs.rm(dir, { recursive: true, force: true });
+        }
+    });
+});

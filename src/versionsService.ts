@@ -66,6 +66,11 @@ export class VersionsService {
      * another window may have just created it.
      */
     private readonly deletedIds = new Set<string>();
+    /**
+     * The last load could not read the store: the versions in memory are a
+     * stand-in, never saved, and the next initialize() reads again.
+     */
+    private readFailed = false;
 
     private constructor() {
         // Initialization will be done via initialize() method
@@ -85,7 +90,9 @@ export class VersionsService {
         if (!this.initialized) {
             await this.loadVersions();
             await this.validateAndRepairVersions();
-            this.initialized = true;
+            // A store that could not be read is read again next time, rather
+            // than served from the stand-in until the window reloads.
+            this.initialized = !this.readFailed;
         }
     }
 
@@ -93,6 +100,7 @@ export class VersionsService {
      * Load versions from odoo-debugger-data.json
      */
     private async loadVersions(): Promise<void> {
+        this.readFailed = false;
         try {
             const data = await SettingsStore.load();
             const versionsData = data.versions || {};
@@ -146,7 +154,11 @@ export class VersionsService {
             }
         } catch (error) {
             logger.error('Failed to load versions:', error);
-            // Create default version on error
+            // A stand-in, in memory only: saving it is refused, and letting
+            // that refusal escape initialize() ended activation, leaving the
+            // window without even Choose Data Store….
+            this.readFailed = true;
+            this.versions.clear();
             const defaultVersion = new VersionModel('Default Version', '17.0', getDefaultVersionSettings());
             defaultVersion.isActive = true;
             this.versions.set(defaultVersion.id, defaultVersion);
@@ -622,8 +634,8 @@ export class VersionsService {
             needsRepair = true;
         }
 
-        // Save if repairs were needed
-        if (needsRepair) {
+        // Save if repairs were needed - never over a store that was not read.
+        if (needsRepair && !this.readFailed) {
             logger.debug('Version data repaired, saving...');
             await this.saveVersions();
         }

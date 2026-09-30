@@ -283,9 +283,22 @@ export class SettingsStore {
             // swallowed this error holds empty data, and saving that would
             // replace everything - or, as a test run found, add a Default
             // Version to a shared store every window then sees.
+            const first = !this.unreadable.has(store.location);
             this.unreadable.add(store.location);
-            void showError(`Failed to read ${store.location}: ${error}`);
-            throw new Error(`Error reading file: ${store.location}`);
+            const reason = error instanceof Error ? error.message : String(error);
+            // Once while it stays unreadable: every view reads on refresh.
+            if (first) {
+                void showError(
+                    `Could not read the data store ${store.location}: ${reason}. `
+                    + 'Nothing is saved to it until it reads again.',
+                    'Choose Data Store…'
+                ).then(choice => {
+                    if (choice) {
+                        void vscode.commands.executeCommand('odoo.chooseDataStore');
+                    }
+                });
+            }
+            throw new Error(`Could not read the data store ${store.location}: ${reason}`);
         }
         this.unreadable.delete(store.location);
         const snapshot: StoreRead = { ...read, data: this.cloneData(read.data) };
