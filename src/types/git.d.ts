@@ -36,5 +36,6 @@ export interface Repository {
         };
     };
     checkout(treeish: string, detached?: boolean): Promise<void>;
+    status(): Promise<void>;
     getBranches(query?: BranchQuery): Promise<Branch[]>;
 }

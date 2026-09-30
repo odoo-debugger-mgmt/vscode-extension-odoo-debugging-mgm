@@ -1930,6 +1930,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.checkoutBranchViaSourceControl = checkoutBranchViaSourceControl;
+exports.refreshRepositoryViaSourceControl = refreshRepositoryViaSourceControl;
 exports.getCurrentBranchViaSourceControl = getCurrentBranchViaSourceControl;
 exports.getBranchesWithMetadata = getBranchesWithMetadata;
 exports.getBranchesViaSourceControl = getBranchesViaSourceControl;
@@ -1982,6 +1983,22 @@ async function checkoutBranchViaSourceControl(repoPath, branch) {
     catch (error) {
         logger_1.logger.warn(`Git API checkout failed for ${repoPath}:`, error);
         return false;
+    }
+}
+/**
+ * Refreshes the Source Control view for `repoPath` after a change made on the
+ * command line - only when this window has that repository open. The global
+ * `git.refresh` command answers a window with no open repository with a
+ * modal "There are no available repositories", and a version's own clone is
+ * usually not open in the window that switches it.
+ */
+async function refreshRepositoryViaSourceControl(repoPath) {
+    try {
+        const repo = await getRepository(repoPath);
+        await repo?.status();
+    }
+    catch (error) {
+        logger_1.logger.debug(`Git API refresh failed for ${repoPath}:`, error);
     }
 }
 async function getCurrentBranchViaSourceControl(repoPath) {
@@ -9177,12 +9194,7 @@ async function checkoutRepoBranch(repoPath, branch) {
     const result = await runGitCheckoutCli(repoPath, branch);
     if (result.ok) {
         (0, runtimeCache_1.invalidateGitBranchCache)(repoPath);
-        try {
-            await vscode.commands.executeCommand('git.refresh');
-        }
-        catch {
-            // Best-effort SCM refresh after external checkout.
-        }
+        await (0, gitService_1.refreshRepositoryViaSourceControl)(repoPath);
     }
     return result;
 }
