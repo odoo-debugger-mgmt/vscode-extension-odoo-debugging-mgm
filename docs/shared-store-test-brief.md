@@ -380,6 +380,33 @@ Setup: item 14's two workspaces, `W17/acme` bound to 17.0 and `W19/acme` to
 6. **Other windows' views** refresh once when a window registers (a store
    change), and not again while idle — check item 6's no-ping-pong still holds.
 
+## 16 · An upgrade across two workspaces (step 4)
+
+Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
+`shared14.db`; acme-db2 (17.0) and acme-db19 (19.0). No upgrade yet.
+
+1. **In `W17`, Set Up an Upgrade** acme-db2 → acme-db19, `staging` → `main`.
+   **Expect** the confirmation to say "Each version already has its own
+   checkout of these, so no copies are made:" with `acme: …/W17/acme (Odoo
+   17.0), …/W19/acme (Odoo 19.0)`, and to name **no** `acme@…` directories.
+   Quote it. After Set It Up: no `~/odoo-dev/acme@…` directories, `acme`
+   still in single-checkout mode, `W17/acme` on `staging` and `W19/acme` on
+   `main`.
+2. **The Upgrade view in `W17`** lists **Start This Side (Odoo 17.0)** and
+   **Open the Other Side (Odoo 19.0)**. In `W19`, the reverse.
+3. **Start This Side** in each window starts only its own version (`-p 8069
+   -d acme-db2` from `W17`, `-p 8079 -d acme-db19` from `W19`), each with its
+   own clone in the addons path. **Start Both Servers** still starts both from
+   either window.
+4. **Open the Other Side** in `W17` opens (or focuses) `W19`'s window.
+5. **The single-clone layout is unchanged:** with 19.0's Custom Addons pointed
+   at the 17.0 folder and no bound workspaces (item 13.5's setup), setting up
+   the same upgrade still proposes `acme@staging` and `acme@main` copies, as
+   in the earlier runs.
+6. **A window running neither side** (bound to neither, active version
+   outside the pair): Start This Side offers Start Both Servers; Open the
+   Other Side asks which side.
+
 ## 12 · A store from the future
 
 1. With every window closed, open `/tmp/odt-brief/shared.db` in the `sqlite3`

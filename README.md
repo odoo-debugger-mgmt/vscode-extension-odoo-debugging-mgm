@@ -146,7 +146,7 @@ one confirmation names what will be created on disk.
 
 Applying the plan:
 
-- gives each repository in the upgrade [one copy per branch](#one-copy-per-branch), so both sides run their own code;
+- gives each repository in the upgrade [one copy per branch](#one-copy-per-branch), so both sides run their own code — unless each version already has its own checkout of it (a folder or workspace per version, see [Repository layouts](#repository-layouts)): then no copies are made, and each side's checkout is switched to its branch;
 - records each database's branch mapping and remembers which database each version launches against;
 - queues any version that does not exist yet for provisioning;
 - stages the source database's installed modules onto the target as `install` (not `-u all`). Modules with no counterpart in the target version are left out and named in the view.
@@ -154,6 +154,7 @@ Applying the plan:
 **While the mode is on:**
 
 - The Upgrade view shows both sides — version, database, port and each repository's branch — and **Start Both Servers** starts each side on its own database and port.
+- **Across two workspaces**, each window runs its own side — the version it is bound to, else its active one. **Start This Side** starts only that side, so each window debugs the code it holds, and on a shared store **Open the Other Side** opens the workspace running the other version.
 - **Install N modules from …** is a toggle: off gives the target database back its own modules, on restores the staged set as you left it.
 - Selecting either database of the pair chooses whose modules the Modules view edits, without realigning the workspace. Databases outside the pair cannot be selected.
 - Project Repos shows both copies of each repository, marked *upgrading from* / *upgrading to*.

@@ -591,7 +591,14 @@ Each step ships on its own and leaves the extension working.
      piece step 4's Open the Other Side builds on. Attached projects are not
      recorded: nothing attaches projects to a workspace yet.
 4. **The upgrade plan** only copies shared directories; Start This Side; Open
-   the Other Side.
+   the Other Side. **Implemented.** `ownCheckoutsFor` (`commands/upgradeCommand.ts`)
+   locates each side's checkout (with a bound workspace's folders); only a
+   repository whose sides resolve to one directory is in `reposToWorktree`,
+   the rest are `reposOnOwnCheckouts`, stay in checkout mode, and have each
+   side's checkout switched to its branch (`upgradeApply.ts` step 4b). A
+   side whose version is not built yet cannot be located, so it gets copies.
+   `thisSide` (`services/upgradeSides.ts`): the bound version's side, else
+   the active one's. Open the Other Side reads the registry (3c).
 5. **Cross-window guards** (§9). The provisioning lease can come first, since it
    fixes something already broken.
 
