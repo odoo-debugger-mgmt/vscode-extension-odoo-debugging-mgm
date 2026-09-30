@@ -17,6 +17,7 @@ import { probeProvision, buildPlan, isFullySatisfied, executeProvision, Provisio
 import { summarizeMissing } from './services/systemDeps';
 import { venvPythonPath } from './services/pythonToolchain';
 import { readSetupState } from './services/setupState';
+import { withLease } from './services/provisionLease';
 
 interface CloneTarget {
     /** Directory name inside the workspace. */
@@ -227,7 +228,12 @@ export async function provisionAndCreateVersion(
         cancellable: true
     }, async (progress, token) => {
         try {
-            return await executeProvision(spec, progress, token);
+            // One build at a time across windows: a build started here waits
+            // for another window's to finish rather than run beside it.
+            return await withLease(spec.root, () => executeProvision(spec, progress, token), {
+                onWait: () => progress.report({ message: 'Waiting for another window to finish building…' }),
+                isCancelled: () => token.isCancellationRequested
+            });
         } catch (error) {
             if (token.isCancellationRequested) {
                 void showInfo('Provisioning cancelled. Run it again to resume where it stopped.');
@@ -321,7 +327,12 @@ export async function provisionExistingVersion(
         cancellable: true
     }, async (progress, token) => {
         try {
-            return await executeProvision(spec, progress, token);
+            // One build at a time across windows: a build started here waits
+            // for another window's to finish rather than run beside it.
+            return await withLease(spec.root, () => executeProvision(spec, progress, token), {
+                onWait: () => progress.report({ message: 'Waiting for another window to finish building…' }),
+                isCancelled: () => token.isCancellationRequested
+            });
         } catch (error) {
             if (!token.isCancellationRequested) {
                 logger.error('Re-provisioning failed:', error);

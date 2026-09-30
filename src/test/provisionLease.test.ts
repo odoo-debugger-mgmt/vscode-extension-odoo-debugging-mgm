@@ -6,7 +6,7 @@ import * as assert from 'assert';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { LEASE_FILE, STALE_MS, acquireLease, mayTakeLease, parseLease } from '../services/provisionLease';
+import { LEASE_FILE, STALE_MS, acquireLease, mayTakeLease, parseLease, withLease } from '../services/provisionLease';
 
 suite('The provisioning lease', () => {
     const alive = () => true;
@@ -47,6 +47,74 @@ suite('The provisioning lease', () => {
             first!.release();
             assert.ok(fs.existsSync(path.join(root, LEASE_FILE)));
             second!.release();
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    test('a holder that stalled knows it lost the lease once another window took over', () => {
+        // Thirteenth run: a frozen window resumed and finished a build the
+        // other window had already redone, saving a second Odoo 9.0.
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'odt-lease-'));
+        try {
+            const frozen = acquireLease(root, 'window-a', () => 1000);
+            assert.strictEqual(frozen!.held(), true);
+            // Silent past the stale limit: the other window takes over.
+            const other = acquireLease(root, 'window-b', () => 1000 + STALE_MS + 1);
+            assert.ok(other);
+            assert.strictEqual(frozen!.held(), false);
+            other!.release();
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    test('a build started by hand while this window\'s queue holds it does not release the queue\'s lease', () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'odt-lease-'));
+        try {
+            const queue = acquireLease(root, 'window-a');
+            const byHand = acquireLease(root, 'window-a');
+            assert.ok(byHand, 'the same window may take it again');
+            byHand!.release();
+            assert.strictEqual(queue!.held(), true);
+            queue!.release();
+            assert.ok(!fs.existsSync(path.join(root, LEASE_FILE)));
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    test('a build by hand waits while another window builds, then runs', async () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'odt-lease-'));
+        try {
+            const elsewhere = acquireLease(root, 'another-window');
+            let waited = false;
+            const running = withLease(root, async () => 'built', {
+                onWait: () => {
+                    waited = true;
+                    setTimeout(() => elsewhere!.release(), 20);
+                },
+                pollMs: 10
+            });
+            assert.strictEqual(await running, 'built');
+            assert.strictEqual(waited, true);
+            assert.ok(!fs.existsSync(path.join(root, LEASE_FILE)), 'released after the build');
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    test('cancelled while waiting, nothing runs', async () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'odt-lease-'));
+        try {
+            const elsewhere = acquireLease(root, 'another-window');
+            let ran = false;
+            const result = await withLease(root, async () => {
+                ran = true;
+            }, { isCancelled: () => true, pollMs: 10 });
+            assert.strictEqual(result, undefined);
+            assert.strictEqual(ran, false);
+            elsewhere!.release();
         } finally {
             fs.rmSync(root, { recursive: true, force: true });
         }

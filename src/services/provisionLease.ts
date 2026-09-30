@@ -25,6 +25,39 @@ export interface Lease {
     heartbeat: number;
 }
 
+/**
+ * Runs `work` holding the lease, waiting for it while another window holds
+ * it: a build started by hand (Create Version, Migrate) must not run beside
+ * another window's build either. Undefined when cancelled while waiting.
+ */
+export async function withLease<T>(
+    root: string,
+    work: (lease: HeldLease) => Promise<T>,
+    options: { onWait?: () => void; isCancelled?: () => boolean; pollMs?: number } = {}
+): Promise<T | undefined> {
+    let lease = acquireLease(root);
+    let waited = false;
+    while (!lease) {
+        if (options.isCancelled?.()) {
+            return undefined;
+        }
+        if (!waited) {
+            waited = true;
+            options.onWait?.();
+        }
+        await new Promise(resolve => setTimeout(resolve, options.pollMs ?? 5000));
+        lease = acquireLease(root);
+    }
+    const heartbeat = setInterval(() => lease!.renew(), HEARTBEAT_MS);
+    heartbeat.unref?.();
+    try {
+        return await work(lease);
+    } finally {
+        clearInterval(heartbeat);
+        lease.release();
+    }
+}
+
 /** This window's id as a lease owner. */
 export const OWNER_ID = randomUUID();
 
@@ -67,6 +100,12 @@ function pidAlive(pid: number): boolean {
 export interface HeldLease {
     /** Says the holder is still alive. */
     renew(): void;
+    /**
+     * Whether this window still holds it. A window that stalled past STALE_MS
+     * - a paused debugger, a suspended machine - may have lost it to another
+     * window, and must not go on building.
+     */
+    held(): boolean;
     release(): void;
 }
 
@@ -91,9 +130,13 @@ export function acquireLease(root: string, owner: string = OWNER_ID, now: () => 
         }
     };
 
-    if (!mayTakeLease(read(), owner, now(), pidAlive)) {
+    const before = read();
+    if (!mayTakeLease(before, owner, now(), pidAlive)) {
         return undefined;
     }
+    // Already this window's - the queue holds it while a foreground build
+    // asks too: the inner holder renews but leaves releasing to the outer.
+    const nested = before?.owner === owner;
     try {
         write();
     } catch {
@@ -112,8 +155,22 @@ export function acquireLease(root: string, owner: string = OWNER_ID, now: () => 
                 }
             }
         },
+        held: () => {
+            const current = read();
+            if (!current) {
+                // Released by a nested holder in this window, or removed:
+                // nobody has it, so it is still this window's to keep.
+                try {
+                    write();
+                } catch {
+                    return false;
+                }
+                return read()?.owner === owner;
+            }
+            return current.owner === owner;
+        },
         release: () => {
-            if (read()?.owner === owner) {
+            if (!nested && read()?.owner === owner) {
                 try {
                     fs.rmSync(file, { force: true });
                 } catch {

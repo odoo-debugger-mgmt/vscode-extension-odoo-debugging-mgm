@@ -205,6 +205,12 @@ export async function drainProvisionQueue(
 
     try {
         for (;;) {
+            // Stalled past the stale limit, another window took over: it
+            // builds the rest, and this one stops rather than build beside it.
+            if (!lease.held()) {
+                logger.info('[queue] another window took over building; stopping here');
+                break;
+            }
             const next = takeNext(readQueue(context));
             if (!next.active) {
                 break;
