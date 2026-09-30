@@ -5,7 +5,156 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds nine runs, newest first. The earlier runs are kept unchanged.
+This file holds ten runs, newest first. The earlier runs are kept unchanged.
+
+# Tenth run: item 13, per-version repository locations (`c6f48f5`)
+
+**Scope:** as asked:
+- the test suite;
+- brief item 13, all six steps.
+
+**Setup:** as item 13 describes, all under `/tmp/odt-brief`.
+- **Origin:** a bare repository, `origin/acme.git`.
+  - Its `17.0-dev` and `17.0-alt` branches add a module `acme_seventeen`.
+  - Its `19.0-dev` and `19.0-alt` branches add `acme_nineteen`.
+  - So the Modules view shows which clone it reads.
+- **Two clones:**
+  - `v17/acme` on `17.0-dev`, with `origin` set to
+    `git@github.com:org/acme.git`;
+  - `v19/acme-19` on `19.0-dev`, with `https://github.com/org/acme`.
+- **For step 4:** a third clone `other/acme-third` (`git@github.com:org/acme`),
+  a clone of another remote `other/beta-clone`
+  (`git@github.com:org/beta.git`), and a plain folder `other/not-a-repo`.
+- **A's data:**
+  - 17.0's Custom Addons is `/tmp/odt-brief/v17`, and 19.0's is
+    `/tmp/odt-brief/v19`;
+  - the project's `acme` is `v17/acme`, in single-checkout mode;
+  - acme-db1 (17.0) maps `acme` to `17.0-alt`, and acme-db19 (19.0) to
+    `19.0-alt`;
+  - acme-db1 is selected, and 17.0 is active.
+- **The window:** an Extension Development Host on a new throwaway profile
+  (`HOME=/tmp/claude/bp`). There is no real Odoo or PostgreSQL. The usual
+  fixture warnings appear: "environment switch finished with issues" from the
+  fake Odoo source, psql, and the missing Python extension.
+
+## Verdict (tenth run)
+
+- **All six steps matched.**
+- **One new finding, 15 (moderate):** every database switch that checks out
+  a clone the window does not have open raises VS Code's modal "Git: There are
+  no available repositories". The per-version layout makes that the normal
+  case.
+
+## Test suite: matched
+
+- VS Code 1.139.1: **471 passing, 0 failing, 0 pending**.
+
+## 13.1–13.3 Database switches: matched
+
+**Before:** the Repos view showed `acme 17.0-dev`, and Modules listed
+`acme_seventeen`.
+
+1. **Switch to acme-db19:**
+   - `v19/acme-19` went to **`19.0-alt`**, and **`v17/acme` stayed on
+     `17.0-dev`**;
+   - Repos showed **`acme-19 19.0-alt`**, and Modules listed `acme_nineteen`
+     rather than `acme_seventeen`.
+2. **`launch.json`:**
+   - `odoo-debugger-19`: `-d acme-db19`, with addons from
+     `/tmp/odt-brief/v19/acme-19`;
+   - `odoo-debugger`: `-d acme-db1`, with addons from `/tmp/odt-brief/v17/acme`.
+3. **Switch back to acme-db1:**
+   - `v17/acme` went to **`17.0-alt`**, and `v19/acme-19` stayed on
+     `19.0-alt`;
+   - Repos showed `acme 17.0-alt`, and Modules listed `acme_seventeen` again;
+   - both entries were unchanged.
+
+## 13.4 Set Repository Location for a Version…: matched
+
+1. **Which version?** The list shows "Odoo 17.0 · Active" first, then Odoo
+   19.0. I picked 19.0.
+2. **"Repository location for Odoo 19.0"** listed **"acme
+   /tmp/odt-brief/v19/acme-19 · found by its remote"**. That is the right
+   folder, found by its remote although its name differs.
+3. **Choose a Folder…:** I typed `/tmp/odt-brief/other/acme-third/`.
+   - "Odoo 19.0 now uses /tmp/odt-brief/other/acme-third for "acme"."
+   - `odoo-debugger-19`'s addons path became `…/other/acme-third`, and
+     `odoo-debugger` stayed on `v17/acme`.
+   - The 19.0 row's tooltip ends with **"acme: /tmp/odt-brief/other/acme-third
+     (set by hand)"**.
+   - The data holds `repoPaths: {"acme": "/tmp/odt-brief/other/acme-third"}` on
+     19.0 only.
+4. **Running the command again:**
+   - the repository row read "acme /tmp/odt-brief/other/acme-third · set by
+     hand";
+   - the next step offered Choose a Folder… and **Use the Default**, with the
+     placeholder "Set by hand: /tmp/odt-brief/other/acme-third".
+5. **A plain folder** (`other/not-a-repo`) was refused: "/tmp/odt-brief/other/not-a-repo
+   is not a git checkout, so it was not set." The setting was unchanged.
+6. **A clone of another remote** (`other/beta-clone`) asked first, in a modal:
+
+   > /tmp/odt-brief/other/beta-clone is a clone of github.com/org/beta, not of
+   > github.com/org/acme like "acme". Use it for Odoo 19.0 anyway?
+
+   It offered Cancel or Use It. Cancel left the setting unchanged.
+7. **Use the Default:**
+   - "Odoo 19.0 finds "acme" automatically again.";
+   - `repoPaths` became `{}`;
+   - `odoo-debugger-19` went back to `v19/acme-19`.
+
+## 13.5 The single-clone layout: matched
+
+1. **Pointing 19.0 at the one clone:** I set 19.0's Custom Addons to
+   `/tmp/odt-brief/v17` from the Versions view (Custom Addons → Enter Path
+   Manually). Both entries' addons paths then named `/tmp/odt-brief/v17/acme`.
+2. **Switch to acme-db19:**
+   - **`v17/acme` went to `19.0-alt`**, and `v19/acme-19` was not touched;
+   - Repos showed `acme 19.0-alt`, and Modules listed `acme_nineteen`.
+
+## 13.6 Save All as Default: matched
+
+This was run on Odoo 19.0, shown as "provisioned", while its settings still
+carried `managedPaths: []` and `repoPaths: {}`.
+1. **Right-click → Set All as Default** asked: "Are you sure you want to save
+   ALL settings from version "Odoo 19.0" as new default values?" with **Save
+   All as Default** and Cancel.
+2. **Save All as Default:**
+   - "All settings from version "Odoo 19.0" saved as new defaults.", with no
+     error;
+   - `A/.vscode/settings.json` got 16 `odooDebugger.defaultVersion.*` keys, with
+     **no `repoPaths` and no `managedPaths`**.
+
+I removed that `settings.json` afterwards, so it would not leak into later
+runs, and kept a copy outside the fixture.
+
+## Findings (tenth run)
+
+### 15. A database switch raises "Git: There are no available repositories" (moderate)
+
+**Steps:** in folder window A, switch between acme-db1 and acme-db19. Each
+switch checks out a branch in `v17/acme` or `v19/acme-19`, and the window does
+not have either open.
+
+**Happened:** on **every** switch, VS Code shows a modal error:
+
+> Git: There are no available repositories
+
+It offers Cancel or Open Git Log. The checkout itself succeeded.
+
+**Why:** after a checkout through the git command line, `checkoutRepoBranch`
+(`src/services/checkout.ts:191`) runs `vscode.commands.executeCommand('git.refresh')`.
+With no repository open in the window, VS Code's Git extension answers with
+this modal. The surrounding `try/catch` cannot stop it, because the Git
+extension shows the modal itself rather than throwing.
+
+This code dates from `8532aff` (1.2). The same folder layout would have
+triggered it before this change too, though I did not run an older build to
+confirm. Per-version clones sit outside the window by design, so the layout
+item 13 describes now hits it on every switch.
+
+Skipping `git.refresh` when no open repository contains the path would avoid
+it, for example by checking the Git extension's API (`getRepository(uri)`)
+first.
 
 # Ninth run: finding 14 replayed (`ec04b14`)
 
