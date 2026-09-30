@@ -599,8 +599,18 @@ Each step ships on its own and leaves the extension working.
    side whose version is not built yet cannot be located, so it gets copies.
    `thisSide` (`services/upgradeSides.ts`): the bound version's side, else
    the active one's. Open the Other Side reads the registry (3c).
-5. **Cross-window guards** (§9). The provisioning lease can come first, since it
-   fixes something already broken.
+5. **Cross-window guards** (§9). **Implemented.** The provisioning lease is a
+   file in the provisioning root (`services/provisionLease.ts`) - one place
+   every window agrees on, whatever store it uses - with a 30 s heartbeat,
+   taken over when its process is gone or silent for 90 s; a window that
+   finds it held retries later. The port probe is in `startServerForVersion`,
+   skipped for this window's own session. Deleted-underneath notices compare
+   the data read before a store change with the data after
+   (`services/goneElsewhere.ts`). Defaults go to Global on a shared store.
+   Live refresh was done in step 2. Also after the twelfth run: a bound
+   window asks before leaving its version, the version question stays in the
+   status bar, and a folder window that is a clone excludes its
+   `launch.json` in `info/exclude`.
 
 ## Testing
 

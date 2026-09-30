@@ -2,7 +2,7 @@
 
 **For:** an agent or person who can run VS Code windows on a real machine and
 see them.
-**Branch:** `v-1.3`, at or after `872733d`.
+**Branch:** `v-1.3`, at or after the commit that added item 17.
 **Build:** `npm ci && npm run compile`, then run an Extension Development Host
 (<kbd>F5</kbd> in this repo, or `code --extensionDevelopmentPath=<repo>`). For
 the Cursor/VSCodium items, `npm run build:vsix` and install the `.vsix`.
@@ -21,6 +21,23 @@ build order steps 1 and 2:
 
 The README section *Sharing data between workspaces* describes the intended
 behaviour. Anything that behaves differently from it is a finding.
+
+## The final run: what is left to test
+
+Everything up to item 14 has been run and matched. What has not run in real
+windows yet, in this order:
+
+1. `npm test`.
+2. **Item 14 again, briefly:** asked on open (no toggle), the Repos view
+   showing the bound workspace's clone — plus the new status bar item (18.3).
+3. **Item 15** — workspaces find each other.
+4. **Item 16** — an upgrade across two workspaces.
+5. **Item 17** — guards between windows.
+6. **Item 18** — the twelfth run's follow-ups.
+7. **Regression spot checks:** item 6 (no ping-pong while idle, now that
+   windows also write the registry), item 7b step 5, and item 13.1–13.3.
+
+Report findings in the same format; anything not reached, say so.
 
 ## Read this first
 
@@ -406,6 +423,50 @@ Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
 6. **A window running neither side** (bound to neither, active version
    outside the pair): Start This Side offers Start Both Servers; Open the
    Other Side asks which side.
+
+## 17 · Guards between windows (step 5)
+
+1. **One builder.** In `W17` and `W19`, queue a version each (Create Version,
+   two different series) at nearly the same time. **Expect** one window's log
+   to say "[queue] another window is building versions; waiting for it", the
+   other window to build **both** versions, one after the other, and
+   `<provisioning root>/.odt-provision.lease` present during the build and
+   gone after. Kill the building window mid-build (`kill -9` its extension
+   host); **expect** the other window to take over within about 90 s of its
+   next try. Say if this could not be arranged.
+2. **Already running elsewhere.** Start Odoo 19.0 in `W19`. In `W17`, run
+   Start Server on 19.0 (Switch Active Version to 19.0, or right-click → start
+   if offered). **Expect** a warning: '"Odoo 19.0" is already running on port
+   8079, probably in another window.' with Open in Browser, and nothing
+   started. **Restart Server** in `W19` still restarts it.
+3. **Deleted in another window.** With `W17` on acme-db1, delete acme-db1 from
+   `W19`. **Expect** in `W17`, once: '"acme-db1" was deleted in another
+   window, so no database is selected here.' Then delete a version `W17` has
+   active (a throwaway one): "… was deleted in another window; this window
+   now runs …". Quote both.
+4. **Defaults.** On the shared store, Versions → a setting → Set as Default.
+   **Expect** "… saved as new default for every workspace (user settings)."
+   and the key in the **user** `settings.json`, not the workspace's. On A (its
+   own file), **expect** "for this workspace" and the workspace settings.
+
+## 18 · The twelfth run's follow-ups
+
+1. **Leaving the bound version.** In `W19` (bound to 19.0), select acme-db1
+   (17.0). **Expect** a modal: 'This workspace runs Odoo 19.0. "acme-db1"
+   belongs to Odoo 17.0, so selecting it switches this window to Odoo 17.0.'
+   with Switch for Now and Run Odoo 17.0 Here From Now On. Cancel: nothing
+   changes. Switch for Now: 17.0 active, binding still 19.0. Run … Here: the
+   binding becomes 17.0 (tooltip "Bound to this workspace"). During an
+   upgrade, selecting the other side's database asks nothing.
+2. **launch.json in a clone.** In `W19/acme` (a folder window on the clone),
+   after a database switch: `.vscode/launch.json` exists, `git status` is
+   clean, and `.git/info/exclude` holds `/.vscode/launch.json` under an "Odoo
+   DevTools" comment. A repository that tracks its own `.vscode/launch.json`
+   gets no exclude line.
+3. **The version question stays.** In a fresh window on the shared store,
+   **expect** "$(question) Which version here?" in the status bar next to the
+   question, still there after the toast hides; clicking it opens Bind This
+   Workspace to a Version…; choosing, or Not Now, removes it.
 
 ## 12 · A store from the future
 

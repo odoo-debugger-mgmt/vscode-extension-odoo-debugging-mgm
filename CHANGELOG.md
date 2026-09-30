@@ -10,6 +10,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Added
 
+- **Windows on a shared store look out for each other.** One window builds queued versions at a time; starting a version that is already listening says it is probably running in another window; something deleted in another window is named once; Set as Default saves for every workspace.
 - **Upgrades across two workspaces.** An upgrade copies only the repositories both versions share: with a folder or workspace per version, each side already has its own checkout, which is switched to its branch instead. **Start This Side** starts the side this window runs, and **Open the Other Side** opens the workspace running the other.
 - **Workspaces on a shared store find each other.** Each one is recorded with the version it runs; a version's tooltip names the other workspaces running it, and **Open the Workspace for a Version…** opens one.
 - **Each workspace on a shared store runs its own version.** A new workspace is asked once which version it runs, with a proposal from the clones it holds and the branches its databases map, and its own folders become that version's code — in the launch entries, database switches and the Repos view. **Bind This Workspace to a Version…** changes it.
@@ -74,6 +75,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Fixed
 
+- **A workspace bound to one version asks before leaving it**, the version question stays in the status bar until answered, and `launch.json` in a clone opened as a workspace no longer shows in its git status.
 - **In a shared store, a window launched the database another window had selected.** The database each version last ran against was shared, and preferred over the window's own selection, so F5 and Copy Odoo Command followed whichever window picked last. It is per window now; only an active upgrade's two databases are the same everywhere.
 - **After another window turned an upgrade on and off, a window showed one database and launched another.** The selection moved onto the upgrade pair and the window's per-version memory stayed behind. The selected database now decides what its own version launches; the memory only decides the versions beside it.
 - **A change a read-only or locked data store refuses is a warning**, not VS Code's "Error running command … likely caused by the extension".

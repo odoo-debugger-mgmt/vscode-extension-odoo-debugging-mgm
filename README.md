@@ -269,6 +269,16 @@ left as it is. The Projects view shows which shared store it is reading.
   names the other workspaces that run it, and **Open the Workspace for a
   Version…** (Command Palette, or a version's context menu) opens one. Entries
   unseen for 90 days, or whose folder is gone, are dropped.
+- **Windows look out for each other.** Only one window builds queued versions
+  at a time (a lease in the environments folder); starting a version whose
+  port is already taken says it is probably running in another window;
+  a project, database or version deleted in another window is named once
+  rather than silently vanishing; and **Set as Default** on a shared store
+  saves to your user settings, so it applies in every workspace.
+- A workspace bound to one version asks before selecting another version's
+  database switches it, and a workspace opened on a clone keeps the
+  extension's `launch.json` out of that repository's git status (through the
+  clone's own `info/exclude`).
 - A store written by a newer Odoo DevTools opens read-only, and says so.
 - Keep the store on a local disk: SQLite's locking is unreliable over network
   shares.
