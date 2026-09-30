@@ -276,6 +276,11 @@ export async function activate(context: vscode.ExtensionContext) {
                 SettingsStore.invalidate();
                 await versionsService.refresh();
                 const data = await SettingsStore.get().catch(() => undefined);
+                // A read that failed says nothing about what was deleted.
+                if (!data || !versionsService.loadedFromStore()) {
+                    await refreshAll({ reason: 'all' });
+                    return;
+                }
                 const keys = (data?.projects ?? []).map(project => project.uid || `name:${project.name ?? ''}`);
                 const sameProject = (data?.projects ?? []).find(project =>
                     (project.uid || `name:${project.name ?? ''}`) === before.projectKey);
@@ -408,6 +413,10 @@ async function promptLegacyVersions(context: vscode.ExtensionContext): Promise<v
 
     const setup = readSetupState();
     const versionsService = VersionsService.getInstance();
+    // The stand-in for a store that could not be read is in no store.
+    if (!versionsService.loadedFromStore()) {
+        return;
+    }
     const diagnoses = versionsService.getVersions().map(version => diagnoseVersion(
         {
             id: version.id,

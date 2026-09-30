@@ -154,6 +154,15 @@ export function leavesBoundVersion(
         && targetVersionId !== activeVersionId && !upgradeActive;
 }
 
+/**
+ * Whether the binding points at a version that is gone - only when the
+ * versions were actually read: a store that could not be read has none, and
+ * the fifteenth run's window forgot its binding over one bad read.
+ */
+export function bindingIsOrphaned(bound: string | undefined, versionsLoaded: boolean, exists: (id: string) => boolean): boolean {
+    return !!bound && versionsLoaded && !exists(bound);
+}
+
 // ---------------------------------------------------------------------------
 // vscode-backed accessors
 // ---------------------------------------------------------------------------

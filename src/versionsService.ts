@@ -76,6 +76,15 @@ export class VersionsService {
         // Initialization will be done via initialize() method
     }
 
+    /**
+     * Whether the versions in memory came from the store. After a failed read
+     * they are a stand-in: nothing may be judged from them - that a version
+     * is gone, or needs migrating.
+     */
+    public loadedFromStore(): boolean {
+        return !this.readFailed;
+    }
+
     public static getInstance(): VersionsService {
         if (!VersionsService.instance) {
             VersionsService.instance = new VersionsService();

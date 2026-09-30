@@ -15,6 +15,7 @@ import { refreshRegistry, registerThisWorkspace, thisWorkspaceId } from '../serv
 import { extractVersionId } from './args';
 import {
     BindingProposal,
+    bindingIsOrphaned,
     WorkspaceFolderFacts,
     proposeWorkspaceVersion,
     readBinding,
@@ -136,10 +137,15 @@ export async function offerWorkspaceBinding(): Promise<void> {
     try {
         const versions = VersionsService.getInstance();
         await versions.initialize();
+        // Nothing is known about this store's versions: neither ask which one
+        // runs here nor decide the bound one is gone.
+        if (!versions.loadedFromStore()) {
+            return;
+        }
         // Bound to a version another window deleted: bound to nothing, and
         // never asked again. It is asked again instead.
         const bound = readBinding().versionId;
-        if (bound && !versions.getVersion(bound)) {
+        if (bindingIsOrphaned(bound, versions.loadedFromStore(), id => !!versions.getVersion(id))) {
             logger.info(`[binding] the version this workspace was bound to (${bound}) no longer exists; asking again`);
             await writeBinding({ versionId: undefined, asked: false });
             void registerThisWorkspace();

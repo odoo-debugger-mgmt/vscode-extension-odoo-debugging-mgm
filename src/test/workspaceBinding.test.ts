@@ -4,7 +4,7 @@
  * point - a shared store.
  */
 import * as assert from 'assert';
-import { leavesBoundVersion, normalizeBinding, proposeWorkspaceVersion, shouldOfferBinding } from '../services/workspaceBinding';
+import { bindingIsOrphaned, leavesBoundVersion, normalizeBinding, proposeWorkspaceVersion, shouldOfferBinding } from '../services/workspaceBinding';
 
 const versions = [
     { id: 'v17', name: 'Odoo 17.0', odooVersion: '17.0' },
@@ -88,5 +88,20 @@ suite('Leaving the version a workspace is bound to', () => {
         // Thirteenth run: already on 17.0, it still said "switches this window to 17.0".
         assert.strictEqual(leavesBoundVersion('v19', 'v17', 'v17', false), false);
         assert.strictEqual(leavesBoundVersion('v19', 'v17', 'v19', true), false, 'selecting a side of an upgrade switches nothing');
+    });
+});
+
+suite('A binding to a version that is gone', () => {
+    const exists = (id: string) => id === 'v17';
+
+    test('is dropped once the versions were read and it is not among them', () => {
+        assert.strictEqual(bindingIsOrphaned('v19', true, exists), true);
+        assert.strictEqual(bindingIsOrphaned('v17', true, exists), false);
+        assert.strictEqual(bindingIsOrphaned(undefined, true, exists), false);
+    });
+
+    test('is kept when the store could not be read', () => {
+        // Fifteenth run: one bad read and the window had to be bound again.
+        assert.strictEqual(bindingIsOrphaned('v17', false, () => false), false);
     });
 });
