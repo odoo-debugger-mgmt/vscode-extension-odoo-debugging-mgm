@@ -10357,6 +10357,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.proposeBranchForSeries = proposeBranchForSeries;
+exports.branchSeed = branchSeed;
 exports.splitStagedModules = splitStagedModules;
 exports.coreAddonsPaths = coreAddonsPaths;
 exports.collectAvailableModules = collectAvailableModules;
@@ -10397,6 +10398,26 @@ function proposeBranchForSeries(branches, series) {
         branch: candidates.length === 1 ? candidates[0] : undefined,
         candidates
     };
+}
+/**
+ * What a side of an upgrade proposes for a repository: a branch taken
+ * without asking, or the row the question opens on.
+ *
+ * A side with its own checkout - the workspace bound to that version - runs
+ * whatever that checkout is on: `W17/acme` on `staging` means 17.0 is
+ * `staging`, even though the clone also has a `17.0-alt` a series name would
+ * pick. So that branch is the default, and a series-named branch is taken
+ * without asking only when the checkout is on it. A shared clone keeps
+ * deducing from the series names.
+ */
+function branchSeed(proposal, onDisk, ownCheckout, exclude) {
+    if (ownCheckout && onDisk && onDisk !== exclude) {
+        return proposal.branch === onDisk ? { branch: onDisk } : { seed: onDisk };
+    }
+    if (proposal.branch && proposal.branch !== exclude) {
+        return { branch: proposal.branch };
+    }
+    return { seed: proposal.candidates.find(candidate => candidate !== exclude) };
 }
 /**
  * Splits the source's installed modules into what the target can install and
@@ -24903,6 +24924,7 @@ const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
 const gitService_1 = __webpack_require__(11);
 const wizard_1 = __webpack_require__(71);
+const branches_1 = __webpack_require__(50);
 const MANUAL_ITEM = {
     label: '$(pencil) Enter branch manually…',
     description: 'e.g. "19.0", "saas-18.4", "master"',
@@ -24998,7 +25020,7 @@ async function pickOdooBranch(odooPath, title) {
  * front and needs no "search all" escape hatch. The point is the same one -
  * a branch the user has to type from memory is a branch they get wrong.
  */
-async function pickRepoBranch(repoPath, title, placeHolder, current, exclude, canGoBack = false) {
+async function pickRepoBranch(repoPath, title, placeHolder, suggested, exclude, canGoBack = false) {
     const all = repoPath && fs.existsSync(repoPath)
         ? await (0, gitService_1.listAllBranches)(repoPath).catch(() => [])
         : [];
@@ -25009,14 +25031,18 @@ async function pickRepoBranch(repoPath, title, placeHolder, current, exclude, ca
     if (branches.length === 0) {
         return promptManualBranch(title);
     }
+    // "current branch" is what the checkout is on; the row the picker opens
+    // on is only a suggestion. Calling the suggestion current marked a branch
+    // the checkout was not on (fourteenth run).
+    const onDisk = repoPath ? await (0, branches_1.getRepoBranch)(repoPath).catch(() => null) : null;
     const items = branches.map(branch => ({
         label: branch,
-        description: branch === current ? 'current branch' : undefined,
+        description: branch === onDisk ? 'current branch' : branch === suggested ? 'suggested' : undefined,
         action: 'branch',
         branch
     }));
     items.push(MANUAL_ITEM);
-    // createQuickPick, not showQuickPick: `current` has to *preselect* a row,
+    // createQuickPick, not showQuickPick: `suggested` has to *preselect* a row,
     // and showQuickPick always opens on its first item however the rows are
     // described. Without this the seed was decoration - the caller's claim
     // that a shared naming convention is Enter-Enter was simply not true.
@@ -25027,7 +25053,7 @@ async function pickRepoBranch(repoPath, title, placeHolder, current, exclude, ca
     picker.matchOnDescription = true;
     picker.buttons = canGoBack ? [vscode.QuickInputButtons.Back] : [];
     picker.items = items;
-    const preselect = current ? items.find(item => item.branch === current) : undefined;
+    const preselect = suggested ? items.find(item => item.branch === suggested) : undefined;
     if (preselect) {
         picker.activeItems = [preselect];
     }
@@ -25749,6 +25775,7 @@ const branchPick_1 = __webpack_require__(123);
 const upgradePlan_1 = __webpack_require__(129);
 const upgradeApply_1 = __webpack_require__(42);
 const upgradeSetup_1 = __webpack_require__(57);
+const branches_1 = __webpack_require__(50);
 const provisionQueue_1 = __webpack_require__(101);
 const setupState_1 = __webpack_require__(69);
 const gitService_1 = __webpack_require__(11);
@@ -25861,10 +25888,31 @@ async function checkoutForSeries(repo, series) {
 async function resolveRepoBranch(repo, series, side, exclude, canGoBack) {
     const repoPath = await checkoutForSeries(repo, series);
     const proposal = (0, upgradeSetup_1.proposeBranchForSeries)(await branchesOf(repoPath), series);
-    if (proposal.branch && proposal.branch !== exclude) {
-        return proposal.branch;
+    const ownCheckout = repoPath !== (0, utils_1.normalizePath)(repo.path);
+    const { branch, seed } = (0, upgradeSetup_1.branchSeed)(proposal, ownCheckout ? (await (0, branches_1.getRepoBranch)(repoPath)) ?? undefined : undefined, ownCheckout, exclude);
+    if (branch) {
+        return branch;
     }
-    return (0, branchPick_1.pickRepoBranch)(repoPath, `Upgrading ${side} — ${repo.name}`, `Which branch of ${repo.name} runs Odoo ${series}?`, proposal.candidates.find(candidate => candidate !== exclude), exclude, canGoBack);
+    return (0, branchPick_1.pickRepoBranch)(repoPath, `Upgrading ${side} — ${repo.name}`, `Which branch of ${repo.name} runs Odoo ${series}?`, seed, exclude, canGoBack);
+}
+/**
+ * Whether applying the plan moves a side's own checkout to another branch.
+ * Checkouts already on their branches are left alone, so there is nothing
+ * to confirm: resuming asked every time (fourteenth run).
+ */
+async function switchesOwnCheckouts(plan, input) {
+    for (const name of plan.reposOnOwnCheckouts) {
+        const own = Object.entries(input.ownCheckouts ?? {})
+            .find(([repoName]) => repoName.toLowerCase() === name.toLowerCase())?.[1];
+        const pair = input.repos.find(repo => repo.name.toLowerCase() === name.toLowerCase());
+        if (!own || !pair) {
+            continue;
+        }
+        if ((await (0, branches_1.getRepoBranch)(own.from)) !== pair.fromBranch || (await (0, branches_1.getRepoBranch)(own.to)) !== pair.toBranch) {
+            return true;
+        }
+    }
+    return false;
 }
 /**
  * Each version's own checkout of each repository, where the two sides were
@@ -26039,7 +26087,7 @@ function registerUpgradeCommand(deps) {
             ownCheckouts: await ownCheckoutsFor(repos, versionsService, remembered.from.series, remembered.to.series)
         };
         const plan = (0, upgradePlan_1.buildUpgradePlan)(input);
-        if (plan.reposToWorktree.length > 0 || plan.reposOnOwnCheckouts.length > 0 || plan.versionsToCreate.length > 0) {
+        if (plan.reposToWorktree.length > 0 || await switchesOwnCheckouts(plan, input) || plan.versionsToCreate.length > 0) {
             const confirmed = await (0, notifications_1.showModalInfo)((0, upgradePlan_1.describeUpgradePlan)(plan, input), 'Resume');
             if (confirmed !== 'Resume') {
                 return;
@@ -26301,7 +26349,7 @@ function registerUpgradeCommand(deps) {
             // Switching each side's own checkout to its branch is touching disk
             // too: the user sees which checkouts before it happens.
             const createsSomething = plan.reposToWorktree.length > 0
-                || plan.reposOnOwnCheckouts.length > 0
+                || await switchesOwnCheckouts(plan, input)
                 || plan.versionsToCreate.length > 0
                 || !draft.toDb;
             if (createsSomething) {

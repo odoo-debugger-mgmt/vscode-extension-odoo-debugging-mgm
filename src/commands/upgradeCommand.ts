@@ -21,7 +21,8 @@ import { errorMessage, logger } from '../services/logger';
 import { pickRepoBranch } from './branchPick';
 import { buildUpgradePlan, describeUpgradePlan, UpgradeInput, UpgradePlan } from '../services/upgradePlan';
 import { applyUpgradeSetup, UpgradeSetup } from '../services/upgradeApply';
-import { proposeBranchForSeries, resolveDatabaseSeries } from '../services/upgradeSetup';
+import { branchSeed, proposeBranchForSeries, resolveDatabaseSeries } from '../services/upgradeSetup';
+import { getRepoBranch } from '../services/branches';
 import {
     drainProvisionQueue,
     enqueue,
@@ -186,19 +187,46 @@ async function resolveRepoBranch(
 ): Promise<StepResult<string>> {
     const repoPath = await checkoutForSeries(repo, series);
     const proposal = proposeBranchForSeries(await branchesOf(repoPath), series);
+    const ownCheckout = repoPath !== normalizePath(repo.path);
+    const { branch, seed } = branchSeed(
+        proposal,
+        ownCheckout ? (await getRepoBranch(repoPath)) ?? undefined : undefined,
+        ownCheckout,
+        exclude
+    );
 
-    if (proposal.branch && proposal.branch !== exclude) {
-        return proposal.branch;
+    if (branch) {
+        return branch;
     }
 
     return pickRepoBranch(
         repoPath,
         `Upgrading ${side} — ${repo.name}`,
         `Which branch of ${repo.name} runs Odoo ${series}?`,
-        proposal.candidates.find(candidate => candidate !== exclude),
+        seed,
         exclude,
         canGoBack
     );
+}
+
+/**
+ * Whether applying the plan moves a side's own checkout to another branch.
+ * Checkouts already on their branches are left alone, so there is nothing
+ * to confirm: resuming asked every time (fourteenth run).
+ */
+async function switchesOwnCheckouts(plan: UpgradePlan, input: UpgradeInput): Promise<boolean> {
+    for (const name of plan.reposOnOwnCheckouts) {
+        const own = Object.entries(input.ownCheckouts ?? {})
+            .find(([repoName]) => repoName.toLowerCase() === name.toLowerCase())?.[1];
+        const pair = input.repos.find(repo => repo.name.toLowerCase() === name.toLowerCase());
+        if (!own || !pair) {
+            continue;
+        }
+        if ((await getRepoBranch(own.from)) !== pair.fromBranch || (await getRepoBranch(own.to)) !== pair.toBranch) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /** A row in the review screen. */
@@ -421,7 +449,7 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
         };
         const plan = buildUpgradePlan(input);
 
-        if (plan.reposToWorktree.length > 0 || plan.reposOnOwnCheckouts.length > 0 || plan.versionsToCreate.length > 0) {
+        if (plan.reposToWorktree.length > 0 || await switchesOwnCheckouts(plan, input) || plan.versionsToCreate.length > 0) {
             const confirmed = await showModalInfo(describeUpgradePlan(plan, input), 'Resume');
             if (confirmed !== 'Resume') {
                 return;
@@ -767,7 +795,7 @@ export function registerUpgradeCommand(deps: CommandDeps): void {
             // Switching each side's own checkout to its branch is touching disk
             // too: the user sees which checkouts before it happens.
             const createsSomething = plan.reposToWorktree.length > 0
-                || plan.reposOnOwnCheckouts.length > 0
+                || await switchesOwnCheckouts(plan, input)
                 || plan.versionsToCreate.length > 0
                 || !draft.toDb;
             if (createsSomething) {

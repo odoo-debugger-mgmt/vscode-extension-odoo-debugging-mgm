@@ -6,6 +6,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
+    branchSeed,
     collectAvailableModules,
     coreAddonsPaths,
     proposeBranchForSeries,
@@ -44,6 +45,29 @@ suite('Branch proposal from a series', () => {
 
     test('an empty series proposes nothing rather than matching everything', () => {
         assert.deepStrictEqual(proposeBranchForSeries(branches, '  '), { candidates: [] });
+    });
+});
+
+suite('What a side of the upgrade proposes for a repository', () => {
+    const twoOn17 = { candidates: ['17.0', '17.0-alt'] };
+
+    test('a side\'s own checkout proposes the branch it is on, not a series name', () => {
+        // Fourteenth run: W17/acme is on staging; 17.0-alt was offered as "current".
+        assert.deepStrictEqual(branchSeed(twoOn17, 'staging', true, undefined), { seed: 'staging' });
+        assert.deepStrictEqual(branchSeed({ branch: '17.0-alt', candidates: ['17.0-alt'] }, 'staging', true, undefined), { seed: 'staging' });
+    });
+
+    test('an own checkout on the one series branch is taken without asking', () => {
+        assert.deepStrictEqual(branchSeed({ branch: '17.0', candidates: ['17.0'] }, '17.0', true, undefined), { branch: '17.0' });
+    });
+
+    test('a shared clone keeps deducing from series names', () => {
+        assert.deepStrictEqual(branchSeed({ branch: '17.0', candidates: ['17.0'] }, undefined, false, undefined), { branch: '17.0' });
+        assert.deepStrictEqual(branchSeed(twoOn17, undefined, false, '17.0'), { seed: '17.0-alt' });
+    });
+
+    test('the other side\'s branch is never proposed', () => {
+        assert.deepStrictEqual(branchSeed(twoOn17, 'main', true, 'main'), { seed: '17.0' });
     });
 });
 

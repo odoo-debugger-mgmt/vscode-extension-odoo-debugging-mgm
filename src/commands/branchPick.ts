@@ -11,6 +11,7 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import { listSeriesBranches, listAllBranches } from '../services/gitService';
 import { BACK, StepResult } from '../services/wizard';
+import { getRepoBranch } from '../services/branches';
 
 interface BranchPickItem extends vscode.QuickPickItem {
     action: 'branch' | 'manual' | 'all';
@@ -125,7 +126,7 @@ export async function pickRepoBranch(
     repoPath: string | undefined,
     title: string,
     placeHolder: string,
-    current?: string,
+    suggested?: string,
     exclude?: string,
     canGoBack = false
 ): Promise<StepResult<string>> {
@@ -141,15 +142,19 @@ export async function pickRepoBranch(
         return promptManualBranch(title);
     }
 
+    // "current branch" is what the checkout is on; the row the picker opens
+    // on is only a suggestion. Calling the suggestion current marked a branch
+    // the checkout was not on (fourteenth run).
+    const onDisk = repoPath ? await getRepoBranch(repoPath).catch(() => null) : null;
     const items: BranchPickItem[] = branches.map(branch => ({
         label: branch,
-        description: branch === current ? 'current branch' : undefined,
+        description: branch === onDisk ? 'current branch' : branch === suggested ? 'suggested' : undefined,
         action: 'branch' as const,
         branch
     }));
     items.push(MANUAL_ITEM);
 
-    // createQuickPick, not showQuickPick: `current` has to *preselect* a row,
+    // createQuickPick, not showQuickPick: `suggested` has to *preselect* a row,
     // and showQuickPick always opens on its first item however the rows are
     // described. Without this the seed was decoration - the caller's claim
     // that a shared naming convention is Enter-Enter was simply not true.
@@ -161,7 +166,7 @@ export async function pickRepoBranch(
     picker.buttons = canGoBack ? [vscode.QuickInputButtons.Back] : [];
     picker.items = items;
 
-    const preselect = current ? items.find(item => item.branch === current) : undefined;
+    const preselect = suggested ? items.find(item => item.branch === suggested) : undefined;
     if (preselect) {
         picker.activeItems = [preselect];
     }

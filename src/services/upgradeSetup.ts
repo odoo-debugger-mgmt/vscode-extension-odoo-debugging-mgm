@@ -45,6 +45,32 @@ export function proposeBranchForSeries(branches: string[], series: string): Bran
     };
 }
 
+/**
+ * What a side of an upgrade proposes for a repository: a branch taken
+ * without asking, or the row the question opens on.
+ *
+ * A side with its own checkout - the workspace bound to that version - runs
+ * whatever that checkout is on: `W17/acme` on `staging` means 17.0 is
+ * `staging`, even though the clone also has a `17.0-alt` a series name would
+ * pick. So that branch is the default, and a series-named branch is taken
+ * without asking only when the checkout is on it. A shared clone keeps
+ * deducing from the series names.
+ */
+export function branchSeed(
+    proposal: BranchProposal,
+    onDisk: string | undefined,
+    ownCheckout: boolean,
+    exclude: string | undefined
+): { branch?: string; seed?: string } {
+    if (ownCheckout && onDisk && onDisk !== exclude) {
+        return proposal.branch === onDisk ? { branch: onDisk } : { seed: onDisk };
+    }
+    if (proposal.branch && proposal.branch !== exclude) {
+        return { branch: proposal.branch };
+    }
+    return { seed: proposal.candidates.find(candidate => candidate !== exclude) };
+}
+
 export interface ModuleStaging {
     /** Names to mark `install` on the target database. */
     staged: string[];
