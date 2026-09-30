@@ -5,7 +5,228 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds fourteen runs, newest first. The earlier runs are kept unchanged.
+This file holds fifteen runs, newest first. The earlier runs are kept unchanged.
+
+# Fifteenth run: the fourteenth run's fixes (`53c9324`)
+
+**Scope:** the brief's final-run list, in its order:
+- `npm test`;
+- item 19.2, a window opened on an unreadable store;
+- item 16.1, the branch pickers;
+- item 17.1's freeze, resumed both ways;
+- item 20, both steps;
+- spot checks of 16.3, 17.1's Create Version waiting, and 19.1.
+
+Everything on the list was reached.
+
+**Setup:**
+- **The build:** `53c9324`, packaged and installed in the fourteenth run's
+  throwaway profile (`HOME=/tmp/claude/bt`), where `W17/acme` and `W19/acme`
+  were already bound.
+- **The store:** `shared14.db`, put back to its state before the thirteenth
+  run (acme-db2 → `17.0-dev`, acme-db19 → `main`, no upgrade).
+- **The clones:** `W17/acme` on `staging`, `W19/acme` on `main`.
+- **For the builds:** the throwaway git source, rebuilt empty
+  (`/tmp/odt-brief/odoo-src`, branches `4.0`–`18.0`), the wheel server that
+  waits 30 s, and an emptied provisioning root.
+- **The store afterwards:** 13 versions (the throwaway builds), and an
+  upgrade that is remembered but off.
+
+## Verdict (fifteenth run)
+
+- **Findings 24, 25 and 26 are fixed,** and both steps of item 20 match.
+- **Matched:** the test suite, 19.2's main points, 16.1's pickers, 17.1's
+  freeze both ways, 20.1, 20.2, and the three spot checks.
+- **Finding 27 (moderate):** a window opened on an unreadable store forgets
+  its version binding. It decides the bound version "no longer exists" from a
+  read that failed.
+- **Low:**
+  - **28:** in that window the read error shows twice, the views invite
+    creating a project, and there is a Migrate offer for a version that exists
+    only in memory;
+  - **29:** Set Up an Upgrade no longer shows 16.1's confirmation in the
+    brief's own setup, where both checkouts are already on their branches.
+
+## Test suite: matched
+
+- VS Code 1.139.1, normal git config: **532 passing, 0 failing**.
+
+## 19.2 A window opened on an unreadable store: matched, with findings 27 and 28
+
+- **The steps:** with every window closed, `ver-17-0001` stored as a BLOB,
+  then `W17/acme` opened.
+- **The extension activated.** There was no activation error in the extension
+  host log, the views are registered, and commands are found.
+- **The error,** with a Choose Data Store… button:
+
+  > Could not read the data store /tmp/odt-brief/shared14.db: Unexpected
+  > non-whitespace character after JSON at position 3 (line 1 column 4).
+  > Nothing is saved to it until it reads again.
+
+- **No "Default Version"** in the store; still four documents.
+- **A save:** Create Version → Profile only said "Failed to create version:
+  The data store /tmp/odt-brief/shared14.db could not be read, so nothing was
+  saved to it", and the store was unchanged.
+- **Choose Data Store…:**
+  - it listed the store in use, Shared store, Open an existing store…,
+    Create a new store… and This workspace only;
+  - This workspace only said "This workspace now uses its own data file.";
+  - the Projects header lost its "shared:" label;
+  - it wrote `.vscode/settings.json` and `.vscode/odoo-debugger-data.json`
+    into the clone. I removed both afterwards.
+- **Afterwards:** with the document restored, the store's documents were
+  byte-identical to the copy taken before the test.
+- **Not as the brief words it:**
+  - "views populated": they show the empty state (finding 28);
+  - "one error": a second one appears once the Odoo DevTools view is opened
+    (finding 28);
+  - the window lost its binding (finding 27).
+
+## 16.1 The branch pickers: matched; the confirmation is gone (finding 29)
+
+- **The 17.0 picker** opened on **`staging`**, marked "current branch".
+  `17.0-alt` is listed with no mark.
+- **The 19.0 picker** opened on **`main`**, marked "current branch".
+  `19.0-alt` is listed with no mark.
+- **No row read "suggested"** here: each proposal was the branch its checkout
+  is on.
+- **Accepting both defaults** gave the plan "acme — from staging", "acme — to
+  main".
+- **Set up this upgrade** went straight to "Upgrade set up: 17.0 → 19.0.",
+  with **no confirmation** (finding 29).
+- **Afterwards:** no copies, `W17/acme` on `staging`, `W19/acme` on `main`,
+  and the Custom Addons clones untouched.
+
+## 20 · The fourteenth run's smaller observations: matched
+
+1. **Resuming an upgrade:**
+   - **Both checkouts on their branches:** turning the upgrade off and on said
+     "Upgrade resumed: 17.0 → 19.0.", with no confirmation.
+   - **`W17/acme` moved to `17.0-dev`:** turning it on showed the plan
+     ("Each version already has its own checkout of these, so no copies are
+     made: acme: /tmp/odt-brief/W17/acme (Odoo 17.0), /tmp/odt-brief/W19/acme
+     (Odoo 19.0)") with Cancel and Resume. Resume put `W17/acme` back on
+     `staging`.
+2. **Cancelling a waiting build:** with 18.0 building in `W19` and 16.0
+   waiting in `W17`, Cancel said:
+
+   > Cancelled; another window was still building.
+
+   Nothing was built for 16.0, and 18.0 finished normally.
+
+## 17.1 The freeze, both ways: matched
+
+Both times I froze the builder **early**, during `python -m venv`, so the two
+pip steps were still ahead of it. After resuming, I watched its extension
+host's child processes for 25 s and counted the wheel server's requests.
+
+- **Resumed while the other window was still building.** `W17` queued 15.0,
+  14.0 and 13.0, and was frozen at 13:40:03, 1 s into 14.0.
+  - **The takeover:** `W19` took the lease at 13:42:02 and started on 14.0.
+  - **The resume** at 13:42:17.83. At 13:42:17.88, `W17` logged:
+
+    > [queue] another window took over building; stopping here (14.0)
+
+  - **No build process** ran under `W17`'s host afterwards, and the wheel
+    server saw no request from it.
+  - **`W19`** built 14.0 and 13.0: "Provisioned 14.0, 13.0.".
+- **Resumed after the other window had finished.** `W17` queued 11.0, 10.0
+  and 9.0, and was frozen at 13:44:57, 1 s into 10.0.
+  - **The takeover:** `W19` took over at 13:46:55, built 10.0 and 9.0, and
+    released the lease at 13:48:04.
+  - **The resume** at 13:48:09.90. At 13:48:09.93, `W17` logged "another
+    window took over building; stopping here (10.0)".
+  - **No build process** ran under it, the wheel server's request count did
+    not move (18 before and after), and the lease was not taken back.
+- **One version per series** in both: 9.0 to 16.0 each exist once.
+- **"Provisioned …":** the resumed window did show "Provisioned 15.0." (then
+  "Provisioned 11.0." in the second repro). That is the entry it had finished
+  **before** the freeze, not the interrupted one, so it is accurate. The
+  brief's "no "Provisioned …" from it" does not hold literally.
+
+## Spot checks: matched
+
+- **16.3:** Start This Side started `-p 8069 -d acme-db2` with `W17/acme` from
+  `W17`, and `-p 8079 -d acme-db19` with `W19/acme` from `W19`.
+- **17.1, Create Version waiting:** `W17` showed "Provisioning Odoo 16.0:
+  Waiting for another window to finish building…" while `W19` built 18.0 under
+  its lease (see 20.2 for the Cancel).
+- **19.1:** Create Version → Profile only, 7.0 in `W19` and 8.0 in `W17`,
+  confirmed 0.37 s apart. Both are in the store, and each window logged
+  "Saved 13 versions".
+
+## Also seen (fifteenth run)
+
+- **Moving a clone workspace to its own file leaves two untracked files in
+  the clone.** Choose Data Store → This workspace only writes
+  `.vscode/settings.json` and `.vscode/odoo-debugger-data.json`. Only
+  `launch.json` is kept out of git status.
+- **The read error's reason is still raw:** "Unexpected non-whitespace
+  character after JSON at position 3" does not say which document.
+
+## Findings (fifteenth run)
+
+### 27. A window opened on an unreadable store forgets its binding (moderate)
+
+**Steps:**
+1. `W17/acme` is bound to 17.0 (`odt.workspaceBinding` holds `ver-17-0001`).
+2. With every window closed, make one version document unreadable, as in
+   19.2.
+3. Open `W17/acme`, then close it and restore the document.
+4. Open `W17/acme` again.
+
+**Expected:** the window still runs 17.0, bound.
+
+**Happened:**
+- **In step 3,** at activation, the log says:
+
+  ```
+  ERROR: Could not read the data store /tmp/odt-brief/shared14.db: … Nothing is saved to it until it reads again.
+  INFO: [binding] the version this workspace was bound to (ver-17-0001) no longer exists; asking again
+  ```
+
+- **In step 4,** the binding is `{asked: false}`:
+  - the window shows "Which version here?";
+  - its registry row has an empty `version_id`;
+  - it had no project selected either. That may have come from my Choose Data
+    Store step rather than from the read failure.
+
+**Why:** the twelfth run's "bound to a deleted version" check runs against
+the versions this window could load, and after a failed read that is none.
+The store is protected from the failed read; the window's own state is not.
+
+**Effect:** one bad read and every workspace opened meanwhile has to be bound
+again. The proposal makes that one click, but a workspace whose folders say
+nothing (an empty folder, or one bound by hand) loses the choice.
+
+### 28. The unreadable-store window: a second error, empty views that invite work, and a Migrate offer (low)
+
+- **Two errors.** Opening the window shows the error once. Opening the Odoo
+  DevTools view adds a second notification, "Could not read the data store
+  /tmp/odt-brief/shared14.db: Unexpected non-whitespace character after JSON
+  at position 3 (line 1 column 4)", without the last sentence and without the
+  button. The log line behind it is "Failed to load versions for tree
+  view: …".
+- **Empty views.** Projects says "No projects yet. A project groups your
+  repositories, databases and settings." with Create Project, as on a new
+  store. Nothing there says the data could not be read.
+- **A Migrate offer.** "1 version(s) were built before provisioning and can be
+  migrated." appears with Migrate and Later. The version is the in-memory
+  "Default Version", which is in no store.
+
+### 29. Set Up an Upgrade no longer confirms when both checkouts are on their branches (low)
+
+- **The brief's 16.1** still expects the confirmation at Set Up, quoted.
+- **The brief's own setup** has `W17/acme` on `staging` and `W19/acme` on
+  `main`, the two branches chosen.
+- **With the new rule** (confirm only when a checkout has to switch,
+  `switchesOwnCheckouts` in `src/commands/upgradeCommand.ts`), that setup
+  shows nothing: Set Up goes straight to "Upgrade set up: 17.0 → 19.0.".
+- **The confirmation still appears** when a checkout is on another branch
+  (20.1).
+- **Either** the brief's 16.1 should drop the quote for this setup, **or**
+  the first Set Up should still say which checkouts each side uses, since it
+  is the only place that names them.
 
 # Fourteenth run: the thirteenth run's fixes (`d053e72`)
 
