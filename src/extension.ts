@@ -129,7 +129,6 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('odooDebugger.statusBar.enabled')) {
             void statusBar.update();
-    void offerWorkspaceBinding();
         }
     }));
 
@@ -293,6 +292,8 @@ export async function activate(context: vscode.ExtensionContext) {
     registerWrongCopyGuard(context);
 
     void statusBar.update();
+    // Once per window, on a shared store: which version does it run?
+    void offerWorkspaceBinding();
 
     // The queue builds versions one at a time and survives a reload, so a
     // window that closed mid-drain resumes rather than dropping the rest.

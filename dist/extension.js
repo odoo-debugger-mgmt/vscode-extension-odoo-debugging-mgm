@@ -150,7 +150,6 @@ async function activate(context) {
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('odooDebugger.statusBar.enabled')) {
             void statusBar.update();
-            void (0, bindingCommand_1.offerWorkspaceBinding)();
         }
     }));
     // One-time v1.2 migrations: fold legacy per-DB odooVersion into versions,
@@ -300,6 +299,8 @@ async function activate(context) {
     });
     (0, wrongCopyGuard_1.registerWrongCopyGuard)(context);
     void statusBar.update();
+    // Once per window, on a shared store: which version does it run?
+    void (0, bindingCommand_1.offerWorkspaceBinding)();
     // The queue builds versions one at a time and survives a reload, so a
     // window that closed mid-drain resumes rather than dropping the rest.
     (0, provisionQueue_1.setQueueProvisioner)(async (branch, name) => {
