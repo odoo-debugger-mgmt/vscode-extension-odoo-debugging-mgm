@@ -28,7 +28,7 @@ This file holds eight runs, newest first. The earlier runs are kept unchanged.
   acme-db19 on 19.0, acme-db1 selected, 17.0 active, no `selectedDbByVersion`,
   no upgrade.
 
-## Verdict (seventh run's follow-ups)
+## Verdict (eighth run)
 
 - **Everything asked for matched.**
 - **A new finding, 14 (moderate):** picking a 19.0 database in a window whose
