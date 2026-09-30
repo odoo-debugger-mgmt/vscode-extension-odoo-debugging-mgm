@@ -92,6 +92,29 @@ async function launchedDb(): Promise<string | undefined> {
         assert.strictEqual(await launchedDb(), 'acme-db2');
     });
 
+    test('picking another version\'s database leaves the first version its own', async () => {
+        // Finding 14, on 1.3-shaped data: acme-db1 selected but never picked,
+        // so nothing remembered it for 17.0.
+        const seeded = seed();
+        seeded.projects[0].isSelected = true;
+        seeded.projects[0].dbs[0].isSelected = true;
+        (seeded.projects[0].dbs as any[]).push({ id: 'acme-db19', versionId: 'v19', modules: [] });
+        (seeded.versions as any).v19 = { id: 'v19', odooVersion: '19.0', settings: {} };
+        await store.commit(await store.read(), seeded);
+        SettingsStore.useForTesting(store, memento());
+
+        // What selectDatabase does for acme-db19.
+        const data = await SettingsStore.get();
+        const project = data.projects[0];
+        project.dbs.forEach(db => (db.isSelected = db.id === 'acme-db19'));
+        project.selectedDbByVersion = rememberDbForVersion(project.selectedDbByVersion, 'v19', 'acme-db19');
+        await SettingsStore.saveWithoutComments(data);
+
+        const after = (await SettingsStore.get()).projects[0];
+        assert.strictEqual(dbForVersion(after, 'v17')?.id, 'acme-db1');
+        assert.strictEqual(dbForVersion(after, 'v19')?.id, 'acme-db19');
+    });
+
     test('after another window turns an upgrade on and off, a window launches what it shows', async () => {
         const windowA = memento();
         const windowB = memento();

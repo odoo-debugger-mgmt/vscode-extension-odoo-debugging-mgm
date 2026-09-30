@@ -10,6 +10,7 @@ import {
     applySelection,
     extractSelection,
     isEmptySelection,
+    keepLeftDatabase,
     normalizeSelection,
     projectKey,
     stripSelection
@@ -218,5 +219,38 @@ suite('Workspace selection', () => {
         test('a selection stored before this moved leaves the data\'s memory alone', () => {
             assert.deepStrictEqual(memoryOf(applySelection(withMemory(), { ...EMPTY_SELECTION })), { v17: 'acme-17', v19: 'acme-19' });
         });
+    });
+});
+
+suite('The version the selection leaves keeps its database', () => {
+    function moved(memory?: Record<string, string>, dbs = [
+        { id: 'acme-db1', versionId: 'v17' },
+        { id: 'acme-db19', versionId: 'v19', isSelected: true }
+    ]): any {
+        return { projects: [{ uid: 'p1', name: 'Acme', dbs, selectedDbByVersion: memory }] };
+    }
+    const was = (dbId: string) => ({ selectedDbByProject: { p1: dbId } });
+
+    test('a selection never picked is remembered under its own version when it moves', () => {
+        // Finding 14: every 1.3 selection is in no memory, so picking a 19.0
+        // database left 17.0 with none.
+        const data = keepLeftDatabase(moved(), was('acme-db1'));
+        assert.deepStrictEqual(data.projects[0].selectedDbByVersion, { v17: 'acme-db1' });
+    });
+
+    test('what a version already remembers is not overwritten', () => {
+        const data = keepLeftDatabase(moved({ v17: 'acme-db2' }), was('acme-db1'));
+        assert.deepStrictEqual(data.projects[0].selectedDbByVersion, { v17: 'acme-db2' });
+    });
+
+    test('a selection that did not move changes nothing', () => {
+        const data = keepLeftDatabase(moved(), was('acme-db19'));
+        assert.strictEqual(data.projects[0].selectedDbByVersion, undefined);
+    });
+
+    test('a deleted or versionless database it leaves is ignored', () => {
+        assert.strictEqual(keepLeftDatabase(moved(), was('gone')).projects[0].selectedDbByVersion, undefined);
+        const legacy = moved(undefined, [{ id: 'old' } as any, { id: 'acme-db19', versionId: 'v19', isSelected: true }]);
+        assert.strictEqual(keepLeftDatabase(legacy, was('old')).projects[0].selectedDbByVersion, undefined);
     });
 });

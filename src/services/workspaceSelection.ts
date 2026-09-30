@@ -66,7 +66,7 @@ interface ProjectLike {
     uid?: string;
     name?: string;
     isSelected?: boolean;
-    dbs?: Array<{ id?: string; isSelected?: boolean }>;
+    dbs?: Array<{ id?: string; isSelected?: boolean; versionId?: string }>;
     testingConfig?: Partial<TestingState> & { savedModuleStates?: unknown };
     selectedDbByVersion?: Record<string, string>;
 }
@@ -256,6 +256,33 @@ export function applySelection<T extends Partial<DebuggerData>>(data: T, selecti
         if (version && typeof version === 'object') {
             (version as { isActive?: boolean }).isActive = id === active;
         }
+    }
+    return data;
+}
+
+/**
+ * Records, in place, the database the selection is leaving under that
+ * database's own version, when that version remembers nothing yet.
+ *
+ * A version launches only its own databases: the selection counts for its
+ * version, and the memory for the others. A database that was selected but
+ * never picked - every 1.3 selection - is in no memory, so moving the
+ * selection to another version's database left the first version with none.
+ * An existing memory is never overwritten.
+ */
+export function keepLeftDatabase<T extends Partial<DebuggerData>>(data: T, previous: WorkspaceSelection | undefined): T {
+    if (!previous) {
+        return data;
+    }
+    for (const project of projectsOf(data)) {
+        const leftId = previous.selectedDbByProject[projectKey(project)];
+        const dbs = project.dbs ?? [];
+        const nowId = dbs.find(db => db?.isSelected)?.id;
+        const left = leftId && leftId !== nowId ? dbs.find(db => db?.id === leftId) : undefined;
+        if (!left?.versionId || project.selectedDbByVersion?.[left.versionId]) {
+            continue;
+        }
+        project.selectedDbByVersion = { ...(project.selectedDbByVersion ?? {}), [left.versionId]: leftId! };
     }
     return data;
 }

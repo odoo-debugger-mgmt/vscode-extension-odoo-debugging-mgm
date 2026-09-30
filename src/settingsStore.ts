@@ -23,6 +23,7 @@ import {
     WorkspaceSelection,
     applySelection,
     extractSelection,
+    keepLeftDatabase,
     normalizeSelection,
     readSelection,
     stripSelection,
@@ -297,8 +298,11 @@ export class SettingsStore {
             ?? this.cache.get(store.location)?.read;
         let payload = this.cloneData(data);
         const memento = this.selectionState;
+        const previous = memento ? readSelection(memento) : undefined;
+        // Before extracting: the version the selection leaves keeps its database.
+        keepLeftDatabase(payload, previous);
         const selection = memento
-            ? { memento, value: extractSelection(payload, readSelection(memento)) }
+            ? { memento, value: extractSelection(payload, previous) }
             : undefined;
         if (memento && store.kind === 'sqlite') {
             payload = stripSelection(payload);

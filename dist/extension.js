@@ -1112,8 +1112,11 @@ class SettingsStore {
             ?? this.cache.get(store.location)?.read;
         let payload = this.cloneData(data);
         const memento = this.selectionState;
+        const previous = memento ? (0, workspaceSelection_1.readSelection)(memento) : undefined;
+        // Before extracting: the version the selection leaves keeps its database.
+        (0, workspaceSelection_1.keepLeftDatabase)(payload, previous);
         const selection = memento
-            ? { memento, value: (0, workspaceSelection_1.extractSelection)(payload, (0, workspaceSelection_1.readSelection)(memento)) }
+            ? { memento, value: (0, workspaceSelection_1.extractSelection)(payload, previous) }
             : undefined;
         if (memento && store.kind === 'sqlite') {
             payload = (0, workspaceSelection_1.stripSelection)(payload);
@@ -5621,6 +5624,7 @@ exports.projectKey = projectKey;
 exports.extractSelection = extractSelection;
 exports.stripSelection = stripSelection;
 exports.applySelection = applySelection;
+exports.keepLeftDatabase = keepLeftDatabase;
 exports.isEmptySelection = isEmptySelection;
 exports.normalizeSelection = normalizeSelection;
 exports.readSelection = readSelection;
@@ -5805,6 +5809,32 @@ function applySelection(data, selection) {
         if (version && typeof version === 'object') {
             version.isActive = id === active;
         }
+    }
+    return data;
+}
+/**
+ * Records, in place, the database the selection is leaving under that
+ * database's own version, when that version remembers nothing yet.
+ *
+ * A version launches only its own databases: the selection counts for its
+ * version, and the memory for the others. A database that was selected but
+ * never picked - every 1.3 selection - is in no memory, so moving the
+ * selection to another version's database left the first version with none.
+ * An existing memory is never overwritten.
+ */
+function keepLeftDatabase(data, previous) {
+    if (!previous) {
+        return data;
+    }
+    for (const project of projectsOf(data)) {
+        const leftId = previous.selectedDbByProject[projectKey(project)];
+        const dbs = project.dbs ?? [];
+        const nowId = dbs.find(db => db?.isSelected)?.id;
+        const left = leftId && leftId !== nowId ? dbs.find(db => db?.id === leftId) : undefined;
+        if (!left?.versionId || project.selectedDbByVersion?.[left.versionId]) {
+            continue;
+        }
+        project.selectedDbByVersion = { ...(project.selectedDbByVersion ?? {}), [left.versionId]: leftId };
     }
     return data;
 }
