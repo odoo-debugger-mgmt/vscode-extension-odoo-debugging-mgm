@@ -8,6 +8,7 @@ import { registerCommand } from './registerCommand';
 import { SettingsStore } from '../settingsStore';
 import { VersionsService } from '../versionsService';
 import { startServerForVersion } from '../debugger';
+import { getSessionByName } from '../services/debugSessions';
 import { ensureUpgradeConfigModel, type UpgradeConfigModel } from '../models/upgrade';
 import { boundVersionId } from '../services/workspaceBinding';
 import { currentMainStore } from '../services/mainStore';
@@ -111,9 +112,36 @@ async function openOtherSide(): Promise<void> {
     }
 }
 
+/**
+ * Stops both sides' servers. Stop Server stops only the active version, so
+ * after Start Both Servers the other side had to be stopped from the debug
+ * toolbar.
+ */
+async function stopBothServers(): Promise<void> {
+    const upgrade = await currentUpgrade();
+    if (!upgrade) {
+        return;
+    }
+    const { config } = upgrade;
+    const versions = VersionsService.getInstance();
+    const stopped: string[] = [];
+    for (const side of [config.from, config.to]) {
+        const version = side?.versionId ? versions.getVersion(side.versionId) : undefined;
+        const session = version ? getSessionByName(version.settings.debuggerName) : undefined;
+        if (version && session) {
+            await vscode.debug.stopDebugging(session);
+            stopped.push(version.name);
+        }
+    }
+    void showInfo(stopped.length > 0
+        ? `Stopped ${stopped.join(' and ')}.`
+        : 'Neither side of the upgrade is running in this window.');
+}
+
 export function registerUpgradeSideCommands(deps: CommandDeps): void {
     deps.context.subscriptions.push(
         registerCommand('odoo.startThisSide', startThisSide),
-        registerCommand('odoo.openOtherSide', openOtherSide)
+        registerCommand('odoo.openOtherSide', openOtherSide),
+        registerCommand('odoo.stopBothServers', stopBothServers)
     );
 }

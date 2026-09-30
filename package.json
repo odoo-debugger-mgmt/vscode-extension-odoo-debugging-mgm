@@ -750,6 +750,12 @@
         "icon": "$(run-all)"
       },
       {
+        "command": "odoo.stopBothServers",
+        "title": "Stop Both Servers",
+        "category": "Odoo DevTools",
+        "icon": "$(debug-stop)"
+      },
+      {
         "command": "odoo.startThisSide",
         "title": "Start This Side of the Upgrade",
         "category": "Odoo DevTools",

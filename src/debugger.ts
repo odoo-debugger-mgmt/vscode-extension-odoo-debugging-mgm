@@ -585,7 +585,7 @@ export async function stopDebugServer(): Promise<void> {
  */
 export async function startServerForVersion(
     versionId: string | undefined,
-    options: { noDebug?: boolean; quiet?: boolean } = {}
+    options: { noDebug?: boolean; quiet?: boolean; afterPick?: boolean } = {}
 ): Promise<{ ok: boolean; message?: string }> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
@@ -633,6 +633,13 @@ export async function startServerForVersion(
         const choice = await showError(message, 'Select Database');
         if (choice === 'Select Database') {
             await vscode.commands.executeCommand('dbSelector.quickSearch', { versionId: version.id });
+            // Picked one: carry on with the start that asked for it, once,
+            // after writing its launch entry.
+            const picked = dbForVersion((await SettingsStore.peekSelectedProject())?.project, version.id);
+            if (picked && !options.afterPick) {
+                await setupDebugger();
+                return startServerForVersion(version.id, { ...options, afterPick: true });
+            }
         }
         return { ok: false, message };
     }

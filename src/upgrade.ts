@@ -333,6 +333,12 @@ export class UpgradeTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         start.tooltip = 'Starts each side on its own database and port.';
         items.push(start);
 
+        const stop = new vscode.TreeItem('Stop Both Servers', vscode.TreeItemCollapsibleState.None);
+        stop.iconPath = new vscode.ThemeIcon('debug-stop');
+        stop.command = { command: 'odoo.stopBothServers', title: 'Stop Both Servers' };
+        stop.tooltip = 'Stops both sides\' servers this window started.';
+        items.push(stop);
+
         // Across two workspaces: each window runs its own side, and can open
         // the other one's window (design §7).
         const side = thisSide(config, boundVersionId(), VersionsService.getInstance().getActiveVersion()?.id);

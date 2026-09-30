@@ -7616,6 +7616,11 @@ class UpgradeTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         start.command = { command: 'odoo.startBothServers', title: 'Start Both Servers' };
         start.tooltip = 'Starts each side on its own database and port.';
         items.push(start);
+        const stop = new vscode.TreeItem('Stop Both Servers', vscode.TreeItemCollapsibleState.None);
+        stop.iconPath = new vscode.ThemeIcon('debug-stop');
+        stop.command = { command: 'odoo.stopBothServers', title: 'Stop Both Servers' };
+        stop.tooltip = 'Stops both sides\' servers this window started.';
+        items.push(stop);
         // Across two workspaces: each window runs its own side, and can open
         // the other one's window (design §7).
         const side = (0, upgradeSides_1.thisSide)(config, (0, workspaceBinding_1.boundVersionId)(), versionsService_1.VersionsService.getInstance().getActiveVersion()?.id);
@@ -20290,6 +20295,13 @@ async function startServerForVersion(versionId, options = {}) {
         const choice = await (0, utils_1.showError)(message, 'Select Database');
         if (choice === 'Select Database') {
             await vscode.commands.executeCommand('dbSelector.quickSearch', { versionId: version.id });
+            // Picked one: carry on with the start that asked for it, once,
+            // after writing its launch entry.
+            const picked = (0, dbResolution_1.dbForVersion)((await settingsStore_1.SettingsStore.peekSelectedProject())?.project, version.id);
+            if (picked && !options.afterPick) {
+                await setupDebugger();
+                return startServerForVersion(version.id, { ...options, afterPick: true });
+            }
         }
         return { ok: false, message };
     }
@@ -27208,6 +27220,7 @@ const registerCommand_1 = __webpack_require__(83);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(32);
 const debugger_1 = __webpack_require__(98);
+const debugSessions_1 = __webpack_require__(86);
 const upgrade_1 = __webpack_require__(40);
 const workspaceBinding_1 = __webpack_require__(61);
 const mainStore_1 = __webpack_require__(27);
@@ -27295,8 +27308,33 @@ async function openOtherSide() {
         await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.parse(chosen.uri), { forceNewWindow: true });
     }
 }
+/**
+ * Stops both sides' servers. Stop Server stops only the active version, so
+ * after Start Both Servers the other side had to be stopped from the debug
+ * toolbar.
+ */
+async function stopBothServers() {
+    const upgrade = await currentUpgrade();
+    if (!upgrade) {
+        return;
+    }
+    const { config } = upgrade;
+    const versions = versionsService_1.VersionsService.getInstance();
+    const stopped = [];
+    for (const side of [config.from, config.to]) {
+        const version = side?.versionId ? versions.getVersion(side.versionId) : undefined;
+        const session = version ? (0, debugSessions_1.getSessionByName)(version.settings.debuggerName) : undefined;
+        if (version && session) {
+            await vscode.debug.stopDebugging(session);
+            stopped.push(version.name);
+        }
+    }
+    void (0, notifications_1.showInfo)(stopped.length > 0
+        ? `Stopped ${stopped.join(' and ')}.`
+        : 'Neither side of the upgrade is running in this window.');
+}
 function registerUpgradeSideCommands(deps) {
-    deps.context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.startThisSide', startThisSide), (0, registerCommand_1.registerCommand)('odoo.openOtherSide', openOtherSide));
+    deps.context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.startThisSide', startThisSide), (0, registerCommand_1.registerCommand)('odoo.openOtherSide', openOtherSide), (0, registerCommand_1.registerCommand)('odoo.stopBothServers', stopBothServers));
 }
 
 
