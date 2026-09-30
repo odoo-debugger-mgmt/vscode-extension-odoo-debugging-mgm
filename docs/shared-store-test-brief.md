@@ -358,6 +358,28 @@ acme-db19 (19.0) to `main`. Use a fresh profile, so neither window was asked.
    Version… and Not Now.
 6. **A workspace on its own file** (no shared store): **expect** no question.
 
+## 15 · Workspaces find each other (step 3c)
+
+Setup: item 14's two workspaces, `W17/acme` bound to 17.0 and `W19/acme` to
+19.0, on `shared14.db`, plus A pinned to its own file.
+
+1. **Open both.** With the `sqlite3` CLI, `SELECT id, name, uri, version_id,
+   last_seen FROM workspaces;` **expect** one row each for `W17/acme` and
+   `W19/acme`, with their versions, and none for A. Binding changes are
+   reflected (rebind `W17` to 19.0 and back; the row follows).
+2. **In `W17/acme`,** hover Odoo 19.0 in the Versions view. **Expect** "Also
+   runs in: acme …" naming `W19`'s workspace.
+3. **Right-click Odoo 19.0 → Open the Workspace for a Version…** **Expect**
+   `W19/acme` to open in a new window (or be focused). From the Command
+   Palette with no version, **expect** a list of the other workspaces, each
+   with its version.
+4. **Pruning:** close every window, rename `W17` on disk, reopen `W19`.
+   **Expect** `W17`'s row gone. Put it back afterwards.
+5. **In A** (its own file), **expect** the command to say only a shared store
+   keeps a list of workspaces.
+6. **Other windows' views** refresh once when a window registers (a store
+   change), and not again while idle — check item 6's no-ping-pong still holds.
+
 ## 12 · A store from the future
 
 1. With every window closed, open `/tmp/odt-brief/shared.db` in the `sqlite3`

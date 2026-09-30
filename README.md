@@ -263,6 +263,11 @@ left as it is. The Projects view shows which shared store it is reading.
   workspace's own folders become its code: a clone the workspace opens is what
   that version runs, with nothing to configure. **Bind This Workspace to a
   Version…** changes it later; switching the active version works as always.
+- **Workspaces find each other.** Each workspace on a shared store is recorded
+  in it, with the version it runs. A version's tooltip in the Versions view
+  names the other workspaces that run it, and **Open the Workspace for a
+  Version…** (Command Palette, or a version's context menu) opens one. Entries
+  unseen for 90 days, or whose folder is gone, are dropped.
 - A store written by a newer Odoo DevTools opens read-only, and says so.
 - Keep the store on a local disk: SQLite's locking is unreliable over network
   shares.

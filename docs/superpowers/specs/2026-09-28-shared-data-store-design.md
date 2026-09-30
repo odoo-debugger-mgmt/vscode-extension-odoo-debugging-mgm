@@ -581,7 +581,15 @@ Each step ships on its own and leaves the extension working.
      version, once. Choosing activates the version through Switch Active
      Version. The bound window's folders are searched first for that
      version's checkouts (`extraRootsFor` in `services/versionRepos.ts`).
-   - **3c, the registry:** next.
+   - **3c, the registry — implemented.** A `workspaces` table beside the
+     documents (`SqliteMainStore.listWorkspaces` / `recordWorkspace` /
+     `forgetWorkspaces`); no schema bump, since older builds ignore it, and a
+     read-only store records nothing. A window records itself on open and
+     when its binding changes (`services/workspaceRegistry.ts`); rows unseen
+     for 90 days or whose file or folder is gone are pruned. Surfaced in the
+     Versions view tooltip and **Open the Workspace for a Version…** - the
+     piece step 4's Open the Other Side builds on. Attached projects are not
+     recorded: nothing attaches projects to a workspace yet.
 4. **The upgrade plan** only copies shared directories; Start This Side; Open
    the Other Side.
 5. **Cross-window guards** (§9). The provisioning lease can come first, since it
