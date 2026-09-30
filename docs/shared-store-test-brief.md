@@ -298,6 +298,35 @@ For each editor available:
    - the extension does not load at all. The engine is `^1.101.0`, and some
      forks report an older VS Code version. That is worth reporting too.
 
+## 13 · Per-version repository locations (step 3a)
+
+Setup: an origin repository, and two clones of it — `/tmp/odt-brief/v17/acme`
+and `/tmp/odt-brief/v19/acme-19` (another folder name on purpose), each with
+an `origin` URL naming the same repository in a different form (`git@…:org/acme.git`
+and `https://…/org/acme`). Version 17.0's **Custom Addons** is `/tmp/odt-brief/v17`,
+19.0's is `/tmp/odt-brief/v19`. The project's `acme` repository is the 17.0
+clone, in single-checkout mode. A 17.0 and a 19.0 database each map `acme` to
+a different branch.
+
+1. **Switch to the 19.0 database.** **Expect** the checkout in
+   `v19/acme-19` only; `git -C v17/acme branch --show-current` unchanged.
+2. **Expect** the 19.0 launch entry's `--addons-path` to name `v19/acme-19`,
+   the 17.0 entry's `v17/acme`; Modules and Project Repos to show the 19.0
+   clone while a 19.0 database is selected.
+3. **Switch back to the 17.0 database.** **Expect** the checkout in
+   `v17/acme` only.
+4. **Set Repository Location for a Version…** → 19.0 → `acme`: the list shows
+   where 19.0 finds it now and "found by its remote". Choose another folder
+   (a third clone); **expect** the 19.0 entry to use it, and the version's
+   tooltip to list it as set by hand. **Use the Default** undoes it. A folder
+   that is not a git checkout is refused; a clone of another remote asks
+   first.
+5. **The single-clone layout:** point both versions' Custom Addons at one
+   folder holding one clone. **Expect** everything exactly as before this
+   change: both versions resolve to that clone, and a switch checks out in it.
+6. **Save All as Default** on a provisioned version now succeeds (it failed
+   before on `managedPaths`); `repoPaths` is not written as a setting.
+
 ## 12 · A store from the future
 
 1. With every window closed, open `/tmp/odt-brief/shared.db` in the `sqlite3`

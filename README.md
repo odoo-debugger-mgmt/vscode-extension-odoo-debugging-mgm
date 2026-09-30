@@ -198,6 +198,24 @@ Turning the mode back off (**Use a Single Checkout**, from the Command Palette)
 removes the copies the extension created, keeping any with uncommitted changes
 and telling you which.
 
+### Repository layouts
+
+Developers keep custom code in different ways, and each version finds its own
+copy of a project repository whichever way you use:
+
+- **One clone for every version** — one custom addons folder, one checkout
+  that switches branch. Every version finds the same clone, exactly as before.
+- **A folder per version** — `~/v17/acme` and `~/v19/acme`, two clones of one
+  repository, each version's **Custom Addons** setting pointing at its own
+  folder. Each version finds its clone (by its `origin` remote, so the folder
+  may be named differently, or else by name). Switching to a 19.0 database
+  checks out in the 19.0 clone and never touches the 17.0 one; the addons
+  path, Modules and Project Repos follow.
+- **One copy per branch** — the extension's own copies, above. Unchanged.
+- **A different home the folder cannot find** — **Set Repository Location for
+  a Version…** (Command Palette, or a version's context menu) sets it by hand.
+  The version's tooltip lists what is set that way.
+
 ### Project Repos (Explorer)
 
 - Browse only the active project's repositories, with the current branch shown per repo.

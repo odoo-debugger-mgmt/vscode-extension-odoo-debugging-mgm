@@ -560,6 +560,21 @@ Each step ships on its own and leaves the extension working.
      still offered the branch its other side was about to use; both sides
      are now resolved before either is built.
 3. **Per-version repo locations**, workspace binding and the registry.
+   - **3a, repo locations — implemented.** `pickRepoCheckout` and
+     `reposForVersion` (`services/repoPaths.ts`), the locator
+     (`services/repoLocations.ts`), and one entry point for every consumer,
+     `resolveReposForDatabase` / `reposSeenByDatabase`
+     (`services/versionRepos.ts`): the launch entries, module discovery,
+     scaffolding, Project Repos, the generated workspace and a database
+     switch's checkouts. Order: `settings.repoPaths` override, a checkout
+     under the version's `customAddonsPath` with the same remote, one there
+     with the same name, `repo.path`. Only checkout-mode repositories are
+     relocated; a copy-per-branch repository keeps its source. The remote is
+     read on demand and cached, not stored. The upgrade setup and the
+     wrong-copy guard deal only in per-branch copies, so they were left as
+     they are until step 4.
+   - **3b, binding a workspace to a version,** and **3c, the registry:**
+     next.
 4. **The upgrade plan** only copies shared directories; Start This Side; Open
    the Other Side.
 5. **Cross-window guards** (§9). The provisioning lease can come first, since it
