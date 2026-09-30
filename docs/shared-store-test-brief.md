@@ -149,7 +149,8 @@ not with nothing selected.
 
    A generated workspace an earlier build opened, reopened from **Recent**,
    shows a message and a `Reopen for debugger` status bar item that stays
-   until clicked; clicking it reopens the window from its file.
+   until clicked; clicking it reopens the window from its file, and Recent
+   then lists the workspace once.
 4. In the generated window, select a different database. Back in `A`, **expect**
    `A`'s selection unchanged. Selection is per window.
 
@@ -229,7 +230,9 @@ Both windows on the same project, on one shared store.
    the second run: they disagreed.)
 6. In a window where no 19.0 database is chosen, **expect** no 19.0 entry in
    the launch file, and Start Server on 19.0 to ask for a database. Choosing
-   one brings the entry back, naming it.
+   one brings the entry back, naming it. Meanwhile the status bar reads
+   `no 19.0 database`, and both it and Start Server's Select Database list
+   only 19.0 databases (and legacy ones with no version).
 
 ## 8 · Testing mode is per window, and its stash is per database
 
