@@ -233,6 +233,9 @@ Both windows on the same project, on one shared store.
    one brings the entry back, naming it. Meanwhile the status bar reads
    `no 19.0 database`, and both it and Start Server's Select Database list
    only 19.0 databases (and legacy ones with no version).
+   Start this step from a 17.0 selection that was never picked in this build
+   (the seed's own). After picking the 19.0 database, `launch.json` still has
+   the 17.0 entry with its database, and switching back to 17.0 shows it.
 
 ## 8 · Testing mode is per window, and its stash is per database
 
