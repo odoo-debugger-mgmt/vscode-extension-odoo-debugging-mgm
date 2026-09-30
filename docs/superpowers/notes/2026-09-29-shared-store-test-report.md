@@ -5,7 +5,208 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds fifteen runs, newest first. The earlier runs are kept unchanged.
+This file holds sixteen runs, newest first. The earlier runs are kept unchanged.
+
+# Sixteenth run: the fifteenth run's fixes (`2dc0ee3`)
+
+**Scope:** as asked:
+- `npm test`;
+- item 19.2, with finding 27's steps;
+- item 16.1's confirmation;
+- item 21;
+- spot checks of 20.1, the 17.1 freeze, and the version question on a fresh
+  window.
+
+Everything on the list was reached.
+
+**Setup:** as the fifteenth run.
+- **The build:** `2dc0ee3`, installed in the same throwaway profile
+  (`HOME=/tmp/claude/bt`), with `W17/acme` bound to 17.0 and `W19/acme` to
+  19.0.
+- **The store:** `shared14.db`, reset to its state before the thirteenth run.
+- **The builds:** the throwaway git source rebuilt empty, the wheel server
+  that waits 30 s, and an emptied provisioning root.
+- **The store afterwards:** six versions and an upgrade that is remembered
+  but off.
+
+## Verdict (sixteenth run)
+
+- **Findings 27 and 29 are fixed.** Item 21 and the three spot checks match.
+- **Finding 28 is fixed in part (finding 30, low).** Projects and Databases
+  now say the store could not be read, and the error names the broken
+  document. But opening the Odoo DevTools view still adds a second error, and
+  the Migrate offer is still there.
+- **Finding 31 (low):** moving a workspace to its own data file and back
+  drops its binding and selection, and each direction shows a "was deleted in
+  another window" notice for a version nobody deleted.
+
+## Test suite: matched
+
+- VS Code 1.139.1, normal git config: **536 passing, 0 failing**.
+
+## 19.2, with finding 27's steps: matched, except the second error and the Migrate offer (finding 30)
+
+- **The steps:** with every window closed, `ver-17-0001` stored as a BLOB,
+  then `W17/acme` opened.
+- **Activation:** no activation error, and commands are found.
+- **The error,** with Choose Data Store…:
+
+  > Could not read the data store /tmp/odt-brief/shared14.db: its version
+  > "ver-17-0001" is not valid JSON (Unexpected non-whitespace character
+  > after JSON at position 3 (line 1 column 4)). Nothing is saved to it until
+  > it reads again.
+
+- **The views:**
+  - Projects: "The data store could not be read, so nothing is shown. Nothing
+    is saved to it until it reads again.", with Choose Data Store…;
+  - Databases: "The data store could not be read.", with Choose Data Store…;
+  - Repos still shows "No repositories found…" with Choose Custom Addons
+    Folder and Create Project. The brief only names Projects and Databases.
+- **Not matched:**
+  - **One error, also after opening the view.** Opening the Odoo DevTools view
+    added a second error (finding 30).
+  - **No Migrate offer.** "1 version(s) were built before provisioning and can
+    be migrated." was there, with Migrate and Later (finding 30).
+- **The store:** still four documents, and no "Default Version".
+- **A save:** Create Version → Profile only said "Failed to create version:
+  The data store /tmp/odt-brief/shared14.db could not be read, so nothing was
+  saved to it".
+- **The binding:** the log has no "[binding]" line, and the stored binding
+  stayed `ver-17-0001`.
+- **Finding 27's steps:** with the document restored, I opened `W17/acme`
+  again.
+  - It is **still bound**: no "Which version here?".
+  - Its registry row has `version_id` `ver-17-0001`.
+  - Its project and database selection came back too.
+
+## 16.1's confirmation: matched
+
+- **The steps:** `W17/acme` on `staging` and `W19/acme` on `main`; Set Up an
+  Upgrade in `W17`, acme-db2 → acme-db19, accepting both pickers' defaults
+  (`staging`, `main`, each "current branch").
+- **The confirmation appeared** although nothing has to switch:
+
+  > Databases     acme-db2 (Odoo 17.0) → acme-db19 (Odoo 19.0)
+  > Versions      Odoo 17.0 (exists), Odoo 19.0 (exists)
+  > Branches
+  >     acme: staging → Odoo 17.0, main → Odoo 19.0
+  >
+  > Each version already has its own checkout of these, so no copies are
+  > made:
+  >     acme: /tmp/odt-brief/W17/acme (Odoo 17.0), /tmp/odt-brief/W19/acme
+  > (Odoo 19.0)
+
+  with Cancel and Set It Up.
+- **After Set It Up:** "Upgrade set up: 17.0 → 19.0.".
+
+## 21 · This workspace only, in a clone: matched
+
+- **The steps:** in `W17/acme`, Choose Data Store… → This workspace only.
+- **The result:**
+  - "This workspace now uses its own data file.";
+  - `git status` in the clone is clean;
+  - `.git/info/exclude` now reads:
+
+    ```
+    # Odoo DevTools writes its launch entries here
+    /.vscode/launch.json
+    # Odoo DevTools records this workspace's data store here
+    /.vscode/settings.json
+    # Odoo DevTools keeps this workspace's data here
+    /.vscode/odoo-debugger-data.json
+    ```
+
+- **Back to the shared store:**
+  - Open an existing store… → `/tmp/odt-brief/shared14.db` → All workspaces
+    said "This workspace has its own data store set
+    (.vscode/odoo-debugger-data.json), which still wins here.", with Use the
+    Shared Store Here Too;
+  - that button said "Now using the shared store /tmp/odt-brief/shared14.db.";
+  - `.vscode/settings.json` was left holding `{}`.
+  - I removed the two files afterwards, as the brief says.
+- **The round trip cost the window its binding** (finding 31).
+
+## Spot checks: matched
+
+- **20.1:**
+  - turning the upgrade off and on with both checkouts on their branches:
+    "Upgrade resumed: 17.0 → 19.0.", with no confirmation;
+  - with `W17/acme` moved to `17.0-dev`: the plan with Cancel and Resume, and
+    Resume put it back on `staging`.
+- **The 17.1 freeze, once,** resumed while the other window was building:
+  - **The steps:** `W17` queued 16.0, 15.0 and 14.0, and I froze it 1 s into
+    15.0, during `python -m venv`.
+  - **The takeover:** `W19` took over at 14:24:23.
+  - **The resume** at 14:24:29.76. At 14:24:29.80, `W17` logged "[queue]
+    another window took over building; stopping here (15.0)".
+  - **No build process** ran under it in the next 25 s.
+  - Its "Provisioned 16.0." is the entry it had finished before the freeze.
+  - `W19` built 15.0 and 14.0, and each series has one version.
+- **The version question on a fresh window:** an empty folder never opened in
+  this profile was asked "Which version does this workspace run? It is asked
+  once; the store has several.", and shows "Which version here?" in the
+  status bar. Its registry row has an empty `version_id`.
+
+## Findings (sixteenth run)
+
+### 30. The unreadable-store window still shows a second error and a Migrate offer (low)
+
+Finding 28 had three parts. The views are fixed; these two are not.
+
+- **A second error.** After the first error, opening the Odoo DevTools view
+  adds another notification:
+
+  > Could not read the data store /tmp/odt-brief/shared14.db: its version
+  > "ver-17-0001" is not valid JSON (Unexpected non-whitespace character
+  > after JSON at position 3 (line 1 column 4))
+
+  It has no last sentence and no button. The log line behind it:
+
+  ```
+  ERROR: Failed to load versions for tree view: StoreReadError: Could not read the data store …
+  ```
+
+- **The Migrate offer.** "1 version(s) were built before provisioning and can
+  be migrated." still appears, with Migrate and Later. The log line is at
+  activation, right after "Failed to load versions". The version is the
+  in-memory "Default Version".
+
+### 31. Moving a workspace to its own file and back drops its binding, behind a "deleted in another window" notice (low)
+
+**Steps:** in `W17/acme`, bound to 17.0 with acme and acme-db2 selected:
+1. Choose Data Store… → This workspace only.
+2. Choose Data Store… → Open an existing store… → the shared store → All
+   workspaces → Use the Shared Store Here Too.
+
+**Happened:**
+- **After step 1,** the log says:
+
+  ```
+  INFO: "Odoo 17.0" was deleted in another window; this window now runs Default Version.
+  INFO: [binding] the version this workspace was bound to (ver-17-0001) no longer exists; asking again
+  ```
+
+  The first line is also shown as a notification.
+- **After step 2:**
+
+  ```
+  INFO: "Default Version" was deleted in another window; this window now runs Odoo 17.0.
+  INFO: Use Odoo 17.0 in this workspace? (acme here is on staging, which acme-db1 runs.)
+  ```
+
+  The window is unbound, shows "Which version here?", and has no project
+  selected.
+- **Meanwhile,** while the window was on its own file, its row in the shared
+  store's registry still named `ver-17-0001`.
+
+**Expected:** nothing about another window, since this window changed
+stores. Whether the binding should survive a round trip is a design choice.
+The binding belongs to the workspace, though, and the shared store it is
+bound in did not change.
+
+**Why, as far as I can tell:** the "deleted in another window" and "bound to
+a deleted version" checks compare this window's state with whatever store it
+reads now. After a store change, that is a different store, not a deletion.
 
 # Fifteenth run: the fourteenth run's fixes (`53c9324`)
 
