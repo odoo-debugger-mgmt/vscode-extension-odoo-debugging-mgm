@@ -53,14 +53,14 @@ const module_1 = __webpack_require__(91);
 const testing_1 = __webpack_require__(92);
 const upgrade_1 = __webpack_require__(39);
 const debugger_1 = __webpack_require__(93);
-const provisionQueue_1 = __webpack_require__(94);
+const provisionQueue_1 = __webpack_require__(95);
 const odooInstaller_1 = __webpack_require__(64);
 const settingsStore_1 = __webpack_require__(6);
 const mainStore_1 = __webpack_require__(27);
-const versionsTreeProvider_1 = __webpack_require__(96);
+const versionsTreeProvider_1 = __webpack_require__(97);
 const versionsService_1 = __webpack_require__(32);
 const context_1 = __webpack_require__(41);
-const server_1 = __webpack_require__(98);
+const server_1 = __webpack_require__(94);
 const sortPreferences_1 = __webpack_require__(99);
 const projectReposExplorer_1 = __webpack_require__(100);
 const logger_1 = __webpack_require__(12);
@@ -78,7 +78,7 @@ const statusBar_1 = __webpack_require__(104);
 const commands_1 = __webpack_require__(105);
 const projectWorkspace_1 = __webpack_require__(109);
 const workspaceBinding_1 = __webpack_require__(61);
-const workspaceRegistry_1 = __webpack_require__(97);
+const workspaceRegistry_1 = __webpack_require__(98);
 const bindingCommand_1 = __webpack_require__(130);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
@@ -18825,6 +18825,7 @@ const provisioning_1 = __webpack_require__(65);
 const customWorktree_1 = __webpack_require__(55);
 const setupState_1 = __webpack_require__(69);
 const odooInstaller_1 = __webpack_require__(64);
+const server_1 = __webpack_require__(94);
 /** Why prepareArgs refuses: no database of that version is selected. */
 const NO_DATABASE = 'Select a database before running this action.';
 // Databases we already told the user about; prepareArgs re-runs on every
@@ -19366,6 +19367,21 @@ async function startServerForVersion(versionId, options = {}) {
     // Restarting this version stops only this version's session; other
     // versions running side by side must survive.
     const existingSession = (0, debugSessions_1.getSessionByName)(settings.debuggerName);
+    // Something already on the port that is not this window's session is
+    // usually the same version started from another window. Odoo would only
+    // fail to bind; say what is going on instead.
+    const port = Number(settings.portNumber) || 0;
+    if (!existingSession && port && await (0, server_1.isPortOpen)(port)) {
+        const message = `"${version.name}" is already running on port ${port}, probably in another window.`;
+        if (!options.quiet) {
+            void (0, utils_1.showWarning)(message, 'Open in Browser').then(choice => {
+                if (choice === 'Open in Browser') {
+                    void vscode.env.openExternal((0, server_1.buildServerUrl)(port, db.id));
+                }
+            });
+        }
+        return { ok: false, message };
+    }
     if (existingSession) {
         await vscode.debug.stopDebugging(existingSession);
     }
@@ -19385,6 +19401,237 @@ async function startDebugServer(options = {}) {
 
 /***/ }),
 /* 94 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getActiveServerPort = getActiveServerPort;
+exports.pickPortForDatabase = pickPortForDatabase;
+exports.buildServerUrl = buildServerUrl;
+exports.isPortOpen = isPortOpen;
+exports.waitForPort = waitForPort;
+exports.resolvePortForDatabase = resolvePortForDatabase;
+exports.openServerInBrowser = openServerInBrowser;
+exports.registerServerLifecycle = registerServerLifecycle;
+/**
+ * Server URL helpers: resolves the local Odoo URL from the active
+ * version's port setting and opens databases in the browser, optionally
+ * waiting for the HTTP port to accept connections first.
+ */
+const vscode = __importStar(__webpack_require__(1));
+const net = __importStar(__webpack_require__(36));
+const versionsService_1 = __webpack_require__(32);
+const logger_1 = __webpack_require__(12);
+const notifications_1 = __webpack_require__(16);
+const runningState_1 = __webpack_require__(79);
+const debugSessions_1 = __webpack_require__(80);
+const DEFAULT_ODOO_PORT = 8069;
+/** Port the Odoo server listens on, from the active version's settings. */
+async function getActiveServerPort() {
+    try {
+        const settings = await versionsService_1.VersionsService.getInstance().getActiveVersionSettings();
+        const port = Number(settings.portNumber);
+        if (Number.isInteger(port) && port > 0 && port <= 65535) {
+            return port;
+        }
+    }
+    catch (error) {
+        logger_1.logger.debug('Could not read active version port, using default:', error);
+    }
+    return DEFAULT_ODOO_PORT;
+}
+/**
+ * Which port serves `dbId`. With several versions running, the active
+ * version's port is usually the wrong answer: a database belongs to the
+ * version that is actually serving it.
+ */
+function pickPortForDatabase(dbId, running, versions, dbVersionId, activePort) {
+    const byId = (id) => versions.find(version => version.id === id);
+    if (dbId) {
+        const live = running.find(instance => instance.dbName === dbId && !!instance.port);
+        if (live?.port) {
+            return { port: live.port, source: 'running', versionName: byId(live.versionId)?.name };
+        }
+    }
+    const owner = byId(dbVersionId);
+    if (owner?.portNumber) {
+        return { port: owner.portNumber, source: 'version', versionName: owner.name };
+    }
+    return { port: activePort, source: 'active' };
+}
+/** Local server URL, optionally routed straight into a database. */
+function buildServerUrl(port, dbName) {
+    const base = `http://localhost:${port}`;
+    if (!dbName) {
+        return vscode.Uri.parse(base);
+    }
+    return vscode.Uri.parse(`${base}/web?db=${encodeURIComponent(dbName)}`);
+}
+/** Whether something accepts a TCP connection on the port right now. */
+function isPortOpen(port) {
+    return new Promise(resolve => {
+        const socket = net.connect({ port, host: '127.0.0.1' });
+        const finish = (result) => {
+            socket.destroy();
+            resolve(result);
+        };
+        socket.setTimeout(1000, () => finish(false));
+        socket.once('connect', () => finish(true));
+        socket.once('error', () => finish(false));
+    });
+}
+/** Resolves true once the port accepts a TCP connection, false on timeout. */
+function waitForPort(port, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    const tryOnce = () => new Promise(resolve => {
+        const socket = net.connect({ port, host: '127.0.0.1' });
+        const finish = (result) => {
+            socket.destroy();
+            resolve(result);
+        };
+        socket.setTimeout(1000, () => finish(false));
+        socket.once('connect', () => finish(true));
+        socket.once('error', () => finish(false));
+    });
+    return (async () => {
+        while (Date.now() < deadline) {
+            if (await tryOnce()) {
+                return true;
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        return false;
+    })();
+}
+/** Resolves the port serving `dbId`, consulting live sessions first. */
+async function resolvePortForDatabase(dbId, dbVersionId) {
+    try {
+        const service = versionsService_1.VersionsService.getInstance();
+        await service.initialize();
+        const versions = service.getVersions().map(version => ({
+            id: version.id,
+            name: version.name,
+            portNumber: Number(version.settings.portNumber) || undefined
+        }));
+        return pickPortForDatabase(dbId, await (0, runningState_1.getRunningInstances)(), versions, dbVersionId, await getActiveServerPort());
+    }
+    catch (error) {
+        logger_1.logger.debug('Could not resolve the port for a database, using the active version:', error);
+        return { port: await getActiveServerPort(), source: 'active' };
+    }
+}
+/**
+ * Opens the Odoo web client for the given (or server-selected) database, on
+ * the port actually serving it. A dead port is reported rather than opened:
+ * a browser tab showing a connection error is worse than being told why.
+ */
+async function openServerInBrowser(dbName, dbVersionId) {
+    const resolved = await resolvePortForDatabase(dbName, dbVersionId);
+    const url = buildServerUrl(resolved.port, dbName);
+    if (await waitForPort(resolved.port, 400)) {
+        await vscode.env.openExternal(url);
+        return;
+    }
+    const target = resolved.versionName
+        ? `${resolved.versionName} (port ${resolved.port})`
+        : `port ${resolved.port}`;
+    const choice = await (0, notifications_1.showWarning)(`No Odoo server is answering on ${target}.`, 'Open Anyway');
+    if (choice === 'Open Anyway') {
+        await vscode.env.openExternal(url);
+    }
+}
+/** The version whose launch configuration this session was started from. */
+async function versionForSession(session) {
+    const name = session.configuration?.name;
+    if (typeof name !== 'string' || name.length === 0) {
+        return undefined;
+    }
+    try {
+        const service = versionsService_1.VersionsService.getInstance();
+        await service.initialize();
+        const version = service.getVersions().find(entry => entry.settings?.debuggerName === name);
+        if (!version) {
+            return undefined;
+        }
+        const port = Number(version.settings.portNumber);
+        return { portNumber: Number.isInteger(port) && port > 0 && port <= 65535 ? port : DEFAULT_ODOO_PORT };
+    }
+    catch {
+        return undefined;
+    }
+}
+/**
+ * Tracks the extension's own debug session: maintains the
+ * 'odoo-debugger.server_running' context key and, when
+ * odooDebugger.server.openBrowserOnStart is enabled, opens the web
+ * client once the server port starts accepting connections.
+ */
+function registerServerLifecycle(context, hooks) {
+    context.subscriptions.push(vscode.debug.onDidStartDebugSession(async (session) => {
+        const version = await versionForSession(session);
+        if (!version) {
+            return;
+        }
+        (0, debugSessions_1.trackSession)(session);
+        hooks.onRunningChanged((0, debugSessions_1.anySessionRunning)());
+        const openBrowser = vscode.workspace
+            .getConfiguration('odooDebugger')
+            .get('server.openBrowserOnStart', false);
+        if (!openBrowser) {
+            return;
+        }
+        // The session's own port, not the active version's: another version
+        // may have been activated since this one was launched.
+        if (await waitForPort(version.portNumber, 60000)) {
+            const dbName = await hooks.getSelectedDbName();
+            await vscode.env.openExternal(buildServerUrl(version.portNumber, dbName));
+        }
+        else {
+            logger_1.logger.debug(`Server port ${version.portNumber} did not open within 60s; not opening browser.`);
+        }
+    }));
+    context.subscriptions.push(vscode.debug.onDidTerminateDebugSession(session => {
+        (0, debugSessions_1.untrackSession)(session);
+        hooks.onRunningChanged((0, debugSessions_1.anySessionRunning)());
+    }));
+}
+
+
+/***/ }),
+/* 95 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -19406,7 +19653,7 @@ exports.stopProvisionQueue = stopProvisionQueue;
 exports.offerStop = offerStop;
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
-const provisionLease_1 = __webpack_require__(95);
+const provisionLease_1 = __webpack_require__(96);
 const setupState_1 = __webpack_require__(69);
 exports.EMPTY_QUEUE = { pending: [] };
 exports.QUEUE_STATE_KEY = 'odt.provisionQueue';
@@ -19598,7 +19845,7 @@ async function offerStop(context, remaining) {
 
 
 /***/ }),
-/* 95 */
+/* 96 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -19756,7 +20003,7 @@ function acquireLease(root, owner = exports.OWNER_ID, now = Date.now) {
 
 
 /***/ }),
-/* 96 */
+/* 97 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -19808,9 +20055,9 @@ const sortOptions_1 = __webpack_require__(37);
 const logger_1 = __webpack_require__(12);
 const baseTreeProvider_1 = __webpack_require__(5);
 const versionIdentity_1 = __webpack_require__(35);
-const provisionQueue_1 = __webpack_require__(94);
+const provisionQueue_1 = __webpack_require__(95);
 const upgrade_1 = __webpack_require__(39);
-const workspaceRegistry_1 = __webpack_require__(97);
+const workspaceRegistry_1 = __webpack_require__(98);
 /** Provisioned state for the tree description, from the shared predicate. */
 function provisioningLabel(version) {
     // The queue owns the row while it is building: "not provisioned" during a
@@ -20059,7 +20306,7 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 
 /***/ }),
-/* 97 */
+/* 98 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20211,223 +20458,6 @@ async function refreshRegistry() {
 function otherWorkspacesFor(versionId) {
     const own = thisWorkspaceId();
     return cached.filter(row => row.versionId === versionId && row.id !== own);
-}
-
-
-/***/ }),
-/* 98 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getActiveServerPort = getActiveServerPort;
-exports.pickPortForDatabase = pickPortForDatabase;
-exports.buildServerUrl = buildServerUrl;
-exports.waitForPort = waitForPort;
-exports.resolvePortForDatabase = resolvePortForDatabase;
-exports.openServerInBrowser = openServerInBrowser;
-exports.registerServerLifecycle = registerServerLifecycle;
-/**
- * Server URL helpers: resolves the local Odoo URL from the active
- * version's port setting and opens databases in the browser, optionally
- * waiting for the HTTP port to accept connections first.
- */
-const vscode = __importStar(__webpack_require__(1));
-const net = __importStar(__webpack_require__(36));
-const versionsService_1 = __webpack_require__(32);
-const logger_1 = __webpack_require__(12);
-const notifications_1 = __webpack_require__(16);
-const runningState_1 = __webpack_require__(79);
-const debugSessions_1 = __webpack_require__(80);
-const DEFAULT_ODOO_PORT = 8069;
-/** Port the Odoo server listens on, from the active version's settings. */
-async function getActiveServerPort() {
-    try {
-        const settings = await versionsService_1.VersionsService.getInstance().getActiveVersionSettings();
-        const port = Number(settings.portNumber);
-        if (Number.isInteger(port) && port > 0 && port <= 65535) {
-            return port;
-        }
-    }
-    catch (error) {
-        logger_1.logger.debug('Could not read active version port, using default:', error);
-    }
-    return DEFAULT_ODOO_PORT;
-}
-/**
- * Which port serves `dbId`. With several versions running, the active
- * version's port is usually the wrong answer: a database belongs to the
- * version that is actually serving it.
- */
-function pickPortForDatabase(dbId, running, versions, dbVersionId, activePort) {
-    const byId = (id) => versions.find(version => version.id === id);
-    if (dbId) {
-        const live = running.find(instance => instance.dbName === dbId && !!instance.port);
-        if (live?.port) {
-            return { port: live.port, source: 'running', versionName: byId(live.versionId)?.name };
-        }
-    }
-    const owner = byId(dbVersionId);
-    if (owner?.portNumber) {
-        return { port: owner.portNumber, source: 'version', versionName: owner.name };
-    }
-    return { port: activePort, source: 'active' };
-}
-/** Local server URL, optionally routed straight into a database. */
-function buildServerUrl(port, dbName) {
-    const base = `http://localhost:${port}`;
-    if (!dbName) {
-        return vscode.Uri.parse(base);
-    }
-    return vscode.Uri.parse(`${base}/web?db=${encodeURIComponent(dbName)}`);
-}
-/** Resolves true once the port accepts a TCP connection, false on timeout. */
-function waitForPort(port, timeoutMs) {
-    const deadline = Date.now() + timeoutMs;
-    const tryOnce = () => new Promise(resolve => {
-        const socket = net.connect({ port, host: '127.0.0.1' });
-        const finish = (result) => {
-            socket.destroy();
-            resolve(result);
-        };
-        socket.setTimeout(1000, () => finish(false));
-        socket.once('connect', () => finish(true));
-        socket.once('error', () => finish(false));
-    });
-    return (async () => {
-        while (Date.now() < deadline) {
-            if (await tryOnce()) {
-                return true;
-            }
-            await new Promise(resolve => setTimeout(resolve, 500));
-        }
-        return false;
-    })();
-}
-/** Resolves the port serving `dbId`, consulting live sessions first. */
-async function resolvePortForDatabase(dbId, dbVersionId) {
-    try {
-        const service = versionsService_1.VersionsService.getInstance();
-        await service.initialize();
-        const versions = service.getVersions().map(version => ({
-            id: version.id,
-            name: version.name,
-            portNumber: Number(version.settings.portNumber) || undefined
-        }));
-        return pickPortForDatabase(dbId, await (0, runningState_1.getRunningInstances)(), versions, dbVersionId, await getActiveServerPort());
-    }
-    catch (error) {
-        logger_1.logger.debug('Could not resolve the port for a database, using the active version:', error);
-        return { port: await getActiveServerPort(), source: 'active' };
-    }
-}
-/**
- * Opens the Odoo web client for the given (or server-selected) database, on
- * the port actually serving it. A dead port is reported rather than opened:
- * a browser tab showing a connection error is worse than being told why.
- */
-async function openServerInBrowser(dbName, dbVersionId) {
-    const resolved = await resolvePortForDatabase(dbName, dbVersionId);
-    const url = buildServerUrl(resolved.port, dbName);
-    if (await waitForPort(resolved.port, 400)) {
-        await vscode.env.openExternal(url);
-        return;
-    }
-    const target = resolved.versionName
-        ? `${resolved.versionName} (port ${resolved.port})`
-        : `port ${resolved.port}`;
-    const choice = await (0, notifications_1.showWarning)(`No Odoo server is answering on ${target}.`, 'Open Anyway');
-    if (choice === 'Open Anyway') {
-        await vscode.env.openExternal(url);
-    }
-}
-/** The version whose launch configuration this session was started from. */
-async function versionForSession(session) {
-    const name = session.configuration?.name;
-    if (typeof name !== 'string' || name.length === 0) {
-        return undefined;
-    }
-    try {
-        const service = versionsService_1.VersionsService.getInstance();
-        await service.initialize();
-        const version = service.getVersions().find(entry => entry.settings?.debuggerName === name);
-        if (!version) {
-            return undefined;
-        }
-        const port = Number(version.settings.portNumber);
-        return { portNumber: Number.isInteger(port) && port > 0 && port <= 65535 ? port : DEFAULT_ODOO_PORT };
-    }
-    catch {
-        return undefined;
-    }
-}
-/**
- * Tracks the extension's own debug session: maintains the
- * 'odoo-debugger.server_running' context key and, when
- * odooDebugger.server.openBrowserOnStart is enabled, opens the web
- * client once the server port starts accepting connections.
- */
-function registerServerLifecycle(context, hooks) {
-    context.subscriptions.push(vscode.debug.onDidStartDebugSession(async (session) => {
-        const version = await versionForSession(session);
-        if (!version) {
-            return;
-        }
-        (0, debugSessions_1.trackSession)(session);
-        hooks.onRunningChanged((0, debugSessions_1.anySessionRunning)());
-        const openBrowser = vscode.workspace
-            .getConfiguration('odooDebugger')
-            .get('server.openBrowserOnStart', false);
-        if (!openBrowser) {
-            return;
-        }
-        // The session's own port, not the active version's: another version
-        // may have been activated since this one was launched.
-        if (await waitForPort(version.portNumber, 60000)) {
-            const dbName = await hooks.getSelectedDbName();
-            await vscode.env.openExternal(buildServerUrl(version.portNumber, dbName));
-        }
-        else {
-            logger_1.logger.debug(`Server port ${version.portNumber} did not open within 60s; not opening browser.`);
-        }
-    }));
-    context.subscriptions.push(vscode.debug.onDidTerminateDebugSession(session => {
-        (0, debugSessions_1.untrackSession)(session);
-        hooks.onRunningChanged((0, debugSessions_1.anySessionRunning)());
-    }));
 }
 
 
@@ -21854,7 +21884,7 @@ const context_1 = __webpack_require__(41);
 const versionProposal_1 = __webpack_require__(58);
 const versionPick_1 = __webpack_require__(113);
 const gitService_1 = __webpack_require__(11);
-const provisionQueue_1 = __webpack_require__(94);
+const provisionQueue_1 = __webpack_require__(95);
 const registerCommand_1 = __webpack_require__(87);
 function registerProjectCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
@@ -22974,7 +23004,7 @@ const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const dbs_1 = __webpack_require__(62);
 const notifications_2 = __webpack_require__(16);
-const server_1 = __webpack_require__(98);
+const server_1 = __webpack_require__(94);
 const utils_1 = __webpack_require__(8);
 const registerCommand_1 = __webpack_require__(87);
 function registerDbCommands(deps) {
@@ -23424,7 +23454,7 @@ const odooInstaller_1 = __webpack_require__(64);
 const provisioning_1 = __webpack_require__(65);
 const wizard_1 = __webpack_require__(70);
 const worktree_1 = __webpack_require__(53);
-const server_1 = __webpack_require__(98);
+const server_1 = __webpack_require__(94);
 const dbResolution_1 = __webpack_require__(59);
 const settingsStore_1 = __webpack_require__(6);
 const setupState_1 = __webpack_require__(69);
@@ -24385,7 +24415,7 @@ exports.registerDebugCommands = registerDebugCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const debugger_1 = __webpack_require__(93);
-const server_1 = __webpack_require__(98);
+const server_1 = __webpack_require__(94);
 const notifications_1 = __webpack_require__(16);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(32);
@@ -25030,7 +25060,7 @@ const branchPick_1 = __webpack_require__(120);
 const upgradePlan_1 = __webpack_require__(126);
 const upgradeApply_1 = __webpack_require__(42);
 const upgradeSetup_1 = __webpack_require__(57);
-const provisionQueue_1 = __webpack_require__(94);
+const provisionQueue_1 = __webpack_require__(95);
 const setupState_1 = __webpack_require__(69);
 const gitService_1 = __webpack_require__(11);
 const dbNaming_1 = __webpack_require__(71);
@@ -26506,7 +26536,7 @@ const repoLocations_1 = __webpack_require__(78);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
 const utils_1 = __webpack_require__(8);
-const workspaceRegistry_1 = __webpack_require__(97);
+const workspaceRegistry_1 = __webpack_require__(98);
 const args_1 = __webpack_require__(119);
 const workspaceBinding_1 = __webpack_require__(61);
 /** This window's folders, with the branch and remote of those that are git checkouts. */
@@ -26708,7 +26738,7 @@ const debugger_1 = __webpack_require__(93);
 const upgrade_1 = __webpack_require__(40);
 const workspaceBinding_1 = __webpack_require__(61);
 const mainStore_1 = __webpack_require__(27);
-const workspaceRegistry_1 = __webpack_require__(97);
+const workspaceRegistry_1 = __webpack_require__(98);
 const notifications_1 = __webpack_require__(16);
 const upgradeSides_1 = __webpack_require__(60);
 async function currentUpgrade() {

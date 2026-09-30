@@ -30,6 +30,7 @@ import { isVersionProvisioned } from './services/provisioning';
 import { ensureCustomWorktrees } from './services/customWorktree';
 import { readSetupState } from './services/setupState';
 import { provisionExistingVersion } from './odooInstaller';
+import { buildServerUrl, isPortOpen } from './services/server';
 
 /** Why prepareArgs refuses: no database of that version is selected. */
 const NO_DATABASE = 'Select a database before running this action.';
@@ -650,6 +651,22 @@ export async function startServerForVersion(
     // Restarting this version stops only this version's session; other
     // versions running side by side must survive.
     const existingSession = getSessionByName(settings.debuggerName);
+
+    // Something already on the port that is not this window's session is
+    // usually the same version started from another window. Odoo would only
+    // fail to bind; say what is going on instead.
+    const port = Number(settings.portNumber) || 0;
+    if (!existingSession && port && await isPortOpen(port)) {
+        const message = `"${version.name}" is already running on port ${port}, probably in another window.`;
+        if (!options.quiet) {
+            void showWarning(message, 'Open in Browser').then(choice => {
+                if (choice === 'Open in Browser') {
+                    void vscode.env.openExternal(buildServerUrl(port, db.id));
+                }
+            });
+        }
+        return { ok: false, message };
+    }
     if (existingSession) {
         await vscode.debug.stopDebugging(existingSession);
     }

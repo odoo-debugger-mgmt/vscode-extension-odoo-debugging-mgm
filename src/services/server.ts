@@ -78,6 +78,20 @@ export function buildServerUrl(port: number, dbName?: string): vscode.Uri {
     return vscode.Uri.parse(`${base}/web?db=${encodeURIComponent(dbName)}`);
 }
 
+/** Whether something accepts a TCP connection on the port right now. */
+export function isPortOpen(port: number): Promise<boolean> {
+    return new Promise(resolve => {
+        const socket = net.connect({ port, host: '127.0.0.1' });
+        const finish = (result: boolean) => {
+            socket.destroy();
+            resolve(result);
+        };
+        socket.setTimeout(1000, () => finish(false));
+        socket.once('connect', () => finish(true));
+        socket.once('error', () => finish(false));
+    });
+}
+
 /** Resolves true once the port accepts a TCP connection, false on timeout. */
 export function waitForPort(port: number, timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
