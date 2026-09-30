@@ -4,7 +4,7 @@
  */
 import { RepoModel, normalizeBranchMode } from "./models/repo";
 import * as vscode from "vscode";
-import { findRepositories, getWorkspacePath, normalizePath, stripSettings } from './utils';
+import { getWorkspacePath, normalizePath, stripSettings } from './utils';
 import { SettingsStore } from './settingsStore';
 import { readUpgradeConfig, refuseDuringUpgrade } from './upgrade';
 import { VersionsService } from './versionsService';
@@ -16,6 +16,8 @@ import { getRepoBranch } from './services/branches';
 import { invalidateModuleDiscoveryCache, invalidateRepositoryDiscoveryCache } from './services/runtimeCache';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 import { selectedIcon, unselectedIcon } from './views/icons';
+import { gatherCheckoutCandidates, locateRepoCheckouts, remoteOf, repoRows } from './services/repoLocations';
+import { extraRootsFor } from './services/versionRepos';
 
 interface RepoEntry {
     name: string;
@@ -25,6 +27,9 @@ interface RepoEntry {
     isGitRepo: boolean;
     repoModel?: RepoModel;
     fsCreatedAt: number;
+    /** The folder's own name, when the row is a project repo's checkout under another name. */
+    folderName?: string;
+    versionName?: string;
 }
 
 async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
@@ -72,21 +77,25 @@ export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             return [];
         }
 
-        const repos: RepoModel[] = project.repos;
-        
-        // Get settings from active version
-        const versionsService = VersionsService.getInstance();
-        const settings = await versionsService.getActiveVersionSettings();
-        const customAddonsPath = normalizePath(settings.customAddonsPath);
+        const repos: RepoModel[] = project.repos ?? [];
 
+        // What the active version finds: a bound workspace's own folders
+        // first, then its custom addons folder - the same checkouts the
+        // launch entries and a database switch use.
+        const versionsService = VersionsService.getInstance();
+        await versionsService.initialize();
+        const version = versionsService.getActiveVersion();
+        const extraRoots = extraRootsFor(version);
+        const candidates = await gatherCheckoutCandidates(version, undefined, extraRoots);
+        const located = await locateRepoCheckouts(repos, version, undefined, extraRoots);
+        const projectRemotes = await Promise.all(repos.map(async repo => ({
+            name: repo.name,
+            remote: await remoteOf(normalizePath(repo.path))
+        })));
         // Empty lists fall through to the view's welcome content, which
         // points at the version's custom addons folder setting.
-        if (!fs.existsSync(customAddonsPath)) {
-            return [];
-        }
-
-        const devsRepos = findRepositories(customAddonsPath);
-        if (devsRepos.length === 0 || !repos) {
+        const devsRepos = repoRows(candidates, located, projectRemotes);
+        if (devsRepos.length === 0) {
             return [];
         }
 
@@ -111,6 +120,8 @@ export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             return {
                 name: repo.name,
                 path: repo.path,
+                folderName: repo.folderName,
+                versionName: version?.name,
                 isSelected: !!existingRepo,
                 branch,
                 isGitRepo,
@@ -128,6 +139,7 @@ export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             treeItem.tooltip = new vscode.MarkdownString([
                 `**${entry.name}**${entry.isSelected ? ' (in project)' : ''}`,
                 `**Path:** ${entry.path}`,
+                entry.folderName ? `Runs as **${entry.name}** for ${entry.versionName ?? 'this version'}` : '',
                 entry.branch ? `**Branch:** ${entry.branch}` : '',
                 entry.isGitRepo ? '' : '**Type:** addons folder (not a git repository)'
             ].filter(Boolean).join('\n\n'));

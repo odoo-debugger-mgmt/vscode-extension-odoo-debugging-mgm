@@ -68,6 +68,82 @@ export interface LocatedRepo {
 }
 
 /**
+ * The git checkouts a version can find its repositories among: those in the
+ * extra roots (a bound workspace's folders, each possibly a clone itself)
+ * first, then those under its custom addons folder, each once.
+ */
+export async function gatherCheckoutCandidates(
+    version: VersionLike | undefined,
+    list: CheckoutLister = root => findRepositories(root),
+    extraRoots: string[] = []
+): Promise<CheckoutCandidate[]> {
+    const rawRoot = version?.settings?.customAddonsPath;
+    const root = rawRoot ? normalizePath(rawRoot) : undefined;
+    const candidates: CheckoutCandidate[] = [];
+    const seen = new Set<string>();
+    for (const batch of [
+        ...(await Promise.all(extraRoots.map(extra => candidatesUnder(extra, list, true)))),
+        await candidatesUnder(root, list)
+    ]) {
+        for (const candidate of batch) {
+            const key = path.resolve(candidate.path);
+            if (!seen.has(key)) {
+                seen.add(key);
+                candidates.push(candidate);
+            }
+        }
+    }
+    return candidates;
+}
+
+export interface RepoRow {
+    /** The label: the project repository's name for its checkout, else the folder's. */
+    name: string;
+    path: string;
+    inProject: boolean;
+    /** The folder's own name, when the label is the project repository's. */
+    folderName?: string;
+}
+
+/**
+ * The Repos view's rows for a version: every checkout it can find, where the
+ * one a project repository runs from carries that repository's name and is
+ * marked as in the project. Other clones of a project repository - same
+ * remote, or same folder name - are left out: they are not what runs, and a
+ * second "acme" on another branch is what made the view misleading.
+ */
+export function repoRows(
+    candidates: CheckoutCandidate[],
+    located: ReadonlyMap<string, { path: string }>,
+    projectRepos: Array<{ name: string; remote?: string }>
+): RepoRow[] {
+    const runs = new Map<string, string>();
+    for (const [name, entry] of located) {
+        runs.set(path.resolve(entry.path), name);
+    }
+    const rows: RepoRow[] = [];
+    for (const candidate of candidates) {
+        const projectName = runs.get(path.resolve(candidate.path));
+        if (projectName) {
+            rows.push({
+                name: projectName,
+                path: candidate.path,
+                inProject: true,
+                folderName: candidate.name !== projectName ? candidate.name : undefined
+            });
+            continue;
+        }
+        const otherClone = projectRepos.some(repo =>
+            (candidate.remote && repo.remote && candidate.remote === repo.remote)
+            || candidate.name.toLowerCase() === repo.name.toLowerCase());
+        if (!otherClone) {
+            rows.push({ name: candidate.name, path: candidate.path, inProject: false });
+        }
+    }
+    return rows;
+}
+
+/**
  * Where each repository lives for `version`, by repository name, with how it
  * was found. `list` is injectable for tests; the extension uses the same
  * repository discovery as the Repos view.
@@ -87,22 +163,7 @@ export async function locateRepoCheckouts(
     if (repos.length === 0) {
         return located;
     }
-    const rawRoot = version?.settings?.customAddonsPath;
-    const root = rawRoot ? normalizePath(rawRoot) : undefined;
-    const candidates: CheckoutCandidate[] = [];
-    const seen = new Set<string>();
-    for (const batch of [
-        ...(await Promise.all(extraRoots.map(extra => candidatesUnder(extra, list, true)))),
-        await candidatesUnder(root, list)
-    ]) {
-        for (const candidate of batch) {
-            const key = path.resolve(candidate.path);
-            if (!seen.has(key)) {
-                seen.add(key);
-                candidates.push(candidate);
-            }
-        }
-    }
+    const candidates = await gatherCheckoutCandidates(version, list, extraRoots);
     const overrides = version?.settings?.repoPaths ?? {};
 
     for (const repo of repos) {

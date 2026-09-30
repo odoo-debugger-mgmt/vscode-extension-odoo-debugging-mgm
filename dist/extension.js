@@ -14344,6 +14344,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.remoteOf = remoteOf;
 exports.invalidateRemoteCache = invalidateRemoteCache;
+exports.gatherCheckoutCandidates = gatherCheckoutCandidates;
+exports.repoRows = repoRows;
 exports.locateRepoCheckouts = locateRepoCheckouts;
 exports.projectReposForVersion = projectReposForVersion;
 /**
@@ -14398,20 +14400,11 @@ async function candidatesUnder(root, list, includeRoot = false) {
     })));
 }
 /**
- * Where each repository lives for `version`, by repository name, with how it
- * was found. `list` is injectable for tests; the extension uses the same
- * repository discovery as the Repos view.
- *
- * `extraRoots` are searched before the custom addons folder: the folders of a
- * workspace bound to this version, each of which may be a clone itself or
- * hold clones. That is how the code a version's workspace holds becomes that
- * version's code.
+ * The git checkouts a version can find its repositories among: those in the
+ * extra roots (a bound workspace's folders, each possibly a clone itself)
+ * first, then those under its custom addons folder, each once.
  */
-async function locateRepoCheckouts(repos, version, list = root => (0, utils_1.findRepositories)(root), extraRoots = []) {
-    const located = new Map();
-    if (repos.length === 0) {
-        return located;
-    }
+async function gatherCheckoutCandidates(version, list = root => (0, utils_1.findRepositories)(root), extraRoots = []) {
     const rawRoot = version?.settings?.customAddonsPath;
     const root = rawRoot ? (0, utils_1.normalizePath)(rawRoot) : undefined;
     const candidates = [];
@@ -14428,6 +14421,56 @@ async function locateRepoCheckouts(repos, version, list = root => (0, utils_1.fi
             }
         }
     }
+    return candidates;
+}
+/**
+ * The Repos view's rows for a version: every checkout it can find, where the
+ * one a project repository runs from carries that repository's name and is
+ * marked as in the project. Other clones of a project repository - same
+ * remote, or same folder name - are left out: they are not what runs, and a
+ * second "acme" on another branch is what made the view misleading.
+ */
+function repoRows(candidates, located, projectRepos) {
+    const runs = new Map();
+    for (const [name, entry] of located) {
+        runs.set(path.resolve(entry.path), name);
+    }
+    const rows = [];
+    for (const candidate of candidates) {
+        const projectName = runs.get(path.resolve(candidate.path));
+        if (projectName) {
+            rows.push({
+                name: projectName,
+                path: candidate.path,
+                inProject: true,
+                folderName: candidate.name !== projectName ? candidate.name : undefined
+            });
+            continue;
+        }
+        const otherClone = projectRepos.some(repo => (candidate.remote && repo.remote && candidate.remote === repo.remote)
+            || candidate.name.toLowerCase() === repo.name.toLowerCase());
+        if (!otherClone) {
+            rows.push({ name: candidate.name, path: candidate.path, inProject: false });
+        }
+    }
+    return rows;
+}
+/**
+ * Where each repository lives for `version`, by repository name, with how it
+ * was found. `list` is injectable for tests; the extension uses the same
+ * repository discovery as the Repos view.
+ *
+ * `extraRoots` are searched before the custom addons folder: the folders of a
+ * workspace bound to this version, each of which may be a clone itself or
+ * hold clones. That is how the code a version's workspace holds becomes that
+ * version's code.
+ */
+async function locateRepoCheckouts(repos, version, list = root => (0, utils_1.findRepositories)(root), extraRoots = []) {
+    const located = new Map();
+    if (repos.length === 0) {
+        return located;
+    }
+    const candidates = await gatherCheckoutCandidates(version, list, extraRoots);
     const overrides = version?.settings?.repoPaths ?? {};
     for (const repo of repos) {
         const override = overrides[repo.name];
@@ -16741,6 +16784,8 @@ const branches_1 = __webpack_require__(50);
 const runtimeCache_1 = __webpack_require__(15);
 const baseTreeProvider_1 = __webpack_require__(5);
 const icons_1 = __webpack_require__(38);
+const repoLocations_1 = __webpack_require__(76);
+const versionRepos_1 = __webpack_require__(75);
 async function mapWithConcurrency(items, limit, worker) {
     if (items.length === 0) {
         return [];
@@ -16780,18 +16825,24 @@ class RepoTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         if (!workspacePath) {
             return [];
         }
-        const repos = project.repos;
-        // Get settings from active version
+        const repos = project.repos ?? [];
+        // What the active version finds: a bound workspace's own folders
+        // first, then its custom addons folder - the same checkouts the
+        // launch entries and a database switch use.
         const versionsService = versionsService_1.VersionsService.getInstance();
-        const settings = await versionsService.getActiveVersionSettings();
-        const customAddonsPath = (0, utils_1.normalizePath)(settings.customAddonsPath);
+        await versionsService.initialize();
+        const version = versionsService.getActiveVersion();
+        const extraRoots = (0, versionRepos_1.extraRootsFor)(version);
+        const candidates = await (0, repoLocations_1.gatherCheckoutCandidates)(version, undefined, extraRoots);
+        const located = await (0, repoLocations_1.locateRepoCheckouts)(repos, version, undefined, extraRoots);
+        const projectRemotes = await Promise.all(repos.map(async (repo) => ({
+            name: repo.name,
+            remote: await (0, repoLocations_1.remoteOf)((0, utils_1.normalizePath)(repo.path))
+        })));
         // Empty lists fall through to the view's welcome content, which
         // points at the version's custom addons folder setting.
-        if (!fs.existsSync(customAddonsPath)) {
-            return [];
-        }
-        const devsRepos = (0, utils_1.findRepositories)(customAddonsPath);
-        if (devsRepos.length === 0 || !repos) {
+        const devsRepos = (0, repoLocations_1.repoRows)(candidates, located, projectRemotes);
+        if (devsRepos.length === 0) {
             return [];
         }
         const repoEntries = await mapWithConcurrency(devsRepos, 6, async (repo) => {
@@ -16817,6 +16868,8 @@ class RepoTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
             return {
                 name: repo.name,
                 path: repo.path,
+                folderName: repo.folderName,
+                versionName: version?.name,
                 isSelected: !!existingRepo,
                 branch,
                 isGitRepo,
@@ -16832,6 +16885,7 @@ class RepoTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
             treeItem.tooltip = new vscode.MarkdownString([
                 `**${entry.name}**${entry.isSelected ? ' (in project)' : ''}`,
                 `**Path:** ${entry.path}`,
+                entry.folderName ? `Runs as **${entry.name}** for ${entry.versionName ?? 'this version'}` : '',
                 entry.branch ? `**Branch:** ${entry.branch}` : '',
                 entry.isGitRepo ? '' : '**Type:** addons folder (not a git repository)'
             ].filter(Boolean).join('\n\n'));

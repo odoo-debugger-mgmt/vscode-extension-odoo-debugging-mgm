@@ -13,7 +13,7 @@ import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { RepoModel } from '../models/repo';
 import { normalizeRemote, pickRepoCheckout, reposForVersion, resolveProjectRepos } from '../services/repoPaths';
-import { locateRepoCheckouts, projectReposForVersion } from '../services/repoLocations';
+import { locateRepoCheckouts, projectReposForVersion, repoRows } from '../services/repoLocations';
 import { resolveProjectRepoCheckouts } from '../services/environment';
 
 suite('Remote URLs compare by what they name', () => {
@@ -87,6 +87,48 @@ suite('The project\'s repositories as a version sees them', () => {
         // What a database switch checks out, and where.
         const checkouts = resolveProjectRepoCheckouts({ projectRepoBranches: assignments }, seen);
         assert.deepStrictEqual(checkouts, [{ repoName: 'acme', repoPath: '/v19/acme', branch: 'main' }]);
+    });
+});
+
+suite('The Repos view lists what the version runs', () => {
+    const acme = { name: 'acme', remote: 'github.com/org/acme' };
+
+    test('the bound workspace\'s clone is the project repository\'s row; another clone of it is left out', () => {
+        // Twelfth run: the view showed v19/acme-19 on 19.0-alt while 19.0 ran W19/acme on main.
+        const rows = repoRows(
+            [
+                { path: '/W19/acme', name: 'acme', remote: 'github.com/org/acme' },
+                { path: '/v19/acme-19', name: 'acme-19', remote: 'github.com/org/acme' },
+                { path: '/v19/tools', name: 'tools', remote: 'github.com/org/tools' }
+            ],
+            new Map([['acme', { path: '/W19/acme' }]]),
+            [acme]
+        );
+        assert.deepStrictEqual(rows, [
+            { name: 'acme', path: '/W19/acme', inProject: true, folderName: undefined },
+            { name: 'tools', path: '/v19/tools', inProject: false }
+        ]);
+    });
+
+    test('a checkout under another folder name carries the project repository\'s name', () => {
+        const rows = repoRows(
+            [{ path: '/v19/acme-19', name: 'acme-19', remote: 'github.com/org/acme' }],
+            new Map([['acme', { path: '/v19/acme-19' }]]),
+            [acme]
+        );
+        assert.deepStrictEqual(rows, [{ name: 'acme', path: '/v19/acme-19', inProject: true, folderName: 'acme-19' }]);
+    });
+
+    test('one clone for every version gives the rows it always did', () => {
+        const rows = repoRows(
+            [{ path: '/addons/acme', name: 'acme' }, { path: '/addons/beta', name: 'beta' }],
+            new Map([['acme', { path: '/addons/acme' }]]),
+            [{ name: 'acme' }]
+        );
+        assert.deepStrictEqual(rows, [
+            { name: 'acme', path: '/addons/acme', inProject: true, folderName: undefined },
+            { name: 'beta', path: '/addons/beta', inProject: false }
+        ]);
     });
 });
 
