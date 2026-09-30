@@ -109,6 +109,7 @@ async function chooseAndBind(proposal: BindingProposal | undefined): Promise<voi
  * itself after a few seconds, and was usually gone before it was read.
  */
 let pendingItem: vscode.StatusBarItem | undefined;
+let offeredThisSession = false;
 
 function showPendingItem(): void {
     if (pendingItem) {
@@ -135,9 +136,24 @@ export async function offerWorkspaceBinding(): Promise<void> {
     try {
         const versions = VersionsService.getInstance();
         await versions.initialize();
+        // Bound to a version another window deleted: bound to nothing, and
+        // never asked again. It is asked again instead.
+        const bound = readBinding().versionId;
+        if (bound && !versions.getVersion(bound)) {
+            logger.info(`[binding] the version this workspace was bound to (${bound}) no longer exists; asking again`);
+            await writeBinding({ versionId: undefined, asked: false });
+            void registerThisWorkspace();
+            offeredThisSession = false;
+        }
+        // Once per session: this also runs after every store change, and an
+        // unanswered question is kept in the status bar meanwhile.
+        if (offeredThisSession) {
+            return;
+        }
         if (!shouldOfferBinding(currentMainStore()?.kind, versions.getVersions().length, readBinding())) {
             return;
         }
+        offeredThisSession = true;
         showPendingItem();
         const proposal = await propose();
         const name = proposal ? versions.getVersion(proposal.versionId)?.name : undefined;

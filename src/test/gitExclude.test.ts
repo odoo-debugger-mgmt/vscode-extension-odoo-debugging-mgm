@@ -52,7 +52,11 @@ suite('Keeping launch.json out of a clone\'s git status', () => {
             git(tracked, 'add', '.');
             git(tracked, 'commit', '-q', '-m', 'team launch.json');
             await excludeLaunchFromGit(tracked);
-            assert.doesNotMatch(fs.readFileSync(path.join(tracked, '.git', 'info', 'exclude'), 'utf8'), /Odoo DevTools/);
+            // A git whose init template holds no info/ has no exclude file at
+            // all: missing reads as empty, and either way nothing was added.
+            const excludeFile = path.join(tracked, '.git', 'info', 'exclude');
+            const exclude = fs.existsSync(excludeFile) ? fs.readFileSync(excludeFile, 'utf8') : '';
+            assert.doesNotMatch(exclude, /Odoo DevTools/);
         } finally {
             fs.rmSync(root, { recursive: true, force: true });
         }

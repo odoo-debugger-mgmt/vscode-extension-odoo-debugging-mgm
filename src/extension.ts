@@ -282,6 +282,8 @@ export async function activate(context: vscode.ExtensionContext) {
                     activeVersionName: versionsService.getActiveVersion()?.name
                 }, goneAlreadySaid).forEach(message => void showInfo(message));
                 await refreshAll({ reason: 'all' });
+                // A binding to a version deleted elsewhere is asked again.
+                void offerWorkspaceBinding();
             })().catch(error => logger.warn('Refreshing after a data store change failed:', error));
         }, 300);
     };

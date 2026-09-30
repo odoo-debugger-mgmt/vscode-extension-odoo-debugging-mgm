@@ -286,6 +286,8 @@ async function activate(context) {
                     activeVersionName: versionsService.getActiveVersion()?.name
                 }, goneAlreadySaid).forEach(message => void (0, notifications_1.showInfo)(message));
                 await refreshAll({ reason: 'all' });
+                // A binding to a version deleted elsewhere is asked again.
+                void (0, bindingCommand_1.offerWorkspaceBinding)();
             })().catch(error => logger_1.logger.warn('Refreshing after a data store change failed:', error));
         }, 300);
     };
@@ -27017,6 +27019,7 @@ async function chooseAndBind(proposal) {
  * itself after a few seconds, and was usually gone before it was read.
  */
 let pendingItem;
+let offeredThisSession = false;
 function showPendingItem() {
     if (pendingItem) {
         return;
@@ -27040,9 +27043,24 @@ async function offerWorkspaceBinding() {
     try {
         const versions = versionsService_1.VersionsService.getInstance();
         await versions.initialize();
+        // Bound to a version another window deleted: bound to nothing, and
+        // never asked again. It is asked again instead.
+        const bound = (0, workspaceBinding_1.readBinding)().versionId;
+        if (bound && !versions.getVersion(bound)) {
+            logger_1.logger.info(`[binding] the version this workspace was bound to (${bound}) no longer exists; asking again`);
+            await (0, workspaceBinding_1.writeBinding)({ versionId: undefined, asked: false });
+            void (0, workspaceRegistry_1.registerThisWorkspace)();
+            offeredThisSession = false;
+        }
+        // Once per session: this also runs after every store change, and an
+        // unanswered question is kept in the status bar meanwhile.
+        if (offeredThisSession) {
+            return;
+        }
         if (!(0, workspaceBinding_1.shouldOfferBinding)((0, mainStore_1.currentMainStore)()?.kind, versions.getVersions().length, (0, workspaceBinding_1.readBinding)())) {
             return;
         }
+        offeredThisSession = true;
         showPendingItem();
         const proposal = await propose();
         const name = proposal ? versions.getVersion(proposal.versionId)?.name : undefined;
