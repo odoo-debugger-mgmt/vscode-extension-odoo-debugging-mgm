@@ -52,6 +52,8 @@ import {
     sanitizeProjectRepoBranchAssignments
 } from './services/environment';
 import { reposSeenByDatabase } from './services/versionRepos';
+import { boundVersionId, leavesBoundVersion, writeBinding } from './services/workspaceBinding';
+import { registerThisWorkspace } from './services/workspaceRegistry';
 
 /**
  * Database UI flows: creation wizard, selection, deletion, restore, version
@@ -966,6 +968,30 @@ export async function selectDatabase(event: unknown) {
             upgradeConfig,
             `"${databaseLabel}" is not part of this upgrade, so it cannot be selected`);
         return;
+    }
+
+    // A window bound to 19.0 selecting a 17.0 database switches the window to
+    // 17.0; say so first, and offer to make that the window's version.
+    const bound = boundVersionId();
+    if (leavesBoundVersion(bound, database.versionId, upgradeConfig.isActive())) {
+        const versions = VersionsService.getInstance();
+        const boundName = versions.getVersion(bound!)?.name;
+        const dbVersionName = versions.getVersion(database.versionId!)?.name;
+        if (boundName && dbVersionName) {
+            const choice = await showModalWarning(
+                `This workspace runs ${boundName}. "${databaseLabel}" is a ${dbVersionName} database, `
+                + `so selecting it switches this window to ${dbVersionName}.`,
+                'Switch for Now',
+                `Run ${dbVersionName} Here From Now On`
+            );
+            if (!choice) {
+                return;
+            }
+            if (choice !== 'Switch for Now') {
+                await writeBinding({ versionId: database.versionId, asked: true });
+                void registerThisWorkspace();
+            }
+        }
     }
 
     // Update database selection

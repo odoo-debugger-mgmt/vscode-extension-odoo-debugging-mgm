@@ -4,7 +4,7 @@
  * point - a shared store.
  */
 import * as assert from 'assert';
-import { normalizeBinding, proposeWorkspaceVersion, shouldOfferBinding } from '../services/workspaceBinding';
+import { leavesBoundVersion, normalizeBinding, proposeWorkspaceVersion, shouldOfferBinding } from '../services/workspaceBinding';
 
 const versions = [
     { id: 'v17', name: 'Odoo 17.0', odooVersion: '17.0' },
@@ -73,5 +73,18 @@ suite('When a workspace is asked', () => {
         assert.deepStrictEqual(normalizeBinding({ versionId: 'v19', asked: true }), { versionId: 'v19', asked: true });
         assert.deepStrictEqual(normalizeBinding({ versionId: '', asked: 'yes' }), { versionId: undefined, asked: false });
         assert.deepStrictEqual(normalizeBinding(undefined), { versionId: undefined, asked: false });
+    });
+});
+
+suite('Leaving the version a workspace is bound to', () => {
+    test('selecting another version\'s database does, and is said first', () => {
+        assert.strictEqual(leavesBoundVersion('v19', 'v17', false), true);
+    });
+
+    test('its own version, no binding, a database with no version, or an upgrade: it does not', () => {
+        assert.strictEqual(leavesBoundVersion('v19', 'v19', false), false);
+        assert.strictEqual(leavesBoundVersion(undefined, 'v17', false), false);
+        assert.strictEqual(leavesBoundVersion('v19', undefined, false), false);
+        assert.strictEqual(leavesBoundVersion('v19', 'v17', true), false, 'selecting a side of an upgrade switches nothing');
     });
 });

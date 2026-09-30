@@ -136,6 +136,16 @@ export function proposeWorkspaceVersion(
     return undefined;
 }
 
+/**
+ * Whether selecting a database of `dbVersionId` takes this window off the
+ * version it is bound to. Not during an upgrade - selecting a side there
+ * chooses whose modules to edit, and switches nothing - and not for a
+ * database linked to no version.
+ */
+export function leavesBoundVersion(bound: string | undefined, dbVersionId: string | undefined, upgradeActive: boolean): boolean {
+    return !!bound && !!dbVersionId && dbVersionId !== bound && !upgradeActive;
+}
+
 // ---------------------------------------------------------------------------
 // vscode-backed accessors
 // ---------------------------------------------------------------------------
