@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 import { parse } from 'jsonc-parser';
 import { SettingsStore } from './settingsStore';
+import { logger } from './services/logger';
 import { ProjectModel } from './models/project';
 import { RepoModel } from './models/repo';
 import { showInfo, normalizePath } from './utils';
@@ -176,7 +177,16 @@ export function offerToReopenByPath(context: vscode.ExtensionContext): void {
     if (workspaceFile?.scheme !== 'vscode-userdata') {
         return;
     }
-    const reopen = () => vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(workspaceFile.fsPath), false);
+    const reopen = async () => {
+        // Otherwise Recent lists the workspace twice under one label, and the
+        // old entry keeps reopening it the way that needs this again.
+        try {
+            await vscode.commands.executeCommand('vscode.removeFromRecentlyOpened', workspaceFile);
+        } catch (error) {
+            logger.debug('Could not remove the old Recent entry:', error);
+        }
+        await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(workspaceFile.fsPath), false);
+    };
 
     const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     item.text = '$(warning) Reopen for debugger';

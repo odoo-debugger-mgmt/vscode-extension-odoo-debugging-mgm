@@ -21071,6 +21071,7 @@ exports.quickSwitchProjectWorkspace = quickSwitchProjectWorkspace;
 const vscode = __importStar(__webpack_require__(1));
 const jsonc_parser_1 = __webpack_require__(21);
 const settingsStore_1 = __webpack_require__(6);
+const logger_1 = __webpack_require__(12);
 const utils_1 = __webpack_require__(8);
 const versionsService_1 = __webpack_require__(32);
 const workspaceFolders_1 = __webpack_require__(104);
@@ -21200,7 +21201,17 @@ function offerToReopenByPath(context) {
     if (workspaceFile?.scheme !== 'vscode-userdata') {
         return;
     }
-    const reopen = () => vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(workspaceFile.fsPath), false);
+    const reopen = async () => {
+        // Otherwise Recent lists the workspace twice under one label, and the
+        // old entry keeps reopening it the way that needs this again.
+        try {
+            await vscode.commands.executeCommand('vscode.removeFromRecentlyOpened', workspaceFile);
+        }
+        catch (error) {
+            logger_1.logger.debug('Could not remove the old Recent entry:', error);
+        }
+        await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(workspaceFile.fsPath), false);
+    };
     const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     item.text = '$(warning) Reopen for debugger';
     item.tooltip = REOPEN_MESSAGE;
