@@ -750,6 +750,18 @@
         "icon": "$(run-all)"
       },
       {
+        "command": "odoo.startThisSide",
+        "title": "Start This Side of the Upgrade",
+        "category": "Odoo DevTools",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "odoo.openOtherSide",
+        "title": "Open the Other Side of the Upgrade",
+        "category": "Odoo DevTools",
+        "icon": "$(multiple-windows)"
+      },
+      {
         "command": "upgradeSelector.toggleSourceModules",
         "title": "Toggle Installing the Source Modules",
         "category": "Odoo DevTools"

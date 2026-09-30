@@ -25,6 +25,9 @@ import { rememberDbForVersion } from './services/dbResolution';
 import { VersionsService } from './versionsService';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 import { selectedIcon, unselectedIcon } from './views/icons';
+import { otherSide, thisSide } from './services/upgradeSides';
+import { boundVersionId } from './services/workspaceBinding';
+import { currentMainStore } from './services/mainStore';
 
 /**
  * The project's upgrade configuration, normalized.
@@ -329,6 +332,29 @@ export class UpgradeTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         start.command = { command: 'odoo.startBothServers', title: 'Start Both Servers' };
         start.tooltip = 'Starts each side on its own database and port.';
         items.push(start);
+
+        // Across two workspaces: each window runs its own side, and can open
+        // the other one's window (design §7).
+        const side = thisSide(config, boundVersionId(), VersionsService.getInstance().getActiveVersion()?.id);
+        if (side) {
+            const own = side === 'from' ? config.from : config.to;
+            const startSide = new vscode.TreeItem(`Start This Side (Odoo ${own?.series})`, vscode.TreeItemCollapsibleState.None);
+            startSide.iconPath = new vscode.ThemeIcon('debug-start');
+            startSide.command = { command: 'odoo.startThisSide', title: 'Start This Side' };
+            startSide.tooltip = `Starts only Odoo ${own?.series} on ${own?.dbId}: the side this window runs.`;
+            items.push(startSide);
+        }
+        if (currentMainStore()?.listWorkspaces) {
+            const other = side ? (otherSide(side) === 'from' ? config.from : config.to) : undefined;
+            const open = new vscode.TreeItem(
+                other ? `Open the Other Side (Odoo ${other.series})` : 'Open the Other Side…',
+                vscode.TreeItemCollapsibleState.None
+            );
+            open.iconPath = new vscode.ThemeIcon('multiple-windows');
+            open.command = { command: 'odoo.openOtherSide', title: 'Open the Other Side' };
+            open.tooltip = 'Opens the workspace that runs the other version, from the shared store.';
+            items.push(open);
+        }
 
         return items;
     }
