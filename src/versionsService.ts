@@ -18,6 +18,21 @@ import {
     probeBusyPorts,
     VersionIdentity
 } from './services/versionIdentity';
+import { currentMainStore } from './services/mainStore';
+
+/**
+ * Where "save as default" writes. On a shared store the versions are every
+ * window's, and a default that only applies in the window that saved it is
+ * not a default: it goes to the user settings. A workspace on its own file
+ * keeps its defaults to itself, as before.
+ */
+function defaultsTarget(): vscode.ConfigurationTarget {
+    return currentMainStore()?.kind === 'sqlite' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace;
+}
+
+function defaultsWhere(): string {
+    return currentMainStore()?.kind === 'sqlite' ? ' for every workspace (user settings)' : ' for this workspace';
+}
 
 export class VersionsService {
     private static instance: VersionsService;
@@ -753,9 +768,9 @@ export class VersionsService {
 
             // Update the VS Code configuration
             const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
-            await config.update(settingKey, currentValue, vscode.ConfigurationTarget.Workspace);
+            await config.update(settingKey, currentValue, defaultsTarget());
 
-            void showInfo(`Setting "${settingKey}" value saved as new default.`);
+            void showInfo(`Setting "${settingKey}" value saved as new default${defaultsWhere()}.`);
             return true;
         } catch (error) {
             logger.error('Unable to save this setting as the default:', error);
@@ -821,10 +836,10 @@ export class VersionsService {
                 if (isDerivedSetting(key) || key === 'managedPaths' || key === 'repoPaths') {
                     continue;
                 }
-                await config.update(key, value, vscode.ConfigurationTarget.Workspace);
+                await config.update(key, value, defaultsTarget());
             }
 
-            void showInfo(`All settings from version "${version.name}" saved as new defaults.`);
+            void showInfo(`All settings from version "${version.name}" saved as new defaults${defaultsWhere()}.`);
             return true;
         } catch (error) {
             logger.error('Failed to set all settings as default:', error);

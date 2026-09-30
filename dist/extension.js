@@ -80,6 +80,7 @@ const projectWorkspace_1 = __webpack_require__(109);
 const workspaceBinding_1 = __webpack_require__(61);
 const workspaceRegistry_1 = __webpack_require__(98);
 const bindingCommand_1 = __webpack_require__(130);
+const goneElsewhere_1 = __webpack_require__(132);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -261,16 +262,31 @@ async function activate(context) {
     // re-read everything. Debounced, because one save elsewhere can touch
     // several documents and each is its own change.
     let storeChangeTimer;
+    const goneAlreadySaid = new Set();
     const onStoreChanged = () => {
         if (storeChangeTimer) {
             clearTimeout(storeChangeTimer);
         }
         storeChangeTimer = setTimeout(() => {
             storeChangeTimer = undefined;
-            settingsStore_1.SettingsStore.invalidate();
-            void versionsService.refresh()
-                .then(() => refreshAll({ reason: 'all' }))
-                .catch(error => logger_1.logger.warn('Refreshing after a data store change failed:', error));
+            void (async () => {
+                // What this window had, to say so if another window deleted it.
+                // From the data read before this change, and the versions not
+                // yet reloaded: the store already holds the other window's edit.
+                const before = (0, goneElsewhere_1.selectionFacts)(settingsStore_1.SettingsStore.lastRead()?.projects?.find(project => project.isSelected), versionsService.getActiveVersion());
+                settingsStore_1.SettingsStore.invalidate();
+                await versionsService.refresh();
+                const data = await settingsStore_1.SettingsStore.get().catch(() => undefined);
+                const keys = (data?.projects ?? []).map(project => project.uid || `name:${project.name ?? ''}`);
+                const sameProject = (data?.projects ?? []).find(project => (project.uid || `name:${project.name ?? ''}`) === before.projectKey);
+                (0, goneElsewhere_1.describeGone)(before, {
+                    projectKeys: keys,
+                    dbIds: (sameProject?.dbs ?? []).map(db => db.id),
+                    versionIds: versionsService.getVersions().map(version => version.id),
+                    activeVersionName: versionsService.getActiveVersion()?.name
+                }, goneAlreadySaid).forEach(message => void (0, notifications_1.showInfo)(message));
+                await refreshAll({ reason: 'all' });
+            })().catch(error => logger_1.logger.warn('Refreshing after a data store change failed:', error));
         }, 300);
     };
     let storeSubscription;
@@ -918,6 +934,22 @@ class SettingsStore {
      * objects but keep that array, so every existing save finds its base.
      */
     static baseOf = new WeakMap();
+    /**
+     * The last data this window read, with its selection applied, without
+     * going back to the store - so a change another window just made is not
+     * in it yet. For telling what that change took away.
+     */
+    static lastRead() {
+        const store = this.resolveStore();
+        const cached = store ? this.cache.get(store.location) : undefined;
+        const memento = this.selectionState;
+        if (!cached) {
+            return undefined;
+        }
+        const data = this.cloneData(cached.read.data);
+        const selection = memento ? (0, workspaceSelection_1.readSelection)(memento) : undefined;
+        return selection ? (0, workspaceSelection_1.applySelection)(data, selection) : data;
+    }
     /** Forgets every cached read; the next `get()` goes to the store. */
     static invalidate() {
         this.cache.clear();
@@ -6032,6 +6064,19 @@ const utils_1 = __webpack_require__(8);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
 const versionIdentity_1 = __webpack_require__(35);
+const mainStore_1 = __webpack_require__(27);
+/**
+ * Where "save as default" writes. On a shared store the versions are every
+ * window's, and a default that only applies in the window that saved it is
+ * not a default: it goes to the user settings. A workspace on its own file
+ * keeps its defaults to itself, as before.
+ */
+function defaultsTarget() {
+    return (0, mainStore_1.currentMainStore)()?.kind === 'sqlite' ? vscode.ConfigurationTarget.Global : vscode.ConfigurationTarget.Workspace;
+}
+function defaultsWhere() {
+    return (0, mainStore_1.currentMainStore)()?.kind === 'sqlite' ? ' for every workspace (user settings)' : ' for this workspace';
+}
 class VersionsService {
     static instance;
     versions = new Map();
@@ -6664,8 +6709,8 @@ class VersionsService {
             }
             // Update the VS Code configuration
             const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
-            await config.update(settingKey, currentValue, vscode.ConfigurationTarget.Workspace);
-            void (0, notifications_1.showInfo)(`Setting "${settingKey}" value saved as new default.`);
+            await config.update(settingKey, currentValue, defaultsTarget());
+            void (0, notifications_1.showInfo)(`Setting "${settingKey}" value saved as new default${defaultsWhere()}.`);
             return true;
         }
         catch (error) {
@@ -6725,9 +6770,9 @@ class VersionsService {
                 if ((0, versionIdentity_1.isDerivedSetting)(key) || key === 'managedPaths' || key === 'repoPaths') {
                     continue;
                 }
-                await config.update(key, value, vscode.ConfigurationTarget.Workspace);
+                await config.update(key, value, defaultsTarget());
             }
-            void (0, notifications_1.showInfo)(`All settings from version "${version.name}" saved as new defaults.`);
+            void (0, notifications_1.showInfo)(`All settings from version "${version.name}" saved as new defaults${defaultsWhere()}.`);
             return true;
         }
         catch (error) {
@@ -26824,6 +26869,57 @@ async function openOtherSide() {
 }
 function registerUpgradeSideCommands(deps) {
     deps.context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.startThisSide', startThisSide), (0, registerCommand_1.registerCommand)('odoo.openOtherSide', openOtherSide));
+}
+
+
+/***/ }),
+/* 132 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.describeGone = describeGone;
+exports.selectionFacts = selectionFacts;
+/**
+ * Things deleted underneath a window (design §9). Another window on a shared
+ * store can delete the project, database or version this window has
+ * selected; the selection then quietly falls back - to nothing, or to the
+ * first version - and without a word it looks like this window lost them.
+ */
+const utils_1 = __webpack_require__(8);
+/** What went missing between two reads, in words; each said once. */
+function describeGone(before, after, alreadySaid) {
+    const messages = [];
+    const say = (key, message) => {
+        if (!alreadySaid.has(key)) {
+            alreadySaid.add(key);
+            messages.push(message);
+        }
+    };
+    if (before.projectKey && !after.projectKeys.includes(before.projectKey)) {
+        say(`project:${before.projectKey}`, `Project "${before.projectName}" was deleted in another window, so no project is selected here.`);
+    }
+    else if (before.dbId && !after.dbIds.includes(before.dbId)) {
+        say(`db:${before.dbId}`, `"${before.dbLabel ?? before.dbId}" was deleted in another window, so no database is selected here.`);
+    }
+    if (before.versionId && !after.versionIds.includes(before.versionId)) {
+        say(`version:${before.versionId}`, after.activeVersionName
+            ? `"${before.versionName}" was deleted in another window; this window now runs ${after.activeVersionName}.`
+            : `"${before.versionName}" was deleted in another window.`);
+    }
+    return messages;
+}
+/** The facts `describeGone` needs from a loaded project and version. */
+function selectionFacts(project, version) {
+    const db = project?.dbs?.find(entry => entry.isSelected);
+    return {
+        projectKey: project ? project.uid || `name:${project.name ?? ''}` : undefined,
+        projectName: project?.name,
+        dbId: db?.id,
+        dbLabel: db ? (0, utils_1.getDatabaseLabel)(db) : undefined,
+        versionId: version?.id,
+        versionName: version?.name
+    };
 }
 
 
