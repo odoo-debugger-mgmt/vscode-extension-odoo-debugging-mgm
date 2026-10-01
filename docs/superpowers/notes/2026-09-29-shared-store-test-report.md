@@ -5,7 +5,183 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds sixteen runs, newest first. The earlier runs are kept unchanged.
+This file holds seventeen runs, newest first. The earlier runs are kept unchanged.
+
+# Seventeenth run: the sixteenth run's fixes (`69177e3`)
+
+**Scope:** as asked:
+- `npm test`;
+- item 19.2 (one error, no Migrate offer);
+- item 22;
+- spot checks of 21, finding 27's reopen step, and 17.3.
+
+Everything on the list was reached.
+
+**Setup:** as the sixteenth run.
+- **The build:** `69177e3`, installed in the same throwaway profile.
+- **The store:** `shared14.db`, reset to its state before the thirteenth run.
+- **`W17/acme`:** acme and acme-db2 selected before the tests. acme-db2 maps
+  acme to `17.0-dev`, so `W17/acme` was on `17.0-dev` during the run. I put
+  it back on `staging` afterwards.
+- **No builds this run.**
+
+## Verdict (seventeenth run)
+
+- **Matched:**
+  - 19.2's single error, even with the Versions view rendered;
+  - Repos saying the store could not be read;
+  - finding 27's reopen step;
+  - item 21;
+  - 17.3, for a database and for a version.
+- **Item 22 is fixed in part (finding 32, moderate).** There is no "deleted in
+  another window" notice either way, no version question on the own file, and
+  the selection comes back. But on the way back, a "[binding] … no longer
+  exists" check clears the binding the switch had just restored.
+- **Finding 33 (low):** the Migrate offer still appears for the unreadable
+  store, through a race between two version loads.
+
+## Test suite: matched
+
+- VS Code 1.139.1: **538 passing, 0 failing**.
+
+## 19.2: one error matched; the Migrate offer did not (finding 33)
+
+- **The steps:** with every window closed, `ver-17-0001` stored as a BLOB,
+  then `W17/acme` opened.
+- **One error:**
+
+  > Could not read the data store /tmp/odt-brief/shared14.db: its version
+  > "ver-17-0001" is not valid JSON (Unexpected non-whitespace character
+  > after JSON at position 3 (line 1 column 4)). Nothing is saved to it until
+  > it reads again.
+
+  It has Choose Data Store…. It stayed the only error after I opened the Odoo
+  DevTools view and also focused the Versions view (the source of the
+  sixteenth run's second error).
+- **The views:**
+  - Projects: "The data store could not be read, so nothing is shown. Nothing
+    is saved to it until it reads again.";
+  - Repos and Databases: "The data store could not be read.";
+  - all three with Choose Data Store…;
+  - Versions still says "No versions yet. A version is a built environment
+    for one Odoo branch…" with Create Version. The brief does not name that
+    view.
+- **The Migrate offer still appears:** "1 version(s) were built before
+  provisioning and can be migrated." with Migrate and Later (finding 33).
+- **The store:** still four documents, no "Default Version". Afterwards its
+  documents were byte-identical to the copy taken before the test.
+
+## Finding 27's reopen step: matched
+
+- **The steps:** with the document restored, I opened `W17/acme` again.
+- **The result:**
+  - still bound: `ver-17-0001`, with no "Which version here?";
+  - acme and acme-db2 selected;
+  - its registry row has `version_id` `ver-17-0001`.
+
+## 22 · To its own file and back: matched in part (finding 32)
+
+**To its own file:** Choose Data Store… → This workspace only.
+- "This workspace now uses its own data file."
+- No "was deleted in another window" notice, and no "[binding]" line.
+- No version question, and no "Which version here?".
+- **Spot check 21:** `git status` in the clone is clean, and both new files
+  are excluded.
+
+**Back:** Choose Data Store… → Open an existing store… →
+`/tmp/odt-brief/shared14.db` → All workspaces → "This workspace has its own
+data store set (.vscode/odoo-debugger-data.json), which still wins here." →
+Use the Shared Store Here Too → "Now using the shared store
+/tmp/odt-brief/shared14.db."
+- **As expected:**
+  - no "was deleted in another window" notice;
+  - acme and acme-db2 selected, 17.0 active;
+  - no "Which version here?" item, and no question.
+- **Not as expected:**
+  - the log says, 21 ms after "Now using the shared store":
+
+    ```
+    INFO: [binding] the version this workspace was bound to (ver-17-0001) no longer exists; asking again
+    ```
+
+  - the binding is `{asked: false}`, and the version tooltip has no "Bound to
+    this workspace";
+  - the window's registry row has an empty `version_id`.
+- **Afterwards:** `.vscode/settings.json` was left holding `{}`. I removed both
+  files, and rebound `W17` with Bind This Workspace to a Version… for the next
+  step.
+
+## Spot check 17.3: matched
+
+- **A database:** with `W17` on acme-db2, I deleted acme-db2 from `W19` (no
+  PostgreSQL database behind it, checked first). `W17` said once: "acme-db2"
+  was deleted in another window, so no database is selected here.
+- **A version:** I created a Profile-only Odoo 12.0 in `W19` and switched
+  `W17` to it. Switching asked "This workspace runs Odoo 17.0. Switching makes
+  this window run Odoo 12.0."; I chose Switch for Now. Then I deleted 12.0
+  from `W19`. `W17` said: "Odoo 12.0" was deleted in another window; this
+  window now runs Odoo 17.0. Its binding stayed 17.0.
+
+## Findings (seventeenth run)
+
+### 32. Back on the shared store, the restored binding is cleared at once (moderate)
+
+**Steps:** item 22. `W17/acme` bound to 17.0 → This workspace only → back to
+the shared store.
+
+**Happened:**
+- **The stash worked.** It holds
+  `odt.perStore:/tmp/odt-brief/shared14.db.binding = {versionId:
+  "ver-17-0001", asked: true}`.
+- **The switch restored it,** and 21 ms later it was cleared:
+
+  ```
+  10:38:54.638 INFO: Now using the shared store /tmp/odt-brief/shared14.db.
+  10:38:54.659 INFO: [binding] the version this workspace was bound to (ver-17-0001) no longer exists; asking again
+  ```
+
+- **Afterwards:**
+  - the binding is `{asked: false}`;
+  - the tooltip has no "Bound to this workspace";
+  - the registry row has an empty `version_id`.
+- **Nothing is shown,** so the window looks bound but is not. Other windows no
+  longer find `W17` as 17.0's workspace (Also runs in, Open the Workspace,
+  the other side of an upgrade). It will be asked again on its next open.
+
+**Why, as far as I can tell:**
+- In the store-switch handler (`src/extension.ts`), `restoreForStore` runs,
+  then `onStoreChanged()`, which reloads the views after its debounce, then
+  `offerWorkspaceBinding()` at once.
+- `offerWorkspaceBinding` calls `versions.initialize()`, which does nothing:
+  the service is still initialized, from the own file.
+- So `bindingIsOrphaned` sees a shared store (`kind === 'sqlite'`), but the
+  own file's versions (only "Default Version"), and clears the binding.
+- Reloading the versions before the binding check, or skipping the check for
+  a switch, as the "deleted" notice now does, would avoid it.
+
+### 33. The Migrate offer still appears for an unreadable store (low)
+
+**Steps:** 19.2.
+
+**Happened:** "1 version(s) were built before provisioning and can be
+migrated." with Migrate and Later. The log order:
+
+```
+10:35:45.375 ERROR: Could not read the data store … Nothing is saved to it until it reads again.
+10:35:45.376 ERROR: Failed to load versions: Error: the data store could not be read
+10:35:45.410 INFO: 1 version(s) were built before provisioning and can be migrated.
+10:35:45.414 ERROR: Failed to load versions: Error: the data store could not be read
+```
+
+**Why, as far as I can tell:**
+- `loadVersions()` sets `this.readFailed = false` on entry, and sets it back to
+  `true` only when the read has failed again.
+- `initialize()` runs it again on every call while the store is unreadable,
+  because `initialized` stays false.
+- So during a second load (between .376 and .414), `loadedFromStore()` is
+  briefly true. `promptLegacyVersions` checked it at .410 and offered to
+  migrate the stand-in.
+- Clearing the flag only after a successful read would close the window.
 
 # Sixteenth run: the fifteenth run's fixes (`2dc0ee3`)
 
