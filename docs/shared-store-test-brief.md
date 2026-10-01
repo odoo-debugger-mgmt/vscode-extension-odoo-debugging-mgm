@@ -24,15 +24,21 @@ behaviour. Anything that behaves differently from it is a finding.
 
 ## The final run: what is left to test
 
-Everything else has been run and matched. After the sixteenth run's fixes,
+Everything else has been run and matched. After the seventeenth run's fixes,
 in this order:
 
 1. `npm test`.
-2. **Item 19.2** — one error also after opening the Odoo DevTools view, no
-   Migrate offer, and Repos saying the store could not be read (finding 30).
-3. **Item 22** — a workspace moved to its own file and back (finding 31).
-4. **Regression spot checks:** item 21, finding 27's reopen step (19.2), and
-   17.3 (a real deletion in another window is still named).
+2. **Item 22** — a workspace moved to its own file and back stays bound to
+   17.0 on its return: no "[binding] … no longer exists" line, the version
+   tooltip saying "Bound to this workspace", and its registry row's
+   `version_id` set (finding 32).
+3. **Item 19.2** — still one error, and no Migrate offer, including in the
+   log: no "can be migrated" line (finding 33).
+4. **Regression spot checks:** a fresh window on the shared store is still
+   asked which version it runs (18.3), and so is a workspace moved from its
+   own file onto the shared store for the first time (14.1's question, after
+   Choose Data Store… → All workspaces); 17.3 (a real deletion in another
+   window is still named).
 
 Report findings in the same format; anything not reached, say so.
 
@@ -543,8 +549,9 @@ store… → the shared store → All workspaces → Use the Shared Store Here T
 **Expect** no "was deleted in another window" notice and no "[binding] …
 no longer exists" line either way; on the own file, no version question;
 back on the shared store, the window bound to 17.0 again (no "Which version
-here?"), with acme and acme-db2 selected. Remove the two `.vscode` files
-afterwards.
+here?", the version tooltip saying "Bound to this workspace", and its
+registry row's `version_id` set), with acme and acme-db2 selected. Remove
+the two `.vscode` files afterwards.
 
 ## 12 · A store from the future
 
