@@ -1591,7 +1591,12 @@
       },
       {
         "view": "repoSelector",
-        "when": "odoo-debugger.is_active",
+        "when": "odoo-debugger.is_active && odoo-debugger.store_unreadable",
+        "contents": "The data store could not be read.\n[Choose Data Store…](command:odoo.chooseDataStore)"
+      },
+      {
+        "view": "repoSelector",
+        "when": "odoo-debugger.is_active && !odoo-debugger.store_unreadable",
         "contents": "No repositories found. Repositories are discovered in your custom addons folder.\n[Choose Custom Addons Folder](command:odoo.chooseCustomAddonsPath)\n[Create Project](command:projectSelector.create)"
       },
       {

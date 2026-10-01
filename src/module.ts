@@ -14,7 +14,7 @@ import { collectModuleDiscovery, resolvePsaeDirectories, setPsaeDirectoryInclude
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { SettingsStore } from './settingsStore';
+import { SettingsStore, noneOnStoreRead } from './settingsStore';
 import { getInstalledModuleNames, getInstalledModules } from './services/database';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
@@ -104,7 +104,7 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         // Empty lists fall through to the view's welcome content, which
         // explains that a project and database must be selected first - so
         // this reads silently rather than raising a toast from a refresh.
-        const result = await SettingsStore.peekSelectedProject();
+        const result = await SettingsStore.peekSelectedProject().catch(noneOnStoreRead);
         if (!result) {
             return [];
         }

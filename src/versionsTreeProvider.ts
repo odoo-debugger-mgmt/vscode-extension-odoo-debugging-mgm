@@ -11,6 +11,7 @@ import { activeIcon, selectedIcon } from './views/icons';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { logger } from './services/logger';
+import { isStoreReadError } from './settingsStore';
 import { BaseTreeProvider } from './views/baseTreeProvider';
 import { isDerivedSetting } from './services/versionIdentity';
 import { currentQueueSnapshot, queueLabel } from './services/provisionQueue';
@@ -207,7 +208,8 @@ export class VersionsTreeProvider extends BaseTreeProvider<VersionTreeItem | Ver
                         otherWorkspacesFor(version.id).map(row => row.name))
                 );
             }).catch(error => {
-                logger.error('Failed to load versions for tree view:', error);
+                // A failed store read was said once, where it happened.
+                (isStoreReadError(error) ? logger.debug : logger.error)('Failed to load versions for tree view:', error);
                 return [];
             });
         } else if (element instanceof VersionTreeItem) {

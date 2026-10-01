@@ -13,7 +13,7 @@
  * would reach every one of its consumers.
  */
 import * as vscode from 'vscode';
-import { SettingsStore } from './settingsStore';
+import { SettingsStore, noneOnStoreRead } from './settingsStore';
 import { ProjectModel } from './models/project';
 import { UpgradeConfigModel, ensureUpgradeConfigModel } from './models/upgrade';
 import { updateUpgradeContext, updateUpgradeRememberedContext } from './context';
@@ -220,7 +220,7 @@ export class UpgradeTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
     async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
         // An empty list falls through to the view's welcome content, which
         // explains that a project has to be selected first.
-        const result = await SettingsStore.peekSelectedProject();
+        const result = await SettingsStore.peekSelectedProject().catch(noneOnStoreRead);
         if (!result) {
             return [];
         }

@@ -4,7 +4,7 @@
  */
 import * as vscode from 'vscode';
 import * as path from 'node:path';
-import { SettingsStore } from './settingsStore';
+import { SettingsStore, noneOnStoreRead } from './settingsStore';
 import { ProjectModel } from './models/project';
 import { RepoModel, normalizeBranchMode } from './models/repo';
 import { showError, showInfo, normalizePath } from './utils';
@@ -200,7 +200,7 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
         if (!element) {
             // Empty lists fall through to the view's welcome content, which
             // offers the select-project / select-repos actions.
-            const selection = await SettingsStore.peekSelectedProject();
+            const selection = await SettingsStore.peekSelectedProject().catch(noneOnStoreRead);
             if (!selection) {
                 return [];
             }

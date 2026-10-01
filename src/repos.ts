@@ -5,7 +5,7 @@
 import { RepoModel, normalizeBranchMode } from "./models/repo";
 import * as vscode from "vscode";
 import { getWorkspacePath, normalizePath, stripSettings } from './utils';
-import { SettingsStore } from './settingsStore';
+import { SettingsStore, noneOnStoreRead } from './settingsStore';
 import { readUpgradeConfig, refuseDuringUpgrade } from './upgrade';
 import { VersionsService } from './versionsService';
 import * as path from 'path';
@@ -66,7 +66,7 @@ export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
     }
     async getChildren(_element?: any): Promise<vscode.TreeItem[] | undefined> {
         // Silent: an empty list shows the view's welcome content.
-        const result = await SettingsStore.peekSelectedProject();
+        const result = await SettingsStore.peekSelectedProject().catch(noneOnStoreRead);
         if (!result) {
             return [];
         }

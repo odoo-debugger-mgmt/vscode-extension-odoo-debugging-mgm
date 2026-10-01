@@ -112,6 +112,10 @@ export class VersionsService {
         this.readFailed = false;
         try {
             const data = await SettingsStore.load();
+            // load() reads a failure as an empty store; it is not one.
+            if (SettingsStore.readFailed()) {
+                throw new Error('the data store could not be read');
+            }
             const versionsData = data.versions || {};
             const activeVersionId = data.activeVersion;
 

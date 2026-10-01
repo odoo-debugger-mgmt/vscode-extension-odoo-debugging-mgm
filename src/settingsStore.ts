@@ -77,6 +77,19 @@ export function isStoreReadError(error: unknown): boolean {
     return error instanceof StoreReadError;
 }
 
+/**
+ * For a view's read: a failed read is nothing to show - the view's welcome
+ * says the store could not be read. A view whose getChildren rejects gets
+ * the error repeated by VS Code as a notification, without Choose Data
+ * Store… (sixteenth run). Anything else is rethrown.
+ */
+export function noneOnStoreRead(error: unknown): null {
+    if (isStoreReadError(error)) {
+        return null;
+    }
+    throw error;
+}
+
 /** Views show "could not be read" instead of an empty store's invitations. */
 function setUnreadableContext(unreadable: boolean): void {
     void Promise.resolve(vscode.commands.executeCommand('setContext', 'odoo-debugger.store_unreadable', unreadable))
@@ -421,6 +434,16 @@ export class SettingsStore {
             }, WRITE_DEBOUNCE_MS);
             this.pendingWrites.set(location, pending);
         });
+    }
+
+    /**
+     * Whether the store this window uses could not be read last time. load()
+     * hides that behind empty data; a caller that must not mistake it for an
+     * empty store asks here.
+     */
+    static readFailed(): boolean {
+        const store = this.resolveStore();
+        return !!store && this.unreadable.has(store.location);
     }
 
     static async load(): Promise<DebuggerData> {

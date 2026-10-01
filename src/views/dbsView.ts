@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { BaseTreeProvider } from './baseTreeProvider';
 import { DatabaseModel } from '../models/db';
-import { SettingsStore } from '../settingsStore';
+import { SettingsStore, noneOnStoreRead } from '../settingsStore';
 import { VersionsService } from '../versionsService';
 import { SortPreferences } from '../sortPreferences';
 import { getDefaultSortOption } from '../sortOptions';
@@ -43,7 +43,7 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
     async getChildren(_element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
         // Silent: an empty list shows the view's welcome content.
-        const result = await SettingsStore.peekSelectedProject();
+        const result = await SettingsStore.peekSelectedProject().catch(noneOnStoreRead);
         if (!result) {
             return [];
         }

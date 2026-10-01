@@ -9,7 +9,7 @@ import { DatabaseModel } from './models/db';
 import { RepoModel } from './models/repo';
 import { findRepositories, showError, showInfo, normalizePath, showAutoInfo, stripSettings, getDatabaseLabel } from './utils';
 import { activeIcon } from './views/icons';
-import { SettingsStore } from './settingsStore';
+import { SettingsStore, noneOnStoreRead } from './settingsStore';
 import { VersionsService } from './versionsService';
 import { randomUUID } from 'crypto';
 import { alignEnvironment, buildDatabaseEnvironmentTarget } from './services/environment';
@@ -148,7 +148,7 @@ export class ProjectTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         return element;
     }
     async getChildren(_element?: any): Promise<vscode.TreeItem[]> {
-        const data = await SettingsStore.get('odoo-debugger-data.json');
+        const data = await SettingsStore.get('odoo-debugger-data.json').catch(noneOnStoreRead);
         if (!data) {
             return [];
         }

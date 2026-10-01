@@ -9,7 +9,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type * as vscode from 'vscode';
-import { SettingsStore, StoreUnreadableError } from '../settingsStore';
+import { SettingsStore, StoreReadError, StoreUnreadableError, noneOnStoreRead } from '../settingsStore';
 import { SqliteMainStore, loadSqlite } from '../services/sqliteMainStore';
 import { VersionsService, findSameEnvironment } from '../versionsService';
 import type { MainStore } from '../services/mainStore';
@@ -168,6 +168,9 @@ suite('An unreadable store is not written to', () => {
             // Fourteenth run: the refused save escaped initialize() and ended activation.
             await service.initialize();
             assert.strictEqual(commits, 0);
+            // Sixteenth run: load() hid the failure, so the stand-in was
+            // taken for stored versions and offered for migration.
+            assert.strictEqual(service.loadedFromStore(), false);
 
             readable = true;
             await service.initialize();
@@ -177,5 +180,12 @@ suite('An unreadable store is not written to', () => {
             real.dispose();
             await fs.rm(dir, { recursive: true, force: true });
         }
+    });
+});
+
+suite('A view reading an unreadable store', () => {
+    test('shows nothing rather than an error VS Code would repeat', async () => {
+        assert.strictEqual(await Promise.reject(new StoreReadError('/s.db', 'bad')).catch(noneOnStoreRead), null);
+        await assert.rejects(Promise.reject(new Error('other')).catch(noneOnStoreRead), /other/);
     });
 });

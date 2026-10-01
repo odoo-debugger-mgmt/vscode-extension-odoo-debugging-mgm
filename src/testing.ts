@@ -4,7 +4,7 @@
  * --stop-after-init/--log-level into the launch configuration.
  */
 import * as vscode from "vscode";
-import { SettingsStore } from './settingsStore';
+import { SettingsStore, noneOnStoreRead } from './settingsStore';
 import { TestTag, TestingConfigModel, LogLevel, ensureTestingConfigModel } from './models/testing';
 import { ModuleModel, ModuleState } from './models/module';
 import type { DatabaseModel } from './models/db';
@@ -33,7 +33,7 @@ export class TestingTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         // Empty lists fall through to the view's welcome content, which
         // explains that a project and database must be selected first. Silent:
         // a view has no business raising an error before anyone asked.
-        const result = await SettingsStore.peekSelectedProject();
+        const result = await SettingsStore.peekSelectedProject().catch(noneOnStoreRead);
         if (!result) {
             return [];
         }
