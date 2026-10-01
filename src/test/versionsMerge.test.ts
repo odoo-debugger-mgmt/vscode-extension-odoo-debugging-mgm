@@ -181,11 +181,82 @@ suite('An unreadable store is not written to', () => {
             await fs.rm(dir, { recursive: true, force: true });
         }
     });
+
+    test('the stand-in is not taken for stored versions while it reads again', async () => {
+        // Seventeenth run, finding 33: a second load cleared the flag on
+        // entry, and the Migrate offer, checking during it, offered the
+        // stand-in.
+        let release: () => void = () => undefined;
+        let stat = 0;
+        const slow: MainStore = {
+            kind: 'sqlite',
+            location: '/tmp/slow.db',
+            root: '/tmp',
+            stat: async () => ++stat,
+            read: () => new Promise((_resolve, reject) => {
+                release = () => reject(new Error('file is not a database'));
+            }),
+            commit: async () => ({ rev: 1, merged: [] }) as never,
+            dispose: () => undefined
+        };
+        SettingsStore.useForTesting(slow, memento());
+        const service = VersionsService.getInstance();
+        (service as unknown as { initialized: boolean; readFailed: boolean }).initialized = false;
+        (service as unknown as { readFailed: boolean }).readFailed = true;
+        try {
+            const again = service.initialize();
+            await new Promise(resolve => setTimeout(resolve, 10));
+            assert.strictEqual(service.loadedFromStore(), false);
+            release();
+            await again;
+            assert.strictEqual(service.loadedFromStore(), false);
+        } finally {
+            SettingsStore.useForTesting(undefined);
+        }
+    });
 });
 
 suite('A view reading an unreadable store', () => {
     test('shows nothing rather than an error VS Code would repeat', async () => {
         assert.strictEqual(await Promise.reject(new StoreReadError('/s.db', 'bad')).catch(noneOnStoreRead), null);
         await assert.rejects(Promise.reject(new Error('other')).catch(noneOnStoreRead), /other/);
+    });
+});
+
+(sqlite ? suite : suite.skip)('A window that switched data stores', function () {
+    this.timeout(20000);
+
+    test('judges nothing from the old store\'s versions until it reads the new one', async () => {
+        // Seventeenth run, finding 32: back on the shared store, the binding
+        // check ran before the versions were read again, found 17.0 missing
+        // from the own file's versions, and cleared the binding.
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'odt-switch-'));
+        const own = new SqliteMainStore(path.join(dir, 'own.db'), dir, sqlite!);
+        const shared = new SqliteMainStore(path.join(dir, 'shared.db'), dir, sqlite!);
+        await shared.commit(await shared.read(), {
+            projects: [],
+            versions: { v17: { id: 'v17', name: 'Odoo 17.0', odooVersion: '17.0', settings: { portNumber: 8069 }, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' } },
+            activeVersion: 'v17',
+            dbTemplates: []
+        } as never);
+        const service = VersionsService.getInstance();
+        try {
+            SettingsStore.useForTesting(own, memento());
+            await service.refresh();
+            assert.strictEqual(service.loadedFromStore(), true);
+            assert.strictEqual(service.getVersion('v17'), undefined);
+
+            SettingsStore.useForTesting(shared, memento());
+            assert.strictEqual(service.loadedFromStore(), false, 'the own file\'s versions say nothing about the shared store');
+
+            await service.refresh();
+            assert.strictEqual(service.loadedFromStore(), true);
+            assert.ok(service.getVersion('v17'));
+        } finally {
+            SettingsStore.useForTesting(undefined);
+            own.dispose();
+            shared.dispose();
+            await fs.rm(dir, { recursive: true, force: true });
+        }
     });
 });

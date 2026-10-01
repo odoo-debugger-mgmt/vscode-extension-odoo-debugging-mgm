@@ -285,6 +285,13 @@ export async function activate(context: vscode.ExtensionContext) {
                 // another store's data says nothing about this one's.
                 if (!data || !versionsService.loadedFromStore() || switched) {
                     await refreshAll({ reason: 'all' });
+                    // A workspace that just joined a shared store is asked
+                    // now, with that store's versions loaded: asked before,
+                    // it judged the binding from the old store's (seventeenth
+                    // run).
+                    if (switched) {
+                        void offerWorkspaceBinding();
+                    }
                     return;
                 }
                 const keys = (data?.projects ?? []).map(project => project.uid || `name:${project.name ?? ''}`);
@@ -330,9 +337,9 @@ export async function activate(context: vscode.ExtensionContext) {
                     switchedStores = true;
                 }
                 onStoreChanged();
-                // A workspace that just joined a shared store is recorded and asked then.
+                // A workspace that just joined a shared store is recorded now,
+                // and asked once onStoreChanged has read its versions.
                 void registerThisWorkspace();
-                void offerWorkspaceBinding();
             })().catch(error => logger.warn('Switching data stores failed:', error));
         }
     }));

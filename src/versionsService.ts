@@ -71,6 +71,8 @@ export class VersionsService {
      * stand-in, never saved, and the next initialize() reads again.
      */
     private readFailed = false;
+    /** The store the versions in memory were read from; undefined before any read. */
+    private loadedFrom: string | undefined;
 
     private constructor() {
         // Initialization will be done via initialize() method
@@ -79,10 +81,14 @@ export class VersionsService {
     /**
      * Whether the versions in memory came from the store. After a failed read
      * they are a stand-in: nothing may be judged from them - that a version
-     * is gone, or needs migrating.
+     * is gone, or needs migrating. Nor from another store's versions, until
+     * a window that switched stores reads again (seventeenth run: the binding
+     * check judged the shared store from the own file's versions, and cleared
+     * the binding the switch had just given back).
      */
     public loadedFromStore(): boolean {
-        return !this.readFailed;
+        return !this.readFailed
+            && (this.loadedFrom === undefined || this.loadedFrom === SettingsStore.storeLocation());
     }
 
     public static getInstance(): VersionsService {
@@ -109,13 +115,18 @@ export class VersionsService {
      * Load versions from odoo-debugger-data.json
      */
     private async loadVersions(): Promise<void> {
-        this.readFailed = false;
+        const location = SettingsStore.storeLocation();
         try {
             const data = await SettingsStore.load();
             // load() reads a failure as an empty store; it is not one.
             if (SettingsStore.readFailed()) {
                 throw new Error('the data store could not be read');
             }
+            // Cleared only once a read succeeds (seventeenth run): cleared on
+            // entry, a second load made the stand-in look stored while it
+            // read, and the Migrate offer checked just then.
+            this.readFailed = false;
+            this.loadedFrom = location;
             const versionsData = data.versions || {};
             const activeVersionId = data.activeVersion;
 

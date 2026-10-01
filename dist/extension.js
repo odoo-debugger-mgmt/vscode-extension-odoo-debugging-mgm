@@ -290,6 +290,13 @@ async function activate(context) {
                 // another store's data says nothing about this one's.
                 if (!data || !versionsService.loadedFromStore() || switched) {
                     await refreshAll({ reason: 'all' });
+                    // A workspace that just joined a shared store is asked
+                    // now, with that store's versions loaded: asked before,
+                    // it judged the binding from the old store's (seventeenth
+                    // run).
+                    if (switched) {
+                        void (0, bindingCommand_1.offerWorkspaceBinding)();
+                    }
                     return;
                 }
                 const keys = (data?.projects ?? []).map(project => project.uid || `name:${project.name ?? ''}`);
@@ -334,9 +341,9 @@ async function activate(context) {
                     switchedStores = true;
                 }
                 onStoreChanged();
-                // A workspace that just joined a shared store is recorded and asked then.
+                // A workspace that just joined a shared store is recorded now,
+                // and asked once onStoreChanged has read its versions.
                 void (0, workspaceRegistry_1.registerThisWorkspace)();
-                void (0, bindingCommand_1.offerWorkspaceBinding)();
             })().catch(error => logger_1.logger.warn('Switching data stores failed:', error));
         }
     }));
@@ -1067,6 +1074,10 @@ class SettingsStore {
     /** Where this window's data lives, for pinning into generated workspaces. */
     static currentLocation() {
         return (0, mainStore_1.currentMainStore)()?.location;
+    }
+    /** The store reads go to now - the test override included, unlike currentLocation(). */
+    static storeLocation() {
+        return this.storeOverride?.location ?? (0, mainStore_1.currentMainStore)()?.location;
     }
     static cloneData(value) {
         if (typeof structuredClone === 'function') {
@@ -6366,16 +6377,22 @@ class VersionsService {
      * stand-in, never saved, and the next initialize() reads again.
      */
     readFailed = false;
+    /** The store the versions in memory were read from; undefined before any read. */
+    loadedFrom;
     constructor() {
         // Initialization will be done via initialize() method
     }
     /**
      * Whether the versions in memory came from the store. After a failed read
      * they are a stand-in: nothing may be judged from them - that a version
-     * is gone, or needs migrating.
+     * is gone, or needs migrating. Nor from another store's versions, until
+     * a window that switched stores reads again (seventeenth run: the binding
+     * check judged the shared store from the own file's versions, and cleared
+     * the binding the switch had just given back).
      */
     loadedFromStore() {
-        return !this.readFailed;
+        return !this.readFailed
+            && (this.loadedFrom === undefined || this.loadedFrom === settingsStore_1.SettingsStore.storeLocation());
     }
     static getInstance() {
         if (!VersionsService.instance) {
@@ -6399,13 +6416,18 @@ class VersionsService {
      * Load versions from odoo-debugger-data.json
      */
     async loadVersions() {
-        this.readFailed = false;
+        const location = settingsStore_1.SettingsStore.storeLocation();
         try {
             const data = await settingsStore_1.SettingsStore.load();
             // load() reads a failure as an empty store; it is not one.
             if (settingsStore_1.SettingsStore.readFailed()) {
                 throw new Error('the data store could not be read');
             }
+            // Cleared only once a read succeeds (seventeenth run): cleared on
+            // entry, a second load made the stand-in look stored while it
+            // read, and the Migrate offer checked just then.
+            this.readFailed = false;
+            this.loadedFrom = location;
             const versionsData = data.versions || {};
             const activeVersionId = data.activeVersion;
             this.versions.clear();

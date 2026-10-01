@@ -176,6 +176,11 @@ export class SettingsStore {
         return currentMainStore()?.location;
     }
 
+    /** The store reads go to now - the test override included, unlike currentLocation(). */
+    static storeLocation(): string | undefined {
+        return this.storeOverride?.location ?? currentMainStore()?.location;
+    }
+
     private static cloneData<T>(value: T): T {
         if (typeof structuredClone === 'function') {
             return structuredClone(value);
