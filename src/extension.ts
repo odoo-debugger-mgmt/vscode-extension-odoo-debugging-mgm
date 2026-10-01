@@ -49,6 +49,7 @@ import { initializeBinding } from './services/workspaceBinding';
 import { initializeRegistry, registerThisWorkspace } from './services/workspaceRegistry';
 import { offerWorkspaceBinding } from './commands/bindingCommand';
 import { describeGone, selectionFacts } from './services/goneElsewhere';
+import { restoreForStore, stashForStore } from './services/storeSwitch';
 
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext(): Promise<void> {
@@ -259,6 +260,8 @@ export async function activate(context: vscode.ExtensionContext) {
     // several documents and each is its own change.
     let storeChangeTimer: NodeJS.Timeout | undefined;
     const goneAlreadySaid = new Set<string>();
+    // This window moved to another store: its data differs, nothing was deleted.
+    let switchedStores = false;
     const onStoreChanged = () => {
         if (storeChangeTimer) {
             clearTimeout(storeChangeTimer);
@@ -276,8 +279,11 @@ export async function activate(context: vscode.ExtensionContext) {
                 SettingsStore.invalidate();
                 await versionsService.refresh();
                 const data = await SettingsStore.get().catch(() => undefined);
-                // A read that failed says nothing about what was deleted.
-                if (!data || !versionsService.loadedFromStore()) {
+                const switched = switchedStores;
+                switchedStores = false;
+                // A read that failed says nothing about what was deleted, and
+                // another store's data says nothing about this one's.
+                if (!data || !versionsService.loadedFromStore() || switched) {
                     await refreshAll({ reason: 'all' });
                     return;
                 }
@@ -301,20 +307,33 @@ export async function activate(context: vscode.ExtensionContext) {
         const store = currentMainStore();
         projectTreeView.description = store?.kind === 'sqlite' ? `shared: ${path.basename(store.location)}` : undefined;
     };
+    let watchedLocation: string | undefined;
     const watchStore = () => {
         describeStore();
         storeSubscription?.dispose();
-        storeSubscription = currentMainStore()?.onDidChange?.(onStoreChanged);
+        const store = currentMainStore();
+        watchedLocation = store?.location;
+        storeSubscription = store?.onDidChange?.(onStoreChanged);
     };
     watchStore();
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('odooDebugger.dataStore.path')) {
-            closeOtherMainStores();
-            watchStore();
-            onStoreChanged();
-            // A workspace that just joined a shared store is recorded and asked then.
-            void registerThisWorkspace();
-            void offerWorkspaceBinding();
+            void (async () => {
+                const from = watchedLocation;
+                closeOtherMainStores();
+                watchStore();
+                // Each store keeps this window's selection and binding as it
+                // left them; given back before anything reads the new store.
+                if (from && watchedLocation && from !== watchedLocation) {
+                    await stashForStore(context.workspaceState, from);
+                    await restoreForStore(context.workspaceState, watchedLocation);
+                    switchedStores = true;
+                }
+                onStoreChanged();
+                // A workspace that just joined a shared store is recorded and asked then.
+                void registerThisWorkspace();
+                void offerWorkspaceBinding();
+            })().catch(error => logger.warn('Switching data stores failed:', error));
         }
     }));
     context.subscriptions.push({

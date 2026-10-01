@@ -81,6 +81,7 @@ const workspaceBinding_1 = __webpack_require__(62);
 const workspaceRegistry_1 = __webpack_require__(81);
 const bindingCommand_1 = __webpack_require__(83);
 const goneElsewhere_1 = __webpack_require__(134);
+const storeSwitch_1 = __webpack_require__(135);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -267,6 +268,8 @@ async function activate(context) {
     // several documents and each is its own change.
     let storeChangeTimer;
     const goneAlreadySaid = new Set();
+    // This window moved to another store: its data differs, nothing was deleted.
+    let switchedStores = false;
     const onStoreChanged = () => {
         if (storeChangeTimer) {
             clearTimeout(storeChangeTimer);
@@ -281,8 +284,11 @@ async function activate(context) {
                 settingsStore_1.SettingsStore.invalidate();
                 await versionsService.refresh();
                 const data = await settingsStore_1.SettingsStore.get().catch(() => undefined);
-                // A read that failed says nothing about what was deleted.
-                if (!data || !versionsService.loadedFromStore()) {
+                const switched = switchedStores;
+                switchedStores = false;
+                // A read that failed says nothing about what was deleted, and
+                // another store's data says nothing about this one's.
+                if (!data || !versionsService.loadedFromStore() || switched) {
                     await refreshAll({ reason: 'all' });
                     return;
                 }
@@ -305,20 +311,33 @@ async function activate(context) {
         const store = (0, mainStore_1.currentMainStore)();
         projectTreeView.description = store?.kind === 'sqlite' ? `shared: ${path.basename(store.location)}` : undefined;
     };
+    let watchedLocation;
     const watchStore = () => {
         describeStore();
         storeSubscription?.dispose();
-        storeSubscription = (0, mainStore_1.currentMainStore)()?.onDidChange?.(onStoreChanged);
+        const store = (0, mainStore_1.currentMainStore)();
+        watchedLocation = store?.location;
+        storeSubscription = store?.onDidChange?.(onStoreChanged);
     };
     watchStore();
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('odooDebugger.dataStore.path')) {
-            (0, mainStore_1.closeOtherMainStores)();
-            watchStore();
-            onStoreChanged();
-            // A workspace that just joined a shared store is recorded and asked then.
-            void (0, workspaceRegistry_1.registerThisWorkspace)();
-            void (0, bindingCommand_1.offerWorkspaceBinding)();
+            void (async () => {
+                const from = watchedLocation;
+                (0, mainStore_1.closeOtherMainStores)();
+                watchStore();
+                // Each store keeps this window's selection and binding as it
+                // left them; given back before anything reads the new store.
+                if (from && watchedLocation && from !== watchedLocation) {
+                    await (0, storeSwitch_1.stashForStore)(context.workspaceState, from);
+                    await (0, storeSwitch_1.restoreForStore)(context.workspaceState, watchedLocation);
+                    switchedStores = true;
+                }
+                onStoreChanged();
+                // A workspace that just joined a shared store is recorded and asked then.
+                void (0, workspaceRegistry_1.registerThisWorkspace)();
+                void (0, bindingCommand_1.offerWorkspaceBinding)();
+            })().catch(error => logger_1.logger.warn('Switching data stores failed:', error));
         }
     }));
     context.subscriptions.push({
@@ -596,7 +615,7 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     }
     async getChildren(_element) {
         // Silent: an empty list shows the view's welcome content.
-        const result = await settingsStore_1.SettingsStore.peekSelectedProject();
+        const result = await settingsStore_1.SettingsStore.peekSelectedProject().catch(settingsStore_1.noneOnStoreRead);
         if (!result) {
             return [];
         }
@@ -916,6 +935,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SettingsStore = exports.StoreReadError = exports.StoreUnreadableError = void 0;
 exports.isStoreReadError = isStoreReadError;
+exports.noneOnStoreRead = noneOnStoreRead;
 /**
  * The extension's data, as callers see it: the main store (services/mainStore.ts)
  * with this window's selection applied on top.
@@ -960,6 +980,18 @@ exports.StoreReadError = StoreReadError;
 /** A failed read, already said. A refused save (StoreUnreadableError) is not: it is news. */
 function isStoreReadError(error) {
     return error instanceof StoreReadError;
+}
+/**
+ * For a view's read: a failed read is nothing to show - the view's welcome
+ * says the store could not be read. A view whose getChildren rejects gets
+ * the error repeated by VS Code as a notification, without Choose Data
+ * Store… (sixteenth run). Anything else is rethrown.
+ */
+function noneOnStoreRead(error) {
+    if (isStoreReadError(error)) {
+        return null;
+    }
+    throw error;
 }
 /** Views show "could not be read" instead of an empty store's invitations. */
 function setUnreadableContext(unreadable) {
@@ -1270,6 +1302,15 @@ class SettingsStore {
             }, WRITE_DEBOUNCE_MS);
             this.pendingWrites.set(location, pending);
         });
+    }
+    /**
+     * Whether the store this window uses could not be read last time. load()
+     * hides that behind empty data; a caller that must not mistake it for an
+     * empty store asks here.
+     */
+    static readFailed() {
+        const store = this.resolveStore();
+        return !!store && this.unreadable.has(store.location);
     }
     static async load() {
         const data = await this.get().catch(() => ({ projects: [] }));
@@ -6361,6 +6402,10 @@ class VersionsService {
         this.readFailed = false;
         try {
             const data = await settingsStore_1.SettingsStore.load();
+            // load() reads a failure as an empty store; it is not one.
+            if (settingsStore_1.SettingsStore.readFailed()) {
+                throw new Error('the data store could not be read');
+            }
             const versionsData = data.versions || {};
             const activeVersionId = data.activeVersion;
             this.versions.clear();
@@ -7735,7 +7780,7 @@ class UpgradeTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     async getChildren(element) {
         // An empty list falls through to the view's welcome content, which
         // explains that a project has to be selected first.
-        const result = await settingsStore_1.SettingsStore.peekSelectedProject();
+        const result = await settingsStore_1.SettingsStore.peekSelectedProject().catch(settingsStore_1.noneOnStoreRead);
         if (!result) {
             return [];
         }
@@ -15755,7 +15800,9 @@ async function offerWorkspaceBinding() {
         // Bound to a version another window deleted: bound to nothing, and
         // never asked again. It is asked again instead.
         const bound = (0, workspaceBinding_1.readBinding)().versionId;
-        if ((0, workspaceBinding_1.bindingIsOrphaned)(bound, versions.loadedFromStore(), id => !!versions.getVersion(id))) {
+        // Only a shared store binds; a workspace's own file never judges one.
+        const shared = (0, mainStore_1.currentMainStore)()?.kind === 'sqlite';
+        if (shared && (0, workspaceBinding_1.bindingIsOrphaned)(bound, versions.loadedFromStore(), id => !!versions.getVersion(id))) {
             logger_1.logger.info(`[binding] the version this workspace was bound to (${bound}) no longer exists; asking again`);
             await (0, workspaceBinding_1.writeBinding)({ versionId: undefined, asked: false });
             void (0, workspaceRegistry_1.registerThisWorkspace)();
@@ -16682,7 +16729,7 @@ class ProjectTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         return element;
     }
     async getChildren(_element) {
-        const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
+        const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json').catch(settingsStore_1.noneOnStoreRead);
         if (!data) {
             return [];
         }
@@ -18176,7 +18223,7 @@ class RepoTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     }
     async getChildren(_element) {
         // Silent: an empty list shows the view's welcome content.
-        const result = await settingsStore_1.SettingsStore.peekSelectedProject();
+        const result = await settingsStore_1.SettingsStore.peekSelectedProject().catch(settingsStore_1.noneOnStoreRead);
         if (!result) {
             return [];
         }
@@ -18451,7 +18498,7 @@ class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         // Empty lists fall through to the view's welcome content, which
         // explains that a project and database must be selected first - so
         // this reads silently rather than raising a toast from a refresh.
-        const result = await settingsStore_1.SettingsStore.peekSelectedProject();
+        const result = await settingsStore_1.SettingsStore.peekSelectedProject().catch(settingsStore_1.noneOnStoreRead);
         if (!result) {
             return [];
         }
@@ -19336,7 +19383,7 @@ class TestingTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         // Empty lists fall through to the view's welcome content, which
         // explains that a project and database must be selected first. Silent:
         // a view has no business raising an error before anyone asked.
-        const result = await settingsStore_1.SettingsStore.peekSelectedProject();
+        const result = await settingsStore_1.SettingsStore.peekSelectedProject().catch(settingsStore_1.noneOnStoreRead);
         if (!result) {
             return [];
         }
@@ -21163,6 +21210,7 @@ const runningState_1 = __webpack_require__(86);
 const icons_1 = __webpack_require__(39);
 const sortOptions_1 = __webpack_require__(38);
 const logger_1 = __webpack_require__(12);
+const settingsStore_1 = __webpack_require__(6);
 const baseTreeProvider_1 = __webpack_require__(5);
 const versionIdentity_1 = __webpack_require__(36);
 const provisionQueue_1 = __webpack_require__(101);
@@ -21355,7 +21403,8 @@ class VersionsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
                 await (0, workspaceRegistry_1.refreshRegistry)();
                 return versions.map(version => new VersionTreeItem(version, vscode.TreeItemCollapsibleState.Collapsed, running.get(version.id), upgradeConfig.sideForVersion(version.id), (0, workspaceRegistry_1.otherWorkspacesFor)(version.id).map(row => row.name)));
             }).catch(error => {
-                logger_1.logger.error('Failed to load versions for tree view:', error);
+                // A failed store read was said once, where it happened.
+                ((0, settingsStore_1.isStoreReadError)(error) ? logger_1.logger.debug : logger_1.logger.error)('Failed to load versions for tree view:', error);
                 return [];
             });
         }
@@ -21634,7 +21683,7 @@ class ProjectReposExplorerProvider extends baseTreeProvider_1.BaseTreeProvider {
         if (!element) {
             // Empty lists fall through to the view's welcome content, which
             // offers the select-project / select-repos actions.
-            const selection = await settingsStore_1.SettingsStore.peekSelectedProject();
+            const selection = await settingsStore_1.SettingsStore.peekSelectedProject().catch(settingsStore_1.noneOnStoreRead);
             if (!selection) {
                 return [];
             }
@@ -27641,6 +27690,41 @@ function selectionFacts(project, version) {
         versionId: version?.id,
         versionName: version?.name
     };
+}
+
+
+/***/ }),
+/* 135 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.PER_STORE_PREFIX = void 0;
+exports.stashForStore = stashForStore;
+exports.restoreForStore = restoreForStore;
+const workspaceSelection_1 = __webpack_require__(30);
+const workspaceBinding_1 = __webpack_require__(62);
+exports.PER_STORE_PREFIX = 'odt.perStore:';
+/** Keeps what this window had in the store at `location`. */
+async function stashForStore(memento, location) {
+    const state = {
+        selection: memento.get(workspaceSelection_1.SELECTION_STATE_KEY),
+        binding: memento.get(workspaceBinding_1.BINDING_STATE_KEY)
+    };
+    await memento.update(exports.PER_STORE_PREFIX + location, state);
+}
+/**
+ * Gives back what this window had in the store at `location`. A store it
+ * never used keeps the current selection - it is reconciled with that
+ * store's data - and has no binding: one is made in a store, for its
+ * versions.
+ */
+async function restoreForStore(memento, location) {
+    const state = memento.get(exports.PER_STORE_PREFIX + location);
+    if (state?.selection !== undefined) {
+        await memento.update(workspaceSelection_1.SELECTION_STATE_KEY, state.selection);
+    }
+    await memento.update(workspaceBinding_1.BINDING_STATE_KEY, state?.binding);
 }
 
 

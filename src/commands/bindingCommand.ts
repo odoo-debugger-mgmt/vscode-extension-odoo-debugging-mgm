@@ -145,7 +145,9 @@ export async function offerWorkspaceBinding(): Promise<void> {
         // Bound to a version another window deleted: bound to nothing, and
         // never asked again. It is asked again instead.
         const bound = readBinding().versionId;
-        if (bindingIsOrphaned(bound, versions.loadedFromStore(), id => !!versions.getVersion(id))) {
+        // Only a shared store binds; a workspace's own file never judges one.
+        const shared = currentMainStore()?.kind === 'sqlite';
+        if (shared && bindingIsOrphaned(bound, versions.loadedFromStore(), id => !!versions.getVersion(id))) {
             logger.info(`[binding] the version this workspace was bound to (${bound}) no longer exists; asking again`);
             await writeBinding({ versionId: undefined, asked: false });
             void registerThisWorkspace();
