@@ -24,19 +24,10 @@ behaviour. Anything that behaves differently from it is a finding.
 
 ## The final run: what is left to test
 
-Everything else has been run and matched. After the eighteenth run's fixes,
-in this order:
-
-1. `npm test`.
-2. **Item 19.2** — the Versions view also says the store could not be read,
-   with Choose Data Store…, and lists no version (finding 34); still one
-   error and no Migrate offer.
-3. **Item 17.3** — a database deleted in another window: exactly one
-   notification, with no "Select a database before configuring the
-   debugger." (finding 35). The status bar still reads `no 17.0 database`.
-4. **Regression spot checks:** item 22 (the Versions view lists the shared
-   store's versions again after the return); 7b.6's Start Server with no
-   database of that version still asks for one.
+The nineteenth run found nothing new. What is left is one regression pass
+over every item, 1 to 22, in order, except item 11 (other editors, out of
+scope). Use the setups of the fifteenth to nineteenth runs, and a fresh
+profile for item 14.
 
 Report findings in the same format; anything not reached, say so.
 

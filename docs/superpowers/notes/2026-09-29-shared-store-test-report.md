@@ -5,7 +5,79 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds eighteen runs, newest first. The earlier runs are kept unchanged.
+This file holds nineteen runs, newest first. The earlier runs are kept unchanged.
+
+# Nineteenth run: the eighteenth run's fixes (`ef683fb`)
+
+**Scope:** the brief's final-run list:
+- `npm test`;
+- item 19.2 (finding 34);
+- item 17.3 (finding 35);
+- spot checks: item 22, and 7b.6's Start Server with no database of that
+  version.
+
+Everything on the list was reached.
+
+**Setup:** as the eighteenth run, with `ef683fb` packaged from a worktree
+and installed in the same profile. The store was reset to the same copy,
+and `W17/acme` to the same state: bound to 17.0, acme and acme-db2
+selected, no per-store stash.
+
+## Verdict (nineteenth run)
+
+- **Findings 34 and 35 are fixed.**
+- **Everything on the list matched,** with no new finding. The next step is
+  the full regression pass.
+
+## Test suite: matched
+
+- VS Code 1.140.0: **542 passing, 0 failing**.
+
+## 19.2: matched
+
+- **One error,** the same text as the eighteenth run, with Choose Data
+  Store…. It stayed the only notification after I opened the Odoo DevTools
+  view and ran Focus on Versions View.
+- **Versions:** "The data store could not be read." with Choose Data Store…,
+  and no version listed. Projects, Repos and Databases are as before.
+- **No Migrate offer,** and no "can be migrated" line in the log.
+- **The store:** with the document restored, its documents were identical to
+  the copy taken before the test.
+
+## 22: matched
+
+- **To its own file:** "This workspace now uses its own data file.", with no
+  "deleted" notice, "[binding]" line or version question.
+- **Back:** "Now using the shared store /tmp/odt-brief/shared14.db.", with no
+  "deleted" notice, "[binding]" line or version question.
+  - The binding is `{versionId: "ver-17-0001", asked: true}`, and the registry
+    row has `version_id` `ver-17-0001`.
+  - acme and acme-db2 are selected, with 17.0 :8069.
+  - Versions lists Odoo 17.0 (active) and Odoo 19.0.
+
+## 17.3: matched
+
+- **The steps:** with `W17` on acme-db2, I deleted acme-db2 from `W19`.
+- **In `W17`:** one new notification, '"acme-db2" was deleted in another
+  window, so no database is selected here.' The status bar reads `no 17.0
+  database`. "Select a database before configuring the debugger." is now a
+  log line only.
+
+## 7b.6's Start Server: matched
+
+- **Start Server** in `W17`, with no 17.0 database: 'No database is selected
+  for "Odoo 17.0".' with Select Database.
+- **Select Database** listed only acme-db1 ("Database for Odoo 17.0").
+  Choosing it started the server without a second Start Server:
+  - `-p 8069 -d acme-db1 -i acme_sale`, with `W17/acme` in the addons path;
+  - acme-db1 shows "running :8069".
+- **The only other notice** was 'Database "acme-db1": environment switch
+  finished with issues — Odoo: fatal: not a git repository…', which is the
+  stub Odoo source (fixture noise, as in earlier runs).
+
+## Findings (nineteenth run)
+
+None.
 
 # Eighteenth run: the seventeenth run's fixes (`fa12b9f`)
 
