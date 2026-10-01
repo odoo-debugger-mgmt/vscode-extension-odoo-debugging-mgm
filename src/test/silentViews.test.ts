@@ -65,4 +65,32 @@ suite('Views read the selection silently', () => {
         }
         assert.deepStrictEqual(offenders, [], 'use SettingsStore.peekSelectedProject() here');
     });
+
+    (files.length ? test : test.skip)('the background launch sync does not toast a missing database', () => {
+        // Eighteenth run: it followed "… was deleted in another window, so no
+        // database is selected here." with a second toast saying the same.
+        const source = fs.readFileSync(path.join(SRC, 'debugger.ts'), 'utf8');
+        const [body] = bodiesOf(source, 'setupDebugger');
+        assert.ok(body);
+        assert.ok(!/show(Info|Warning|Error)\('Select a database/.test(body));
+    });
+});
+
+suite('Views over an unreadable store', () => {
+    // Seventeenth and eighteenth runs: Projects, Databases and Repos said the
+    // store could not be read, while Versions still said "No versions yet"
+    // and offered Create Version, which the store refuses.
+    const welcome: { view: string; when?: string; contents: string }[] =
+        JSON.parse(fs.readFileSync(path.resolve(SRC, '..', 'package.json'), 'utf8')).contributes.viewsWelcome;
+    const unreadable = (when: string | undefined) => /(^|[^!])odoo-debugger\.store_unreadable/.test(when ?? '');
+    const invitations = welcome.filter(entry => /command:(projectSelector|dbSelector|odoo)\.create/.test(entry.contents));
+
+    test('every view that invites creating something says so instead', () => {
+        assert.ok(invitations.length >= 3);
+        for (const entry of invitations) {
+            assert.ok(/!odoo-debugger\.store_unreadable/.test(entry.when ?? ''), `${entry.view} invites creating on an unreadable store`);
+            assert.ok(welcome.some(other => other.view === entry.view && unreadable(other.when) && other.contents.includes('command:odoo.chooseDataStore')),
+                `${entry.view} has no unreadable-store text`);
+        }
+    });
 });

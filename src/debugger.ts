@@ -180,11 +180,14 @@ export async function setupDebugger(): Promise<any> {
             }
             // A version with no resolvable database is skipped rather than
             // failing the sync for every other version. Only the active one is
-            // worth telling the user about.
+            // worth telling the user about - and not for a missing database:
+            // the status bar says "no … database", and Start Server and Copy
+            // Command ask for one. A toast from this unrequested sync doubled
+            // "… was deleted in another window" (eighteenth run).
             if (version.id === activeVersion?.id) {
                 logger.warn('Could not prepare debugger launch arguments:', error);
                 if (error instanceof Error && error.message === NO_DATABASE) {
-                    void showInfo('Select a database before configuring the debugger.');
+                    logger.info('Select a database before configuring the debugger.');
                 } else if (!isStoreReadError(error)) {
                     void showError(error instanceof Error ? error.message : 'Could not prepare debugger launch arguments.');
                 }

@@ -20265,11 +20265,14 @@ async function setupDebugger() {
             }
             // A version with no resolvable database is skipped rather than
             // failing the sync for every other version. Only the active one is
-            // worth telling the user about.
+            // worth telling the user about - and not for a missing database:
+            // the status bar says "no … database", and Start Server and Copy
+            // Command ask for one. A toast from this unrequested sync doubled
+            // "… was deleted in another window" (eighteenth run).
             if (version.id === activeVersion?.id) {
                 logger_1.logger.warn('Could not prepare debugger launch arguments:', error);
                 if (error instanceof Error && error.message === NO_DATABASE) {
-                    void (0, utils_1.showInfo)('Select a database before configuring the debugger.');
+                    logger_1.logger.info('Select a database before configuring the debugger.');
                 }
                 else if (!(0, settingsStore_1.isStoreReadError)(error)) {
                     void (0, utils_1.showError)(error instanceof Error ? error.message : 'Could not prepare debugger launch arguments.');
@@ -21415,6 +21418,11 @@ class VersionsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         if (!element) {
             // Root level - show versions
             return this.versionsService.initialize().then(async () => {
+                // The stand-in for an unreadable store is in no store; the
+                // view says the store could not be read instead.
+                if (!this.versionsService.loadedFromStore()) {
+                    return [];
+                }
                 const sortId = this.sortPreferences.get('versionsManager', (0, sortOptions_1.getDefaultSortOption)('versionsManager'));
                 const versions = this.versionsService.getVersions().slice().sort((a, b) => this.compareVersions(a, b, sortId));
                 // Probed once per refresh, not once per row.

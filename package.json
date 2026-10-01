@@ -1626,7 +1626,12 @@
       },
       {
         "view": "versionsManager",
-        "when": "odoo-debugger.is_active && odoo-debugger.is_configured",
+        "when": "odoo-debugger.is_active && odoo-debugger.store_unreadable",
+        "contents": "The data store could not be read.\n[Choose Data Store…](command:odoo.chooseDataStore)"
+      },
+      {
+        "view": "versionsManager",
+        "when": "odoo-debugger.is_active && odoo-debugger.is_configured && !odoo-debugger.store_unreadable",
         "contents": "No versions yet. A version is a built environment for one Odoo branch: its worktree, virtualenv and settings.\n[Create Version](command:odoo.createVersion)"
       },
       {

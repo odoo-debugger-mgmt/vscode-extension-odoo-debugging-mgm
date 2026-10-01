@@ -75,6 +75,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Fixed
 
+- **The Versions view on an unreadable store** says the store could not be read, with Choose Data Store…, like the other views, instead of "No versions yet" and Create Version. A database deleted in another window is announced once, without a second "Select a database before configuring the debugger.": the background launch update no longer shows that; the status bar already says no database is selected.
 - **Back on the shared store, a workspace stays bound to its version.** The binding check ran before the shared store's versions were read again, judged the bound version missing from the workspace's own file, and cleared the binding. A window on an unreadable store no longer offers to migrate a version while it tries the store again.
 - **Moving a workspace to its own data file and back** keeps its version binding and its selection, and no longer says anything was deleted in another window. A window on an unreadable store no longer repeats the read error when a view opens, nor offers to migrate a version that is in no store.
 - **A window on an unreadable store keeps its version binding**, says the read error once, naming the broken document, and its views say the store could not be read, with Choose Data Store…, instead of inviting a new project. Set Up an Upgrade again names each side's own checkout. A clone moved to its own data file keeps that file and its settings out of git status.

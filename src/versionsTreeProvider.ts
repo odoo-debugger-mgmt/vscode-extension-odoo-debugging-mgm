@@ -189,6 +189,11 @@ export class VersionsTreeProvider extends BaseTreeProvider<VersionTreeItem | Ver
         if (!element) {
             // Root level - show versions
             return this.versionsService.initialize().then(async () => {
+                // The stand-in for an unreadable store is in no store; the
+                // view says the store could not be read instead.
+                if (!this.versionsService.loadedFromStore()) {
+                    return [];
+                }
                 const sortId = this.sortPreferences.get('versionsManager', getDefaultSortOption('versionsManager'));
                 const versions = this.versionsService.getVersions().slice().sort((a, b) => this.compareVersions(a, b, sortId));
                 // Probed once per refresh, not once per row.
