@@ -5,7 +5,179 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds seventeen runs, newest first. The earlier runs are kept unchanged.
+This file holds eighteen runs, newest first. The earlier runs are kept unchanged.
+
+# Eighteenth run: the seventeenth run's fixes (`fa12b9f`)
+
+**Scope:** the brief's final-run list:
+- `npm test`;
+- item 22 (finding 32);
+- item 19.2 (finding 33);
+- spot checks: the version question on a fresh window (18.3) and on a
+  workspace moved from its own file onto the shared store, and 17.3.
+
+Everything on the list was reached. 17.3 was run for a database and for a
+version.
+
+**Setup:** as the seventeenth run.
+- **The build:** `fa12b9f`, packaged from a worktree and installed in the
+  same throwaway profile (`HOME=/tmp/claude/bt`), on Xvfb.
+- **The store:** `shared14.db`, reset to the copy taken before the
+  seventeenth run (acme-db1, acme-db2, acme-db19; 17.0 and 19.0).
+- **`W17/acme`:** bound to 17.0, with acme and acme-db2 selected and no
+  per-store stash, written into its `workspaceState` with every window
+  closed. The clone stayed on `staging`.
+- **New folders:** `empty18` (the fresh window) and `own18`, whose
+  `.vscode/settings.json` pins it to its own data file.
+- **No builds this run.**
+
+## Verdict (eighteenth run)
+
+- **Findings 32 and 33 are fixed.** Item 22 matches in full, and 19.2 shows
+  one error and no Migrate offer, in the window and in the log.
+- **Matched:** the test suite, 18.3, the version question after a first move
+  onto the shared store, and 17.3 for a database and a version.
+- **Finding 34 (low):** on the unreadable store, the Versions view still says
+  "No versions yet" and offers Create Version.
+- **Finding 35 (low):** after "… was deleted in another window", a second
+  toast says "Select a database before configuring the debugger."
+
+## Test suite: matched
+
+- VS Code 1.140.0: **540 passing, 0 failing**.
+
+## 22 · To its own file and back: matched
+
+**To its own file:** Choose Data Store… → This workspace only.
+- "This workspace now uses its own data file."
+- No "was deleted in another window" notice, no "[binding]" line, and no
+  version question.
+- `git status` in the clone is clean.
+- The stash holds `odt.perStore:/tmp/odt-brief/shared14.db` = binding
+  `{versionId: "ver-17-0001", asked: true}`, selection acme → acme-db2.
+
+**Back:** Choose Data Store… → Open an existing store… →
+`/tmp/odt-brief/shared14.db` → All workspaces → "This workspace has its own
+data store set (.vscode/odoo-debugger-data.json), which still wins here." →
+Use the Shared Store Here Too → "Now using the shared store
+/tmp/odt-brief/shared14.db."
+- No "[binding] … no longer exists" line; the log has no "deleted",
+  "binding" or "Which version" line at all.
+- The binding is `{versionId: "ver-17-0001", asked: true}`.
+- The version tooltip reads "Active version: Odoo 17.0 (17.0) · Server:
+  http://localhost:8069 · Not running · Bound to this workspace".
+- The registry row has `version_id` `ver-17-0001`.
+- The status bar shows acme, acme-db2 and 17.0 :8069.
+- **Afterwards:** `.vscode/settings.json` held `{}`, as in the seventeenth
+  run. I removed it and the data file.
+
+## 19.2: matched, except the Versions view (finding 34)
+
+- **The steps:** with every window closed, `ver-17-0001` stored as a BLOB,
+  then `W17/acme` opened.
+- **One error,** with Choose Data Store…:
+
+  > Could not read the data store /tmp/odt-brief/shared14.db: its version
+  > "ver-17-0001" is not valid JSON (Unexpected non-whitespace character
+  > after JSON at position 3 (line 1 column 4)). Nothing is saved to it until
+  > it reads again.
+
+  It was still the only notification after I opened the Odoo DevTools view
+  and ran Focus on Versions View.
+- **No Migrate offer.** The log has no "can be migrated" line; it has three
+  "Failed to load versions" lines (activation, the binding check, the
+  Versions view).
+- **The views:**
+  - Projects: "The data store could not be read, so nothing is shown. Nothing
+    is saved to it until it reads again.";
+  - Repos and Databases: "The data store could not be read.";
+  - all three with Choose Data Store…;
+  - Versions: "No versions yet. A version is a built environment for one Odoo
+    branch: its worktree, virtualenv and settings." with Create Version
+    (finding 34).
+- **The store:** with the document restored, its documents were identical to
+  the copy taken before the test.
+
+**Finding 27's reopen step:** opened again with the document restored,
+`W17/acme` is still bound to `ver-17-0001`, with acme and acme-db2 selected,
+and its registry row has `version_id` `ver-17-0001`. No question.
+
+## Spot check 18.3: matched
+
+- **A fresh window** on `empty18`: "Which version does this workspace run? It
+  is asked once; the store has several." with Choose a Version… and Not Now,
+  and "Which version here?" in the status bar.
+- **Not Now** removed the status bar item, and the binding became
+  `{asked: true}`. (My first click missed: I sent it after the toast had
+  hidden. On reopening, the question came back, as it should for an
+  unanswered one.)
+
+## The version question after a first move onto the shared store: matched
+
+The seventeenth run's fix moved the binding check after the reload, so this
+checks that a window joining the shared store is still asked.
+
+- `own18` opened on its own file, with no question.
+- Choose Data Store… → Open an existing store… → `shared14.db` → All
+  workspaces → Use the Shared Store Here Too.
+- 0.6 s after "Now using the shared store /tmp/odt-brief/shared14.db.": "Which
+  version does this workspace run? It is asked once; the store has
+  several.", and "Which version here?" in the status bar.
+
+## Spot check 17.3: matched, with a second toast (finding 35)
+
+- **A database:** with `W17` on acme-db2, I deleted acme-db2 from `W19` (no
+  PostgreSQL database behind it). `W17` said once: '"acme-db2" was deleted in
+  another window, so no database is selected here.' The status bar reads
+  `no 17.0 database`. But a second toast followed: "Select a database before
+  configuring the debugger." (finding 35).
+- **A version:** I created a Profile-only Odoo 12.0 in `W19`, and switched
+  `W17` to it ("This workspace runs Odoo 17.0. Switching makes this window
+  run Odoo 12.0." → Switch for Now). Then I deleted 12.0 from `W19`. `W17`
+  said: '"Odoo 12.0" was deleted in another window; this window now runs
+  Odoo 17.0.' Its binding stayed 17.0. The same second toast followed, since
+  no 17.0 database was selected.
+
+## Findings (eighteenth run)
+
+### 34. On an unreadable store, the Versions view invites creating a version (low)
+
+**Steps:** 19.2.
+
+**Happened:** Projects, Databases and Repos say the store could not be read.
+Versions says "No versions yet…" with Create Version, which the store
+refuses ("nothing was saved to it").
+
+**Why:** `package.json` has no `store_unreadable` welcome entry for
+`versionsManager`, and its "No versions yet" entry is not gated on it.
+
+### 35. A database deleted in another window is announced twice (low)
+
+**Steps:** 17.3.
+
+**Happened:**
+
+```
+11:06:42.866 INFO: "acme-db2" was deleted in another window, so no database is selected here.
+11:06:43.068 INFO: Select a database before configuring the debugger.
+```
+
+Both were toasts.
+
+**Why:** the refresh after the change re-syncs the launch entries.
+`setupDebugger` shows that toast whenever the active version has no
+database. It runs only as a background sync (and once after a pick), so
+nobody asked for it. Start Server and Copy Command have their own message,
+and the status bar already reads `no 17.0 database`.
+
+## Also seen (eighteenth run)
+
+- **The Migrate offer on a new own file.** `own18` was offered "1 version(s)
+  were built before provisioning and can be migrated." for the Default
+  Version its new data file was given (`./odoo`). Earlier runs list this
+  offer as fixture noise. It is not about the shared store.
+- **"Creating odoo-debugger-data.json file..."** shows as a toast each time a
+  workspace gets its own file.
 
 # Seventeenth run: the sixteenth run's fixes (`69177e3`)
 
