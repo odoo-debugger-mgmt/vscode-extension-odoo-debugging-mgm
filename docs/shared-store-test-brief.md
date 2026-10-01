@@ -24,21 +24,19 @@ behaviour. Anything that behaves differently from it is a finding.
 
 ## The final run: what is left to test
 
-Everything else has been run and matched. After the seventeenth run's fixes,
+Everything else has been run and matched. After the eighteenth run's fixes,
 in this order:
 
 1. `npm test`.
-2. **Item 22** — a workspace moved to its own file and back stays bound to
-   17.0 on its return: no "[binding] … no longer exists" line, the version
-   tooltip saying "Bound to this workspace", and its registry row's
-   `version_id` set (finding 32).
-3. **Item 19.2** — still one error, and no Migrate offer, including in the
-   log: no "can be migrated" line (finding 33).
-4. **Regression spot checks:** a fresh window on the shared store is still
-   asked which version it runs (18.3), and so is a workspace moved from its
-   own file onto the shared store for the first time (14.1's question, after
-   Choose Data Store… → All workspaces); 17.3 (a real deletion in another
-   window is still named).
+2. **Item 19.2** — the Versions view also says the store could not be read,
+   with Choose Data Store…, and lists no version (finding 34); still one
+   error and no Migrate offer.
+3. **Item 17.3** — a database deleted in another window: exactly one
+   notification, with no "Select a database before configuring the
+   debugger." (finding 35). The status bar still reads `no 17.0 database`.
+4. **Regression spot checks:** item 22 (the Versions view lists the shared
+   store's versions again after the return); 7b.6's Start Server with no
+   database of that version still asks for one.
 
 Report findings in the same format; anything not reached, say so.
 
@@ -463,8 +461,9 @@ Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
    8079, probably in another window.' with Open in Browser, and nothing
    started. **Restart Server** in `W19` still restarts it.
 3. **Deleted in another window.** With `W17` on acme-db1, delete acme-db1 from
-   `W19`. **Expect** in `W17`, once: '"acme-db1" was deleted in another
-   window, so no database is selected here.' Then delete a version `W17` has
+   `W19`. **Expect** in `W17`, once, and as its only notification:
+   '"acme-db1" was deleted in another window, so no database is selected
+   here.' Then delete a version `W17` has
    active (a throwaway one): "… was deleted in another window; this window
    now runs …". Quote both.
 4. **Defaults.** On the shared store, Versions → a setting → Set as Default.
@@ -504,7 +503,7 @@ Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
    also after opening the Odoo DevTools view — "Could not read the data
    store <path>: its version "<key>" is not valid JSON (…). Nothing is saved
    to it until it reads again." with **Choose Data Store…**; Projects,
-   Databases and Repos saying "The data store could not be read…" with
+   Databases, Repos and Versions saying "The data store could not be read…" with
    Choose Data Store… (not "No projects yet"); no Migrate offer; and **no** new "Default
    Version" in the store; any save in that window warns
    that nothing was saved. Choose Data Store… moves the window to another
