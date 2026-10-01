@@ -75,6 +75,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Fixed
 
+- **Moving a workspace to its own data file and back** keeps its version binding and its selection, and no longer says anything was deleted in another window. A window on an unreadable store no longer repeats the read error when a view opens, nor offers to migrate a version that is in no store.
 - **A window on an unreadable store keeps its version binding**, says the read error once, naming the broken document, and its views say the store could not be read, with Choose Data Store…, instead of inviting a new project. Set Up an Upgrade again names each side's own checkout. A clone moved to its own data file keeps that file and its settings out of git status.
 - **A window opened on an unreadable store still starts**, with Choose Data Store… to move it off; the read error names the store and the reason once. The upgrade's branch pickers mark the branch each side's checkout is on as current, and propose it; resuming an upgrade confirms only when a checkout has to switch. A build that lost the lease to another window stops rather than build beside it, and cancelling a build that was waiting says so.
 - **Two windows creating versions at the same moment no longer lose one.** Saving versions keeps the ones another window created; a build into a directory a version already runs from reuses it. An unreadable store is no longer written to.

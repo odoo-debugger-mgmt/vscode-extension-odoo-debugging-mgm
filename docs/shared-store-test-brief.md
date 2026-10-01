@@ -24,18 +24,15 @@ behaviour. Anything that behaves differently from it is a finding.
 
 ## The final run: what is left to test
 
-Everything else has been run and matched. After the fifteenth run's fixes,
+Everything else has been run and matched. After the sixteenth run's fixes,
 in this order:
 
 1. `npm test`.
-2. **Item 19.2** again, with finding 27's steps: the window keeps its
-   binding, one error naming the broken document, the views say the store
-   could not be read, and no Migrate offer (findings 27, 28).
-3. **Item 16.1's confirmation** at Set Up, with both checkouts already on
-   their branches (finding 29).
-4. **Item 21** — This workspace only in a clone.
-5. **Regression spot checks:** 20.1 (resume asks only when a checkout
-   moves), 17.1's freeze once, and 14's question on a fresh window.
+2. **Item 19.2** — one error also after opening the Odoo DevTools view, no
+   Migrate offer, and Repos saying the store could not be read (finding 30).
+3. **Item 22** — a workspace moved to its own file and back (finding 31).
+4. **Regression spot checks:** item 21, finding 27's reopen step (19.2), and
+   17.3 (a real deletion in another window is still named).
 
 Report findings in the same format; anything not reached, say so.
 
@@ -500,9 +497,9 @@ Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
    **expect** the extension to activate (commands found), **one** error —
    also after opening the Odoo DevTools view — "Could not read the data
    store <path>: its version "<key>" is not valid JSON (…). Nothing is saved
-   to it until it reads again." with **Choose Data Store…**; Projects and
-   Databases saying "The data store could not be read…" with Choose Data
-   Store… (not "No projects yet"); no Migrate offer; and **no** new "Default
+   to it until it reads again." with **Choose Data Store…**; Projects,
+   Databases and Repos saying "The data store could not be read…" with
+   Choose Data Store… (not "No projects yet"); no Migrate offer; and **no** new "Default
    Version" in the store; any save in that window warns
    that nothing was saved. Choose Data Store… moves the window to another
    store. Restore the store after. **Then finding 27's steps:** with the
@@ -537,6 +534,17 @@ Data Store… → This workspace only. **Expect** `git status` in the clone
 clean: `.git/info/exclude` gains `/.vscode/odoo-debugger-data.json` and
 `/.vscode/settings.json` under "Odoo DevTools" comments. Choose the shared
 store again afterwards, and remove the two files.
+
+## 22 · To its own file and back
+
+In `W17/acme`, bound to 17.0 with acme and acme-db2 selected: Choose Data
+Store… → This workspace only; then Choose Data Store… → Open an existing
+store… → the shared store → All workspaces → Use the Shared Store Here Too.
+**Expect** no "was deleted in another window" notice and no "[binding] …
+no longer exists" line either way; on the own file, no version question;
+back on the shared store, the window bound to 17.0 again (no "Which version
+here?"), with acme and acme-db2 selected. Remove the two `.vscode` files
+afterwards.
 
 ## 12 · A store from the future
 
