@@ -48,6 +48,7 @@ import { getRepoBranch } from './services/branches';
 import { readSetupState, shouldAdoptLegacySourceRepo, readRawSetupSettings, writeSetupSettings } from './services/setupState';
 import { showBriefStatus, showInfo, showWarning } from './services/notifications';
 import { VIEW_SCHEME, ViewFileSystemProvider, parseViewUri, type ViewRef } from './views/viewFileSystem';
+import { ViewArchPoller } from './views/viewPoll';
 import { locateArchError } from './services/views/archErrors';
 import { getWriteDates } from './services/views/viewQueries';
 import { getDefaultVersionSettings, normalizePath, resolveOptionalPath } from './utils';
@@ -225,33 +226,22 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Edits made in Odoo's own UI: one psql query per database every 3 s,
     // and only while an arch tab is open.
-    const seenWriteDates = new Map<string, number>();
+    const viewPoller = new ViewArchPoller(
+        getWriteDates,
+        (uris, edited) => {
+            viewFiles.notifyChanged(uris);
+            if (edited) {
+                providers.views.refresh();
+            }
+        },
+        (dbName, error) => logger.debug(`Could not poll the views of ${dbName}:`, error)
+    );
     const viewPoll = setInterval(() => {
         const open = vscode.workspace.textDocuments
             .filter(document => document.uri.scheme === VIEW_SCHEME)
             .map(document => ({ uri: document.uri, ref: parseViewUri(document.uri) }))
             .filter((entry): entry is { uri: vscode.Uri; ref: ViewRef } => !!entry.ref);
-        const byDb = new Map<string, typeof open>();
-        for (const entry of open) {
-            byDb.set(entry.ref.dbName, [...(byDb.get(entry.ref.dbName) ?? []), entry]);
-        }
-        for (const [dbName, entries] of byDb) {
-            void getWriteDates(dbName, entries.map(entry => entry.ref.viewId)).then(dates => {
-                const changed = entries.filter(entry => {
-                    const key = entry.uri.toString();
-                    const date = dates.get(entry.ref.viewId);
-                    const previous = seenWriteDates.get(key);
-                    if (date !== undefined) {
-                        seenWriteDates.set(key, date);
-                    }
-                    return previous !== undefined && date !== undefined && date !== previous;
-                });
-                if (changed.length > 0) {
-                    viewFiles.notifyChanged(changed.map(entry => entry.uri));
-                    providers.views.refresh();
-                }
-            }).catch(error => logger.debug(`Could not poll the views of ${dbName}:`, error));
-        }
+        void viewPoller.tick(open);
     }, 3000);
     context.subscriptions.push(new vscode.Disposable(() => clearInterval(viewPoll)));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('versionsManager', providers.versions));
