@@ -5,7 +5,91 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds twenty runs, newest first. The earlier runs are kept unchanged.
+This file holds twenty-one runs, newest first. The earlier runs are kept unchanged.
+
+# Twenty-first run: the twentieth run's fixes (`35aa3df`)
+
+**Scope:** the brief's final-run list:
+- `npm test`;
+- item 17.1's freeze, both ways, with the waiting window opened during the
+  builder's foreground build (finding 37);
+- item 10's version question on an own file and back (finding 36);
+- spot checks: 14.1 and 18.3, 17.1's two builds at once, item 6's idle
+  minute, and 19.3 (it touches the same binding code).
+
+Everything on the list was reached.
+
+**Setup:** the twentieth run's `bt3` profile and `shared14.db`, with
+`35aa3df` packaged from a worktree and installed. For 17.1: the same wheel
+server, and new series branches (`20.0`–`24.0`) in the throwaway source.
+
+## Verdict (twenty-first run)
+
+- **Findings 36 and 37 are fixed.**
+- **Everything on the list matched,** with no new finding.
+
+## Test suite: matched
+
+- VS Code 1.140.0: **542 passing, 0 failing** (on `e0f846a`'s code;
+  `35aa3df` is documentation only).
+
+## 17.1 The freeze, both ways: matched
+
+Both times W17 ran Set Up with three versions, and W19 was opened during the
+first, foreground build, before anything was queued: it logged "[queue]
+another window is building versions; waiting for it". I froze W17's
+extension host 1 s into the second version, during `python -m venv`.
+
+- **Resumed while W19 was still building.** Set Up 3.0, 2.0, 1.0; frozen at
+  09:49:14, 1 s into 2.0.
+  - **The takeover:** W19 took the lease after **91 s**, and built 2.0 and
+    1.0 ("Provisioned 2.0, 1.0."). Its retries while waiting were debug
+    lines.
+  - **The resume** at 09:50:54.05. At 09:50:54.10, W17 logged "[queue]
+    another window took over building; stopping here (2.0)".
+  - No build process ran under W17's host in the next 25 s, and the lease
+    stayed W19's.
+- **Resumed after W19 had finished.** Set Up 22.0, 21.0, 20.0; frozen at
+  09:53:18, 1 s into 21.0.
+  - **The takeover:** after **99 s**; W19 built 21.0 and 20.0 and released
+    the lease at 09:56:04.
+  - **The resume** at 09:56:10.95. At 09:56:11.13, W17 logged "another window
+    took over building; stopping here (21.0)". No build process under it for
+    25 s, and no lease file afterwards.
+- **One version per series,** 1.0 to 24.0.
+
+## 10 · The version question on an own file and back: matched
+
+- `empty20`, its question unanswered, showed "Which version here?".
+- Choose Data Store… → This workspace only: the item went.
+- Back (Open an existing store… → `shared14.db` → All workspaces → Use the
+  Shared Store Here Too): the item came back, without asking a second time.
+
+## Spot checks: matched
+
+- **14.1 and 18.3:** a new folder, `empty21`: "Which version does this
+  workspace run? It is asked once; the store has several." and "Which version
+  here?", still there after the toast hid. Clicking it opened Bind This
+  Workspace to a Version…; choosing Odoo 17.0 ("This workspace runs Odoo
+  17.0.") removed it.
+- **17.1, two builds at once:** Create Version → Provision, 23.0 in W17 and
+  24.0 in W19: "Provisioning Odoo 24.0: Waiting for another window to finish
+  building…", and 24.0 built after 23.0, under the lease.
+- **Item 6's idle minute:** five windows open, 65 s: no new log line in any.
+- **19.3:** `empty21` bound to 23.0, 23.0 deleted from W19 (Keep Folders):
+  '"Odoo 23.0" was deleted in another window; this window now runs Odoo
+  17.0.', "[binding] the version this workspace was bound to (…) no longer
+  exists; asking again", the question, and "Which version here?".
+
+## Findings (twenty-first run)
+
+None.
+
+## Also seen (twenty-first run)
+
+- **Deleting a provisioned version asks a second question:** 'Also delete the
+  2 folder(s) this extension created for "Odoo 23.0"?' with Keep Folders,
+  Cancel and Delete Folders.
 
 # Twentieth run: the regression pass, items 1–22 (`b9acf47`)
 

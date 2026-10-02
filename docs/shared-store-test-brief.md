@@ -24,21 +24,11 @@ behaviour. Anything that behaves differently from it is a finding.
 
 ## The final run: what is left to test
 
-The twentieth run, the regression pass, matched everything except two
-findings. After their fixes, in this order:
-
-1. `npm test`.
-2. **Item 17.1's freeze, both ways** (finding 37): with the waiting window
-   opened while the builder is still on its foreground build, as the
-   twentieth run did. Expect the takeover within about 90 s, then the
-   resumed builder to stop within about 5 s.
-3. **Item 10** (finding 36): a window with the version question unanswered,
-   moved to its own file, loses "Which version here?"; moved back, it shows
-   it again.
-4. **Regression spot checks:** 14.1 and 18.3 (a fresh window is asked, the
-   item stays until answered), 17.1's two builds at once, and item 6's idle
-   minute while another window builds (only debug lines, no repeating info
-   line).
+Nothing is left. The twentieth run ran every item, 1 to 22 except 11
+(other editors, out of scope), and found two problems (36, 37); the
+twenty-first run re-tested their fixes and the items around them, and found
+nothing. A new change to the shared store, the binding or the build queue
+starts a new final-run list here.
 
 Report findings in the same format; anything not reached, say so.
 
