@@ -4,9 +4,11 @@
  * writes through the database's Odoo shell.
  *
  * mtime is the view's write_date, so a view edited in Odoo's UI after it was
- * opened makes VS Code's save report a newer file. Size is always 0: VS Code
- * compares mtime *and* size before saving, and a size learnt only after the
- * first read would look like a change on every first save.
+ * opened makes VS Code's save report a newer file. Size carries the
+ * write_date too, not the arch's length: before saving, VS Code reports a
+ * newer file only when the mtime advanced *and* the size differs from the one
+ * it last saw (it pairs the new size with the old mtime), so a size that never
+ * changes would let a save silently overwrite an edit made in Odoo.
  */
 import * as vscode from 'vscode';
 import type { SaveResult, ViewBackend } from '../services/views/viewService';
@@ -36,6 +38,15 @@ export function parseViewUri(uri: vscode.Uri): ViewRef | undefined {
     return { dbName: decodeURIComponent(db), viewId };
 }
 
+/**
+ * A stand-in size that changes whenever the write_date does. Kept under a
+ * megabyte so no large-file guard ever trips on it; two dates collide only
+ * when they are a whole multiple of 1000 s apart to the millisecond.
+ */
+export function viewFileSize(mtime: number): number {
+    return 1 + (mtime % 1_000_000);
+}
+
 export class ViewFileSystemProvider implements vscode.FileSystemProvider {
     private readonly changes = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
     readonly onDidChangeFile = this.changes.event;
@@ -59,7 +70,7 @@ export class ViewFileSystemProvider implements vscode.FileSystemProvider {
         if (mtime === undefined) {
             throw vscode.FileSystemError.FileNotFound(uri);
         }
-        return { type: vscode.FileType.File, ctime: 0, mtime, size: 0 };
+        return { type: vscode.FileType.File, ctime: 0, mtime, size: viewFileSize(mtime) };
     }
 
     async readFile(uri: vscode.Uri): Promise<Uint8Array> {

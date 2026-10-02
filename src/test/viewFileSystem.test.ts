@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import { ViewFileSystemProvider, parseViewUri, viewUri, type ViewRef } from '../views/viewFileSystem';
+import { ViewFileSystemProvider, parseViewUri, viewFileSize, viewUri, type ViewRef } from '../views/viewFileSystem';
 import type { SaveResult, ViewBackend } from '../services/views/viewService';
 
 class FakeBackend implements ViewBackend {
@@ -35,17 +35,41 @@ suite('View arch files', () => {
         assert.strictEqual(parseViewUri(vscode.Uri.parse('odoo-view:/')), undefined);
     });
 
-    test('reads the arch as UTF-8 and dates it by write_date, at a constant size', async () => {
+    test('reads the arch as UTF-8 and dates it by write_date', async () => {
         const backend = new FakeBackend();
         const provider = new ViewFileSystemProvider(backend, { onSaved: () => undefined });
         assert.strictEqual(Buffer.from(await provider.readFile(uri)).toString('utf-8'), '<data>é</data>');
         const before = await provider.stat(uri);
-        assert.deepStrictEqual([before.type, before.mtime, before.size], [vscode.FileType.File, 1000, 0]);
+        assert.deepStrictEqual([before.type, before.mtime], [vscode.FileType.File, 1000]);
+        assert.deepStrictEqual(await provider.stat(uri), before, 'an unchanged view must stat the same, or every save would conflict');
 
         // Edited in Odoo's own UI meanwhile: the date moves, so VS Code sees a newer file.
         backend.writeDates.set(12, 2000);
         assert.strictEqual((await provider.stat(uri)).mtime, 2000);
-        assert.strictEqual((await provider.stat(uri)).size, 0, 'a size that changed after reading would fake a conflict');
+    });
+
+    test('an edit made in Odoo meanwhile trips VS Code\'s newer-file check', async () => {
+        // VS Code's FileService.validateWriteFile, verbatim in substance: it pairs the
+        // size on disk with the mtime it last saw.
+        const etag = (stat: { mtime: number; size: number }) => stat.mtime.toString(29) + stat.size.toString(31);
+        const modifiedSince = (seen: vscode.FileStat, now: vscode.FileStat) =>
+            seen.mtime < now.mtime && etag(seen) !== etag({ mtime: seen.mtime, size: now.size });
+
+        const backend = new FakeBackend();
+        const provider = new ViewFileSystemProvider(backend, { onSaved: () => undefined });
+        const opened = await provider.stat(uri);
+        assert.strictEqual(modifiedSince(opened, await provider.stat(uri)), false);
+
+        backend.writeDates.set(12, Date.parse('2026-10-02T16:50:01.518Z'));
+        assert.strictEqual(modifiedSince(opened, await provider.stat(uri)), true);
+    });
+
+    test('the stand-in size follows the date and stays small', () => {
+        const date = Date.parse('2026-10-02T16:48:22.309Z');
+        assert.notStrictEqual(viewFileSize(date), viewFileSize(date + 1));
+        assert.notStrictEqual(viewFileSize(date), viewFileSize(date + 31_000));
+        assert.ok(viewFileSize(date) > 0 && viewFileSize(date) <= 1_000_000);
+        assert.strictEqual(viewFileSize(date), viewFileSize(date));
     });
 
     test('a deleted view is not found', async () => {
