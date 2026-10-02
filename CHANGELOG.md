@@ -4,6 +4,13 @@ All notable changes to the "odoo-devtools-vscode" extension will be documented i
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [Unreleased]
+
+### Added
+
+- **A Views view for fixing the views a database has turned off.** It lists what an upgrade disabled first — read from upgrade-util's report in Discuss, still-off before re-enabled, with the versions that disabled each — then every other inactive view. It shows the selected database, or the upgraded one while an upgrade is set up.
+- **Edit a view's arch in the editor and save it straight to the database.** A view opens as an XML file; saving writes it through an Odoo shell running that database's own version, and turns the view on when Odoo can build it. When it cannot, your arch is kept, the view stays off, and Odoo's reason is shown on the line it is about. The running server picks the change up without a restart. Right-click a view to turn it on or off, copy its external id, or open its parent. Linux and macOS only.
+
 ## [1.4.0] - 2026-10-02
 
 > **Beta.** Several workspaces sharing one data store is new in this release, and has so far been tested against stand-in Odoo servers and stand-in builds only. Please report anything that surprises you.

@@ -45,43 +45,53 @@ const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const dbsView_1 = __webpack_require__(4);
-const environment_1 = __webpack_require__(50);
-const dataMigration_1 = __webpack_require__(88);
-const project_1 = __webpack_require__(89);
-const repos_1 = __webpack_require__(96);
-const module_1 = __webpack_require__(97);
-const testing_1 = __webpack_require__(98);
+const environment_1 = __webpack_require__(51);
+const dataMigration_1 = __webpack_require__(89);
+const project_1 = __webpack_require__(90);
+const repos_1 = __webpack_require__(97);
+const module_1 = __webpack_require__(98);
+const testing_1 = __webpack_require__(99);
 const upgrade_1 = __webpack_require__(40);
-const debugger_1 = __webpack_require__(99);
-const provisionQueue_1 = __webpack_require__(101);
-const odooInstaller_1 = __webpack_require__(65);
+const debugger_1 = __webpack_require__(100);
+const provisionQueue_1 = __webpack_require__(102);
+const odooInstaller_1 = __webpack_require__(66);
 const settingsStore_1 = __webpack_require__(6);
 const mainStore_1 = __webpack_require__(27);
-const versionsTreeProvider_1 = __webpack_require__(102);
+const versionsTreeProvider_1 = __webpack_require__(103);
 const versionsService_1 = __webpack_require__(33);
 const context_1 = __webpack_require__(42);
-const server_1 = __webpack_require__(100);
-const sortPreferences_1 = __webpack_require__(103);
-const projectReposExplorer_1 = __webpack_require__(104);
+const server_1 = __webpack_require__(101);
+const sortPreferences_1 = __webpack_require__(104);
+const viewDoctorView_1 = __webpack_require__(105);
+const viewService_1 = __webpack_require__(106);
+const viewWorker_1 = __webpack_require__(110);
+const viewWorkerPool_1 = __webpack_require__(111);
+const viewWorkerSpec_1 = __webpack_require__(112);
+const postgres_1 = __webpack_require__(47);
+const projectReposExplorer_1 = __webpack_require__(113);
 const logger_1 = __webpack_require__(12);
-const reconcile_1 = __webpack_require__(78);
-const runningState_1 = __webpack_require__(86);
-const wrongCopyGuard_1 = __webpack_require__(106);
-const versionMigration_1 = __webpack_require__(107);
-const versionProposal_1 = __webpack_require__(59);
-const environment_2 = __webpack_require__(50);
-const branches_1 = __webpack_require__(51);
-const setupState_1 = __webpack_require__(70);
+const reconcile_1 = __webpack_require__(79);
+const runningState_1 = __webpack_require__(87);
+const wrongCopyGuard_1 = __webpack_require__(115);
+const versionMigration_1 = __webpack_require__(116);
+const versionProposal_1 = __webpack_require__(60);
+const environment_2 = __webpack_require__(51);
+const branches_1 = __webpack_require__(52);
+const setupState_1 = __webpack_require__(71);
 const notifications_1 = __webpack_require__(16);
+const viewFileSystem_1 = __webpack_require__(117);
+const viewPoll_1 = __webpack_require__(118);
+const archErrors_1 = __webpack_require__(119);
+const viewQueries_1 = __webpack_require__(107);
 const utils_1 = __webpack_require__(8);
-const statusBar_1 = __webpack_require__(108);
-const commands_1 = __webpack_require__(109);
-const projectWorkspace_1 = __webpack_require__(113);
-const workspaceBinding_1 = __webpack_require__(62);
-const workspaceRegistry_1 = __webpack_require__(81);
-const bindingCommand_1 = __webpack_require__(83);
-const goneElsewhere_1 = __webpack_require__(134);
-const storeSwitch_1 = __webpack_require__(135);
+const statusBar_1 = __webpack_require__(120);
+const commands_1 = __webpack_require__(121);
+const projectWorkspace_1 = __webpack_require__(125);
+const workspaceBinding_1 = __webpack_require__(63);
+const workspaceRegistry_1 = __webpack_require__(82);
+const bindingCommand_1 = __webpack_require__(84);
+const goneElsewhere_1 = __webpack_require__(147);
+const storeSwitch_1 = __webpack_require__(148);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -130,6 +140,14 @@ async function activate(context) {
     }));
     await initializeTestingContext();
     await (0, upgrade_1.initializeUpgradeContext)();
+    // The View Doctor's shells: one per database, started on first use.
+    const viewWorkerScript = context.asAbsolutePath(path.join('resources', 'scripts', 'view_worker.py'));
+    const viewWorkers = new viewWorkerPool_1.ViewWorkerPool(async (dbName) => new viewWorker_1.ViewWorker(await (0, viewWorkerSpec_1.resolveViewWorkerSpec)(dbName, viewWorkerScript)), {
+        onStarting: (dbName, ready) => void vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Starting an Odoo shell on ${dbName}…` }, () => ready.catch(() => undefined))
+    });
+    const viewService = new viewService_1.ViewService(viewWorkers);
+    context.subscriptions.push(viewWorkers, (0, postgres_1.onBeforeDatabaseRelease)(dbName => viewWorkers.release(dbName)));
+    let viewDoctorTreeView;
     const providers = {
         project: new project_1.ProjectTreeProvider(context, sortPreferences),
         repo: new repos_1.RepoTreeProvider(context, sortPreferences),
@@ -138,7 +156,12 @@ async function activate(context) {
         testing: new testing_1.TestingTreeProvider(context),
         upgrade: new upgrade_1.UpgradeTreeProvider(context),
         versions: new versionsTreeProvider_1.VersionsTreeProvider(sortPreferences),
-        projectReposExplorer: new projectReposExplorer_1.ProjectReposExplorerProvider(sortPreferences)
+        projectReposExplorer: new projectReposExplorer_1.ProjectReposExplorerProvider(sortPreferences),
+        views: new viewDoctorView_1.ViewDoctorTreeProvider(viewService, dbName => {
+            if (viewDoctorTreeView) {
+                viewDoctorTreeView.description = dbName;
+            }
+        })
     };
     // React to version changes fired by VersionsService.refresh(). Must be
     // registered before the migrations below, which may fire it, and outside
@@ -186,6 +209,44 @@ async function activate(context) {
     context.subscriptions.push(moduleTreeView);
     context.subscriptions.push(vscode.window.registerTreeDataProvider('testingSelector', providers.testing));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('upgradeSelector', providers.upgrade));
+    viewDoctorTreeView = vscode.window.createTreeView('viewDoctor', { treeDataProvider: providers.views, showCollapseAll: true });
+    context.subscriptions.push(viewDoctorTreeView);
+    // Odoo's reason a saved view stays off, on the line it is about.
+    const viewDiagnostics = vscode.languages.createDiagnosticCollection('odoo-views');
+    context.subscriptions.push(viewDiagnostics);
+    const viewFiles = new viewFileSystem_1.ViewFileSystemProvider(viewService, {
+        onSaved: (_ref, result, uri, text) => {
+            if (result.activationError) {
+                const where = (0, archErrors_1.locateArchError)(text, result.activationError);
+                const diagnostic = new vscode.Diagnostic(new vscode.Range(where.line, where.start, where.line, where.end), (0, archErrors_1.readableArchError)(result.activationError), vscode.DiagnosticSeverity.Error);
+                diagnostic.source = 'Odoo';
+                viewDiagnostics.set(uri, [diagnostic]);
+                void (0, notifications_1.showWarning)(`Saved. The view stays off: ${(0, archErrors_1.archErrorSummary)(result.activationError)}`);
+            }
+            else {
+                viewDiagnostics.delete(uri);
+                (0, notifications_1.showBriefStatus)(result.activated ? 'Saved, and the view is on.' : 'Saved.');
+            }
+            providers.views.refresh();
+        }
+    });
+    context.subscriptions.push(vscode.workspace.registerFileSystemProvider(viewFileSystem_1.VIEW_SCHEME, viewFiles, { isCaseSensitive: true }));
+    // Edits made in Odoo's own UI: one psql query per database every 3 s,
+    // and only while an arch tab is open.
+    const viewPoller = new viewPoll_1.ViewArchPoller(viewQueries_1.getWriteDates, (uris, edited) => {
+        viewFiles.notifyChanged(uris);
+        if (edited) {
+            providers.views.refresh();
+        }
+    }, (dbName, error) => logger_1.logger.debug(`Could not poll the views of ${dbName}:`, error));
+    const viewPoll = setInterval(() => {
+        const open = vscode.workspace.textDocuments
+            .filter(document => document.uri.scheme === viewFileSystem_1.VIEW_SCHEME)
+            .map(document => ({ uri: document.uri, ref: (0, viewFileSystem_1.parseViewUri)(document.uri) }))
+            .filter((entry) => !!entry.ref);
+        void viewPoller.tick(open);
+    }, 3000);
+    context.subscriptions.push(new vscode.Disposable(() => clearInterval(viewPoll)));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('versionsManager', providers.versions));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('odt.projectReposExplorer', providers.projectReposExplorer));
     // ------------------------------------------------------------------
@@ -262,7 +323,7 @@ async function activate(context) {
             await refreshViews();
         }
     };
-    (0, commands_1.registerAllCommands)({ context, providers, versionsService, sortPreferences, moduleTreeView, dbTreeView, refreshAll });
+    (0, commands_1.registerAllCommands)({ context, providers, versionsService, sortPreferences, viewService, moduleTreeView, dbTreeView, refreshAll });
     // Another window wrote to a shared store, or this window switched stores:
     // re-read everything. Debounced, because one save elsewhere can touch
     // several documents and each is its own change.
@@ -592,9 +653,9 @@ const sortOptions_1 = __webpack_require__(38);
 const utils_1 = __webpack_require__(8);
 const icons_1 = __webpack_require__(39);
 const upgrade_1 = __webpack_require__(40);
-const environment_1 = __webpack_require__(50);
-const dbs_1 = __webpack_require__(63);
-const runningState_1 = __webpack_require__(86);
+const environment_1 = __webpack_require__(51);
+const dbs_1 = __webpack_require__(64);
+const runningState_1 = __webpack_require__(87);
 /** Tree provider for the Databases view of the selected project. */
 class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     sortPreferences;
@@ -7626,12 +7687,12 @@ const upgradeApply_1 = __webpack_require__(43);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const utils_1 = __webpack_require__(8);
-const dbResolution_1 = __webpack_require__(60);
+const dbResolution_1 = __webpack_require__(61);
 const versionsService_1 = __webpack_require__(33);
 const baseTreeProvider_1 = __webpack_require__(5);
 const icons_1 = __webpack_require__(39);
-const upgradeSides_1 = __webpack_require__(61);
-const workspaceBinding_1 = __webpack_require__(62);
+const upgradeSides_1 = __webpack_require__(62);
+const workspaceBinding_1 = __webpack_require__(63);
 const mainStore_1 = __webpack_require__(27);
 /**
  * The project's upgrade configuration, normalized.
@@ -8244,13 +8305,13 @@ const repo_1 = __webpack_require__(46);
 const upgrade_1 = __webpack_require__(41);
 const postgres_1 = __webpack_require__(47);
 const database_1 = __webpack_require__(48);
-const environment_1 = __webpack_require__(50);
+const environment_1 = __webpack_require__(51);
 const logger_1 = __webpack_require__(12);
-const repoPaths_1 = __webpack_require__(55);
-const customWorktree_1 = __webpack_require__(56);
-const branches_1 = __webpack_require__(51);
-const checkout_1 = __webpack_require__(52);
-const upgradeSetup_1 = __webpack_require__(58);
+const repoPaths_1 = __webpack_require__(56);
+const customWorktree_1 = __webpack_require__(57);
+const branches_1 = __webpack_require__(52);
+const checkout_1 = __webpack_require__(53);
+const upgradeSetup_1 = __webpack_require__(59);
 /**
  * The addons a version can install, or undefined when it is not built yet.
  * Undefined defers the check to the first launch rather than holding back
@@ -8652,6 +8713,8 @@ exports.RepoModel = RepoModel;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.RESERVED_DATABASE_NAMES = void 0;
 exports.quotePgIdentifier = quotePgIdentifier;
+exports.onBeforeDatabaseRelease = onBeforeDatabaseRelease;
+exports.releaseDatabase = releaseDatabase;
 exports.runSql = runSql;
 exports.listPostgresDatabases = listPostgresDatabases;
 exports.databaseExists = databaseExists;
@@ -8673,6 +8736,20 @@ exports.RESERVED_DATABASE_NAMES = new Set(['postgres', 'template0', 'template1']
 function quotePgIdentifier(identifier) {
     return `"${identifier.replace(/"/g, '""')}"`;
 }
+const releaseListeners = new Set();
+/**
+ * Registers something that holds connections to databases (the View
+ * Doctor's shells). Postgres refuses to drop, rename or copy a database that
+ * has other sessions, so each listener lets go of `dbName` first.
+ */
+function onBeforeDatabaseRelease(listener) {
+    releaseListeners.add(listener);
+    return { dispose: () => releaseListeners.delete(listener) };
+}
+/** Asks every listener to let go of `dbName`; a failing listener never blocks the caller. */
+async function releaseDatabase(dbName) {
+    await Promise.all([...releaseListeners].map(listener => listener(dbName).catch(error => logger_1.logger.warn(`Could not release ${dbName}:`, error))));
+}
 /** Runs a single SQL statement against `dbName` and returns trimmed stdout. */
 async function runSql(dbName, sql) {
     const { stdout } = await (0, process_1.runCommand)('psql', [
@@ -8680,7 +8757,7 @@ async function runSql(dbName, sql) {
         '-v', 'ON_ERROR_STOP=1',
         '-d', dbName,
         '-tAc', sql
-    ]);
+    ], { env: (0, database_1.ownQueryEnv)() });
     return stdout.trim();
 }
 /** Lists all databases on the local PostgreSQL instance. */
@@ -8703,11 +8780,15 @@ async function databaseExists(dbName) {
 }
 /** Creates a database, optionally cloning from a template (createdb -T). */
 async function createDatabase(dbName, templateDbName) {
+    if (templateDbName) {
+        await releaseDatabase(templateDbName);
+    }
     const args = templateDbName ? ['-T', templateDbName, dbName] : [dbName];
     await (0, process_1.runCommand)('createdb', args);
     (0, database_1.clearInstalledModuleCache)(dbName);
 }
 async function dropDatabase(dbName, options = {}) {
+    await releaseDatabase(dbName);
     const args = options.ifExists ? ['--if-exists', dbName] : [dbName];
     await (0, process_1.runCommand)('dropdb', args);
     (0, database_1.clearInstalledModuleCache)(dbName);
@@ -8717,6 +8798,7 @@ async function dropDatabaseIfExists(dbName) {
     await dropDatabase(dbName, { ifExists: true });
 }
 async function renameDatabase(oldName, newName) {
+    await releaseDatabase(oldName);
     const sql = `ALTER DATABASE ${quotePgIdentifier(oldName)} RENAME TO ${quotePgIdentifier(newName)};`;
     await (0, process_1.runCommand)('psql', ['-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-c', sql]);
     (0, database_1.clearInstalledModuleCache)(oldName);
@@ -8794,6 +8876,8 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ACTIVE_DATABASES_QUERY = exports.OWN_QUERY_APP_NAME = void 0;
+exports.ownQueryEnv = ownQueryEnv;
 exports.databaseHasModuleTable = databaseHasModuleTable;
 exports.getInstalledModules = getInstalledModules;
 exports.getInstalledModuleNames = getInstalledModuleNames;
@@ -8810,7 +8894,18 @@ const node_child_process_1 = __webpack_require__(14);
 const util = __importStar(__webpack_require__(49));
 const runtimeCache_1 = __webpack_require__(15);
 const logger_1 = __webpack_require__(12);
+const viewWorkerArgs_1 = __webpack_require__(50);
 const execFileAsync = util.promisify(node_child_process_1.execFile);
+/**
+ * The application name of the extension's own psql queries: the Views tree,
+ * the arch poll (every 3 s while an arch is open), the module probes. Like the
+ * View Doctor's shell, they are not a server running.
+ */
+exports.OWN_QUERY_APP_NAME = 'odoo-devtools-query';
+/** The environment for one of the extension's own psql queries. */
+function ownQueryEnv(base = process.env) {
+    return { ...base, PGAPPNAME: exports.OWN_QUERY_APP_NAME };
+}
 const INSTALLED_MODULES_QUERY = `
     SELECT id, name, shortdesc, latest_version, state, application
     FROM ir_module_module
@@ -8829,10 +8924,14 @@ const TABLE_EXISTS_QUERY = `
         WHERE table_name = 'ir_module_module'
     );
 `.trim();
-const ACTIVE_DATABASES_QUERY = `
+// The View Doctor's shell holds a connection while it is open, and the
+// extension's own queries hold one briefly; neither is a server running, so
+// neither may light the database up as one.
+exports.ACTIVE_DATABASES_QUERY = `
     SELECT datname
     FROM pg_stat_activity
     WHERE datname IS NOT NULL
+      AND coalesce(application_name, '') NOT IN ('${viewWorkerArgs_1.VIEW_WORKER_APP_NAME}', '${exports.OWN_QUERY_APP_NAME}')
     GROUP BY datname;
 `.trim();
 const BASE_MODULE_VERSION_QUERY = `
@@ -8861,6 +8960,7 @@ async function runPsqlQuery(dbName, query, fieldSeparator = '|') {
             query
         ];
         const { stdout } = await execFileAsync('psql', args, {
+            env: ownQueryEnv(),
             encoding: 'utf-8',
             maxBuffer: 10 * 1024 * 1024 // Allow reasonably large result sets
         });
@@ -9001,7 +9101,7 @@ function parseActiveDatabaseNames(output) {
 async function getActiveDatabaseNames() {
     return runtimeCache_1.runtimeCache.getActiveDatabases(async () => {
         try {
-            return parseActiveDatabaseNames(await runPsqlQuery('postgres', ACTIVE_DATABASES_QUERY));
+            return parseActiveDatabaseNames(await runPsqlQuery('postgres', exports.ACTIVE_DATABASES_QUERY));
         }
         catch (error) {
             logger_1.logger.debug('Could not read active databases from pg_stat_activity:', error);
@@ -9019,6 +9119,97 @@ module.exports = require("node:util");
 
 /***/ }),
 /* 50 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+/**
+ * The command line of the View Doctor's Odoo shell. It shares the server's
+ * addons path and database but none of what makes a launch *do* something:
+ * no -i/-u (a shell that installs is not a reader), no test flags, no port.
+ * extraParams is filtered too, since anything can be typed there.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.VIEW_WORKER_APP_NAME = void 0;
+exports.buildViewWorkerArgs = buildViewWorkerArgs;
+exports.viewWorkerEnv = viewWorkerEnv;
+/** application_name the worker's connections carry, so probes can skip them. */
+exports.VIEW_WORKER_APP_NAME = 'odoo-devtools-view-worker';
+/** Short flags that are refused, each of which takes a value. */
+const REFUSED_SHORT = ['-i', '-u', '-p', '-d'];
+/**
+ * Long options that are refused, and whether they take a value (a bare flag
+ * then owns the next extraParams part). The worker sets its own database and
+ * addons path, and a later duplicate would win in optparse.
+ */
+const REFUSED_LONG = new Map([
+    ['--init', true], ['--update', true],
+    ['--test-enable', false], ['--test-file', true], ['--test-tags', true],
+    ['--stop-after-init', false],
+    ['--http-port', true], ['--xmlrpc-port', true], ['--dev', true],
+    ['--database', true], ['--addons-path', true]
+]);
+/**
+ * Whether optparse would read `arg` as a refused option, in any spelling it
+ * accepts (attached short values, unambiguous long prefixes), and if so
+ * whether it takes the next part as its value.
+ */
+function refusal(arg) {
+    const name = arg.split(/[=\s]/, 1)[0];
+    if (name.startsWith('--')) {
+        if (name.length < 3) {
+            return undefined;
+        }
+        const matches = [...REFUSED_LONG].filter(([long]) => long.startsWith(name));
+        return matches.length > 0 ? { takesValue: matches.some(([, takes]) => takes) } : undefined;
+    }
+    if (name.startsWith('-') && name.length > 1 && REFUSED_SHORT.includes(name.slice(0, 2))) {
+        return { takesValue: true };
+    }
+    return undefined;
+}
+function buildViewWorkerArgs(input) {
+    const extras = (input.extraParams ?? '')
+        .split(',')
+        .map(part => part.trim())
+        .filter(Boolean);
+    const kept = [];
+    for (let index = 0; index < extras.length; index++) {
+        const arg = extras[index];
+        const refused = refusal(arg);
+        if (!refused) {
+            kept.push(arg);
+            continue;
+        }
+        // A bare value-taking flag ("-u") owned the next part ("sale") as its
+        // value. Boolean flags and attached values ("-uall") own nothing.
+        const name = arg.split(/[=\s]/, 1)[0];
+        const next = extras[index + 1];
+        const bare = arg === name && (name.startsWith('--') || name.length === 2);
+        if (refused.takesValue && bare && next !== undefined && !next.startsWith('-')) {
+            index++;
+        }
+    }
+    return [
+        input.odooBinPath,
+        'shell',
+        '--no-http',
+        '--addons-path', input.addonsPaths.join(','),
+        '-d', input.dbName,
+        ...kept
+    ];
+}
+/**
+ * The worker's environment. Odoo 15 leaves application_name to libpq
+ * (PGAPPNAME), 16-18 read ODOO_PGAPPNAME, 19 deprecates that for PGAPPNAME:
+ * setting both names the connections on every version.
+ */
+function viewWorkerEnv(base) {
+    return { ...base, PGAPPNAME: exports.VIEW_WORKER_APP_NAME, ODOO_PGAPPNAME: exports.VIEW_WORKER_APP_NAME };
+}
+
+
+/***/ }),
+/* 51 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -9074,9 +9265,9 @@ const repo_1 = __webpack_require__(46);
 const settings_1 = __webpack_require__(7);
 const versionsService_1 = __webpack_require__(33);
 const utils_1 = __webpack_require__(8);
-const branches_1 = __webpack_require__(51);
-const checkout_1 = __webpack_require__(52);
-const worktree_1 = __webpack_require__(54);
+const branches_1 = __webpack_require__(52);
+const checkout_1 = __webpack_require__(53);
+const worktree_1 = __webpack_require__(55);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
 const LEGACY_BEHAVIOR_MAP = {
@@ -9425,7 +9616,7 @@ async function applyEnvironmentDiff(diff, label) {
 
 
 /***/ }),
-/* 51 */
+/* 52 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -9518,7 +9709,7 @@ async function getRepoBranch(repoPath) {
 
 
 /***/ }),
-/* 52 */
+/* 53 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -9560,7 +9751,7 @@ exports.checkoutRepoBranch = checkoutRepoBranch;
 exports.alignCoreRepos = alignCoreRepos;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(9));
-const child_process_1 = __webpack_require__(53);
+const child_process_1 = __webpack_require__(54);
 const utils_1 = __webpack_require__(8);
 const gitService_1 = __webpack_require__(11);
 const runtimeCache_1 = __webpack_require__(15);
@@ -9790,13 +9981,13 @@ async function alignCoreRepos(settings, branch, needsCheckout) {
 
 
 /***/ }),
-/* 53 */
+/* 54 */
 /***/ ((module) => {
 
 module.exports = require("child_process");
 
 /***/ }),
-/* 54 */
+/* 55 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10081,7 +10272,7 @@ async function removeManagedBranch(repoPath, branch) {
 
 
 /***/ }),
-/* 55 */
+/* 56 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10311,7 +10502,7 @@ function describeModeChange(repoName, mode, root, branches, repoPath) {
 
 
 /***/ }),
-/* 56 */
+/* 57 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10360,11 +10551,11 @@ const vscode = __importStar(__webpack_require__(1));
 const process_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
-const branches_1 = __webpack_require__(51);
-const worktree_1 = __webpack_require__(54);
+const branches_1 = __webpack_require__(52);
+const worktree_1 = __webpack_require__(55);
 const runtimeCache_1 = __webpack_require__(15);
 const gitService_1 = __webpack_require__(11);
-const sourceConflict_1 = __webpack_require__(57);
+const sourceConflict_1 = __webpack_require__(58);
 async function dirtyFiles(repoPath) {
     const stdout = await (0, process_1.tryRunCommand)('git', ['status', '--porcelain'], { cwd: repoPath });
     return stdout === undefined ? [] : (0, sourceConflict_1.parsePorcelainStatus)(stdout);
@@ -10502,7 +10693,7 @@ async function ensureCustomWorktrees(resolved, token, options = {}) {
 
 
 /***/ }),
-/* 57 */
+/* 58 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -10573,7 +10764,7 @@ function parsePorcelainStatus(stdout) {
 
 
 /***/ }),
-/* 58 */
+/* 59 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -10631,7 +10822,7 @@ exports.resolveDatabaseSeries = resolveDatabaseSeries;
  */
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
-const versionProposal_1 = __webpack_require__(59);
+const versionProposal_1 = __webpack_require__(60);
 const database_1 = __webpack_require__(48);
 const logger_1 = __webpack_require__(12);
 /**
@@ -10768,7 +10959,7 @@ async function resolveDatabaseSeries(dbId, linkedSeries) {
 
 
 /***/ }),
-/* 59 */
+/* 60 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -10866,7 +11057,7 @@ function proposeVersions(repoBranches, seriesBranches, existing) {
 
 
 /***/ }),
-/* 60 */
+/* 61 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -10961,7 +11152,7 @@ function dbForVersion(project, versionId) {
 
 
 /***/ }),
-/* 61 */
+/* 62 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -10981,7 +11172,7 @@ function otherSide(side) {
 
 
 /***/ }),
-/* 62 */
+/* 63 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -10996,7 +11187,7 @@ exports.initializeBinding = initializeBinding;
 exports.readBinding = readBinding;
 exports.writeBinding = writeBinding;
 exports.boundVersionId = boundVersionId;
-const versionProposal_1 = __webpack_require__(59);
+const versionProposal_1 = __webpack_require__(60);
 exports.BINDING_STATE_KEY = 'odt.workspaceBinding';
 const NOT_BOUND = { asked: false };
 function normalizeBinding(raw) {
@@ -11114,7 +11305,7 @@ function boundVersionId() {
 
 
 /***/ }),
-/* 63 */
+/* 64 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -11170,28 +11361,28 @@ exports.manageDatabaseTemplates = manageDatabaseTemplates;
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
 const os = __importStar(__webpack_require__(18));
-const node_crypto_1 = __webpack_require__(64);
+const node_crypto_1 = __webpack_require__(65);
 const db_1 = __webpack_require__(44);
 const utils_1 = __webpack_require__(8);
-const odooInstaller_1 = __webpack_require__(65);
-const wizard_1 = __webpack_require__(72);
+const odooInstaller_1 = __webpack_require__(66);
+const wizard_1 = __webpack_require__(73);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branches_1 = __webpack_require__(51);
+const branches_1 = __webpack_require__(52);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(33);
-const dbResolution_1 = __webpack_require__(60);
-const dbNaming_1 = __webpack_require__(73);
+const dbResolution_1 = __webpack_require__(61);
+const dbNaming_1 = __webpack_require__(74);
 const database_1 = __webpack_require__(48);
 const upgrade_1 = __webpack_require__(40);
 const postgres_1 = __webpack_require__(47);
-const dumpImport_1 = __webpack_require__(74);
-const templates_1 = __webpack_require__(77);
-const reconcile_1 = __webpack_require__(78);
-const environment_1 = __webpack_require__(50);
-const versionRepos_1 = __webpack_require__(79);
-const workspaceBinding_1 = __webpack_require__(62);
-const bindingCommand_1 = __webpack_require__(83);
+const dumpImport_1 = __webpack_require__(75);
+const templates_1 = __webpack_require__(78);
+const reconcile_1 = __webpack_require__(79);
+const environment_1 = __webpack_require__(51);
+const versionRepos_1 = __webpack_require__(80);
+const workspaceBinding_1 = __webpack_require__(63);
+const bindingCommand_1 = __webpack_require__(84);
 /**
  * Database UI flows: creation wizard, selection, deletion, restore, version
  * and branch-mapping edits, and template management. All PostgreSQL / dump
@@ -12712,13 +12903,13 @@ async function manageDatabaseTemplates() {
 
 
 /***/ }),
-/* 64 */
+/* 65 */
 /***/ ((module) => {
 
 module.exports = require("node:crypto");
 
 /***/ }),
-/* 65 */
+/* 66 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -12773,11 +12964,11 @@ const process_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
 const versionsService_1 = __webpack_require__(33);
-const provisioning_1 = __webpack_require__(66);
-const systemDeps_1 = __webpack_require__(69);
-const pythonToolchain_1 = __webpack_require__(68);
-const setupState_1 = __webpack_require__(70);
-const provisionLease_1 = __webpack_require__(71);
+const provisioning_1 = __webpack_require__(67);
+const systemDeps_1 = __webpack_require__(70);
+const pythonToolchain_1 = __webpack_require__(69);
+const setupState_1 = __webpack_require__(71);
+const provisionLease_1 = __webpack_require__(72);
 const CLONE_TARGETS = {
     odoo: {
         dirName: 'odoo',
@@ -13158,7 +13349,7 @@ async function cloneOdooRepositories(defaultBaseDir) {
 
 
 /***/ }),
-/* 66 */
+/* 67 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13210,10 +13401,10 @@ exports.executeProvision = executeProvision;
  */
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
-const odooRequirements_1 = __webpack_require__(67);
-const worktree_1 = __webpack_require__(54);
-const pythonToolchain_1 = __webpack_require__(68);
-const systemDeps_1 = __webpack_require__(69);
+const odooRequirements_1 = __webpack_require__(68);
+const worktree_1 = __webpack_require__(55);
+const pythonToolchain_1 = __webpack_require__(69);
+const systemDeps_1 = __webpack_require__(70);
 const logger_1 = __webpack_require__(12);
 function samePath(a, b) {
     return path.resolve(a) === path.resolve(b);
@@ -13398,7 +13589,7 @@ async function executeProvision(spec, progress, token) {
 
 
 /***/ }),
-/* 67 */
+/* 68 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13536,7 +13727,7 @@ async function readOdooPythonWindow(odooPath) {
 
 
 /***/ }),
-/* 68 */
+/* 69 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13784,7 +13975,7 @@ async function installRequirements(venvPath, requirementsPath, uvPath, onLine, t
 
 
 /***/ }),
-/* 69 */
+/* 70 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -13833,7 +14024,7 @@ exports.checkSystemDeps = checkSystemDeps;
  */
 const fs = __importStar(__webpack_require__(2));
 const process_1 = __webpack_require__(13);
-const pythonToolchain_1 = __webpack_require__(68);
+const pythonToolchain_1 = __webpack_require__(69);
 const INSTALL_HINTS = {
     wkhtmltopdf: {
         apt: 'sudo apt install wkhtmltopdf',
@@ -13914,7 +14105,7 @@ async function checkSystemDeps(venvPath) {
 
 
 /***/ }),
-/* 70 */
+/* 71 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14060,7 +14251,7 @@ function shouldAdoptLegacySourceRepo(raw, legacyOdooPath, exists) {
 
 
 /***/ }),
-/* 71 */
+/* 72 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14116,7 +14307,7 @@ exports.acquireLease = acquireLease;
  */
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
-const node_crypto_1 = __webpack_require__(64);
+const node_crypto_1 = __webpack_require__(65);
 exports.LEASE_FILE = '.odt-provision.lease';
 /** How often the holder says it is alive. */
 exports.HEARTBEAT_MS = 30_000;
@@ -14283,7 +14474,7 @@ function acquireLease(root, owner = exports.OWNER_ID, now = Date.now) {
 
 
 /***/ }),
-/* 72 */
+/* 73 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14523,7 +14714,7 @@ function step(run, accept, options = {}) {
 
 
 /***/ }),
-/* 73 */
+/* 74 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14658,7 +14849,7 @@ function generateDatabaseIdentifiers(options) {
 
 
 /***/ }),
-/* 74 */
+/* 75 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -14707,8 +14898,8 @@ const fsp = __importStar(__webpack_require__(20));
 const path = __importStar(__webpack_require__(3));
 const os = __importStar(__webpack_require__(18));
 const node_child_process_1 = __webpack_require__(14);
-const node_stream_1 = __webpack_require__(75);
-const promises_1 = __webpack_require__(76);
+const node_stream_1 = __webpack_require__(76);
+const promises_1 = __webpack_require__(77);
 const process_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(12);
 /** Recursively finds restorable dump sources under `root` (bounded depth). */
@@ -15011,19 +15202,19 @@ async function prepareDumpViaTempFile(dumpPath) {
 
 
 /***/ }),
-/* 75 */
+/* 76 */
 /***/ ((module) => {
 
 module.exports = require("node:stream");
 
 /***/ }),
-/* 76 */
+/* 77 */
 /***/ ((module) => {
 
 module.exports = require("node:stream/promises");
 
 /***/ }),
-/* 77 */
+/* 78 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -15118,7 +15309,7 @@ async function persistDatabaseTemplates(data, templates) {
 
 
 /***/ }),
-/* 78 */
+/* 79 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -15174,7 +15365,7 @@ async function logStaleReferences() {
 
 
 /***/ }),
-/* 79 */
+/* 80 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15225,12 +15416,12 @@ exports.resolveReposForDatabase = resolveReposForDatabase;
  */
 const vscode = __importStar(__webpack_require__(1));
 const versionsService_1 = __webpack_require__(33);
-const environment_1 = __webpack_require__(50);
-const repoLocations_1 = __webpack_require__(80);
-const repoPaths_1 = __webpack_require__(55);
-const setupState_1 = __webpack_require__(70);
-const workspaceBinding_1 = __webpack_require__(62);
-const workspaceRegistry_1 = __webpack_require__(81);
+const environment_1 = __webpack_require__(51);
+const repoLocations_1 = __webpack_require__(81);
+const repoPaths_1 = __webpack_require__(56);
+const setupState_1 = __webpack_require__(71);
+const workspaceBinding_1 = __webpack_require__(63);
+const workspaceRegistry_1 = __webpack_require__(82);
 /**
  * Where to look first for `version`'s checkouts (see locateRepoCheckouts):
  * this window's folders when it is bound to that version, and the folders of
@@ -15270,7 +15461,7 @@ async function resolveReposForDatabase(project, db, options = {}) {
 
 
 /***/ }),
-/* 80 */
+/* 81 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15326,7 +15517,7 @@ const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const utils_1 = __webpack_require__(8);
 const process_1 = __webpack_require__(13);
-const repoPaths_1 = __webpack_require__(55);
+const repoPaths_1 = __webpack_require__(56);
 const remotes = new Map();
 /** `origin` of the checkout at `repoPath`, normalised; cached for the session. */
 function remoteOf(repoPath) {
@@ -15455,7 +15646,7 @@ async function projectReposForVersion(repos, version, list, extraRoots = []) {
 
 
 /***/ }),
-/* 81 */
+/* 82 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15511,13 +15702,13 @@ exports.otherWorkspacesFor = otherWorkspacesFor;
  */
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
-const node_url_1 = __webpack_require__(82);
-const node_crypto_1 = __webpack_require__(64);
+const node_url_1 = __webpack_require__(83);
+const node_crypto_1 = __webpack_require__(65);
 const vscode = __importStar(__webpack_require__(1));
 const jsonc_parser_1 = __webpack_require__(21);
 const mainStore_1 = __webpack_require__(27);
 const launchConfig_1 = __webpack_require__(19);
-const workspaceBinding_1 = __webpack_require__(62);
+const workspaceBinding_1 = __webpack_require__(63);
 const logger_1 = __webpack_require__(12);
 /** Unseen for this long, a workspace is dropped from the registry. */
 exports.STALE_AFTER_MS = 90 * 24 * 60 * 60 * 1000;
@@ -15651,13 +15842,13 @@ function otherWorkspacesFor(versionId) {
 
 
 /***/ }),
-/* 82 */
+/* 83 */
 /***/ ((module) => {
 
 module.exports = require("node:url");
 
 /***/ }),
-/* 83 */
+/* 84 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15701,18 +15892,18 @@ exports.registerBindingCommand = registerBindingCommand;
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
-const registerCommand_1 = __webpack_require__(84);
+const registerCommand_1 = __webpack_require__(85);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(33);
 const mainStore_1 = __webpack_require__(27);
-const branches_1 = __webpack_require__(51);
-const repoLocations_1 = __webpack_require__(80);
+const branches_1 = __webpack_require__(52);
+const repoLocations_1 = __webpack_require__(81);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
 const utils_1 = __webpack_require__(8);
-const workspaceRegistry_1 = __webpack_require__(81);
-const args_1 = __webpack_require__(85);
-const workspaceBinding_1 = __webpack_require__(62);
+const workspaceRegistry_1 = __webpack_require__(82);
+const args_1 = __webpack_require__(86);
+const workspaceBinding_1 = __webpack_require__(63);
 /** This window's folders, with the branch and remote of those that are git checkouts. */
 async function folderFacts() {
     return Promise.all((vscode.workspace.workspaceFolders ?? []).map(async (folder) => {
@@ -15941,7 +16132,7 @@ function registerBindingCommand(deps) {
 
 
 /***/ }),
-/* 84 */
+/* 85 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16018,7 +16209,7 @@ function registerCommand(command, callback, thisArg) {
 
 
 /***/ }),
-/* 85 */
+/* 86 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16111,7 +16302,7 @@ function extractUri(arg) {
 
 
 /***/ }),
-/* 86 */
+/* 87 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -16130,8 +16321,8 @@ exports.invalidateRunningState = invalidateRunningState;
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(33);
 const database_1 = __webpack_require__(48);
-const debugSessions_1 = __webpack_require__(87);
-const dbResolution_1 = __webpack_require__(60);
+const debugSessions_1 = __webpack_require__(88);
+const dbResolution_1 = __webpack_require__(61);
 const runtimeCache_1 = __webpack_require__(15);
 const logger_1 = __webpack_require__(12);
 /**
@@ -16210,7 +16401,7 @@ function invalidateRunningState() {
 
 
 /***/ }),
-/* 87 */
+/* 88 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -16272,7 +16463,7 @@ function resolveStopTarget(running, activeName) {
 
 
 /***/ }),
-/* 88 */
+/* 89 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16572,7 +16763,7 @@ async function migrateHookSettings() {
 
 
 /***/ }),
-/* 89 */
+/* 90 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16629,26 +16820,26 @@ exports.quickProjectSearch = quickProjectSearch;
  * import/export, ticket management and quick project search.
  */
 const vscode = __importStar(__webpack_require__(1));
-const os = __importStar(__webpack_require__(90));
-const project_1 = __webpack_require__(91);
+const os = __importStar(__webpack_require__(91));
+const project_1 = __webpack_require__(92);
 const repo_1 = __webpack_require__(46);
 const utils_1 = __webpack_require__(8);
 const icons_1 = __webpack_require__(39);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(33);
 const crypto_1 = __webpack_require__(35);
-const environment_1 = __webpack_require__(50);
+const environment_1 = __webpack_require__(51);
 const sortOptions_1 = __webpack_require__(38);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
 const notifications_2 = __webpack_require__(16);
 const baseTreeProvider_1 = __webpack_require__(5);
-const customAddonsCommand_1 = __webpack_require__(93);
-const wizard_1 = __webpack_require__(72);
-const branches_1 = __webpack_require__(51);
-const manifest_1 = __webpack_require__(94);
-const psaeInternal_1 = __webpack_require__(95);
-const versionRepos_1 = __webpack_require__(79);
+const customAddonsCommand_1 = __webpack_require__(94);
+const wizard_1 = __webpack_require__(73);
+const branches_1 = __webpack_require__(52);
+const manifest_1 = __webpack_require__(95);
+const psaeInternal_1 = __webpack_require__(96);
+const versionRepos_1 = __webpack_require__(80);
 let projectMetadataMigrationCompleted = false;
 function sanitizeProjectTickets(rawTickets) {
     if (!Array.isArray(rawTickets)) {
@@ -17671,19 +17862,19 @@ async function quickProjectSearch() {
 
 
 /***/ }),
-/* 90 */
+/* 91 */
 /***/ ((module) => {
 
 module.exports = require("os");
 
 /***/ }),
-/* 91 */
+/* 92 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectModel = void 0;
-const testing_1 = __webpack_require__(92);
+const testing_1 = __webpack_require__(93);
 const upgrade_1 = __webpack_require__(41);
 const crypto_1 = __webpack_require__(35);
 class ProjectModel {
@@ -17720,7 +17911,7 @@ exports.ProjectModel = ProjectModel;
 
 
 /***/ }),
-/* 92 */
+/* 93 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17807,7 +17998,7 @@ function ensureTestingConfigModel(testingConfig) {
 
 
 /***/ }),
-/* 93 */
+/* 94 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17864,7 +18055,7 @@ const vscode = __importStar(__webpack_require__(1));
 const versionsService_1 = __webpack_require__(33);
 const runtimeCache_1 = __webpack_require__(15);
 const notifications_1 = __webpack_require__(16);
-const registerCommand_1 = __webpack_require__(84);
+const registerCommand_1 = __webpack_require__(85);
 /**
  * Asks for the folder and records it. Returns the chosen path, or undefined
  * when the user cancels.
@@ -17908,7 +18099,7 @@ function registerCustomAddonsCommand(deps) {
 
 
 /***/ }),
-/* 94 */
+/* 95 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -18060,7 +18251,7 @@ function extractTicketIdsFromBranch(branchName) {
 
 
 /***/ }),
-/* 95 */
+/* 96 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18071,7 +18262,7 @@ exports.parsePsaeOverrides = parsePsaeOverrides;
 exports.resolvePsaeDirectories = resolvePsaeDirectories;
 exports.setPsaeDirectoryIncluded = setPsaeDirectoryIncluded;
 const utils_1 = __webpack_require__(8);
-const repoPaths_1 = __webpack_require__(55);
+const repoPaths_1 = __webpack_require__(56);
 /**
  * Single source of truth for "psae-internal" module directories (Odoo PS
  * convention: directories matching ps*-internal hold internal modules that
@@ -18162,7 +18353,7 @@ function setPsaeDirectoryIncluded(project, dir, include) {
 
 
 /***/ }),
-/* 96 */
+/* 97 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -18215,12 +18406,12 @@ const versionsService_1 = __webpack_require__(33);
 const path = __importStar(__webpack_require__(10));
 const fs = __importStar(__webpack_require__(9));
 const sortOptions_1 = __webpack_require__(38);
-const branches_1 = __webpack_require__(51);
+const branches_1 = __webpack_require__(52);
 const runtimeCache_1 = __webpack_require__(15);
 const baseTreeProvider_1 = __webpack_require__(5);
 const icons_1 = __webpack_require__(39);
-const repoLocations_1 = __webpack_require__(80);
-const versionRepos_1 = __webpack_require__(79);
+const repoLocations_1 = __webpack_require__(81);
+const versionRepos_1 = __webpack_require__(80);
 async function mapWithConcurrency(items, limit, worker) {
     if (items.length === 0) {
         return [];
@@ -18400,7 +18591,7 @@ async function selectRepo(event) {
 
 
 /***/ }),
-/* 97 */
+/* 98 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -18460,7 +18651,7 @@ exports.viewInstalledModules = viewInstalledModules;
 const module_1 = __webpack_require__(45);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(8);
-const psaeInternal_1 = __webpack_require__(95);
+const psaeInternal_1 = __webpack_require__(96);
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(6);
@@ -18471,8 +18662,8 @@ const notifications_1 = __webpack_require__(16);
 const baseTreeProvider_1 = __webpack_require__(5);
 const process_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(12);
-const manifest_1 = __webpack_require__(94);
-const versionRepos_1 = __webpack_require__(79);
+const manifest_1 = __webpack_require__(95);
+const versionRepos_1 = __webpack_require__(80);
 /**
  * Whether module selections may be edited right now. Both refusals were
  * repeated at nine call sites with no way forward; hoisting them means the
@@ -19332,7 +19523,7 @@ async function viewInstalledModules() {
 
 
 /***/ }),
-/* 98 */
+/* 99 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -19389,12 +19580,12 @@ exports.setSpecificLogLevel = setSpecificLogLevel;
  */
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(6);
-const testing_1 = __webpack_require__(92);
+const testing_1 = __webpack_require__(93);
 const module_1 = __webpack_require__(45);
 const utils_1 = __webpack_require__(8);
 const context_1 = __webpack_require__(42);
 const upgrade_1 = __webpack_require__(40);
-const debugger_1 = __webpack_require__(99);
+const debugger_1 = __webpack_require__(100);
 const database_1 = __webpack_require__(48);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
@@ -20074,7 +20265,7 @@ async function setSpecificLogLevel() {
 
 
 /***/ }),
-/* 99 */
+/* 100 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20113,7 +20304,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.currentLaunchTarget = currentLaunchTarget;
+exports.runDirectory = runDirectory;
 exports.setupDebugger = setupDebugger;
+exports.collectAddonsPaths = collectAddonsPaths;
 exports.buildOdooCommandLine = buildOdooCommandLine;
 exports.startDebugShell = startDebugShell;
 exports.stopDebugServer = stopDebugServer;
@@ -20128,22 +20321,22 @@ const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
 const settings_1 = __webpack_require__(7);
 const utils_1 = __webpack_require__(8);
-const psaeInternal_1 = __webpack_require__(95);
+const psaeInternal_1 = __webpack_require__(96);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(33);
-const testing_1 = __webpack_require__(92);
+const testing_1 = __webpack_require__(93);
 const database_1 = __webpack_require__(48);
 const logger_1 = __webpack_require__(12);
 const launchConfig_1 = __webpack_require__(19);
 const dataLocation_1 = __webpack_require__(17);
-const debugSessions_1 = __webpack_require__(87);
-const dbResolution_1 = __webpack_require__(60);
-const versionRepos_1 = __webpack_require__(79);
-const provisioning_1 = __webpack_require__(66);
-const customWorktree_1 = __webpack_require__(56);
-const setupState_1 = __webpack_require__(70);
-const odooInstaller_1 = __webpack_require__(65);
-const server_1 = __webpack_require__(100);
+const debugSessions_1 = __webpack_require__(88);
+const dbResolution_1 = __webpack_require__(61);
+const versionRepos_1 = __webpack_require__(80);
+const provisioning_1 = __webpack_require__(67);
+const customWorktree_1 = __webpack_require__(57);
+const setupState_1 = __webpack_require__(71);
+const odooInstaller_1 = __webpack_require__(66);
+const server_1 = __webpack_require__(101);
 const gitExclude_1 = __webpack_require__(32);
 /** Why prepareArgs refuses: no database of that version is selected. */
 const NO_DATABASE = 'Select a database before running this action.';
@@ -20347,8 +20540,13 @@ async function setupDebugger() {
     await selectPythonInterpreter(activeSettings.pythonPath);
     return activeConfig;
 }
-async function prepareArgs(project, settings, options = {}) {
-    const isShell = options.isShell === true;
+/**
+ * The --addons-path a version runs `db` with: core, enterprise and themes,
+ * the project's repositories as this database's version sees them, the
+ * included psae-internal folders and the legacy submodule paths. Shared by the
+ * server launch and the View Doctor's shell, so both load the same code.
+ */
+async function collectAddonsPaths(project, settings, db, versionId) {
     // Build addons path using settings paths
     const addonsPaths = [];
     const addonPathSet = new Set();
@@ -20377,17 +20575,13 @@ async function prepareArgs(project, settings, options = {}) {
         addAddonPath(`${settings.odooPath}/odoo/addons`);
         addAddonPath(`${settings.odooPath}/addons`);
     }
-    const db = (0, dbResolution_1.dbForVersion)(project, options.versionId);
-    if (!db) {
-        throw new Error(NO_DATABASE);
-    }
     const projectModules = db.modules ?? [];
     // psae-internal directories: resolved through the shared service so the
     // Modules tree and the launch args always agree on what is included.
     // Resolve every project repo to the directory this version runs from, so
     // two versions on different branches never share one copy of the code.
     const resolvedRepos = await (0, versionRepos_1.resolveReposForDatabase)(project, db, {
-        version: options.versionId ? versionsService_1.VersionsService.getInstance().getVersion(options.versionId) : undefined
+        version: versionId ? versionsService_1.VersionsService.getInstance().getVersion(versionId) : undefined
     });
     const discovery = (0, psaeInternal_1.collectModuleDiscovery)(project, resolvedRepos);
     const containerPathMap = new Map();
@@ -20443,6 +20637,16 @@ async function prepareArgs(project, settings, options = {}) {
             addAddonPath(subModulePath);
         }
     }
+    return addonsPaths;
+}
+async function prepareArgs(project, settings, options = {}) {
+    const isShell = options.isShell === true;
+    const db = (0, dbResolution_1.dbForVersion)(project, options.versionId);
+    if (!db) {
+        throw new Error(NO_DATABASE);
+    }
+    const projectModules = db.modules ?? [];
+    const addonsPaths = await collectAddonsPaths(project, settings, db, options.versionId);
     let installs = projectModules
         .filter(module => module.state === 'install')
         .map(module => module.name);
@@ -20733,7 +20937,7 @@ async function startDebugServer(options = {}) {
 
 
 /***/ }),
-/* 100 */
+/* 101 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20789,8 +20993,8 @@ const net = __importStar(__webpack_require__(37));
 const versionsService_1 = __webpack_require__(33);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
-const runningState_1 = __webpack_require__(86);
-const debugSessions_1 = __webpack_require__(87);
+const runningState_1 = __webpack_require__(87);
+const debugSessions_1 = __webpack_require__(88);
 const DEFAULT_ODOO_PORT = 8069;
 /** Port the Odoo server listens on, from the active version's settings. */
 async function getActiveServerPort() {
@@ -20964,7 +21168,7 @@ function registerServerLifecycle(context, hooks) {
 
 
 /***/ }),
-/* 101 */
+/* 102 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -20986,8 +21190,8 @@ exports.stopProvisionQueue = stopProvisionQueue;
 exports.offerStop = offerStop;
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
-const provisionLease_1 = __webpack_require__(71);
-const setupState_1 = __webpack_require__(70);
+const provisionLease_1 = __webpack_require__(72);
+const setupState_1 = __webpack_require__(71);
 exports.EMPTY_QUEUE = { pending: [] };
 exports.QUEUE_STATE_KEY = 'odt.provisionQueue';
 function knownBranches(state) {
@@ -21196,7 +21400,7 @@ async function offerStop(context, remaining) {
 
 
 /***/ }),
-/* 102 */
+/* 103 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21241,17 +21445,17 @@ exports.VersionsTreeProvider = exports.VersionSettingTreeItem = exports.VersionT
 const vscode = __importStar(__webpack_require__(1));
 const versionsService_1 = __webpack_require__(33);
 const utils_1 = __webpack_require__(8);
-const provisioning_1 = __webpack_require__(66);
-const runningState_1 = __webpack_require__(86);
+const provisioning_1 = __webpack_require__(67);
+const runningState_1 = __webpack_require__(87);
 const icons_1 = __webpack_require__(39);
 const sortOptions_1 = __webpack_require__(38);
 const logger_1 = __webpack_require__(12);
 const settingsStore_1 = __webpack_require__(6);
 const baseTreeProvider_1 = __webpack_require__(5);
 const versionIdentity_1 = __webpack_require__(36);
-const provisionQueue_1 = __webpack_require__(101);
+const provisionQueue_1 = __webpack_require__(102);
 const upgrade_1 = __webpack_require__(40);
-const workspaceRegistry_1 = __webpack_require__(81);
+const workspaceRegistry_1 = __webpack_require__(82);
 /** Provisioned state for the tree description, from the shared predicate. */
 function provisioningLabel(version) {
     // The queue owns the row while it is building: "not provisioned" during a
@@ -21506,7 +21710,7 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 
 /***/ }),
-/* 103 */
+/* 104 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -21529,7 +21733,944 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 104 */
+/* 105 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ViewDoctorTreeProvider = exports.ViewGroupItem = exports.ViewItem = void 0;
+exports.resolveViewDoctorTarget = resolveViewDoctorTarget;
+exports.buildDoctorRows = buildDoctorRows;
+/**
+ * The Views tree: the views a database has turned off, what an upgrade
+ * disabled first. It shows the selected database, or the upgraded side while
+ * an upgrade is set up, since that is where views get disabled.
+ */
+const vscode = __importStar(__webpack_require__(1));
+const settingsStore_1 = __webpack_require__(6);
+const upgrade_1 = __webpack_require__(41);
+const logger_1 = __webpack_require__(12);
+const baseTreeProvider_1 = __webpack_require__(5);
+function resolveViewDoctorTarget(project) {
+    if (!project) {
+        return undefined;
+    }
+    const config = (0, upgrade_1.ensureUpgradeConfigModel)(project.upgradeConfig);
+    if (config.isActive() && config.to?.dbId) {
+        return { dbName: config.to.dbId, side: 'to' };
+    }
+    const selected = (project.dbs ?? []).find(db => db.isSelected);
+    return selected ? { dbName: selected.id } : undefined;
+}
+class ViewItem extends vscode.TreeItem {
+    dbName;
+    view;
+    constructor(dbName, view, section, versions = []) {
+        super(view.name, vscode.TreeItemCollapsibleState.None);
+        this.dbName = dbName;
+        this.view = view;
+        // Keyed by state too: a row that changes state is a different row.
+        this.id = `${dbName}:${section}:${view.id}:${view.active ? 'on' : 'off'}`;
+        this.description = `${view.model || view.type} · ${view.xmlid ?? `#${view.id}`}`;
+        this.iconPath = new vscode.ThemeIcon(view.active ? 'pass' : 'circle-slash');
+        this.contextValue = ['odooView', view.active ? 'active' : 'inactive', view.inheritId ? 'hasParent' : 'root'].join('.');
+        const tooltip = new vscode.MarkdownString(undefined, true);
+        tooltip.appendMarkdown(`**${view.name}** (${view.type}, id ${view.id})\n\n`);
+        tooltip.appendMarkdown(`${view.xmlid ? `\`${view.xmlid}\`` : 'No external id'}\n\n`);
+        if (view.inheritId) {
+            tooltip.appendMarkdown(`Inherits view ${view.inheritId}, root ${view.rootId}\n\n`);
+        }
+        if (versions.length > 0) {
+            tooltip.appendMarkdown(`Disabled by the ${versions.join(' and ')} upgrade${versions.length > 1 ? 's' : ''}\n\n`);
+        }
+        tooltip.appendMarkdown(view.active ? 'On now' : 'Off');
+        this.tooltip = tooltip;
+        this.command = { command: 'viewDoctor.openArch', title: 'Open Arch', arguments: [this] };
+    }
+}
+exports.ViewItem = ViewItem;
+class ViewGroupItem extends vscode.TreeItem {
+    children;
+    constructor(label, id, children, expanded, description) {
+        super(label, expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
+        this.children = children;
+        this.id = id;
+        this.description = description;
+        this.contextValue = 'odooViewGroup';
+    }
+}
+exports.ViewGroupItem = ViewGroupItem;
+function messageItem(text, icon) {
+    const item = new vscode.TreeItem(text, vscode.TreeItemCollapsibleState.None);
+    item.iconPath = new vscode.ThemeIcon(icon);
+    return item;
+}
+function buildDoctorRows(dbName, groups) {
+    const rows = [];
+    if (groups.upgradeDisabled.length > 0 || groups.missingIds.length > 0) {
+        const off = groups.upgradeDisabled.filter(view => !view.active).length;
+        const on = groups.upgradeDisabled.length - off;
+        const children = groups.upgradeDisabled.map(view => new ViewItem(dbName, view, 'upgrade', view.versions));
+        if (groups.missingIds.length > 0) {
+            const count = groups.missingIds.length;
+            children.push(messageItem(`${count} listed view${count === 1 ? ' no longer exists' : 's no longer exist'}`, 'trash'));
+        }
+        const parts = [`${off} off`, ...(on > 0 ? [`${on} re-enabled`] : []), ...(groups.upgradeVersions.length > 0 ? [groups.upgradeVersions.join(', ')] : [])];
+        rows.push(new ViewGroupItem('Disabled by upgrade', `${dbName}:group:upgrade`, children, true, parts.join(' · ')));
+    }
+    if (groups.otherInactive.length > 0) {
+        rows.push(new ViewGroupItem('Other inactive views', `${dbName}:group:other`, groups.otherInactive.map(view => new ViewItem(dbName, view, 'other')), false, String(groups.otherInactive.length)));
+    }
+    if (rows.length === 0) {
+        rows.push(messageItem(`No views are turned off in ${dbName}.`, 'check'));
+    }
+    return rows;
+}
+class ViewDoctorTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
+    service;
+    describe;
+    loaded;
+    constructor(service, describe) {
+        super();
+        this.service = service;
+        this.describe = describe;
+    }
+    refresh(element) {
+        if (!element) {
+            this.loaded = undefined;
+        }
+        super.refresh(element);
+    }
+    getTreeItem(element) {
+        return element;
+    }
+    async getChildren(element) {
+        if (element instanceof ViewGroupItem) {
+            return element.children;
+        }
+        if (element) {
+            return [];
+        }
+        if (!this.loaded) {
+            this.loaded = this.load();
+        }
+        return this.loaded;
+    }
+    async load() {
+        const result = await settingsStore_1.SettingsStore.peekSelectedProject().catch(() => null);
+        const target = resolveViewDoctorTarget(result?.project);
+        this.describe?.(target?.dbName);
+        if (!target) {
+            return [];
+        }
+        try {
+            return buildDoctorRows(target.dbName, await this.service.doctorGroups(target.dbName));
+        }
+        catch (error) {
+            logger_1.logger.warn(`Could not read the views of ${target.dbName}:`, error);
+            return [messageItem(`Could not read the views of ${target.dbName}: ${(0, logger_1.errorMessage)(error)}`, 'error')];
+        }
+    }
+}
+exports.ViewDoctorTreeProvider = ViewDoctorTreeProvider;
+
+
+/***/ }),
+/* 106 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ViewService = void 0;
+const viewQueries_1 = __webpack_require__(107);
+const disabledReport_1 = __webpack_require__(108);
+const viewGroups_1 = __webpack_require__(109);
+class ViewService {
+    pool;
+    constructor(pool) {
+        this.pool = pool;
+    }
+    async writeDate(dbName, viewId) {
+        return (await (0, viewQueries_1.getWriteDates)(dbName, [viewId])).get(viewId);
+    }
+    async getArch(dbName, viewId) {
+        return (await this.pool.run(dbName, 'get_arch', { view_id: viewId })).arch;
+    }
+    save(dbName, viewId, arch) {
+        return this.pool.run(dbName, 'save', { view_id: viewId, arch, activate: true });
+    }
+    async activate(dbName, viewId) {
+        await this.pool.run(dbName, 'activate', { view_id: viewId });
+    }
+    async deactivate(dbName, viewId) {
+        await this.pool.run(dbName, 'deactivate', { view_id: viewId });
+    }
+    rows(dbName, ids) {
+        return (0, viewQueries_1.getViewRows)(dbName, ids);
+    }
+    /** The tree's content: psql only, so it shows without waiting for a shell. */
+    async doctorGroups(dbName) {
+        const [inactive, messages] = await Promise.all([(0, viewQueries_1.listInactiveViews)(dbName), (0, viewQueries_1.getReportMessages)(dbName)]);
+        const reported = (0, disabledReport_1.mergeReports)(messages.map(message => (0, disabledReport_1.parseDisabledViews)(message.body)));
+        const inactiveIds = new Set(inactive.map(view => view.id));
+        const reEnabled = await (0, viewQueries_1.getViewRows)(dbName, [...reported.keys()].filter(id => !inactiveIds.has(id)));
+        return (0, viewGroups_1.groupViews)(inactive, reported, reEnabled);
+    }
+}
+exports.ViewService = ViewService;
+
+
+/***/ }),
+/* 107 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.sqlIdList = sqlIdList;
+exports.viewRowsSql = viewRowsSql;
+exports.parseViewRows = parseViewRows;
+exports.parseReportMessages = parseReportMessages;
+exports.parseWriteDates = parseWriteDates;
+exports.listInactiveViews = listInactiveViews;
+exports.getViewRows = getViewRows;
+exports.getReportMessages = getReportMessages;
+exports.getWriteDates = getWriteDates;
+/**
+ * Read-only SQL for the View Doctor, through psql. Every query returns one
+ * JSON value (json_agg / json_object_agg): view names and Discuss bodies are
+ * free text with tabs and newlines, which the `|`-separated readers in
+ * database.ts would split. Ported from odoo-manager's docker_manager.py
+ * (list_disabled_views, _first_xmlid, the Discuss report query). Ids are
+ * validated integers; nothing else is ever interpolated.
+ */
+const postgres_1 = __webpack_require__(47);
+/** Ids for embedding in SQL; throws on anything that is not a positive integer. */
+function sqlIdList(ids) {
+    for (const id of ids) {
+        if (!Number.isSafeInteger(id) || id <= 0) {
+            throw new Error(`Not a view id: ${id}`);
+        }
+    }
+    return ids.join(',');
+}
+/**
+ * The view rows matching `where`, an expression over ir_ui_view aliased `v`.
+ * The root comes from a walk up inherit_id bounded at 50 steps, so a corrupt
+ * cycle cannot hang the query. A root counts as a report when any of its
+ * external ids is an ir.actions.report's report_name.
+ */
+function viewRowsSql(where) {
+    return `
+WITH RECURSIVE chain AS (
+    SELECT v.id AS start_id, v.id AS cur_id, v.inherit_id, 0 AS depth
+    FROM ir_ui_view v WHERE ${where}
+    UNION ALL
+    SELECT c.start_id, p.id, p.inherit_id, c.depth + 1
+    FROM chain c JOIN ir_ui_view p ON p.id = c.inherit_id
+    WHERE c.depth < 50
+), roots AS (
+    SELECT DISTINCT ON (start_id) start_id, cur_id AS root_id
+    FROM chain ORDER BY start_id, depth DESC
+)
+SELECT coalesce(json_agg(json_build_object(
+    'id', v.id,
+    'name', coalesce(v.name, v.type),
+    'model', coalesce(v.model, ''),
+    'type', v.type,
+    'active', v.active,
+    'inherit_id', v.inherit_id,
+    'xmlid', (SELECT d.module || '.' || d.name FROM ir_model_data d
+              WHERE d.model = 'ir.ui.view' AND d.res_id = v.id
+              ORDER BY d.module, d.name LIMIT 1),
+    'root_id', r.root_id,
+    'is_report', EXISTS (
+        SELECT 1 FROM ir_model_data rd
+        JOIN ir_act_report_xml a ON a.report_name = rd.module || '.' || rd.name
+        WHERE rd.model = 'ir.ui.view' AND rd.res_id = r.root_id),
+    'write_date', floor(extract(epoch FROM v.write_date) * 1000)
+) ORDER BY v.model, v.id), '[]'::json)
+FROM ir_ui_view v JOIN roots r ON r.start_id = v.id;`.trim();
+}
+const REPORT_MESSAGES_SQL = `
+SELECT coalesce(json_agg(json_build_object('id', id, 'date', create_date, 'body', body) ORDER BY id), '[]'::json)
+FROM mail_message
+WHERE model IN ('discuss.channel', 'mail.channel') AND body LIKE '%Disabled views%';`.trim();
+function parseJson(output, fallback) {
+    return JSON.parse(output.trim() || fallback);
+}
+function parseViewRows(output) {
+    const raw = parseJson(output, '[]');
+    if (!Array.isArray(raw)) {
+        throw new Error('Unexpected output from the view query.');
+    }
+    return raw.map(entry => {
+        const row = entry;
+        const id = Number(row.id);
+        return {
+            id,
+            name: String(row.name ?? ''),
+            model: String(row.model ?? ''),
+            type: String(row.type ?? ''),
+            active: row.active === true,
+            inheritId: typeof row.inherit_id === 'number' ? row.inherit_id : null,
+            xmlid: typeof row.xmlid === 'string' ? row.xmlid : null,
+            rootId: typeof row.root_id === 'number' ? row.root_id : id,
+            isReport: row.is_report === true,
+            writeDate: typeof row.write_date === 'number' ? row.write_date : 0
+        };
+    });
+}
+function parseReportMessages(output) {
+    const raw = parseJson(output, '[]');
+    if (!Array.isArray(raw)) {
+        throw new Error('Unexpected output from the report query.');
+    }
+    return raw.map(entry => {
+        const message = entry;
+        return { id: Number(message.id), body: String(message.body ?? '') };
+    });
+}
+function parseWriteDates(output) {
+    const raw = parseJson(output, '{}');
+    return new Map(Object.entries(raw).map(([id, ms]) => [Number(id), typeof ms === 'number' ? ms : 0]));
+}
+/** Every view that is off right now, whatever turned it off. */
+async function listInactiveViews(dbName) {
+    return parseViewRows(await (0, postgres_1.runSql)(dbName, viewRowsSql('v.active = false')));
+}
+/** The rows for these ids; an id with no view is absent. */
+async function getViewRows(dbName, ids) {
+    if (ids.length === 0) {
+        return [];
+    }
+    return parseViewRows(await (0, postgres_1.runSql)(dbName, viewRowsSql(`v.id IN (${sqlIdList(ids)})`)));
+}
+/** upgrade-util's post-upgrade report messages; none on a database without Discuss. */
+async function getReportMessages(dbName) {
+    const hasTable = await (0, postgres_1.runSql)(dbName, "SELECT to_regclass('mail_message') IS NOT NULL;");
+    if (hasTable !== 't') {
+        return [];
+    }
+    return parseReportMessages(await (0, postgres_1.runSql)(dbName, REPORT_MESSAGES_SQL));
+}
+/** write_date of each view in epoch ms; an id with no view is absent. */
+async function getWriteDates(dbName, ids) {
+    if (ids.length === 0) {
+        return new Map();
+    }
+    const sql = 'SELECT coalesce(json_object_agg(id, floor(extract(epoch FROM write_date) * 1000)), \'{}\'::json) '
+        + `FROM ir_ui_view WHERE id IN (${sqlIdList(ids)});`;
+    return parseWriteDates(await (0, postgres_1.runSql)(dbName, sql));
+}
+
+
+/***/ }),
+/* 108 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+/**
+ * The "Disabled views" list of upgrade-util's post-upgrade report, which it
+ * posts to Discuss: the only record of which views an upgrade turned off - a
+ * view that is inactive now may have been inactive all along. Port of
+ * odoo-manager's migration_report.py, without an HTML parser: the report is
+ * generated markup, and only headings and anchors matter.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.decodeEntities = decodeEntities;
+exports.viewIdFromHref = viewIdFromHref;
+exports.parseDisabledViews = parseDisabledViews;
+exports.mergeReports = mergeReports;
+const SECTION_TITLE = 'Disabled views';
+const VERSION_RE = /upgraded to Odoo\s+(\S+)/;
+const TAG_RE = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+const HEADING_RE = /^h[1-6]$/;
+const HREF_RE = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
+function decodeEntities(text) {
+    return text
+        .replace(/&#(\d+);/g, (_match, code) => String.fromCodePoint(Number(code)))
+        .replace(/&#x([0-9a-f]+);/gi, (_match, code) => String.fromCodePoint(parseInt(code, 16)))
+        .replace(/&quot;/g, '"')
+        .replace(/&(?:#39|apos);/g, '\'')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&');
+}
+/**
+ * The record id an upgrade-util anchor points at. It switched shapes at
+ * saas~17.2:
+ *   /web?debug=1#view_type=form&model=ir.ui.view&action=29&id=1818   id in the hash
+ *   /odoo/action-29/1830?debug=1                                     id is the last path segment
+ */
+function viewIdFromHref(href) {
+    if (!href) {
+        return undefined;
+    }
+    const hashAt = href.indexOf('#');
+    const fragment = hashAt >= 0 ? href.slice(hashAt + 1) : '';
+    const beforeHash = hashAt >= 0 ? href.slice(0, hashAt) : href;
+    const queryAt = beforeHash.indexOf('?');
+    const query = queryAt >= 0 ? beforeHash.slice(queryAt + 1) : '';
+    const pathPart = queryAt >= 0 ? beforeHash.slice(0, queryAt) : beforeHash;
+    for (const part of [fragment, query]) {
+        const id = new URLSearchParams(part).get('id');
+        if (id && /^\d+$/.test(id)) {
+            return Number(id);
+        }
+    }
+    const last = pathPart.replace(/\/+$/, '').split('/').pop() ?? '';
+    return /^\d+$/.test(last) ? Number(last) : undefined;
+}
+/**
+ * The view ids under the report's "Disabled views" heading, in order, each
+ * once. Anchors elsewhere in the message (server actions, "Overridden views")
+ * are not views the upgrade disabled. Any heading ends the section.
+ */
+function parseDisabledViews(body) {
+    const result = { viewIds: [] };
+    if (!body || !body.trim()) {
+        return result;
+    }
+    const seen = new Set();
+    let heading;
+    let inSection = false;
+    for (const match of body.matchAll(TAG_RE)) {
+        const [whole, closing, rawTag, attributes] = match;
+        const tag = rawTag.toLowerCase();
+        const at = match.index ?? 0;
+        if (HEADING_RE.test(tag)) {
+            if (!closing) {
+                inSection = false;
+                heading = { tag, textStart: at + whole.length };
+            }
+            else if (heading && heading.tag === tag) {
+                const text = decodeEntities(body.slice(heading.textStart, at).replace(/<[^>]*>/g, ''))
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                if (tag === 'h2' && result.odooVersion === undefined) {
+                    const version = VERSION_RE.exec(text);
+                    if (version) {
+                        result.odooVersion = version[1];
+                    }
+                }
+                inSection = text === SECTION_TITLE;
+                heading = undefined;
+            }
+            continue;
+        }
+        if (inSection && !closing && tag === 'a') {
+            const href = HREF_RE.exec(attributes);
+            const id = viewIdFromHref(decodeEntities(href?.[1] ?? href?.[2] ?? href?.[3] ?? ''));
+            if (id !== undefined && !seen.has(id)) {
+                seen.add(id);
+                result.viewIds.push(id);
+            }
+        }
+    }
+    return result;
+}
+/** Every listed view, with the versions whose upgrade disabled it, in report order. */
+function mergeReports(reports) {
+    const merged = new Map();
+    for (const report of reports) {
+        for (const id of report.viewIds) {
+            const versions = merged.get(id) ?? [];
+            if (report.odooVersion && !versions.includes(report.odooVersion)) {
+                versions.push(report.odooVersion);
+            }
+            merged.set(id, versions);
+        }
+    }
+    return merged;
+}
+
+
+/***/ }),
+/* 109 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.groupViews = groupViews;
+function groupViews(inactive, reported, reportedRows) {
+    const byId = new Map();
+    for (const view of [...inactive, ...reportedRows]) {
+        byId.set(view.id, view);
+    }
+    const upgradeDisabled = [];
+    const missingIds = [];
+    const upgradeVersions = [];
+    for (const [id, versions] of reported) {
+        for (const version of versions) {
+            if (!upgradeVersions.includes(version)) {
+                upgradeVersions.push(version);
+            }
+        }
+        const view = byId.get(id);
+        if (view) {
+            upgradeDisabled.push({ ...view, versions });
+        }
+        else {
+            missingIds.push(id);
+        }
+    }
+    upgradeDisabled.sort((a, b) => Number(a.active) - Number(b.active) || a.model.localeCompare(b.model) || a.id - b.id);
+    upgradeVersions.sort();
+    const otherInactive = inactive.filter(view => !reported.has(view.id) && (view.type !== 'qweb' || view.isReport));
+    return { upgradeDisabled, upgradeVersions, otherInactive, missingIds };
+}
+
+
+/***/ }),
+/* 110 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ViewWorker = exports.ViewWorkerError = void 0;
+exports.workerBootstrap = workerBootstrap;
+/**
+ * One long-lived `odoo-bin shell` on one database, running view_worker.py.
+ *
+ * The shell exec()s all of stdin once it reaches EOF, so stdin carries only
+ * a one-line bootstrap and is then closed. Requests go out on fd 3 and replies
+ * come back on fd 4, one JSON object per line. That also keeps Odoo's logging
+ * on stdout/stderr out of the replies; its last lines are kept, to explain a
+ * shell that dies.
+ */
+const node_child_process_1 = __webpack_require__(14);
+const vscode = __importStar(__webpack_require__(1));
+class ViewWorkerError extends Error {
+    trace;
+    restart;
+    constructor(message, trace, restart = false) {
+        super(message);
+        this.trace = trace;
+        this.restart = restart;
+        this.name = 'ViewWorkerError';
+    }
+}
+exports.ViewWorkerError = ViewWorkerError;
+/** A JSON string literal is a valid Python string literal, whatever the path holds. */
+function workerBootstrap(scriptPath) {
+    const literal = JSON.stringify(scriptPath);
+    return `exec(compile(open(${literal}, encoding='utf-8').read(), ${literal}, 'exec'))\n`;
+}
+const TAIL_LINES = 30;
+const DEFAULT_START_TIMEOUT_MS = 180_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+const KILL_AFTER_MS = 3000;
+class ViewWorker {
+    spec;
+    options;
+    child;
+    requests;
+    pending = new Map();
+    nextId = 1;
+    ready;
+    exited = false;
+    tail = [];
+    exitEmitter = new vscode.EventEmitter();
+    onDidExit = this.exitEmitter.event;
+    constructor(spec, options = {}) {
+        this.spec = spec;
+        this.options = options;
+    }
+    get isAlive() {
+        return !!this.child && !this.exited;
+    }
+    start() {
+        if (!this.ready) {
+            this.ready = this.spawn();
+        }
+        return this.ready;
+    }
+    async request(cmd, args = {}) {
+        await this.start();
+        const requests = this.requests;
+        if (!this.isAlive || !requests) {
+            throw new ViewWorkerError('The Odoo shell is not running.');
+        }
+        const id = this.nextId++;
+        const timeoutMs = this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+        return new Promise((resolve, reject) => {
+            this.pending.set(id, {
+                resolve: value => resolve(value),
+                reject,
+                timer: setTimeout(() => {
+                    this.pending.delete(id);
+                    reject(new ViewWorkerError(`The Odoo shell did not answer "${cmd}" within ${Math.round(timeoutMs / 1000)} s.`));
+                    // It answers in order: one stuck request blocks every later one.
+                    void this.dispose();
+                }, timeoutMs)
+            });
+            requests.write(JSON.stringify({ id, cmd, args }) + '\n');
+        });
+    }
+    /** EOF on the request pipe lets Python finish cleanly; a kill follows if it does not. */
+    dispose() {
+        const child = this.child;
+        if (!child || this.exited) {
+            return Promise.resolve();
+        }
+        return new Promise(resolve => {
+            const killer = setTimeout(() => child.kill('SIGKILL'), KILL_AFTER_MS);
+            child.once('exit', () => {
+                clearTimeout(killer);
+                resolve();
+            });
+            this.requests?.end();
+        });
+    }
+    spawn() {
+        return new Promise((resolve, reject) => {
+            const startTimeoutMs = this.options.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS;
+            this.pending.set(0, {
+                resolve,
+                reject,
+                timer: setTimeout(() => {
+                    this.failAll(new ViewWorkerError(`The Odoo shell did not start within ${Math.round(startTimeoutMs / 1000)} s.${this.tailText()}`));
+                    this.child?.kill('SIGKILL');
+                }, startTimeoutMs)
+            });
+            const child = (0, node_child_process_1.spawn)(this.spec.command, this.spec.args, {
+                cwd: this.spec.cwd,
+                env: this.spec.env,
+                shell: false,
+                stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe']
+            });
+            this.child = child;
+            // Null when the spawn itself failed; 'error' below reports that.
+            this.requests = (child.stdio[3] ?? undefined);
+            const replies = (child.stdio[4] ?? undefined);
+            const remember = (chunk) => {
+                this.tail.push(...chunk.toString('utf-8').split('\n').filter(line => line.trim()));
+                if (this.tail.length > TAIL_LINES) {
+                    this.tail.splice(0, this.tail.length - TAIL_LINES);
+                }
+            };
+            child.stdout?.on('data', remember);
+            child.stderr?.on('data', remember);
+            let buffer = '';
+            replies?.setEncoding('utf-8');
+            replies?.on('data', (chunk) => {
+                buffer += chunk;
+                let newline = buffer.indexOf('\n');
+                while (newline >= 0) {
+                    const line = buffer.slice(0, newline);
+                    buffer = buffer.slice(newline + 1);
+                    newline = buffer.indexOf('\n');
+                    this.handleReply(line);
+                }
+            });
+            child.on('error', error => {
+                this.exited = true;
+                this.failAll(new ViewWorkerError(`Could not start ${this.spec.command}: ${error.message}`));
+            });
+            child.on('exit', () => {
+                this.exited = true;
+            });
+            // 'close' comes after stdout and stderr are drained, so the tail is complete.
+            child.on('close', code => {
+                this.exited = true;
+                const status = code === null ? '' : ` (exit code ${code})`;
+                this.failAll(new ViewWorkerError(`The Odoo shell stopped${status}.${this.tailText()}`));
+                this.exitEmitter.fire();
+            });
+            // A failed write after an early exit is reported by 'close'; do not crash on EPIPE.
+            child.stdin?.on('error', () => undefined);
+            this.requests?.on('error', () => undefined);
+            if (child.pid !== undefined) {
+                child.stdin?.end(this.spec.bootstrap);
+            }
+        });
+    }
+    handleReply(line) {
+        let reply;
+        try {
+            reply = JSON.parse(line);
+        }
+        catch {
+            return;
+        }
+        if (typeof reply.id !== 'number') {
+            return;
+        }
+        const pending = this.pending.get(reply.id);
+        if (!pending) {
+            return;
+        }
+        this.pending.delete(reply.id);
+        clearTimeout(pending.timer);
+        if (reply.ok) {
+            pending.resolve(reply.result);
+        }
+        else {
+            pending.reject(new ViewWorkerError(reply.error || 'The Odoo shell reported an error.', reply.trace, reply.restart === true));
+        }
+    }
+    failAll(error) {
+        for (const [id, pending] of this.pending) {
+            clearTimeout(pending.timer);
+            this.pending.delete(id);
+            pending.reject(error);
+        }
+    }
+    tailText() {
+        return this.tail.length > 0 ? `\n${this.tail.slice(-8).join('\n')}` : '';
+    }
+}
+exports.ViewWorker = ViewWorker;
+
+
+/***/ }),
+/* 111 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ViewWorkerPool = void 0;
+const viewWorker_1 = __webpack_require__(110);
+const DEFAULT_IDLE_MS = 10 * 60_000;
+class ViewWorkerPool {
+    factory;
+    options;
+    entries = new Map();
+    constructor(factory, options = {}) {
+        this.factory = factory;
+        this.options = options;
+    }
+    has(dbName) {
+        return this.entries.has(dbName);
+    }
+    /** Runs one command on the database's shell, starting it on first use. */
+    async run(dbName, cmd, args = {}) {
+        try {
+            return await this.runOnce(dbName, cmd, args);
+        }
+        catch (error) {
+            if (!(error instanceof viewWorker_1.ViewWorkerError) || !error.restart) {
+                throw error;
+            }
+            // The shell found its registry out of date and exited: retry once on a fresh one
+            // (runOnce has already released the stale worker).
+            return this.runOnce(dbName, cmd, args);
+        }
+    }
+    async runOnce(dbName, cmd, args) {
+        const worker = await this.workerFor(dbName);
+        this.touch(dbName);
+        try {
+            return await worker.request(cmd, args);
+        }
+        catch (error) {
+            if (error instanceof viewWorker_1.ViewWorkerError && error.restart && this.entries.get(dbName)?.worker === worker) {
+                // Only this worker: a concurrent run may already have started a new one.
+                await this.release(dbName);
+            }
+            throw error;
+        }
+        finally {
+            this.touch(dbName);
+        }
+    }
+    /** Stops the database's shell now, even mid-start, and waits for it to exit. */
+    async release(dbName) {
+        const entry = this.entries.get(dbName);
+        if (!entry) {
+            return;
+        }
+        this.forget(dbName, entry);
+        const worker = entry.worker ?? await entry.created.catch(() => undefined);
+        await worker?.dispose();
+    }
+    dispose() {
+        for (const dbName of [...this.entries.keys()]) {
+            void this.release(dbName);
+        }
+    }
+    workerFor(dbName) {
+        const existing = this.entries.get(dbName);
+        if (existing) {
+            return existing.ready;
+        }
+        const entry = {};
+        entry.created = this.factory(dbName).then(worker => {
+            entry.worker = worker;
+            worker.onDidExit(() => this.forget(dbName, entry));
+            return worker;
+        });
+        entry.ready = entry.created.then(async (worker) => {
+            const started = worker.start();
+            this.options.onStarting?.(dbName, started);
+            await started;
+            return worker;
+        });
+        entry.ready.catch(() => this.forget(dbName, entry));
+        this.entries.set(dbName, entry);
+        return entry.ready;
+    }
+    touch(dbName) {
+        const entry = this.entries.get(dbName);
+        if (!entry) {
+            return;
+        }
+        if (entry.idle) {
+            clearTimeout(entry.idle);
+        }
+        entry.idle = setTimeout(() => void this.release(dbName), this.options.idleMs ?? DEFAULT_IDLE_MS);
+        entry.idle.unref?.();
+    }
+    forget(dbName, entry) {
+        if (entry.idle) {
+            clearTimeout(entry.idle);
+        }
+        if (this.entries.get(dbName) === entry) {
+            this.entries.delete(dbName);
+        }
+    }
+}
+exports.ViewWorkerPool = ViewWorkerPool;
+
+
+/***/ }),
+/* 112 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.viewWorkerUnavailableReason = viewWorkerUnavailableReason;
+exports.resolveViewWorkerSpec = resolveViewWorkerSpec;
+/**
+ * How the View Doctor's shell is launched for a database: that database's
+ * own version - its python, odoo-bin, addons path and extraParams - so a 17.0
+ * database is read by 17.0 code even while 19.0 is the active version.
+ */
+const settingsStore_1 = __webpack_require__(6);
+const settings_1 = __webpack_require__(7);
+const debugger_1 = __webpack_require__(100);
+const utils_1 = __webpack_require__(8);
+const provisioning_1 = __webpack_require__(67);
+const versionRepos_1 = __webpack_require__(80);
+const viewWorkerArgs_1 = __webpack_require__(50);
+const viewWorker_1 = __webpack_require__(110);
+/** Why no shell can be started for this database, or undefined when one can. */
+function viewWorkerUnavailableReason(input) {
+    if (input.platform === 'win32') {
+        return 'The View Doctor needs Linux or macOS: it talks to the Odoo shell over extra pipes Windows does not pass on.';
+    }
+    if (!input.inProject) {
+        return `"${input.dbName}" is not a database of the selected project.`;
+    }
+    if (!input.versionName) {
+        return `"${input.dbName}" has no version to run its code.`;
+    }
+    if (!input.provisioned) {
+        return `"${input.versionName}" has no environment to run.`;
+    }
+    return undefined;
+}
+async function resolveViewWorkerSpec(dbName, scriptPath) {
+    const result = await settingsStore_1.SettingsStore.peekSelectedProject();
+    const db = result?.project.dbs?.find(entry => entry.id === dbName);
+    const version = db ? (0, versionRepos_1.versionOfDatabase)(db) : undefined;
+    const settings = version ? new settings_1.SettingsModel(version.settings) : undefined;
+    const reason = viewWorkerUnavailableReason({
+        dbName,
+        inProject: !!db,
+        versionName: version?.name,
+        provisioned: !!settings && (0, provisioning_1.isVersionProvisioned)((0, utils_1.resolveOptionalPath)(settings.pythonPath)),
+        platform: process.platform
+    });
+    if (reason || !result || !db || !version || !settings) {
+        throw new Error(reason ?? `Cannot start an Odoo shell for "${dbName}".`);
+    }
+    const addonsPaths = await (0, debugger_1.collectAddonsPaths)(result.project, settings, db, version.id);
+    const workspacePath = (0, utils_1.getWorkspacePath)();
+    return {
+        command: (0, utils_1.normalizePath)(settings.pythonPath),
+        args: (0, viewWorkerArgs_1.buildViewWorkerArgs)({
+            odooBinPath: `${(0, utils_1.normalizePath)(settings.odooPath)}/odoo-bin`,
+            addonsPaths,
+            dbName,
+            extraParams: settings.extraParams
+        }),
+        cwd: workspacePath ? (0, debugger_1.runDirectory)(workspacePath) : undefined,
+        env: (0, viewWorkerArgs_1.viewWorkerEnv)(process.env),
+        bootstrap: (0, viewWorker_1.workerBootstrap)(scriptPath)
+    };
+}
+
+
+/***/ }),
+/* 113 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21583,15 +22724,15 @@ const settingsStore_1 = __webpack_require__(6);
 const repo_1 = __webpack_require__(46);
 const utils_1 = __webpack_require__(8);
 const runtimeCache_1 = __webpack_require__(15);
-const filesExclude_1 = __webpack_require__(105);
+const filesExclude_1 = __webpack_require__(114);
 const baseTreeProvider_1 = __webpack_require__(5);
 const sortOptions_1 = __webpack_require__(38);
-const branches_1 = __webpack_require__(51);
-const repoPaths_1 = __webpack_require__(55);
-const environment_1 = __webpack_require__(50);
-const setupState_1 = __webpack_require__(70);
-const versionRepos_1 = __webpack_require__(79);
-const dumpImport_1 = __webpack_require__(74);
+const branches_1 = __webpack_require__(52);
+const repoPaths_1 = __webpack_require__(56);
+const environment_1 = __webpack_require__(51);
+const setupState_1 = __webpack_require__(71);
+const versionRepos_1 = __webpack_require__(80);
+const dumpImport_1 = __webpack_require__(75);
 const upgrade_1 = __webpack_require__(41);
 /**
  * Both copies of every repository an active upgrade runs on.
@@ -21955,7 +23096,7 @@ async function selectProjectForExplorer() {
 
 
 /***/ }),
-/* 105 */
+/* 114 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22101,7 +23242,7 @@ function createFilesExcludeMatcher(scopeUri) {
 
 
 /***/ }),
-/* 106 */
+/* 115 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22154,9 +23295,9 @@ const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(6);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
-const setupState_1 = __webpack_require__(70);
-const repoPaths_1 = __webpack_require__(55);
-const environment_1 = __webpack_require__(50);
+const setupState_1 = __webpack_require__(71);
+const repoPaths_1 = __webpack_require__(56);
+const environment_1 = __webpack_require__(51);
 const upgrade_1 = __webpack_require__(41);
 const SUPPRESSED_KEY = 'odooDevtools.wrongCopyWarningSuppressed';
 /**
@@ -22236,7 +23377,7 @@ function registerWrongCopyGuard(context) {
 
 
 /***/ }),
-/* 107 */
+/* 116 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22357,7 +23498,276 @@ function migratable(diagnoses) {
 
 
 /***/ }),
-/* 108 */
+/* 117 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ViewFileSystemProvider = exports.VIEW_SCHEME = void 0;
+exports.viewUri = viewUri;
+exports.parseViewUri = parseViewUri;
+exports.viewFileSize = viewFileSize;
+/**
+ * Views as files: odoo-view:/<db>/<id>/<xmlid>.xml. VS Code's own editor
+ * is the arch editor - XML highlighting, search, multi-cursor - and saving
+ * writes through the database's Odoo shell.
+ *
+ * mtime is the view's write_date, so a view edited in Odoo's UI after it was
+ * opened makes VS Code's save report a newer file. Size carries the
+ * write_date too, not the arch's length: before saving, VS Code reports a
+ * newer file only when the mtime advanced *and* the size differs from the one
+ * it last saw (it pairs the new size with the old mtime), so a size that never
+ * changes would let a save silently overwrite an edit made in Odoo.
+ */
+const vscode = __importStar(__webpack_require__(1));
+exports.VIEW_SCHEME = 'odoo-view';
+function viewUri(dbName, viewId, label) {
+    const safe = label.replace(/[^\w.-]+/g, '_') || `view-${viewId}`;
+    return vscode.Uri.from({ scheme: exports.VIEW_SCHEME, path: `/${encodeURIComponent(dbName)}/${viewId}/${safe}.xml` });
+}
+function parseViewUri(uri) {
+    const [, db, id] = uri.path.split('/');
+    const viewId = Number(id);
+    if (!db || !Number.isSafeInteger(viewId) || viewId <= 0) {
+        return undefined;
+    }
+    return { dbName: decodeURIComponent(db), viewId };
+}
+/**
+ * A stand-in size that changes whenever the write_date does. Kept under a
+ * megabyte so no large-file guard ever trips on it; two dates collide only
+ * when they are a whole multiple of 1000 s apart to the millisecond.
+ */
+function viewFileSize(mtime) {
+    return 1 + (mtime % 1_000_000);
+}
+class ViewFileSystemProvider {
+    backend;
+    hooks;
+    changes = new vscode.EventEmitter();
+    onDidChangeFile = this.changes.event;
+    constructor(backend, hooks) {
+        this.backend = backend;
+        this.hooks = hooks;
+    }
+    watch() {
+        return new vscode.Disposable(() => undefined);
+    }
+    /** Tells VS Code these files changed elsewhere; clean editors reload. */
+    notifyChanged(uris) {
+        if (uris.length > 0) {
+            this.changes.fire(uris.map(uri => ({ type: vscode.FileChangeType.Changed, uri })));
+        }
+    }
+    async stat(uri) {
+        const ref = this.ref(uri);
+        const mtime = await this.backend.writeDate(ref.dbName, ref.viewId);
+        if (mtime === undefined) {
+            throw vscode.FileSystemError.FileNotFound(uri);
+        }
+        return { type: vscode.FileType.File, ctime: 0, mtime, size: viewFileSize(mtime) };
+    }
+    async readFile(uri) {
+        const ref = this.ref(uri);
+        return Buffer.from(await this.backend.getArch(ref.dbName, ref.viewId), 'utf-8');
+    }
+    async writeFile(uri, content, _options) {
+        const ref = this.ref(uri);
+        const text = Buffer.from(content).toString('utf-8');
+        // Throws when Odoo rejects the arch: VS Code shows the message and keeps the editor dirty.
+        const result = await this.backend.save(ref.dbName, ref.viewId, text);
+        this.changes.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+        this.hooks.onSaved(ref, result, uri, text);
+    }
+    readDirectory(_uri) {
+        throw vscode.FileSystemError.NoPermissions('Views are opened from the Views tree, one at a time.');
+    }
+    createDirectory(_uri) {
+        throw vscode.FileSystemError.NoPermissions('Views cannot be created here.');
+    }
+    delete(_uri) {
+        throw vscode.FileSystemError.NoPermissions('Views cannot be deleted here.');
+    }
+    rename(_oldUri, _newUri) {
+        throw vscode.FileSystemError.NoPermissions('Views cannot be renamed here.');
+    }
+    ref(uri) {
+        const ref = parseViewUri(uri);
+        if (!ref) {
+            throw vscode.FileSystemError.FileNotFound(uri);
+        }
+        return ref;
+    }
+}
+exports.ViewFileSystemProvider = ViewFileSystemProvider;
+
+
+/***/ }),
+/* 118 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ViewArchPoller = void 0;
+class ViewArchPoller {
+    getDates;
+    onChanged;
+    onError;
+    seen = new Map();
+    inFlight = new Set();
+    constructor(getDates, 
+    /** `edited` is true when a view differed from a date seen before. */
+    onChanged, onError) {
+        this.getDates = getDates;
+        this.onChanged = onChanged;
+        this.onError = onError;
+    }
+    tick(open) {
+        const openKeys = new Set(open.map(entry => entry.uri.toString()));
+        for (const key of [...this.seen.keys()]) {
+            if (!openKeys.has(key)) {
+                this.seen.delete(key);
+            }
+        }
+        const byDb = new Map();
+        for (const entry of open) {
+            byDb.set(entry.ref.dbName, [...(byDb.get(entry.ref.dbName) ?? []), entry]);
+        }
+        const pending = [];
+        for (const [dbName, entries] of byDb) {
+            if (this.inFlight.has(dbName)) {
+                continue;
+            }
+            this.inFlight.add(dbName);
+            pending.push(this.poll(dbName, entries));
+        }
+        return Promise.all(pending).then(() => undefined);
+    }
+    async poll(dbName, entries) {
+        try {
+            const dates = await this.getDates(dbName, entries.map(entry => entry.ref.viewId));
+            let edited = false;
+            const changed = entries.filter(entry => {
+                const key = entry.uri.toString();
+                const date = dates.get(entry.ref.viewId);
+                const previous = this.seen.get(key);
+                if (date === undefined) {
+                    return false;
+                }
+                this.seen.set(key, date);
+                if (previous === undefined) {
+                    // An edit between loading the tab and the first poll must still reload a clean editor.
+                    return true;
+                }
+                if (date !== previous) {
+                    edited = true;
+                    return true;
+                }
+                return false;
+            });
+            if (changed.length > 0) {
+                this.onChanged(changed.map(entry => entry.uri), edited);
+            }
+        }
+        catch (error) {
+            this.onError(dbName, error);
+        }
+        finally {
+            this.inFlight.delete(dbName);
+        }
+    }
+}
+exports.ViewArchPoller = ViewArchPoller;
+
+
+/***/ }),
+/* 119 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.readableArchError = readableArchError;
+exports.archErrorSummary = archErrorSummary;
+exports.locateArchError = locateArchError;
+/**
+ * Where in an arch Odoo's error points, for a diagnostic. Odoo names the
+ * failing locator or field in quotes, or (for XML syntax) a line; an error
+ * that names neither lands on the first line.
+ */
+const disabledReport_1 = __webpack_require__(108);
+/**
+ * Odoo's message as plain text. It HTML-escapes the attributes of a locator
+ * it cannot find - `@name=&#39;partner_id&#39;` - on every version from 15
+ * to 19, so the raw text neither reads well nor matches the arch.
+ */
+function readableArchError(message) {
+    return (0, disabledReport_1.decodeEntities)(message);
+}
+/**
+ * The line of Odoo's message that says what is wrong, for a one-line notice.
+ * Odoo leads with a heading ("Error while parsing or validating view:") and
+ * ends with "View error context:", neither of which is the reason.
+ */
+function archErrorSummary(message) {
+    const lines = readableArchError(message).split('\n').map(line => line.trim()).filter(line => line !== '');
+    return lines.find(line => !line.endsWith(':')) ?? lines[0] ?? '';
+}
+function locateArchError(arch, rawMessage) {
+    const message = readableArchError(rawMessage);
+    const lines = arch.split('\n');
+    const whole = (line) => ({ line, start: 0, end: lines[line]?.length ?? 0 });
+    const syntaxLine = /line (\d+), column \d+/.exec(message);
+    if (syntaxLine) {
+        return whole(Math.max(0, Math.min(Number(syntaxLine[1]) - 1, lines.length - 1)));
+    }
+    const needles = [...message.matchAll(/"([^"]{3,})"/g)].map(match => match[1]);
+    for (const needle of needles) {
+        for (let line = 0; line < lines.length; line++) {
+            const start = lines[line].indexOf(needle);
+            if (start >= 0) {
+                return { line, start, end: start + needle.length };
+            }
+        }
+    }
+    return whole(0);
+}
+
+
+/***/ }),
+/* 120 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22401,9 +23811,9 @@ const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(33);
 const utils_1 = __webpack_require__(8);
 const logger_1 = __webpack_require__(12);
-const runningState_1 = __webpack_require__(86);
-const dbResolution_1 = __webpack_require__(60);
-const workspaceBinding_1 = __webpack_require__(62);
+const runningState_1 = __webpack_require__(87);
+const dbResolution_1 = __webpack_require__(61);
+const workspaceBinding_1 = __webpack_require__(63);
 /**
  * Status bar indicators for the active project, database and version.
  * Clicking each opens the corresponding quick-switch picker, so the current
@@ -22512,29 +23922,30 @@ exports.StatusBarIndicators = StatusBarIndicators;
 
 
 /***/ }),
-/* 109 */
+/* 121 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(110);
-const projectCommands_1 = __webpack_require__(112);
-const repoCommands_1 = __webpack_require__(118);
-const dbCommands_1 = __webpack_require__(119);
-const moduleCommands_1 = __webpack_require__(120);
-const testingCommands_1 = __webpack_require__(121);
-const versionCommands_1 = __webpack_require__(122);
-const debugCommands_1 = __webpack_require__(124);
-const reposExplorerCommands_1 = __webpack_require__(125);
-const editorCommands_1 = __webpack_require__(126);
-const helpCommands_1 = __webpack_require__(127);
-const upgradeCommand_1 = __webpack_require__(128);
-const customAddonsCommand_1 = __webpack_require__(93);
-const dataStoreCommands_1 = __webpack_require__(130);
-const repoLocationCommand_1 = __webpack_require__(132);
-const bindingCommand_1 = __webpack_require__(83);
-const upgradeSideCommands_1 = __webpack_require__(133);
+const viewCommands_1 = __webpack_require__(122);
+const projectCommands_1 = __webpack_require__(124);
+const repoCommands_1 = __webpack_require__(130);
+const dbCommands_1 = __webpack_require__(131);
+const moduleCommands_1 = __webpack_require__(132);
+const testingCommands_1 = __webpack_require__(133);
+const versionCommands_1 = __webpack_require__(134);
+const debugCommands_1 = __webpack_require__(136);
+const reposExplorerCommands_1 = __webpack_require__(137);
+const editorCommands_1 = __webpack_require__(138);
+const helpCommands_1 = __webpack_require__(139);
+const upgradeCommand_1 = __webpack_require__(140);
+const customAddonsCommand_1 = __webpack_require__(94);
+const dataStoreCommands_1 = __webpack_require__(142);
+const repoLocationCommand_1 = __webpack_require__(144);
+const bindingCommand_1 = __webpack_require__(84);
+const upgradeSideCommands_1 = __webpack_require__(145);
+const viewDoctorCommands_1 = __webpack_require__(146);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -22554,11 +23965,12 @@ function registerAllCommands(deps) {
     (0, repoLocationCommand_1.registerRepoLocationCommand)(deps);
     (0, bindingCommand_1.registerBindingCommand)(deps);
     (0, upgradeSideCommands_1.registerUpgradeSideCommands)(deps);
+    (0, viewDoctorCommands_1.registerViewDoctorCommands)(deps);
 }
 
 
 /***/ }),
-/* 110 */
+/* 122 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22598,12 +24010,12 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(111);
+const quickSearch_1 = __webpack_require__(123);
 const versionsService_1 = __webpack_require__(33);
 const sortOptions_1 = __webpack_require__(38);
 const notifications_1 = __webpack_require__(16);
-const module_1 = __webpack_require__(97);
-const registerCommand_1 = __webpack_require__(84);
+const module_1 = __webpack_require__(98);
+const registerCommand_1 = __webpack_require__(85);
 /**
  * Generic per-view plumbing: refresh, sort, and quick-search commands.
  */
@@ -22746,7 +24158,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 111 */
+/* 123 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22870,7 +24282,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 112 */
+/* 124 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22914,23 +24326,23 @@ exports.registerProjectCommands = registerProjectCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
-const wizard_1 = __webpack_require__(72);
+const wizard_1 = __webpack_require__(73);
 const utils_1 = __webpack_require__(8);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const settingsStore_1 = __webpack_require__(6);
-const project_1 = __webpack_require__(89);
-const dbs_1 = __webpack_require__(63);
-const odooInstaller_1 = __webpack_require__(65);
-const projectWorkspace_1 = __webpack_require__(113);
-const setupFlow_1 = __webpack_require__(115);
-const setupState_1 = __webpack_require__(70);
+const project_1 = __webpack_require__(90);
+const dbs_1 = __webpack_require__(64);
+const odooInstaller_1 = __webpack_require__(66);
+const projectWorkspace_1 = __webpack_require__(125);
+const setupFlow_1 = __webpack_require__(127);
+const setupState_1 = __webpack_require__(71);
 const context_1 = __webpack_require__(42);
-const versionProposal_1 = __webpack_require__(59);
-const versionPick_1 = __webpack_require__(117);
+const versionProposal_1 = __webpack_require__(60);
+const versionPick_1 = __webpack_require__(129);
 const gitService_1 = __webpack_require__(11);
-const provisionQueue_1 = __webpack_require__(101);
-const registerCommand_1 = __webpack_require__(84);
+const provisionQueue_1 = __webpack_require__(102);
+const registerCommand_1 = __webpack_require__(85);
 function registerProjectCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push((0, registerCommand_1.registerCommand)('projectSelector.create', async () => {
@@ -23094,7 +24506,7 @@ function registerProjectCommands(deps) {
 
 
 /***/ }),
-/* 113 */
+/* 125 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23144,10 +24556,10 @@ const vscode = __importStar(__webpack_require__(1));
 const jsonc_parser_1 = __webpack_require__(21);
 const settingsStore_1 = __webpack_require__(6);
 const logger_1 = __webpack_require__(12);
-const versionRepos_1 = __webpack_require__(79);
+const versionRepos_1 = __webpack_require__(80);
 const utils_1 = __webpack_require__(8);
 const versionsService_1 = __webpack_require__(33);
-const workspaceFolders_1 = __webpack_require__(114);
+const workspaceFolders_1 = __webpack_require__(126);
 async function getActiveProjectOrPrompt() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
@@ -23321,7 +24733,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 114 */
+/* 126 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23381,7 +24793,7 @@ function repoFolderEntries(resolved, existingPaths) {
 
 
 /***/ }),
-/* 115 */
+/* 127 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23433,10 +24845,10 @@ const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branches_1 = __webpack_require__(51);
-const customAddonsCommand_1 = __webpack_require__(93);
-const setupDetection_1 = __webpack_require__(116);
-const setupState_1 = __webpack_require__(70);
+const branches_1 = __webpack_require__(52);
+const customAddonsCommand_1 = __webpack_require__(94);
+const setupDetection_1 = __webpack_require__(128);
+const setupState_1 = __webpack_require__(71);
 /** The per-version key that every repository-discovery site already reads. */
 const CUSTOM_ADDONS_KEY = 'defaultVersion.customAddonsPath';
 function readConfiguredCustomAddons() {
@@ -23617,7 +25029,7 @@ async function runSetup(options) {
 
 
 /***/ }),
-/* 116 */
+/* 128 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23834,7 +25246,7 @@ function detectCustomAddonsRoot(roots) {
 
 
 /***/ }),
-/* 117 */
+/* 129 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23883,7 +25295,7 @@ const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(6);
-const branches_1 = __webpack_require__(51);
+const branches_1 = __webpack_require__(52);
 const utils_1 = __webpack_require__(8);
 const logger_1 = __webpack_require__(12);
 /** Stated, not measured: enough to stop someone ticking four boxes blind. */
@@ -23983,15 +25395,15 @@ async function collectRepoBranches() {
 
 
 /***/ }),
-/* 118 */
+/* 130 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerRepoCommands = registerRepoCommands;
-const repos_1 = __webpack_require__(96);
-const projectWorkspace_1 = __webpack_require__(113);
-const registerCommand_1 = __webpack_require__(84);
+const repos_1 = __webpack_require__(97);
+const projectWorkspace_1 = __webpack_require__(125);
+const registerCommand_1 = __webpack_require__(85);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push((0, registerCommand_1.registerCommand)('repoSelector.selectRepo', async (event) => {
@@ -24003,7 +25415,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 119 */
+/* 131 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24049,11 +25461,11 @@ const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(6);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const dbs_1 = __webpack_require__(63);
+const dbs_1 = __webpack_require__(64);
 const notifications_2 = __webpack_require__(16);
-const server_1 = __webpack_require__(100);
+const server_1 = __webpack_require__(101);
 const utils_1 = __webpack_require__(8);
-const registerCommand_1 = __webpack_require__(84);
+const registerCommand_1 = __webpack_require__(85);
 function registerDbCommands(deps) {
     const { context, versionsService, providers, dbTreeView, refreshAll } = deps;
     context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.create', async () => {
@@ -24254,7 +25666,7 @@ function registerDbCommands(deps) {
 
 
 /***/ }),
-/* 120 */
+/* 132 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24298,8 +25710,8 @@ exports.registerModuleCommands = registerModuleCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const notifications_1 = __webpack_require__(16);
-const module_1 = __webpack_require__(97);
-const registerCommand_1 = __webpack_require__(84);
+const module_1 = __webpack_require__(98);
+const registerCommand_1 = __webpack_require__(85);
 /**
  * Tree context menus pass (clickedItem, selectedItems); with canSelectMany
  * enabled a bulk action applies to the whole selection when the clicked
@@ -24390,15 +25802,15 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 121 */
+/* 133 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerTestingCommands = registerTestingCommands;
 const settingsStore_1 = __webpack_require__(6);
-const testing_1 = __webpack_require__(98);
-const registerCommand_1 = __webpack_require__(84);
+const testing_1 = __webpack_require__(99);
+const registerCommand_1 = __webpack_require__(85);
 function registerTestingCommands(deps) {
     const { context, providers, refreshAll } = deps;
     context.subscriptions.push((0, registerCommand_1.registerCommand)('testingSelector.toggleTesting', async (event) => {
@@ -24447,7 +25859,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 122 */
+/* 134 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24491,27 +25903,27 @@ exports.registerVersionCommands = registerVersionCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
-const args_1 = __webpack_require__(85);
+const args_1 = __webpack_require__(86);
 const utils_1 = __webpack_require__(8);
 const versionIdentity_1 = __webpack_require__(36);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(123);
+const branchPick_1 = __webpack_require__(135);
 const runtimeCache_1 = __webpack_require__(15);
-const environment_1 = __webpack_require__(50);
-const odooInstaller_1 = __webpack_require__(65);
-const provisioning_1 = __webpack_require__(66);
-const wizard_1 = __webpack_require__(72);
-const worktree_1 = __webpack_require__(54);
-const server_1 = __webpack_require__(100);
-const dbResolution_1 = __webpack_require__(60);
+const environment_1 = __webpack_require__(51);
+const odooInstaller_1 = __webpack_require__(66);
+const provisioning_1 = __webpack_require__(67);
+const wizard_1 = __webpack_require__(73);
+const worktree_1 = __webpack_require__(55);
+const server_1 = __webpack_require__(101);
+const dbResolution_1 = __webpack_require__(61);
 const settingsStore_1 = __webpack_require__(6);
-const setupState_1 = __webpack_require__(70);
-const versionMigration_1 = __webpack_require__(107);
+const setupState_1 = __webpack_require__(71);
+const versionMigration_1 = __webpack_require__(116);
 const upgrade_1 = __webpack_require__(40);
-const registerCommand_1 = __webpack_require__(84);
-const workspaceBinding_1 = __webpack_require__(62);
-const bindingCommand_1 = __webpack_require__(83);
+const registerCommand_1 = __webpack_require__(85);
+const workspaceBinding_1 = __webpack_require__(63);
+const bindingCommand_1 = __webpack_require__(84);
 function registerVersionCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.checkVersions', async () => {
@@ -25125,7 +26537,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 123 */
+/* 135 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25177,8 +26589,8 @@ exports.pickRepoBranch = pickRepoBranch;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
 const gitService_1 = __webpack_require__(11);
-const wizard_1 = __webpack_require__(72);
-const branches_1 = __webpack_require__(51);
+const wizard_1 = __webpack_require__(73);
+const branches_1 = __webpack_require__(52);
 const MANUAL_ITEM = {
     label: '$(pencil) Enter branch manually…',
     description: 'e.g. "19.0", "saas-18.4", "master"',
@@ -25340,7 +26752,7 @@ async function pickRepoBranch(repoPath, title, placeHolder, suggested, exclude, 
 
 
 /***/ }),
-/* 124 */
+/* 136 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25383,13 +26795,13 @@ exports.registerDebugCommands = registerDebugCommands;
  * Start/stop/restart server (with and without debugging) and shell commands.
  */
 const vscode = __importStar(__webpack_require__(1));
-const debugger_1 = __webpack_require__(99);
-const server_1 = __webpack_require__(100);
+const debugger_1 = __webpack_require__(100);
+const server_1 = __webpack_require__(101);
 const notifications_1 = __webpack_require__(16);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(33);
 const upgrade_1 = __webpack_require__(41);
-const registerCommand_1 = __webpack_require__(84);
+const registerCommand_1 = __webpack_require__(85);
 function registerDebugCommands(deps) {
     const { context } = deps;
     context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.startServer', async () => {
@@ -25478,7 +26890,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 125 */
+/* 137 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25526,26 +26938,26 @@ exports.registerReposExplorerCommands = registerReposExplorerCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
-const args_1 = __webpack_require__(85);
+const args_1 = __webpack_require__(86);
 const notifications_1 = __webpack_require__(16);
-const customWorktree_1 = __webpack_require__(56);
+const customWorktree_1 = __webpack_require__(57);
 const notifications_2 = __webpack_require__(16);
 const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const runtimeCache_1 = __webpack_require__(15);
-const projectReposExplorer_1 = __webpack_require__(104);
+const projectReposExplorer_1 = __webpack_require__(113);
 const utils_2 = __webpack_require__(8);
 const notifications_3 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const process_1 = __webpack_require__(13);
-const worktree_1 = __webpack_require__(54);
-const setupState_1 = __webpack_require__(70);
-const repoPaths_1 = __webpack_require__(55);
-const sourceConflict_1 = __webpack_require__(57);
+const worktree_1 = __webpack_require__(55);
+const setupState_1 = __webpack_require__(71);
+const repoPaths_1 = __webpack_require__(56);
+const sourceConflict_1 = __webpack_require__(58);
 const repo_1 = __webpack_require__(46);
-const environment_1 = __webpack_require__(50);
+const environment_1 = __webpack_require__(51);
 const upgrade_1 = __webpack_require__(40);
-const registerCommand_1 = __webpack_require__(84);
+const registerCommand_1 = __webpack_require__(85);
 /** Registers the checkout/worktree mode toggle for a project repository. */
 function registerRepoBranchModeCommand(deps) {
     const { context, refreshAll } = deps;
@@ -25771,7 +27183,7 @@ function registerReposExplorerCommands(deps) {
 
 
 /***/ }),
-/* 126 */
+/* 138 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25816,12 +27228,12 @@ exports.registerEditorCommands = registerEditorCommands;
  * commands themselves stay callable from the palette.
  */
 const vscode = __importStar(__webpack_require__(1));
-const manifest_1 = __webpack_require__(94);
-const module_1 = __webpack_require__(97);
-const testing_1 = __webpack_require__(98);
-const debugger_1 = __webpack_require__(99);
+const manifest_1 = __webpack_require__(95);
+const module_1 = __webpack_require__(98);
+const testing_1 = __webpack_require__(99);
+const debugger_1 = __webpack_require__(100);
 const notifications_1 = __webpack_require__(16);
-const registerCommand_1 = __webpack_require__(84);
+const registerCommand_1 = __webpack_require__(85);
 async function moduleForActiveEditor() {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.uri.scheme !== 'file') {
@@ -25879,7 +27291,7 @@ function registerEditorCommands(deps) {
 
 
 /***/ }),
-/* 127 */
+/* 139 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25925,7 +27337,7 @@ exports.registerHelpCommands = registerHelpCommands;
  * Shortcuts editor for customization.
  */
 const vscode = __importStar(__webpack_require__(1));
-const registerCommand_1 = __webpack_require__(84);
+const registerCommand_1 = __webpack_require__(85);
 /** 'ctrl+alt+o s' → 'Ctrl+Alt+O S' */
 function formatKey(key) {
     return key
@@ -25967,7 +27379,7 @@ function registerHelpCommands(deps) {
 
 
 /***/ }),
-/* 128 */
+/* 140 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26025,25 +27437,25 @@ const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(123);
-const upgradePlan_1 = __webpack_require__(129);
+const branchPick_1 = __webpack_require__(135);
+const upgradePlan_1 = __webpack_require__(141);
 const upgradeApply_1 = __webpack_require__(43);
-const upgradeSetup_1 = __webpack_require__(58);
-const branches_1 = __webpack_require__(51);
-const provisionQueue_1 = __webpack_require__(101);
-const setupState_1 = __webpack_require__(70);
+const upgradeSetup_1 = __webpack_require__(59);
+const branches_1 = __webpack_require__(52);
+const provisionQueue_1 = __webpack_require__(102);
+const setupState_1 = __webpack_require__(71);
 const gitService_1 = __webpack_require__(11);
-const dbNaming_1 = __webpack_require__(73);
-const dbs_1 = __webpack_require__(63);
+const dbNaming_1 = __webpack_require__(74);
+const dbs_1 = __webpack_require__(64);
 const upgrade_1 = __webpack_require__(40);
-const wizard_1 = __webpack_require__(72);
+const wizard_1 = __webpack_require__(73);
 const repo_1 = __webpack_require__(46);
 const versionsService_1 = __webpack_require__(33);
-const registerCommand_1 = __webpack_require__(84);
+const registerCommand_1 = __webpack_require__(85);
 const path = __importStar(__webpack_require__(3));
-const repoLocations_1 = __webpack_require__(80);
-const versionRepos_1 = __webpack_require__(79);
-const workspaceRegistry_1 = __webpack_require__(81);
+const repoLocations_1 = __webpack_require__(81);
+const versionRepos_1 = __webpack_require__(80);
+const workspaceRegistry_1 = __webpack_require__(82);
 /** How a database is described in the picker, without probing every one. */
 function describeDatabase(db, versionsService) {
     const version = db.versionId ? versionsService.getVersion(db.versionId) : undefined;
@@ -26627,7 +28039,7 @@ function registerUpgradeCommand(deps) {
 
 
 /***/ }),
-/* 129 */
+/* 141 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26680,7 +28092,7 @@ exports.describeUpgradePlan = describeUpgradePlan;
  *
  * Pure: nothing here touches git, settings or the filesystem.
  */
-const repoPaths_1 = __webpack_require__(55);
+const repoPaths_1 = __webpack_require__(56);
 const path = __importStar(__webpack_require__(3));
 function buildUpgradePlan(input) {
     const existing = new Set(input.existingVersions.map(entry => entry.trim()));
@@ -26753,7 +28165,7 @@ function describeUpgradePlan(plan, input) {
 
 
 /***/ }),
-/* 130 */
+/* 142 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26810,12 +28222,12 @@ const jsonc_parser_1 = __webpack_require__(21);
 const settingsStore_1 = __webpack_require__(6);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
-const setupState_1 = __webpack_require__(70);
+const setupState_1 = __webpack_require__(71);
 const dataLocation_1 = __webpack_require__(17);
 const mainStore_1 = __webpack_require__(27);
 const workspaceSelection_1 = __webpack_require__(30);
-const dataImport_1 = __webpack_require__(131);
-const registerCommand_1 = __webpack_require__(84);
+const dataImport_1 = __webpack_require__(143);
+const registerCommand_1 = __webpack_require__(85);
 const gitExclude_1 = __webpack_require__(32);
 const SHARED_STORE_FILE = 'odoo-devtools.db';
 /** This window's data as the store holds it: no selection, absolute paths. */
@@ -27102,7 +28514,7 @@ function registerDataStoreCommands(deps) {
 
 
 /***/ }),
-/* 131 */
+/* 143 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27154,7 +28566,7 @@ exports.buildExport = buildExport;
  * commands/dataStoreCommands.ts.
  */
 const path = __importStar(__webpack_require__(3));
-const node_crypto_1 = __webpack_require__(64);
+const node_crypto_1 = __webpack_require__(65);
 const workspaceSelection_1 = __webpack_require__(30);
 const loose = (data) => structuredClone(data);
 /** Version settings that hold a single path. */
@@ -27359,7 +28771,7 @@ function buildExport(data, exportedAt = new Date()) {
 
 
 /***/ }),
-/* 132 */
+/* 144 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27401,12 +28813,12 @@ exports.registerRepoLocationCommand = registerRepoLocationCommand;
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
-const args_1 = __webpack_require__(85);
-const registerCommand_1 = __webpack_require__(84);
+const args_1 = __webpack_require__(86);
+const registerCommand_1 = __webpack_require__(85);
 const settingsStore_1 = __webpack_require__(6);
 const notifications_1 = __webpack_require__(16);
-const repoLocations_1 = __webpack_require__(80);
-const versionRepos_1 = __webpack_require__(79);
+const repoLocations_1 = __webpack_require__(81);
+const versionRepos_1 = __webpack_require__(80);
 const utils_1 = __webpack_require__(8);
 const DESCRIBE_SOURCE = {
     override: 'set by hand',
@@ -27517,7 +28929,7 @@ function registerRepoLocationCommand(deps) {
 
 
 /***/ }),
-/* 133 */
+/* 145 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27561,17 +28973,17 @@ exports.registerUpgradeSideCommands = registerUpgradeSideCommands;
  * its version is, and can open the window that runs the other.
  */
 const vscode = __importStar(__webpack_require__(1));
-const registerCommand_1 = __webpack_require__(84);
+const registerCommand_1 = __webpack_require__(85);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(33);
-const debugger_1 = __webpack_require__(99);
-const debugSessions_1 = __webpack_require__(87);
+const debugger_1 = __webpack_require__(100);
+const debugSessions_1 = __webpack_require__(88);
 const upgrade_1 = __webpack_require__(41);
-const workspaceBinding_1 = __webpack_require__(62);
+const workspaceBinding_1 = __webpack_require__(63);
 const mainStore_1 = __webpack_require__(27);
-const workspaceRegistry_1 = __webpack_require__(81);
+const workspaceRegistry_1 = __webpack_require__(82);
 const notifications_1 = __webpack_require__(16);
-const upgradeSides_1 = __webpack_require__(61);
+const upgradeSides_1 = __webpack_require__(62);
 async function currentUpgrade() {
     const result = await settingsStore_1.SettingsStore.getSelectedProject();
     if (!result) {
@@ -27684,7 +29096,126 @@ function registerUpgradeSideCommands(deps) {
 
 
 /***/ }),
-/* 134 */
+/* 146 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerViewDoctorCommands = registerViewDoctorCommands;
+const vscode = __importStar(__webpack_require__(1));
+const registerCommand_1 = __webpack_require__(85);
+const viewDoctorView_1 = __webpack_require__(105);
+const viewFileSystem_1 = __webpack_require__(117);
+const notifications_1 = __webpack_require__(16);
+const logger_1 = __webpack_require__(12);
+const archErrors_1 = __webpack_require__(119);
+function viewItem(arg) {
+    return arg instanceof viewDoctorView_1.ViewItem ? arg : undefined;
+}
+async function openArch(dbName, viewId, xmlid) {
+    await vscode.window.showTextDocument((0, viewFileSystem_1.viewUri)(dbName, viewId, xmlid ?? `view-${viewId}`), { preview: true });
+}
+function registerViewDoctorCommands(deps) {
+    const { context, providers, viewService } = deps;
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.refresh', () => providers.views.refresh()));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.openArch', async (arg) => {
+        const item = viewItem(arg);
+        if (item) {
+            await openArch(item.dbName, item.view.id, item.view.xmlid);
+        }
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.openParent', async (arg) => {
+        const item = viewItem(arg);
+        if (!item?.view.inheritId) {
+            return;
+        }
+        const [parent] = await viewService.rows(item.dbName, [item.view.inheritId]);
+        await openArch(item.dbName, item.view.inheritId, parent?.xmlid ?? null);
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.activate', async (arg) => {
+        const item = viewItem(arg);
+        if (!item) {
+            return;
+        }
+        try {
+            await viewService.activate(item.dbName, item.view.id);
+            (0, notifications_1.showBriefStatus)(`${item.view.name} is on.`);
+        }
+        catch (error) {
+            const choice = await (0, notifications_1.showError)(`${item.view.name} cannot be turned on: ${(0, archErrors_1.readableArchError)((0, logger_1.errorMessage)(error))}`, 'Open Arch');
+            if (choice === 'Open Arch') {
+                await openArch(item.dbName, item.view.id, item.view.xmlid);
+            }
+        }
+        finally {
+            providers.views.refresh();
+        }
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.deactivate', async (arg) => {
+        const item = viewItem(arg);
+        if (!item) {
+            return;
+        }
+        const choice = await (0, notifications_1.showModalWarning)(`Turn off ${item.view.name} in ${item.dbName}?`, 'Turn Off');
+        if (choice !== 'Turn Off') {
+            return;
+        }
+        try {
+            await viewService.deactivate(item.dbName, item.view.id);
+            (0, notifications_1.showBriefStatus)(`${item.view.name} is off.`);
+        }
+        catch (error) {
+            void (0, notifications_1.showError)(`${item.view.name} could not be turned off: ${(0, logger_1.errorMessage)(error)}`);
+        }
+        finally {
+            providers.views.refresh();
+        }
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.copyXmlid', async (arg) => {
+        const item = viewItem(arg);
+        if (item) {
+            await vscode.env.clipboard.writeText(item.view.xmlid ?? String(item.view.id));
+            (0, notifications_1.showBriefStatus)('Copied.');
+        }
+    }));
+}
+
+
+/***/ }),
+/* 147 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -27735,7 +29266,7 @@ function selectionFacts(project, version) {
 
 
 /***/ }),
-/* 135 */
+/* 148 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -27744,7 +29275,7 @@ exports.PER_STORE_PREFIX = void 0;
 exports.stashForStore = stashForStore;
 exports.restoreForStore = restoreForStore;
 const workspaceSelection_1 = __webpack_require__(30);
-const workspaceBinding_1 = __webpack_require__(62);
+const workspaceBinding_1 = __webpack_require__(63);
 exports.PER_STORE_PREFIX = 'odt.perStore:';
 /** Keeps what this window had in the store at `location`. */
 async function stashForStore(memento, location) {
