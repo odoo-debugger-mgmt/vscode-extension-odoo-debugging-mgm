@@ -8,11 +8,41 @@
 /** application_name the worker's connections carry, so probes can skip them. */
 export const VIEW_WORKER_APP_NAME = 'odoo-devtools-view-worker';
 
-const REFUSED_FLAGS = new Set([
-    '-i', '--init', '-u', '--update',
-    '--test-enable', '--test-file', '--test-tags', '--stop-after-init',
-    '-p', '--http-port', '--xmlrpc-port', '--dev'
+/** Short flags that are refused, each of which takes a value. */
+const REFUSED_SHORT = ['-i', '-u', '-p', '-d'];
+
+/**
+ * Long options that are refused, and whether they take a value (a bare flag
+ * then owns the next extraParams part). The worker sets its own database and
+ * addons path, and a later duplicate would win in optparse.
+ */
+const REFUSED_LONG = new Map<string, boolean>([
+    ['--init', true], ['--update', true],
+    ['--test-enable', false], ['--test-file', true], ['--test-tags', true],
+    ['--stop-after-init', false],
+    ['--http-port', true], ['--xmlrpc-port', true], ['--dev', true],
+    ['--database', true], ['--addons-path', true]
 ]);
+
+/**
+ * Whether optparse would read `arg` as a refused option, in any spelling it
+ * accepts (attached short values, unambiguous long prefixes), and if so
+ * whether it takes the next part as its value.
+ */
+function refusal(arg: string): { takesValue: boolean } | undefined {
+    const name = arg.split(/[=\s]/, 1)[0];
+    if (name.startsWith('--')) {
+        if (name.length < 3) {
+            return undefined;
+        }
+        const matches = [...REFUSED_LONG].filter(([long]) => long.startsWith(name));
+        return matches.length > 0 ? { takesValue: matches.some(([, takes]) => takes) } : undefined;
+    }
+    if (name.startsWith('-') && name.length > 1 && REFUSED_SHORT.includes(name.slice(0, 2))) {
+        return { takesValue: true };
+    }
+    return undefined;
+}
 
 export interface ViewWorkerArgsInput {
     odooBinPath: string;
@@ -31,14 +61,17 @@ export function buildViewWorkerArgs(input: ViewWorkerArgsInput): string[] {
     const kept: string[] = [];
     for (let index = 0; index < extras.length; index++) {
         const arg = extras[index];
-        const name = arg.split(/[=\s]/, 1)[0];
-        if (!REFUSED_FLAGS.has(name)) {
+        const refused = refusal(arg);
+        if (!refused) {
             kept.push(arg);
             continue;
         }
-        // A bare flag ("-u") took its value as the next part ("sale").
+        // A bare value-taking flag ("-u") owned the next part ("sale") as its
+        // value. Boolean flags and attached values ("-uall") own nothing.
+        const name = arg.split(/[=\s]/, 1)[0];
         const next = extras[index + 1];
-        if (arg === name && next !== undefined && !next.startsWith('-')) {
+        const bare = arg === name && (name.startsWith('--') || name.length === 2);
+        if (refused.takesValue && bare && next !== undefined && !next.startsWith('-')) {
             index++;
         }
     }

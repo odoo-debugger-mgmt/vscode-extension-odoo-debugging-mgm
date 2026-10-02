@@ -29,6 +29,27 @@ suite('View worker arguments', () => {
         assert.strictEqual(args[args.length - 1], '--log-level=warn');
     });
 
+    test('refuses every optparse spelling and cannot be redirected by extraParams', () => {
+        const refusedParts = ['-uall', '-ibase', '-p8070', '-dother', '--upd=x', '--ini=crm', '--stop-after',
+            '--test-en', '--http-p=9000', '-d,other', '--database=other', '--addons-path=/evil',
+            '-u,sale,--update,stock', '--addons,/evil'];
+        for (const part of refusedParts) {
+            const args = buildViewWorkerArgs({ ...base, extraParams: part });
+            assert.deepStrictEqual(args, buildViewWorkerArgs(base), `leaked: ${part}`);
+        }
+    });
+
+    test('keeps unrelated long options', () => {
+        const kept = ['--db_host=localhost', '--data-dir=/x', '--limit-time-real=100', '--log-level=warn'];
+        assert.deepStrictEqual(buildViewWorkerArgs({ ...base, extraParams: kept.join(',') }).slice(-4), kept);
+    });
+
+    test('a boolean refused flag does not eat the next part', () => {
+        const args = buildViewWorkerArgs({ ...base, extraParams: '--test-enable,somevalue' });
+        assert.strictEqual(args[args.length - 1], 'somevalue');
+        assert.ok(!args.includes('--test-enable'));
+    });
+
     test('names its connections for every Odoo spelling', () => {
         const env = viewWorkerEnv({ PATH: '/usr/bin' });
         assert.strictEqual(env.PATH, '/usr/bin');
