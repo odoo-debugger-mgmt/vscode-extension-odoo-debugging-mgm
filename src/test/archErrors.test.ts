@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { locateArchError } from '../services/views/archErrors';
+import { locateArchError, readableArchError } from '../services/views/archErrors';
 
 const ARCH = [
     '<data>',
@@ -13,6 +13,13 @@ suite('Arch error location', () => {
     test('points at the xpath Odoo could not locate', () => {
         const message = 'Element \'<xpath expr="//field[@name=\'partner_id\']">\' cannot be located in parent view';
         assert.deepStrictEqual(locateArchError(ARCH, message), { line: 1, start: 17, end: 44 });
+    });
+
+    test('points at the xpath when Odoo escapes its quotes, as every version does', () => {
+        // Odoo 17's text, verbatim: template_inheritance html_escapes the locator's attributes.
+        const message = 'Error while parsing or validating view:\n\nElement \'<xpath expr="//field[@name=&#39;partner_id&#39;]">\' cannot be located in parent view';
+        assert.deepStrictEqual(locateArchError(ARCH, message), { line: 1, start: 17, end: 44 });
+        assert.ok(readableArchError(message).includes('@name=\'partner_id\''));
     });
 
     test('points at a field Odoo does not know', () => {

@@ -3,6 +3,7 @@
  * failing locator or field in quotes, or (for XML syntax) a line; an error
  * that names neither lands on the first line.
  */
+import { decodeEntities } from './disabledReport';
 
 export interface ArchErrorLocation {
     line: number;
@@ -10,7 +11,17 @@ export interface ArchErrorLocation {
     end: number;
 }
 
-export function locateArchError(arch: string, message: string): ArchErrorLocation {
+/**
+ * Odoo's message as plain text. It HTML-escapes the attributes of a locator
+ * it cannot find - `@name=&#39;partner_id&#39;` - on every version from 15
+ * to 19, so the raw text neither reads well nor matches the arch.
+ */
+export function readableArchError(message: string): string {
+    return decodeEntities(message);
+}
+
+export function locateArchError(arch: string, rawMessage: string): ArchErrorLocation {
+    const message = readableArchError(rawMessage);
     const lines = arch.split('\n');
     const whole = (line: number): ArchErrorLocation => ({ line, start: 0, end: lines[line]?.length ?? 0 });
 

@@ -49,7 +49,7 @@ import { readSetupState, shouldAdoptLegacySourceRepo, readRawSetupSettings, writ
 import { showBriefStatus, showInfo, showWarning } from './services/notifications';
 import { VIEW_SCHEME, ViewFileSystemProvider, parseViewUri, type ViewRef } from './views/viewFileSystem';
 import { ViewArchPoller } from './views/viewPoll';
-import { locateArchError } from './services/views/archErrors';
+import { locateArchError, readableArchError } from './services/views/archErrors';
 import { getWriteDates } from './services/views/viewQueries';
 import { getDefaultVersionSettings, normalizePath, resolveOptionalPath } from './utils';
 import { StatusBarIndicators } from './views/statusBar';
@@ -209,7 +209,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 const where = locateArchError(text, result.activationError);
                 const diagnostic = new vscode.Diagnostic(
                     new vscode.Range(where.line, where.start, where.line, where.end),
-                    result.activationError,
+                    readableArchError(result.activationError),
                     vscode.DiagnosticSeverity.Error
                 );
                 diagnostic.source = 'Odoo';
