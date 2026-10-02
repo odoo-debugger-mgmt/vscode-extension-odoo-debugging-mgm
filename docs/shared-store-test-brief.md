@@ -24,10 +24,21 @@ behaviour. Anything that behaves differently from it is a finding.
 
 ## The final run: what is left to test
 
-The nineteenth run found nothing new. What is left is one regression pass
-over every item, 1 to 22, in order, except item 11 (other editors, out of
-scope). Use the setups of the fifteenth to nineteenth runs, and a fresh
-profile for item 14.
+The twentieth run, the regression pass, matched everything except two
+findings. After their fixes, in this order:
+
+1. `npm test`.
+2. **Item 17.1's freeze, both ways** (finding 37): with the waiting window
+   opened while the builder is still on its foreground build, as the
+   twentieth run did. Expect the takeover within about 90 s, then the
+   resumed builder to stop within about 5 s.
+3. **Item 10** (finding 36): a window with the version question unanswered,
+   moved to its own file, loses "Which version here?"; moved back, it shows
+   it again.
+4. **Regression spot checks:** 14.1 and 18.3 (a fresh window is asked, the
+   item stays until answered), 17.1's two builds at once, and item 6's idle
+   minute while another window builds (only debug lines, no repeating info
+   line).
 
 Report findings in the same format; anything not reached, say so.
 
@@ -284,7 +295,8 @@ what will happen before you commit to it.
 
 1. In `B`, run Choose Data Store → **This workspace only**.
 2. **Expect:** `B` now shows its own (empty or new) data. `A` stays on the shared
-   store, because the user-level value still applies to it.
+   store, because the user-level value still applies to it. A "Which version
+   here?" item `B` had on the shared store goes: only a shared store asks.
 3. Check `B`'s `.vscode/settings.json`. It should name
    `.vscode/odoo-debugger-data.json`, because a user-level shared store is set.
    Report what it contains.
@@ -437,7 +449,9 @@ Setup: item 14's `W17/acme` (bound to 17.0) and `W19/acme` (bound to 19.0) on
    `<provisioning root>/.odt-provision.lease` present during the build and
    gone after. Kill the building window mid-build (`kill -9` its extension
    host); **expect** the other window to take over within about 90 s of its
-   next try. **Freeze** the builder instead (`kill -STOP`) and let the other take
+   next try. The same when the waiting window was opened while the builder
+   was still on its foreground build, before anything was queued (twentieth
+   run: it never tried again). **Freeze** the builder instead (`kill -STOP`) and let the other take
    over. Resume it (`kill -CONT`) twice over: once while the other is still
    building, once after it finished. **Expect** both times, within about 5 s
    of resuming, its log to say "another window took over building; stopping
