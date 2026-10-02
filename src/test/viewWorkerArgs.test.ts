@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import { buildViewWorkerArgs, viewWorkerEnv, VIEW_WORKER_APP_NAME } from '../services/views/viewWorkerArgs';
-import { ACTIVE_DATABASES_QUERY } from '../services/database';
+import { ACTIVE_DATABASES_QUERY, OWN_QUERY_APP_NAME, ownQueryEnv } from '../services/database';
 
 suite('View worker arguments', () => {
     const base = { odooBinPath: '/odoo/odoo-bin', addonsPaths: ['/odoo/addons', '/custom'], dbName: 'shop-18' };
@@ -57,7 +57,13 @@ suite('View worker arguments', () => {
         assert.strictEqual(env.ODOO_PGAPPNAME, VIEW_WORKER_APP_NAME);
     });
 
-    test('the running-database probe skips the worker', () => {
-        assert.ok(ACTIVE_DATABASES_QUERY.includes(`application_name IS DISTINCT FROM '${VIEW_WORKER_APP_NAME}'`));
+    test('the running-database probe skips the worker and the extension\'s own queries', () => {
+        assert.ok(ACTIVE_DATABASES_QUERY.includes(`NOT IN ('${VIEW_WORKER_APP_NAME}', '${OWN_QUERY_APP_NAME}')`));
+    });
+
+    test('the extension\'s own queries carry their application name', () => {
+        const env = ownQueryEnv({ PATH: '/usr/bin' });
+        assert.strictEqual(env.PATH, '/usr/bin');
+        assert.strictEqual(env.PGAPPNAME, OWN_QUERY_APP_NAME);
     });
 });

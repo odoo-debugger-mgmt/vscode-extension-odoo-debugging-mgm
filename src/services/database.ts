@@ -11,6 +11,18 @@ import { VIEW_WORKER_APP_NAME } from './views/viewWorkerArgs';
 
 const execFileAsync = util.promisify(execFile);
 
+/**
+ * The application name of the extension's own psql queries: the Views tree,
+ * the arch poll (every 3 s while an arch is open), the module probes. Like the
+ * View Doctor's shell, they are not a server running.
+ */
+export const OWN_QUERY_APP_NAME = 'odoo-devtools-query';
+
+/** The environment for one of the extension's own psql queries. */
+export function ownQueryEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+    return { ...base, PGAPPNAME: OWN_QUERY_APP_NAME };
+}
+
 const INSTALLED_MODULES_QUERY = `
     SELECT id, name, shortdesc, latest_version, state, application
     FROM ir_module_module
@@ -32,13 +44,14 @@ const TABLE_EXISTS_QUERY = `
     );
 `.trim();
 
-// The View Doctor's shell holds a connection while it is open; that is not
-// a server running, so it must not light the database up as one.
+// The View Doctor's shell holds a connection while it is open, and the
+// extension's own queries hold one briefly; neither is a server running, so
+// neither may light the database up as one.
 export const ACTIVE_DATABASES_QUERY = `
     SELECT datname
     FROM pg_stat_activity
     WHERE datname IS NOT NULL
-      AND application_name IS DISTINCT FROM '${VIEW_WORKER_APP_NAME}'
+      AND coalesce(application_name, '') NOT IN ('${VIEW_WORKER_APP_NAME}', '${OWN_QUERY_APP_NAME}')
     GROUP BY datname;
 `.trim();
 
@@ -71,6 +84,7 @@ async function runPsqlQuery(dbName: string, query: string, fieldSeparator = '|')
         ];
 
         const { stdout } = await execFileAsync('psql', args, {
+            env: ownQueryEnv(),
             encoding: 'utf-8',
             maxBuffer: 10 * 1024 * 1024 // Allow reasonably large result sets
         });

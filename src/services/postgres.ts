@@ -1,5 +1,5 @@
 import { runCommand } from './process';
-import { clearInstalledModuleCache } from './database';
+import { clearInstalledModuleCache, ownQueryEnv } from './database';
 import { logger } from './logger';
 
 /**
@@ -41,7 +41,7 @@ export async function runSql(dbName: string, sql: string): Promise<string> {
         '-v', 'ON_ERROR_STOP=1',
         '-d', dbName,
         '-tAc', sql
-    ]);
+    ], { env: ownQueryEnv() });
     return stdout.trim();
 }
 
