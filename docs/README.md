@@ -8,6 +8,7 @@ User-facing documentation lives in the root [README](../README.md), the
 
 | Document | What it is for |
 |---|---|
+| [beta-1.4-testing.md](beta-1.4-testing.md) | What changed in 1.4.0 (several workspaces sharing one data store) and what beta testers should try. |
 | [beta-1.3-testing.md](beta-1.3-testing.md) | What changed in 1.3.0 and what beta testers should try. |
 | [shared-store-test-brief.md](shared-store-test-brief.md) | Test script for the shared data store (steps 1 and 2): real windows, other editors, and the test suite in a real Extension Host. |
 | [manual-test-brief.md](manual-test-brief.md) | Manual test script for what the automated suite cannot judge: wording, sequence, appearance. |
