@@ -1,4 +1,6 @@
 import * as assert from 'assert';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { ViewDoctorTreeProvider, ViewGroupItem, ViewItem, buildDoctorRows, resolveViewDoctorTarget } from '../views/viewDoctorView';
 import type { ViewGroups } from '../services/views/viewGroups';
@@ -50,10 +52,24 @@ suite('Views tree', () => {
         assert.strictEqual(off.contextValue, 'odooView.inactive.hasParent');
         assert.strictEqual(off.command?.command, 'viewDoctor.openArch');
         assert.strictEqual(off.command?.arguments?.[0], off);
-        assert.strictEqual((upgrade.children[1] as ViewItem).contextValue, 'odooView.active.hasParent');
-        assert.strictEqual((other.children[0] as ViewItem).contextValue, 'odooView.inactive.root');
+        assert.strictEqual((upgrade.children[1] as ViewItem).contextValue, 'odooView.active.hasParent.noXmlid');
+        assert.strictEqual((other.children[0] as ViewItem).contextValue, 'odooView.inactive.root.noXmlid');
         assert.strictEqual((other.children[0] as ViewItem).description, 'res.partner · #20');
         assert.notStrictEqual(off.id, (upgrade.children[1] as ViewItem).id);
+    });
+
+    test('a row\'s menu offers only what applies to it', () => {
+        const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8'));
+        const entries = (manifest.contributes.menus['view/item/context'] as Array<{ command: string; when?: string; group?: string }>)
+            .filter(entry => entry.command.startsWith('viewDoctor.') && entry.group !== 'inline@1');
+        // The rows' clauses are `view == viewDoctor && viewItem =~ /.../`; VS Code reads the pattern as a RegExp.
+        const offered = (contextValue: string) => entries
+            .filter(entry => new RegExp(/viewItem =~ \/(.*)\/$/.exec(entry.when ?? '')![1]).test(contextValue))
+            .map(entry => entry.command.replace('viewDoctor.', ''));
+        assert.deepStrictEqual(offered('odooView.inactive.hasParent'), ['openArch', 'openParent', 'activate', 'copyXmlid']);
+        assert.deepStrictEqual(offered('odooView.active.hasParent.noXmlid'), ['openArch', 'openParent', 'deactivate']);
+        assert.deepStrictEqual(offered('odooView.inactive.root.noXmlid'), ['openArch', 'activate']);
+        assert.deepStrictEqual(offered('odooView.active.root'), ['openArch', 'copyXmlid', 'deactivate']);
     });
 
     test('a database with nothing off says so', () => {

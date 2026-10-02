@@ -203,6 +203,12 @@ export async function activate(context: vscode.ExtensionContext) {
     // Odoo's reason a saved view stays off, on the line it is about.
     const viewDiagnostics = vscode.languages.createDiagnosticCollection('odoo-views');
     context.subscriptions.push(viewDiagnostics);
+    // A closed arch has no line left to point at.
+    context.subscriptions.push(vscode.workspace.onDidCloseTextDocument(document => {
+        if (document.uri.scheme === VIEW_SCHEME) {
+            viewDiagnostics.delete(document.uri);
+        }
+    }));
     const viewFiles = new ViewFileSystemProvider(viewService, {
         onSaved: (_ref, result, uri, text) => {
             if (result.activationError) {
@@ -330,7 +336,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     };
 
-    registerAllCommands({ context, providers, versionsService, sortPreferences, viewService, moduleTreeView, dbTreeView, refreshAll });
+    registerAllCommands({ context, providers, versionsService, sortPreferences, viewService, viewDiagnostics, moduleTreeView, dbTreeView, refreshAll });
 
     // Another window wrote to a shared store, or this window switched stores:
     // re-read everything. Debounced, because one save elsewhere can touch

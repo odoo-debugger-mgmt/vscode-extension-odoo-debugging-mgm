@@ -39,6 +39,21 @@ export function parseViewUri(uri: vscode.Uri): ViewRef | undefined {
 }
 
 /**
+ * Drops the diagnostics on every URI of this view: the label part of its URI
+ * depends on how it was opened, so entries are matched by database and id.
+ */
+export function clearViewDiagnostics(diagnostics: vscode.DiagnosticCollection, dbName: string, viewId: number): void {
+    const matching: vscode.Uri[] = [];
+    diagnostics.forEach(uri => {
+        const ref = uri.scheme === VIEW_SCHEME ? parseViewUri(uri) : undefined;
+        if (ref?.dbName === dbName && ref.viewId === viewId) {
+            matching.push(uri);
+        }
+    });
+    matching.forEach(uri => diagnostics.delete(uri));
+}
+
+/**
  * A stand-in size that changes whenever the write_date does. Kept under a
  * megabyte so no large-file guard ever trips on it; two dates collide only
  * when they are a whole multiple of 1000 s apart to the millisecond.

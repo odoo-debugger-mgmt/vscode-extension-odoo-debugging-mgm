@@ -56,6 +56,8 @@ export interface CommandDeps {
     sortPreferences: SortPreferences;
     /** Arch reads/writes and activation for the View Doctor. */
     viewService: ViewService;
+    /** Odoo's reasons saved views stay off, on their arch files. */
+    viewDiagnostics: vscode.DiagnosticCollection;
     /** TreeView handle for the Modules view (needed for reveal + multi-select). */
     moduleTreeView: vscode.TreeView<vscode.TreeItem>;
     /** TreeView handle for the Databases view (reveal keeps its highlight honest). */

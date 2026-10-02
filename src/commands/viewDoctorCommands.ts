@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { CommandDeps } from './index';
 import { registerCommand } from './registerCommand';
 import { ViewItem } from '../views/viewDoctorView';
-import { viewUri } from '../views/viewFileSystem';
+import { clearViewDiagnostics, viewUri } from '../views/viewFileSystem';
 import { showBriefStatus, showError, showModalWarning } from '../services/notifications';
 import { errorMessage } from '../services/logger';
 import { readableArchError } from '../services/views/archErrors';
@@ -16,7 +16,7 @@ async function openArch(dbName: string, viewId: number, xmlid: string | null): P
 }
 
 export function registerViewDoctorCommands(deps: CommandDeps): void {
-    const { context, providers, viewService } = deps;
+    const { context, providers, viewService, viewDiagnostics } = deps;
 
     context.subscriptions.push(registerCommand('viewDoctor.refresh', () => providers.views.refresh()));
 
@@ -43,6 +43,8 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
         }
         try {
             await viewService.activate(item.dbName, item.view.id);
+            // The reason a save left it off no longer holds.
+            clearViewDiagnostics(viewDiagnostics, item.dbName, item.view.id);
             showBriefStatus(`${item.view.name} is on.`);
         } catch (error) {
             const choice = await showError(`${item.view.name} cannot be turned on: ${readableArchError(errorMessage(error))}`, 'Open Arch');
@@ -75,9 +77,15 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
 
     context.subscriptions.push(registerCommand('viewDoctor.copyXmlid', async (arg: unknown) => {
         const item = viewItem(arg);
-        if (item) {
-            await vscode.env.clipboard.writeText(item.view.xmlid ?? String(item.view.id));
+        if (!item) {
+            return;
+        }
+        // The menu hides it for a view without one; never copy the id in its place.
+        if (item.view.xmlid) {
+            await vscode.env.clipboard.writeText(item.view.xmlid);
             showBriefStatus('Copied.');
+        } else {
+            showBriefStatus(`${item.view.name} has no external ID.`);
         }
     }));
 }

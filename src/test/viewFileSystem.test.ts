@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import { ViewFileSystemProvider, parseViewUri, viewFileSize, viewUri, type ViewRef } from '../views/viewFileSystem';
+import { ViewFileSystemProvider, clearViewDiagnostics, parseViewUri, viewFileSize, viewUri, type ViewRef } from '../views/viewFileSystem';
 import type { SaveResult, ViewBackend } from '../services/views/viewService';
 
 class FakeBackend implements ViewBackend {
@@ -108,6 +108,20 @@ suite('View arch files', () => {
         assert.throws(() => provider.rename(uri, uri), vscode.FileSystemError);
         assert.throws(() => provider.createDirectory(uri), vscode.FileSystemError);
         assert.throws(() => provider.readDirectory(uri), vscode.FileSystemError);
+    });
+
+    test('clears a view\'s diagnostics whatever label its URI carries, and only that view\'s', () => {
+        const diagnostics = vscode.languages.createDiagnosticCollection('odoo-views-test');
+        const problem = [new vscode.Diagnostic(new vscode.Range(0, 0, 0, 1), 'stays off')];
+        const sameView = viewUri('shop-18', 12, 'view-12');
+        const otherView = viewUri('shop-18', 13, 'view-13');
+        const otherDb = viewUri('shop-17', 12, 'view-12');
+        for (const entry of [uri, sameView, otherView, otherDb]) {
+            diagnostics.set(entry, problem);
+        }
+        clearViewDiagnostics(diagnostics, 'shop-18', 12);
+        assert.deepStrictEqual([uri, sameView, otherView, otherDb].map(entry => diagnostics.has(entry)), [false, false, true, true]);
+        diagnostics.dispose();
     });
 
     test('reports views changed elsewhere so clean editors reload', () => {
