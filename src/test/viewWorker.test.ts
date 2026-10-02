@@ -49,6 +49,18 @@ suite('View worker', function () {
         }
     });
 
+    test('a restart reply rejects with restart set', async () => {
+        const worker = new ViewWorker(fakeSpec('ok'));
+        try {
+            await assert.rejects(worker.request('restart'), (error: unknown) =>
+                error instanceof ViewWorkerError && error.restart === true && error.message === 'modules changed');
+            await assert.rejects(worker.request('fail'), (error: unknown) =>
+                error instanceof ViewWorkerError && error.restart === false);
+        } finally {
+            await worker.dispose();
+        }
+    });
+
     test('a shell that dies mid-request fails it and says it stopped', async () => {
         const worker = new ViewWorker(fakeSpec('ok'));
         await worker.start();

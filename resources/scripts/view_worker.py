@@ -19,6 +19,10 @@ class Refused(Exception):
     """An error whose message is already what the user should read."""
 
 
+class Restart(Exception):
+    """The shell is out of date and must be replaced."""
+
+
 def _invalidate(env):
     if hasattr(env, 'invalidate_all'):
         env.invalidate_all()
@@ -32,6 +36,24 @@ def _fresh(env):
     # rather than what the running server has written since.
     env.cr.rollback()
     _invalidate(env)
+    _check_registry(env)
+
+
+def _check_registry(env):
+    """Raises Restart when the running server reloaded the registry (a module
+    install or update) since this shell loaded it: its models are stale."""
+    known = getattr(env.registry, 'registry_sequence', None)
+    if known is None:
+        return
+    try:
+        env.cr.execute('SELECT last_value FROM base_registry_signaling')
+        current = env.cr.fetchone()[0]
+    except Exception:  # noqa: BLE001 - no sequence: nothing to compare
+        env.cr.rollback()
+        return
+    env.cr.rollback()
+    if current != known:
+        raise Restart("The database's modules changed since this Odoo shell started.")
 
 
 def _flush(env):
@@ -59,7 +81,7 @@ def _view(env, view_id):
 def _root(view):
     root = view
     seen = set()
-    while root.inherit_id and root.id not in seen:
+    while root.inherit_id and root.mode != 'primary' and root.id not in seen:
         seen.add(root.id)
         root = root.inherit_id
     return root
@@ -155,6 +177,8 @@ def main(env):
         replies.flush()
 
     reply({'id': 0, 'ok': True, 'result': {'series': odoo.release.serie}})
+    # Never sit idle in transaction: it would hold locks that block a -u.
+    env.cr.rollback()
     for line in requests:
         line = line.strip()
         if not line:
@@ -168,13 +192,23 @@ def main(env):
                 raise Refused('Unknown command: %s' % request.get('cmd'))
             _fresh(env)
             result = handler(env, **(request.get('args') or {}))
-            reply({'id': request_id, 'ok': True, 'result': result})
+            reply_payload = {'id': request_id, 'ok': True, 'result': result}
+        except Restart as error:
+            _end_transaction(env)
+            reply({'id': request_id, 'ok': False, 'error': str(error), 'restart': True})
+            return
         except Exception as error:  # noqa: BLE001 - every failure is a reply
-            try:
-                env.cr.rollback()
-            except Exception:  # noqa: BLE001
-                pass
-            reply({'id': request_id, 'ok': False, 'error': _message(error), 'trace': traceback.format_exc()[-4000:]})
+            reply_payload = {'id': request_id, 'ok': False, 'error': _message(error), 'trace': traceback.format_exc()[-4000:]}
+        # Results are plain dicts: the transaction can end before the reply.
+        _end_transaction(env)
+        reply(reply_payload)
+
+
+def _end_transaction(env):
+    try:
+        env.cr.rollback()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 main(ENV)

@@ -35,7 +35,7 @@ export interface PooledWorker {
 }
 
 export class ViewWorkerError extends Error {
-    constructor(message: string, readonly trace?: string) {
+    constructor(message: string, readonly trace?: string, readonly restart = false) {
         super(message);
         this.name = 'ViewWorkerError';
     }
@@ -59,6 +59,7 @@ interface Reply {
     result?: unknown;
     error?: string;
     trace?: string;
+    restart?: boolean;
 }
 
 const TAIL_LINES = 30;
@@ -179,7 +180,11 @@ export class ViewWorker implements PooledWorker {
                 this.exited = true;
                 this.failAll(new ViewWorkerError(`Could not start ${this.spec.command}: ${error.message}`));
             });
-            child.on('exit', code => {
+            child.on('exit', () => {
+                this.exited = true;
+            });
+            // 'close' comes after stdout and stderr are drained, so the tail is complete.
+            child.on('close', code => {
                 this.exited = true;
                 const status = code === null ? '' : ` (exit code ${code})`;
                 this.failAll(new ViewWorkerError(`The Odoo shell stopped${status}.${this.tailText()}`));
@@ -188,7 +193,9 @@ export class ViewWorker implements PooledWorker {
             // A failed write after an early exit is reported by 'exit'; do not crash on EPIPE.
             child.stdin?.on('error', () => undefined);
             this.requests?.on('error', () => undefined);
-            child.stdin?.end(this.spec.bootstrap);
+            if (child.pid !== undefined) {
+                child.stdin?.end(this.spec.bootstrap);
+            }
         });
     }
 
@@ -211,7 +218,7 @@ export class ViewWorker implements PooledWorker {
         if (reply.ok) {
             pending.resolve(reply.result);
         } else {
-            pending.reject(new ViewWorkerError(reply.error || 'The Odoo shell reported an error.', reply.trace));
+            pending.reject(new ViewWorkerError(reply.error || 'The Odoo shell reported an error.', reply.trace, reply.restart === true));
         }
     }
 

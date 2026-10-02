@@ -49,6 +49,10 @@ process.stdin.on('end', () => {
                     break;
                 case 'hang':
                     break;
+                case 'restart':
+                    reply({ id: request.id, ok: false, error: 'modules changed', restart: true });
+                    setTimeout(() => process.exit(0), 20);
+                    break;
                 case 'die':
                     process.exit(3);
                     break;

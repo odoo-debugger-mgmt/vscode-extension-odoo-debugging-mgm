@@ -4,7 +4,7 @@
  * or copied) and with the extension.
  */
 import type * as vscode from 'vscode';
-import type { PooledWorker } from './viewWorker';
+import { ViewWorkerError, type PooledWorker } from './viewWorker';
 
 export type WorkerFactory = (dbName: string) => Promise<PooledWorker>;
 
@@ -34,6 +34,19 @@ export class ViewWorkerPool implements vscode.Disposable {
 
     /** Runs one command on the database's shell, starting it on first use. */
     async run<T>(dbName: string, cmd: string, args: Record<string, unknown> = {}): Promise<T> {
+        try {
+            return await this.runOnce<T>(dbName, cmd, args);
+        } catch (error) {
+            if (!(error instanceof ViewWorkerError) || !error.restart) {
+                throw error;
+            }
+            // The shell found its registry out of date and exited: retry once on a fresh one.
+            await this.release(dbName);
+            return this.runOnce<T>(dbName, cmd, args);
+        }
+    }
+
+    private async runOnce<T>(dbName: string, cmd: string, args: Record<string, unknown>): Promise<T> {
         const worker = await this.workerFor(dbName);
         this.touch(dbName);
         try {

@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { ViewWorkerPool } from '../services/views/viewWorkerPool';
-import type { PooledWorker } from '../services/views/viewWorker';
+import { ViewWorkerError, type PooledWorker } from '../services/views/viewWorker';
 import { onBeforeDatabaseRelease, releaseDatabase } from '../services/postgres';
 
 class FakeWorker implements PooledWorker {
@@ -52,6 +52,22 @@ suite('View worker pool', () => {
         assert.strictEqual(pool.has('a'), false);
         await pool.run('a', 'echo');
         assert.strictEqual(created.length, 2);
+        pool.dispose();
+    });
+
+    test('a restart error releases the worker and retries once on a fresh one', async () => {
+        const created: FakeWorker[] = [];
+        const pool = new ViewWorkerPool(async db => {
+            const worker = new FakeWorker(db);
+            if (created.length === 0) {
+                worker.request = async () => { throw new ViewWorkerError('modules changed', undefined, true); };
+            }
+            created.push(worker);
+            return worker;
+        });
+        assert.deepStrictEqual(await pool.run('a', 'echo'), { db: 'a', cmd: 'echo', args: {} });
+        assert.strictEqual(created.length, 2);
+        assert.strictEqual(created[0].disposed, 1);
         pool.dispose();
     });
 
