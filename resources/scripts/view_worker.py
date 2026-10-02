@@ -11,8 +11,14 @@ import os
 import traceback
 
 import odoo
+import psycopg2
 
-ENV = env  # noqa: F821 - provided by `odoo-bin shell`
+# `odoo-bin shell` gives OdooBot's language. The arch is read and written as
+# its en_US source instead: in another language Odoo shows the translation
+# and turns what is typed into source terms (15 even rewrites the source).
+ENV = env(context=dict(env.context, lang='en_US'))  # noqa: F821 - provided by `odoo-bin shell`
+
+LOST_CONNECTION = 'The Odoo shell lost its database connection.'
 
 
 class Refused(Exception):
@@ -57,12 +63,30 @@ def _check_registry(env):
         return
     try:
         current = _registry_sequence(env)
-    except Exception:  # noqa: BLE001 - no signaling tables: nothing to compare
+    except Exception as error:  # noqa: BLE001 - no signaling tables: nothing to compare
+        if _connection_lost(env, error):
+            raise
         env.cr.rollback()
         return
     env.cr.rollback()
     if current != known:
         raise Restart("The database's modules changed since this Odoo shell started.")
+
+
+def _connection_lost(env, error):
+    """The backend is gone (Postgres restarted, the session was terminated, the
+    database dropped): every later request would fail the same way. A server
+    error with a SQLSTATE outside the connection classes - a lock timeout, a
+    serialization failure - is an ordinary failure, not a lost connection."""
+    if getattr(getattr(env.cr, '_cnx', None), 'closed', False):
+        return True
+    if isinstance(error, psycopg2.InterfaceError):
+        return True
+    if isinstance(error, psycopg2.OperationalError):
+        code = getattr(error, 'pgcode', None)
+        # 08: connection exception; 57P: operator intervention (terminated, shut down, dropped).
+        return not code or code.startswith(('08', '57P'))
+    return False
 
 
 def _flush(env):
@@ -102,10 +126,7 @@ def _compose(env, view):
     current structure until then."""
     root = _root(view)
     if root.type == 'qweb' or not root.model or root.model not in env:
-        if hasattr(root, '_get_combined_arch'):
-            root._get_combined_arch()
-        else:
-            root.read_combined(['arch'])
+        root._get_combined_arch()
         return
     target = env[root.model]
     if hasattr(target, 'get_view'):
@@ -207,17 +228,25 @@ def main(env):
             reply({'id': request_id, 'ok': False, 'error': str(error), 'restart': True})
             return
         except Exception as error:  # noqa: BLE001 - every failure is a reply
+            if _connection_lost(env, error):
+                # Exiting is the cure: the pool retries once on a fresh shell.
+                reply({'id': request_id, 'ok': False, 'error': LOST_CONNECTION, 'restart': True})
+                return
             reply_payload = {'id': request_id, 'ok': False, 'error': _message(error), 'trace': traceback.format_exc()[-4000:]}
         # Results are plain dicts: the transaction can end before the reply.
-        _end_transaction(env)
+        connected = _end_transaction(env)
         reply(reply_payload)
+        if not connected:
+            return
 
 
 def _end_transaction(env):
+    """Rolls back; False when the connection turned out to be gone."""
     try:
         env.cr.rollback()
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as error:  # noqa: BLE001
+        return not _connection_lost(env, error)
+    return True
 
 
 main(ENV)
