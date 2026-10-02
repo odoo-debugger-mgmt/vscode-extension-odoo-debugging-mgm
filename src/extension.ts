@@ -46,7 +46,10 @@ import { branchToSeries } from './services/versionProposal';
 import { sanitizeProjectRepoBranchAssignments } from './services/environment';
 import { getRepoBranch } from './services/branches';
 import { readSetupState, shouldAdoptLegacySourceRepo, readRawSetupSettings, writeSetupSettings } from './services/setupState';
-import { showInfo } from './services/notifications';
+import { showBriefStatus, showInfo, showWarning } from './services/notifications';
+import { VIEW_SCHEME, ViewFileSystemProvider, parseViewUri, type ViewRef } from './views/viewFileSystem';
+import { locateArchError } from './services/views/archErrors';
+import { getWriteDates } from './services/views/viewQueries';
 import { getDefaultVersionSettings, normalizePath, resolveOptionalPath } from './utils';
 import { StatusBarIndicators } from './views/statusBar';
 import { registerAllCommands, RefreshReason } from './commands';
@@ -195,6 +198,62 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.window.registerTreeDataProvider('upgradeSelector', providers.upgrade));
     viewDoctorTreeView = vscode.window.createTreeView('viewDoctor', { treeDataProvider: providers.views, showCollapseAll: true });
     context.subscriptions.push(viewDoctorTreeView);
+
+    // Odoo's reason a saved view stays off, on the line it is about.
+    const viewDiagnostics = vscode.languages.createDiagnosticCollection('odoo-views');
+    context.subscriptions.push(viewDiagnostics);
+    const viewFiles = new ViewFileSystemProvider(viewService, {
+        onSaved: (_ref, result, uri, text) => {
+            if (result.activationError) {
+                const where = locateArchError(text, result.activationError);
+                const diagnostic = new vscode.Diagnostic(
+                    new vscode.Range(where.line, where.start, where.line, where.end),
+                    result.activationError,
+                    vscode.DiagnosticSeverity.Error
+                );
+                diagnostic.source = 'Odoo';
+                viewDiagnostics.set(uri, [diagnostic]);
+                void showWarning(`Saved. The view stays off: ${result.activationError.split('\n')[0]}`);
+            } else {
+                viewDiagnostics.delete(uri);
+                showBriefStatus(result.activated ? 'Saved, and the view is on.' : 'Saved.');
+            }
+            providers.views.refresh();
+        }
+    });
+    context.subscriptions.push(vscode.workspace.registerFileSystemProvider(VIEW_SCHEME, viewFiles, { isCaseSensitive: true }));
+
+    // Edits made in Odoo's own UI: one psql query per database every 3 s,
+    // and only while an arch tab is open.
+    const seenWriteDates = new Map<string, number>();
+    const viewPoll = setInterval(() => {
+        const open = vscode.workspace.textDocuments
+            .filter(document => document.uri.scheme === VIEW_SCHEME)
+            .map(document => ({ uri: document.uri, ref: parseViewUri(document.uri) }))
+            .filter((entry): entry is { uri: vscode.Uri; ref: ViewRef } => !!entry.ref);
+        const byDb = new Map<string, typeof open>();
+        for (const entry of open) {
+            byDb.set(entry.ref.dbName, [...(byDb.get(entry.ref.dbName) ?? []), entry]);
+        }
+        for (const [dbName, entries] of byDb) {
+            void getWriteDates(dbName, entries.map(entry => entry.ref.viewId)).then(dates => {
+                const changed = entries.filter(entry => {
+                    const key = entry.uri.toString();
+                    const date = dates.get(entry.ref.viewId);
+                    const previous = seenWriteDates.get(key);
+                    if (date !== undefined) {
+                        seenWriteDates.set(key, date);
+                    }
+                    return previous !== undefined && date !== undefined && date !== previous;
+                });
+                if (changed.length > 0) {
+                    viewFiles.notifyChanged(changed.map(entry => entry.uri));
+                    providers.views.refresh();
+                }
+            }).catch(error => logger.debug(`Could not poll the views of ${dbName}:`, error));
+        }
+    }, 3000);
+    context.subscriptions.push(new vscode.Disposable(() => clearInterval(viewPoll)));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('versionsManager', providers.versions));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('odt.projectReposExplorer', providers.projectReposExplorer));
 
