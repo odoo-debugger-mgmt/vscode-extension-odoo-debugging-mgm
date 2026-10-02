@@ -5,7 +5,430 @@
 **Run:** 2026-09-29, on `v-1.3` at `d6e4207`, in real VS Code windows.
 **Nothing was fixed.** Every problem below is reported, not patched.
 
-This file holds nineteen runs, newest first. The earlier runs are kept unchanged.
+This file holds twenty runs, newest first. The earlier runs are kept unchanged.
+
+# Twentieth run: the regression pass, items 1–22 (`b9acf47`)
+
+**Scope:** every item of the brief, in order, except item 11 (other editors,
+out of scope). Everything was reached.
+
+**Setup:**
+- **The build:** `ef683fb`'s code (`b9acf47` is documentation only),
+  packaged from a worktree and installed in two new throwaway profiles, on
+  Xvfb with VS Code 1.140.0:
+  - `HOME=/tmp/claude/bt2` for items 2–10, 12 and 13, with no user-level
+    store;
+  - `HOME=/tmp/claude/bt3` for items 14–22, never asked anything, with the
+    user-level store `shared14.db`.
+- **Items 2–10 and 12:** A reset to `seed-original.json` (acme-db1 selected,
+  `repos/acme` on `17.0-dev`), and a new store, `/tmp/odt-brief/shared20.db`.
+- **Item 13:** A on the tenth run's data file (17.0 finds addons in `v17`,
+  19.0 in `v19`), `v17/acme` on `17.0-dev`, `v19/acme-19` on `19.0-dev`.
+- **Items 14–22:** `shared14.db` reset to the copy taken before the
+  seventeenth run, with an empty registry; `W17/acme` on `staging`,
+  `W19/acme` on `main`; their `launch.json` and the Odoo DevTools lines in
+  `.git/info/exclude` removed, so additions could be watched.
+- **For 17.1:** the throwaway git source with branches `1.0`–`18.0`, its old
+  worktrees and `odt/*` branches removed, and the wheel server that waits
+  30 s.
+- **Clicks on toasts:** the first click on a toast in a window that is not
+  focused only focuses it. Three "missed" clicks below were that; a second
+  click while hovering worked each time. Not a finding.
+
+## Verdict (twentieth run)
+
+- **Matched:** items 1–10, 12–16, 18–22, and 17.2–17.4.
+- **17.1 matched in part (finding 37, moderate):** builds waited for each
+  other, the lease came and went, Cancel while waiting built nothing, and
+  every series exists once. But a window told to wait while the builder was
+  still on its foreground build never tried again: with the builder frozen,
+  nobody took over its queue.
+- **Finding 36 (low):** a window moved to its own file keeps "Which version
+  here?", which then offers to bind it to that file's version.
+
+## 1 · Test suite: matched
+
+- VS Code 1.140.0: **542 passing, 0 failing** (on `ef683fb`'s code).
+
+## 2 · An existing workspace keeps its selection: matched
+
+- A opened on `acme · acme-db1 · 17.0 :8069`, as seeded.
+- After selecting acme-db2 and closing, the diff against the copy: acme-db1
+  `isSelected` `false`, acme-db2 `true`, and acme gained
+  `"selectedDbByVersion": { "ver-17-0001": "acme-db2" }` (as the fourteenth
+  run saw). Repository flags untouched, nothing else changed.
+- Reopened: `acme · acme-db2 · 17.0`.
+- `--profile-temp` (with the build loaded as a development extension, since
+  a temp profile has no installed extensions): `acme · acme-db2 · 17.0
+  :8069`. The only notice was "Odoo DevTools isn't set up yet.", as a
+  profile with no settings should say. No "No project is selected.".
+
+## 3 · Open Project Workspace keeps the data: matched
+
+- New window: `acme-uid-0001 (Workspace)` with A's projects and
+  `acme · acme-db2 · 17.0`.
+- `repos/acme` has no `.vscode` at all, also after selecting acme-db1 there.
+  The generated `.code-workspace` holds `odoo-debugger -d acme-db1 -p 8069`
+  under `launch`.
+- Start Server, Restart Server (new pid) and F5 all ran
+  `-p 8069 -d acme-db1` with `repos/acme`.
+- A kept `acme-db2`.
+- **Reopened from its `vscode-userdata:` URI** (as an earlier build opened
+  it): "This workspace was opened in a way that keeps the Python debugger
+  from running. Reopen it from its file to fix that." with Reopen It, and
+  `Reopen for debugger` in the status bar, still there after the toast hid.
+  Clicking it reopened the window from its file, without the item. Recent
+  then listed the workspace once, by its `file:` path.
+
+## 4 · Moving a workspace onto a shared store: matched
+
+- Choose Data Store… → Create a new store… → `/tmp/odt-brief/shared20.db` →
+  All workspaces (the brief's "Choose a store file…" is now "Create a new
+  store…"):
+
+  > Bring this workspace's data into /tmp/odt-brief/shared20.db?
+  >
+  > It adds:
+  > 2 new projects
+  > 4 databases added
+  > 2 new versions
+  >
+  > Nothing already in that store is overwritten. This workspace's own file
+  > is left as it is.
+  >
+  > [Use What Is There] [Cancel] [Bring It Along]
+
+- Bring It Along: "Now using the shared store /tmp/odt-brief/shared20.db.",
+  the same projects, and `acme · acme-db2 · 17.0`.
+- A's own file was last written when A opened (its window's selection, as
+  item 2 describes), not by the move.
+- The placeholder: "Now using shared store /tmp/odt-brief/shared20.db".
+- A was then asked "Which version does this workspace run?…", as item 14.5
+  expects of a store with two versions.
+
+## 5 · A second window on the same store: matched
+
+- B showed acme and beta with nothing selected, and no "No project is
+  selected.".
+- B → beta, beta-db1, then 19.0: `beta · no 19.0 database · 19.0 :8079`. A
+  kept `acme · acme-db2 · 17.0 :8069`.
+
+## 6 · Live changes between windows: matched
+
+- B renamed acme-db19's display name to `acme-19-live`. A's Databases view
+  showed it in the ninth frame, about **2.1 s** later, with nothing done in
+  A.
+- Idle 65 s: no new log line in either window.
+
+## 7 · Simultaneous edits to one project: matched
+
+- A on acme-db1, B on acme-db2, three rounds of context-menu marks about
+  0.5 s apart. The rev went 3 → 5 → 7 → 9, and every mark landed on its own
+  database. (In round 3, A's "clear" hit the module the list had moved into
+  that row; that was my targeting.)
+- No `[store] merged changes…` line: the saves did not overlap.
+
+## 7b · Each window launches its own database: matched
+
+- **1–3:** A's Copy Odoo Command: `-p 8069 -d acme-db1 -i acme_crm -u
+  acme_stock`; A's `launch.json` the same; B's `-d acme-db2 -i
+  acme_crm,acme_sale -u acme_stock`.
+- **4:** Set Up an Upgrade in A, acme-db2 → acme-db19, `17.0-dev` → `main`.
+  It proposed the copies `…/bt2/odoo-dev/acme@17.0-dev` and `acme@main`
+  (one clone shared by both versions), and asked to move `repos/acme` off
+  `17.0-dev` (Move to Another Branch → `parking`). Both windows' `launch.json`
+  then had 17.0 → `acme-db2` on `acme@17.0-dev` and 19.0 → `acme-db19` on
+  `acme@main`.
+- **5:** upgrade off, A on acme-db1, then in B on and off ("Upgrade resumed:
+  17.0 → 19.0."). A's status bar, Databases view and `launch.json` all name
+  acme-db2.
+- **6:** with A's per-version memory cleared (as a seed selection never
+  picked in this build), switching A to 19.0 gave `no 19.0 database` and no
+  19.0 entry; the 17.0 entry kept `acme-db1`. Start Server: 'No database is
+  selected for "Odoo 19.0".' with Select Database, which listed only
+  `acme-19-live`; choosing it started `-p 8079 -d acme-db19`, wrote the 19.0
+  entry, and kept the 17.0 one. Back on 17.0: `acme-db1`.
+  `launch.json` is only rewritten by a refresh: a deleted one stays missing
+  until the next change (pre-existing, not shared-store behaviour).
+
+## 8 · Testing mode per window, stash per database: matched
+
+- Testing on in A (acme-db2): A "Testing Enabled", acme-db2's marks cleared
+  and stashed on the database (`testingModuleStates`); B "Testing Disabled".
+- A → acme-db1, testing off: acme-db2's three marks came back on acme-db2,
+  and acme-db1's two marks are untouched.
+
+## 9 · Export and import: matched
+
+1. "Exported 2 project(s) to /tmp/odt-brief/export20.json.": no project or
+   database `isSelected`, no `activeVersion`, no `selectedDbByVersion`; the
+   two `isSelected: true` are repository flags; every path absolute
+   (`./custom` became `/tmp/odt-brief/A/custom`).
+2. Re-import:
+
+   > Import export20.json into shared store /tmp/odt-brief/shared20.db?
+   >
+   > Nothing is missing: it is all here already.
+   >
+   > (2 versions are already there, matched by branch.)
+   >
+   > Merge never overwrites what is here. Replace would discard the 2
+   > projects, 2 versions and 4 databases here now.
+
+   Merge: "Nothing to import: everything in export20.json is already here.",
+   and the store was byte-identical.
+3. The raw seed file: the same preview and result; still two versions.
+4. Replace… with a one-project file:
+
+   > Replace everything in shared store /tmp/odt-brief/shared20.db with
+   > small20.json?
+   >
+   > The 2 projects, 2 versions and 4 databases there now are discarded, and
+   > replaced by the 1 project, 2 versions and 1 database in the file. Export
+   > first if you might want them back.
+   >
+   > [Replace Everything] [Cancel] [Keep Current Data]
+
+   Cancel: the store unchanged.
+
+## 10 · Back to the workspace's own file: matched, with finding 36
+
+- B → This workspace only: "This workspace now uses its own data file.", an
+  empty tree with a new Default Version; A stayed on `shared20.db`.
+- B's `.vscode/settings.json`: `{ "odooDebugger.dataStore.path":
+  ".vscode/odoo-debugger-data.json" }`.
+- **Not as expected:** B kept "Which version here?" from its time on the
+  shared store (finding 36).
+- I removed the user-level `odooDebugger.dataStore.path` (`shared20.db`) from
+  `bt2`'s settings afterwards.
+
+## 12 · A store from the future: matched
+
+- `schema_version` 99, A opened: the data showed, and the log has "The data
+  store /tmp/odt-brief/shared20.db is read-only here: it was written by a
+  newer Odoo DevTools (schema 99). Changes to projects, versions and
+  databases cannot be saved; selecting still works in this window."
+- Selecting acme-db2 worked.
+- Clear State on a module: a warning, "The data store
+  /tmp/odt-brief/shared20.db is read-only here: a newer Odoo DevTools (schema
+  99) wrote it; the change was not saved." Not "Error running command".
+- Set back to 1.
+
+## 13 · Per-version repository locations: matched
+
+1. acme-db2 → acme-db19: `v19/acme-19` went to `19.0-alt`, `v17/acme` stayed
+   on `17.0-dev`; Repos `acme 19.0-alt`, Modules with `acme_nineteen`; no Git
+   modal in five frames over 10 s.
+2. 19.0 entry on `v19/acme-19`, 17.0 entry on `v17/acme`.
+3. → acme-db1: only `v17/acme` moved (`17.0-alt`).
+4. Set Repository Location for a Version… → 19.0: "acme /tmp/odt-brief/v19/
+   acme-19 — found by its remote".
+   - `other/not-a-repo`: "…is not a git checkout, so it was not…" (refused).
+   - `other/beta-clone`: "/tmp/odt-brief/other/beta-clone is a clone of
+     github.com/org/beta, not of github.com/org/acme like "acme". Use it for
+     Odoo 19.0 anyway?" (Cancel).
+   - `other/acme-third`: "Odoo 19.0 now uses /tmp/odt-brief/other/acme-third
+     for "acme"."; the 19.0 entry used it; the tooltip read "acme:
+     /tmp/odt-brief/other/acme-third (set by hand)".
+   - Use the Default: back to `v19/acme-19`, `repoPaths` emptied.
+5. Both versions' Custom Addons on `v17`: both entries on `v17/acme`, and
+   acme-db19 checked out `19.0-alt` there.
+6. Set All as Default on 19.0: "All settings from version "Odoo 19.0" saved
+   as new defaults for this workspace.", in A's workspace settings, with no
+   `repoPaths`.
+- **`v17/acme` added to the window** (an untitled workspace): a switch to
+  acme-db1 moved the Git status item and the Source Control input to
+  `17.0-alt`.
+
+## 14 · Binding a workspace to a version: matched
+
+1. `W19/acme`, on open: "Use Odoo 19.0 in this workspace? (acme here is on
+   main, which acme-db19 runs.)" with Use It, Choose Another…, Not Now.
+2. Use It: "This workspace runs Odoo 19.0."; the tooltip "Bound to this
+   workspace"; with acme-db19 selected, the 19.0 entry on `W19/acme`; Repos
+   "acme (in project) · Path: /tmp/odt-brief/W19/acme · Branch: main", no
+   `acme-19` row.
+3. `W17/acme`: "Use Odoo 17.0 in this workspace? (acme here is on staging,
+   which acme-db1 runs.)". Not Now, then reopened: no question.
+4. Bind This Workspace to a Version…: "Odoo 17.0 — acme here is on staging,
+   which acme-db1 runs"; chosen: "This workspace runs Odoo 17.0.", the 17.0
+   entry on `W17/acme`, `W19` still 19.0.
+5. `empty20`: "Which version does this workspace run? It is asked once; the
+   store has several." and "Which version here?".
+6. A pinned to its own file: no question.
+
+## 15 · Workspaces find each other: matched
+
+1. One row each: `W19/acme` (`ver-19-0002`), `W17/acme` (`ver-17-0001`),
+   `empty20` (no version), none for A. Rebinding W17 to 19.0 and back: the
+   row followed both ways.
+2. In W17, Odoo 19.0's tooltip: "Also runs in: acme (Open the Workspace for a
+   Version…)".
+3. Right-click → Open the Workspace for a Version… brought W19's window
+   forward. From the palette: "empty20 — no version chosen" and "acme — Odoo
+   19.0 · /tmp/odt-brief/W19/acme".
+4. With every window closed and W17 renamed, opening W19 removed W17's row.
+5. In A: "Only a shared data store keeps a list of the workspaces that use
+   it. Choose one with Choose Data Store…".
+6. Idle 65 s with three windows open: no new log line.
+
+## 16 · An upgrade across two workspaces: matched
+
+1. In W17, acme-db2 → acme-db19: the 17.0 picker lists W17/acme's branches
+   and opens on "staging — current branch"; the 19.0 picker lists
+   W19/acme's (no `staging`) and opens on "main — current branch". The
+   confirmation:
+
+   > Each version already has its own checkout of these, so no copies are
+   > made:
+   > acme: /tmp/odt-brief/W17/acme (Odoo 17.0), /tmp/odt-brief/W19/acme (Odoo
+   > 19.0)
+
+   After Set It Up: no `acme@…` directories, acme still single-checkout,
+   W17 on `staging`, W19 on `main`.
+2. W17's Upgrade view: Start This Side (Odoo 17.0), Open the Other Side (Odoo
+   19.0); W19's the reverse.
+3. Start This Side: W17 `-p 8069 -d acme-db2` with `W17/acme`, W19 `-p 8079
+   -d acme-db19` with `W19/acme`. Start Both Servers from W17, and from W19,
+   each started both, each side with its own clone.
+4. Open the Other Side in W17 brought W19's window forward.
+5. Covered by 7b.4: one clone, no bound workspaces, per-branch copies
+   proposed.
+6. `empty20` on a throwaway 12.0: Start This Side said "This window runs
+   neither side of the 17.0 → 19.0 upgrade. Start Both Servers starts them
+   from here." with Start Both Servers; Open the Other Side asked "Which
+   side?" (Odoo 17.0 upgrading from, Odoo 19.0 upgrading to).
+
+## 17 · Guards between windows: matched, except the freeze (finding 37)
+
+1. **One builder:**
+   - Create Version → Provision, 15.0 in W17 and 16.0 in W19 within a second:
+     W19 showed "Provisioning Odoo 16.0: Waiting for another window to finish
+     building…", and built 16.0 only after W17's 15.0; the lease file was
+     there during the builds and gone after.
+   - **The queue:** Set Up in both windows (W17 13.0 + 12.0, W19 11.0 +
+     10.0) built all four one at a time. Reopened during W17's next Set Up
+     (9.0, 8.0, 7.0), W19 logged "[queue] another window is building
+     versions; waiting for it".
+   - **Kill:** `kill -9` on W17's extension host while it built 8.0 from
+     the queue. VS Code restarted that host at once, and the new host took
+     the lease 2 s later and built 8.0 and 7.0 ("Provisioned 8.0, 7.0."). One
+     pip into `venv-8.0`: the killed host's child died with it. So W17
+     resumed its own queue; W19 did not need to take over.
+   - **Freeze:** with W17 on Set Up 6.0, 5.0, 4.0 and W19 waiting (it logged
+     "waiting for it" during the 6.0 build), I froze W17's host 1 s into 5.0.
+     **Nobody took over in 240 s** (finding 37). Resumed, W17 built 5.0 and
+     4.0. The "resumed after the other took over" checks could not be run.
+   - One version per series, 4.0 to 19.0.
+2. Start Server on 19.0 in W17 while W19 ran it: '"Odoo 19.0" is already
+   running on port 8079, probably in another window.' with Open in Browser,
+   nothing started. Restart Server in W19 restarted it.
+3. **A version:** with `empty20` on a throwaway 12.0, deleted from W19:
+   '"Odoo 12.0" was deleted in another window; this window now runs Odoo
+   17.0.' (The database half was run in the nineteenth run.)
+4. Shared store: Set as Default on a version setting: 'Setting
+   "limitTimeReal" value saved as new default for every workspace (user
+   settings).', in the user `settings.json`. A, own file: item 13.6's "for
+   this workspace".
+
+## 18 · The twelfth run's follow-ups: matched
+
+1. In W19 (bound to 19.0), acme-db1: 'This workspace runs Odoo 19.0.
+   "acme-db1" belongs to Odoo 17.0, so selecting it switches this window to
+   Odoo 17.0.' with Run Odoo 17.0 Here From Now On, Cancel, Switch for Now.
+   Cancel: acme-db19 kept. Switch for Now: 17.0 active, binding still 19.0.
+   Run … Here: binding 17.0, and the registry row followed. During the
+   upgrade, selecting acme-db2 in W19 asked nothing.
+2. In 14.2: `launch.json` written in `W19/acme`, `git status` clean, and
+   `/.vscode/launch.json` added to `.git/info/exclude` under "Odoo DevTools
+   writes its launch entries here".
+3. As 14.5, with Not Now clearing the item (`{asked: true}`).
+
+## 19 · The thirteenth run's other findings: matched
+
+1. Profile only, 13.0 in W17 and 14.0 in W19, confirmed 0.41 s apart: both
+   in the store and in both Versions views, also after switching `empty20`
+   to 14.0.
+2. Run in the eighteenth and nineteenth runs.
+3. `empty20` bound to 13.0, 13.0 deleted from W19: '"Odoo 13.0" was deleted
+   in another window; this window now runs Odoo 17.0.', "[binding] the
+   version this workspace was bound to (…) no longer exists; asking again",
+   the version question, and "Which version here?".
+4. W17 (bound 17.0) → Switch Active Version 19.0: 'This workspace runs Odoo
+   17.0. Switching makes this window run Odoo 19.0.'; Cancel kept 17.0; not
+   asked for 17.0 itself, nor for re-selecting acme-db2.
+5. As 7b.6: Select Database picked acme-db19 and started the server.
+6. After Start Both Servers in W17: "Stopped Odoo 17.0 and Odoo 19.0.".
+
+## 20 · The fourteenth run's smaller observations: matched
+
+1. Resumed with both checkouts on their branches: "Upgrade resumed: 17.0 →
+   19.0.", no confirmation. With W17/acme on `17.0-alt`: the confirmation
+   ("Each version already has its own checkout…") with Resume, after which
+   W17/acme was back on `staging`.
+2. "Cancelled; another window was still building.", and nothing built for
+   12.0.
+
+## 21 · This workspace only, in a clone: matched
+
+- W17 → This workspace only: `git status` clean; `.git/info/exclude` gained
+  `/.vscode/settings.json` and `/.vscode/odoo-debugger-data.json` under their
+  "Odoo DevTools" comments.
+
+## 22 · To its own file and back: matched
+
+- No "deleted", "[binding]" or version-question line either way; back on
+  the shared store: `{versionId: "ver-17-0001", asked: true}`, acme-db2,
+  registry row `ver-17-0001`, status bar `acme · acme-db2 · 17.0`. Files
+  removed afterwards.
+
+## Findings (twentieth run)
+
+### 36. A window moved to its own file keeps "Which version here?" (low)
+
+**Steps:** item 10. B on the shared store, version question unanswered →
+Choose Data Store… → This workspace only.
+
+**Happened:** B, now on its own file, kept "Which version here?". Clicking
+it opened Bind This Workspace to a Version… with the file's "Default
+Version". A workspace on its own file is never asked (14.6).
+
+**Why:** `offerWorkspaceBinding` returned early once it had asked in the
+session, before checking `shouldOfferBinding`, so nothing removed the item
+when the question stopped applying.
+
+### 37. A frozen builder's queue is not taken over (moderate)
+
+**Steps:** 17.1. W17: Set Up with 6.0, 5.0, 4.0. W19 opened during the 6.0
+build ("[queue] another window is building versions; waiting for it"). W17's
+extension host frozen (`kill -STOP`) 1 s into 5.0.
+
+**Happened:** the lease's heartbeat stopped at 19:28:05, and in 240 s no
+window took it. 5.0 and 4.0 waited until W17 was resumed.
+
+**Why:** a drain that finds the lease taken schedules a retry only when the
+shared queue has entries at that moment. Set Up queues its other versions
+after its foreground build, so W19, told to wait during that build, never
+tried again. (In the fifteenth run both windows had queued entries, so the
+retry existed.)
+
+## Also seen (twentieth run)
+
+- **Stop Both Servers stops what this window started.** With each side
+  started from its own window, W19's Stop Both Servers stopped only 19.0
+  ("Stopped Odoo 19.0."); W17's 17.0 kept running. The message says so.
+- **The upgrade's database pickers show the database name** (`acme-db19`),
+  not the display name set in item 6 (`acme-19-live`).
+- **During an upgrade, Switch Active Version asks nothing**, so W17 (bound
+  to 17.0) could run 19.0 with acme-db2 still marked in its Databases view.
+  Its status bar named `acme-db19`, the database 19.0 launches. That is the
+  resolution order in `resolveDbForVersion`, not a disagreement about what
+  runs.
+- **Fixture noise, as before:** "environment switch finished with issues —
+  Odoo: fatal: not a git repository…" (the stub Odoo source), the Migrate
+  offer for versions outside the provisioning root, the Python extension's
+  "invalid interpreter" toast, and "Creating odoo-debugger-data.json file..."
+  on every new own file.
 
 # Nineteenth run: the eighteenth run's fixes (`ef683fb`)
 
