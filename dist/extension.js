@@ -214,6 +214,12 @@ async function activate(context) {
     // Odoo's reason a saved view stays off, on the line it is about.
     const viewDiagnostics = vscode.languages.createDiagnosticCollection('odoo-views');
     context.subscriptions.push(viewDiagnostics);
+    // A closed arch has no line left to point at.
+    context.subscriptions.push(vscode.workspace.onDidCloseTextDocument(document => {
+        if (document.uri.scheme === viewFileSystem_1.VIEW_SCHEME) {
+            viewDiagnostics.delete(document.uri);
+        }
+    }));
     const viewFiles = new viewFileSystem_1.ViewFileSystemProvider(viewService, {
         onSaved: (_ref, result, uri, text) => {
             if (result.activationError) {
@@ -323,7 +329,7 @@ async function activate(context) {
             await refreshViews();
         }
     };
-    (0, commands_1.registerAllCommands)({ context, providers, versionsService, sortPreferences, viewService, moduleTreeView, dbTreeView, refreshAll });
+    (0, commands_1.registerAllCommands)({ context, providers, versionsService, sortPreferences, viewService, viewDiagnostics, moduleTreeView, dbTreeView, refreshAll });
     // Another window wrote to a shared store, or this window switched stores:
     // re-read everything. Debounced, because one save elsewhere can touch
     // several documents and each is its own change.
@@ -8726,6 +8732,7 @@ exports.neutralizeDatabase = neutralizeDatabase;
 const process_1 = __webpack_require__(13);
 const database_1 = __webpack_require__(48);
 const logger_1 = __webpack_require__(12);
+const viewWorkerArgs_1 = __webpack_require__(50);
 /**
  * All PostgreSQL CLI operations (psql/createdb/dropdb). Every call passes
  * arguments as arrays with no shell, so database names and paths can never be
@@ -8746,9 +8753,30 @@ function onBeforeDatabaseRelease(listener) {
     releaseListeners.add(listener);
     return { dispose: () => releaseListeners.delete(listener) };
 }
-/** Asks every listener to let go of `dbName`; a failing listener never blocks the caller. */
+// psql expands :'db' only in what it reads, not in -c: the statement goes on
+// stdin, and the name stays a variable that is never spliced into the SQL.
+const TERMINATE_VIEW_WORKERS_SQL = `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+WHERE datname = :'db' AND application_name = '${viewWorkerArgs_1.VIEW_WORKER_APP_NAME}' AND pid <> pg_backend_pid();
+`;
+/**
+ * Asks every listener to let go of `dbName`, then ends the View Doctor shells
+ * other windows still hold on it (the running probe hides them by design);
+ * such a shell restarts on its next use. A failure here never blocks the caller.
+ */
 async function releaseDatabase(dbName) {
     await Promise.all([...releaseListeners].map(listener => listener(dbName).catch(error => logger_1.logger.warn(`Could not release ${dbName}:`, error))));
+    try {
+        await (0, process_1.runCommand)('psql', [
+            '--no-psqlrc',
+            '-v', 'ON_ERROR_STOP=1',
+            '-v', `db=${dbName}`,
+            '-d', 'postgres',
+            '-tA'
+        ], { env: (0, database_1.ownQueryEnv)(), input: TERMINATE_VIEW_WORKERS_SQL });
+    }
+    catch (error) {
+        logger_1.logger.warn(`Could not end other View Doctor shells on ${dbName}:`, error);
+    }
 }
 /** Runs a single SQL statement against `dbName` and returns trimmed stdout. */
 async function runSql(dbName, sql) {
@@ -21806,7 +21834,9 @@ class ViewItem extends vscode.TreeItem {
         this.id = `${dbName}:${section}:${view.id}:${view.active ? 'on' : 'off'}`;
         this.description = `${view.model || view.type} · ${view.xmlid ?? `#${view.id}`}`;
         this.iconPath = new vscode.ThemeIcon(view.active ? 'pass' : 'circle-slash');
-        this.contextValue = ['odooView', view.active ? 'active' : 'inactive', view.inheritId ? 'hasParent' : 'root'].join('.');
+        this.contextValue = [
+            'odooView', view.active ? 'active' : 'inactive', view.inheritId ? 'hasParent' : 'root', ...(view.xmlid ? [] : ['noXmlid'])
+        ].join('.');
         const tooltip = new vscode.MarkdownString(undefined, true);
         tooltip.appendMarkdown(`**${view.name}** (${view.type}, id ${view.id})\n\n`);
         tooltip.appendMarkdown(`${view.xmlid ? `\`${view.xmlid}\`` : 'No external id'}\n\n`);
@@ -23543,6 +23573,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ViewFileSystemProvider = exports.VIEW_SCHEME = void 0;
 exports.viewUri = viewUri;
 exports.parseViewUri = parseViewUri;
+exports.clearViewDiagnostics = clearViewDiagnostics;
 exports.viewFileSize = viewFileSize;
 /**
  * Views as files: odoo-view:/<db>/<id>/<xmlid>.xml. VS Code's own editor
@@ -23569,6 +23600,20 @@ function parseViewUri(uri) {
         return undefined;
     }
     return { dbName: decodeURIComponent(db), viewId };
+}
+/**
+ * Drops the diagnostics on every URI of this view: the label part of its URI
+ * depends on how it was opened, so entries are matched by database and id.
+ */
+function clearViewDiagnostics(diagnostics, dbName, viewId) {
+    const matching = [];
+    diagnostics.forEach(uri => {
+        const ref = uri.scheme === exports.VIEW_SCHEME ? parseViewUri(uri) : undefined;
+        if (ref?.dbName === dbName && ref.viewId === viewId) {
+            matching.push(uri);
+        }
+    });
+    matching.forEach(uri => diagnostics.delete(uri));
 }
 /**
  * A stand-in size that changes whenever the write_date does. Kept under a
@@ -29180,7 +29225,7 @@ async function openArch(dbName, viewId, xmlid) {
     await vscode.window.showTextDocument((0, viewFileSystem_1.viewUri)(dbName, viewId, xmlid ?? `view-${viewId}`), { preview: true });
 }
 function registerViewDoctorCommands(deps) {
-    const { context, providers, viewService } = deps;
+    const { context, providers, viewService, viewDiagnostics } = deps;
     context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.refresh', () => providers.views.refresh()));
     context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.openArch', async (arg) => {
         const item = viewItem(arg);
@@ -29203,6 +29248,8 @@ function registerViewDoctorCommands(deps) {
         }
         try {
             await viewService.activate(item.dbName, item.view.id);
+            // The reason a save left it off no longer holds.
+            (0, viewFileSystem_1.clearViewDiagnostics)(viewDiagnostics, item.dbName, item.view.id);
             (0, notifications_1.showBriefStatus)(`${item.view.name} is on.`);
         }
         catch (error) {
@@ -29237,9 +29284,16 @@ function registerViewDoctorCommands(deps) {
     }));
     context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.copyXmlid', async (arg) => {
         const item = viewItem(arg);
-        if (item) {
-            await vscode.env.clipboard.writeText(item.view.xmlid ?? String(item.view.id));
+        if (!item) {
+            return;
+        }
+        // The menu hides it for a view without one; never copy the id in its place.
+        if (item.view.xmlid) {
+            await vscode.env.clipboard.writeText(item.view.xmlid);
             (0, notifications_1.showBriefStatus)('Copied.');
+        }
+        else {
+            (0, notifications_1.showBriefStatus)(`${item.view.name} has no external ID.`);
         }
     }));
 }
