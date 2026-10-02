@@ -1,6 +1,7 @@
 import { runCommand } from './process';
 import { clearInstalledModuleCache, ownQueryEnv } from './database';
 import { logger } from './logger';
+import { VIEW_WORKER_APP_NAME } from './views/viewWorkerArgs';
 
 /**
  * All PostgreSQL CLI operations (psql/createdb/dropdb). Every call passes
@@ -28,10 +29,31 @@ export function onBeforeDatabaseRelease(listener: DatabaseReleaseListener): { di
     return { dispose: () => releaseListeners.delete(listener) };
 }
 
-/** Asks every listener to let go of `dbName`; a failing listener never blocks the caller. */
+// psql expands :'db' only in what it reads, not in -c: the statement goes on
+// stdin, and the name stays a variable that is never spliced into the SQL.
+const TERMINATE_VIEW_WORKERS_SQL = `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+WHERE datname = :'db' AND application_name = '${VIEW_WORKER_APP_NAME}' AND pid <> pg_backend_pid();
+`;
+
+/**
+ * Asks every listener to let go of `dbName`, then ends the View Doctor shells
+ * other windows still hold on it (the running probe hides them by design);
+ * such a shell restarts on its next use. A failure here never blocks the caller.
+ */
 export async function releaseDatabase(dbName: string): Promise<void> {
     await Promise.all([...releaseListeners].map(listener =>
         listener(dbName).catch(error => logger.warn(`Could not release ${dbName}:`, error))));
+    try {
+        await runCommand('psql', [
+            '--no-psqlrc',
+            '-v', 'ON_ERROR_STOP=1',
+            '-v', `db=${dbName}`,
+            '-d', 'postgres',
+            '-tA'
+        ], { env: ownQueryEnv(), input: TERMINATE_VIEW_WORKERS_SQL });
+    } catch (error) {
+        logger.warn(`Could not end other View Doctor shells on ${dbName}:`, error);
+    }
 }
 
 /** Runs a single SQL statement against `dbName` and returns trimmed stdout. */
