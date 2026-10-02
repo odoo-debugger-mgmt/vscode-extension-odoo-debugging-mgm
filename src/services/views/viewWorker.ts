@@ -190,7 +190,7 @@ export class ViewWorker implements PooledWorker {
                 this.failAll(new ViewWorkerError(`The Odoo shell stopped${status}.${this.tailText()}`));
                 this.exitEmitter.fire();
             });
-            // A failed write after an early exit is reported by 'exit'; do not crash on EPIPE.
+            // A failed write after an early exit is reported by 'close'; do not crash on EPIPE.
             child.stdin?.on('error', () => undefined);
             this.requests?.on('error', () => undefined);
             if (child.pid !== undefined) {

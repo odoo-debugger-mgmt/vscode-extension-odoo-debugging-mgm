@@ -39,6 +39,16 @@ def _fresh(env):
     _check_registry(env)
 
 
+def _registry_sequence(env):
+    # Odoo 17 and later read it themselves (a sequence on 17 and 18, an
+    # insert-only table on 19); 15 and 16 only have the sequence.
+    get_sequences = getattr(env.registry, 'get_sequences', None)
+    if get_sequences is not None:
+        return get_sequences(env.cr)[0]
+    env.cr.execute('SELECT last_value FROM base_registry_signaling')
+    return env.cr.fetchone()[0]
+
+
 def _check_registry(env):
     """Raises Restart when the running server reloaded the registry (a module
     install or update) since this shell loaded it: its models are stale."""
@@ -46,9 +56,8 @@ def _check_registry(env):
     if known is None:
         return
     try:
-        env.cr.execute('SELECT last_value FROM base_registry_signaling')
-        current = env.cr.fetchone()[0]
-    except Exception:  # noqa: BLE001 - no sequence: nothing to compare
+        current = _registry_sequence(env)
+    except Exception:  # noqa: BLE001 - no signaling tables: nothing to compare
         env.cr.rollback()
         return
     env.cr.rollback()

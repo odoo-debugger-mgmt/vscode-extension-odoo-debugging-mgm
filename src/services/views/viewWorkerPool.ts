@@ -40,8 +40,8 @@ export class ViewWorkerPool implements vscode.Disposable {
             if (!(error instanceof ViewWorkerError) || !error.restart) {
                 throw error;
             }
-            // The shell found its registry out of date and exited: retry once on a fresh one.
-            await this.release(dbName);
+            // The shell found its registry out of date and exited: retry once on a fresh one
+            // (runOnce has already released the stale worker).
             return this.runOnce<T>(dbName, cmd, args);
         }
     }
@@ -51,6 +51,12 @@ export class ViewWorkerPool implements vscode.Disposable {
         this.touch(dbName);
         try {
             return await worker.request<T>(cmd, args);
+        } catch (error) {
+            if (error instanceof ViewWorkerError && error.restart && this.entries.get(dbName)?.worker === worker) {
+                // Only this worker: a concurrent run may already have started a new one.
+                await this.release(dbName);
+            }
+            throw error;
         } finally {
             this.touch(dbName);
         }

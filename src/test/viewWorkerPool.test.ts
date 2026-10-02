@@ -71,6 +71,27 @@ suite('View worker pool', () => {
         pool.dispose();
     });
 
+    test('a restart retry leaves a newer worker alone', async () => {
+        const created: FakeWorker[] = [];
+        const pool = new ViewWorkerPool(async db => {
+            const worker = new FakeWorker(db);
+            if (created.length === 0) {
+                worker.request = async () => {
+                    worker.exit.fire();
+                    await pool.run(db, 'echo');
+                    throw new ViewWorkerError('modules changed', undefined, true);
+                };
+            }
+            created.push(worker);
+            return worker;
+        });
+        await pool.run('a', 'echo');
+        assert.strictEqual(created.length, 2);
+        assert.strictEqual(created[1].disposed, 0);
+        assert.strictEqual(pool.has('a'), true);
+        pool.dispose();
+    });
+
     test('a failed start is forgotten, so the next run tries again', async () => {
         let attempt = 0;
         const pool = new ViewWorkerPool(async db => {
