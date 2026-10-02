@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { mergeReports, parseDisabledViews, viewIdFromHref } from '../services/views/disabledReport';
+import { decodeEntities, mergeReports, parseDisabledViews, viewIdFromHref } from '../services/views/disabledReport';
 
 const OLD_STYLE = `
 <h2> Congratulations, you have just upgraded to Odoo 17.0 </h2>
@@ -95,5 +95,16 @@ suite('Upgrade report: disabled views', () => {
             { viewIds: [1830] }
         ]);
         assert.deepStrictEqual([...merged], [[1818, ['17.0', '18.0']], [1788, ['17.0']], [1830, ['18.0']]]);
+    });
+});
+
+suite('HTML entities', () => {
+    test('decodes the entities Odoo writes', () => {
+        assert.strictEqual(decodeEntities('@name=&#39;x&#39; &quot;a&quot; &lt;b&gt; &#x2713; &amp;amp;'), '@name=\'x\' "a" <b> \u2713 &amp;');
+    });
+
+    test('leaves an entity that names no code point as written, instead of throwing', () => {
+        assert.strictEqual(decodeEntities('a &#99999999; b &#x110000; c'), 'a &#99999999; b &#x110000; c');
+        assert.strictEqual(decodeEntities('&#1114111;'), String.fromCodePoint(0x10FFFF));
     });
 });

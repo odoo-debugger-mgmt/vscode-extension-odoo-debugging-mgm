@@ -17,10 +17,15 @@ export interface DisabledReport {
     viewIds: number[];
 }
 
+/** A numeric entity's character; one that names no code point stays as written. */
+function codePoint(entity: string, code: number): string {
+    return Number.isInteger(code) && code >= 0 && code <= 0x10FFFF ? String.fromCodePoint(code) : entity;
+}
+
 export function decodeEntities(text: string): string {
     return text
-        .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number(code)))
-        .replace(/&#x([0-9a-f]+);/gi, (_match, code: string) => String.fromCodePoint(parseInt(code, 16)))
+        .replace(/&#(\d+);/g, (entity, code: string) => codePoint(entity, Number(code)))
+        .replace(/&#x([0-9a-f]+);/gi, (entity, code: string) => codePoint(entity, parseInt(code, 16)))
         .replace(/&quot;/g, '"')
         .replace(/&(?:#39|apos);/g, '\'')
         .replace(/&lt;/g, '<')
