@@ -5,6 +5,7 @@ import { ViewItem } from '../views/viewDoctorView';
 import { viewUri } from '../views/viewFileSystem';
 import { showBriefStatus, showError, showModalWarning } from '../services/notifications';
 import { errorMessage } from '../services/logger';
+import { readableArchError } from '../services/views/archErrors';
 
 function viewItem(arg: unknown): ViewItem | undefined {
     return arg instanceof ViewItem ? arg : undefined;
@@ -44,7 +45,7 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
             await viewService.activate(item.dbName, item.view.id);
             showBriefStatus(`${item.view.name} is on.`);
         } catch (error) {
-            const choice = await showError(`${item.view.name} cannot be turned on: ${errorMessage(error)}`, 'Open Arch');
+            const choice = await showError(`${item.view.name} cannot be turned on: ${readableArchError(errorMessage(error))}`, 'Open Arch');
             if (choice === 'Open Arch') {
                 await openArch(item.dbName, item.view.id, item.view.xmlid);
             }

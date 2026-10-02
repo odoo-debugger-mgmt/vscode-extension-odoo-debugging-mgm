@@ -20,6 +20,16 @@ export function readableArchError(message: string): string {
     return decodeEntities(message);
 }
 
+/**
+ * The line of Odoo's message that says what is wrong, for a one-line notice.
+ * Odoo leads with a heading ("Error while parsing or validating view:") and
+ * ends with "View error context:", neither of which is the reason.
+ */
+export function archErrorSummary(message: string): string {
+    const lines = readableArchError(message).split('\n').map(line => line.trim()).filter(line => line !== '');
+    return lines.find(line => !line.endsWith(':')) ?? lines[0] ?? '';
+}
+
 export function locateArchError(arch: string, rawMessage: string): ArchErrorLocation {
     const message = readableArchError(rawMessage);
     const lines = arch.split('\n');

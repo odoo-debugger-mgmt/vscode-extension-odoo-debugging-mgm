@@ -49,7 +49,7 @@ import { readSetupState, shouldAdoptLegacySourceRepo, readRawSetupSettings, writ
 import { showBriefStatus, showInfo, showWarning } from './services/notifications';
 import { VIEW_SCHEME, ViewFileSystemProvider, parseViewUri, type ViewRef } from './views/viewFileSystem';
 import { ViewArchPoller } from './views/viewPoll';
-import { locateArchError, readableArchError } from './services/views/archErrors';
+import { archErrorSummary, locateArchError, readableArchError } from './services/views/archErrors';
 import { getWriteDates } from './services/views/viewQueries';
 import { getDefaultVersionSettings, normalizePath, resolveOptionalPath } from './utils';
 import { StatusBarIndicators } from './views/statusBar';
@@ -214,7 +214,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 );
                 diagnostic.source = 'Odoo';
                 viewDiagnostics.set(uri, [diagnostic]);
-                void showWarning(`Saved. The view stays off: ${result.activationError.split('\n')[0]}`);
+                void showWarning(`Saved. The view stays off: ${archErrorSummary(result.activationError)}`);
             } else {
                 viewDiagnostics.delete(uri);
                 showBriefStatus(result.activated ? 'Saved, and the view is on.' : 'Saved.');

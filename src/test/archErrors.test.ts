@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { locateArchError, readableArchError } from '../services/views/archErrors';
+import { archErrorSummary, locateArchError, readableArchError } from '../services/views/archErrors';
 
 const ARCH = [
     '<data>',
@@ -38,5 +38,19 @@ suite('Arch error location', () => {
 
     test('falls back to the first line', () => {
         assert.deepStrictEqual(locateArchError(ARCH, 'Something else broke'), { line: 0, start: 0, end: 6 });
+    });
+
+    test('a one-line summary says the reason, not the heading', () => {
+        const message = [
+            'Error while parsing or validating view:',
+            '',
+            'Element \'<xpath expr="//field[@name=&#39;partner_id&#39;]">\' cannot be located in parent view',
+            '',
+            'View error context:',
+            '{\'name\': \'odt.view.doctor.test\'}'
+        ].join('\n');
+        assert.strictEqual(archErrorSummary(message), 'Element \'<xpath expr="//field[@name=\'partner_id\']">\' cannot be located in parent view');
+        assert.strictEqual(archErrorSummary('Field "x_custom" does not exist in model "res.partner"'), 'Field "x_custom" does not exist in model "res.partner"');
+        assert.strictEqual(archErrorSummary('Odd heading only:'), 'Odd heading only:');
     });
 });
