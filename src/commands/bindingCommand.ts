@@ -153,12 +153,18 @@ export async function offerWorkspaceBinding(): Promise<void> {
             void registerThisWorkspace();
             offeredThisSession = false;
         }
-        // Once per session: this also runs after every store change, and an
-        // unanswered question is kept in the status bar meanwhile.
-        if (offeredThisSession) {
+        // Nothing to ask, the status bar included: a window moved to its own
+        // file kept "Which version here?", which bound it to that file's
+        // version (twentieth run).
+        if (!shouldOfferBinding(currentMainStore()?.kind, versions.getVersions().length, readBinding())) {
+            answered();
             return;
         }
-        if (!shouldOfferBinding(currentMainStore()?.kind, versions.getVersions().length, readBinding())) {
+        // Once per session: this also runs after every store change, and an
+        // unanswered question is kept in the status bar meanwhile - shown
+        // again for a window back on the shared store.
+        if (offeredThisSession) {
+            showPendingItem();
             return;
         }
         offeredThisSession = true;

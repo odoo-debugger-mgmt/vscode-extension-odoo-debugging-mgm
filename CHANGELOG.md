@@ -75,6 +75,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Fixed
 
+- **A window that waits for another window's build takes over its queue** if that window freezes or dies, also when it started waiting before anything was queued. A window moved to its own data file no longer keeps "Which version here?", which only a shared store asks.
 - **The Versions view on an unreadable store** says the store could not be read, with Choose Data Store…, like the other views, instead of "No versions yet" and Create Version. A database deleted in another window is announced once, without a second "Select a database before configuring the debugger.": the background launch update no longer shows that; the status bar already says no database is selected.
 - **Back on the shared store, a workspace stays bound to its version.** The binding check ran before the shared store's versions were read again, judged the bound version missing from the workspace's own file, and cleared the binding. A window on an unreadable store no longer offers to migrate a version while it tries the store again.
 - **Moving a workspace to its own data file and back** keeps its version binding and its selection, and no longer says anything was deleted in another window. A window on an unreadable store no longer repeats the read error when a view opens, nor offers to migrate a version that is in no store.

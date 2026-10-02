@@ -176,7 +176,8 @@ async function persist(
  */
 export async function drainProvisionQueue(
     context: vscode.ExtensionContext,
-    onProgress: () => void = () => undefined
+    onProgress: () => void = () => undefined,
+    retrying = false
 ): Promise<void> {
     if (draining || !provisioner) {
         return;
@@ -186,11 +187,16 @@ export async function drainProvisionQueue(
     // too. Asked again later, for anything queued after its drain ended.
     const lease = acquireLease(readSetupState().provisioningRoot);
     if (!lease) {
-        logger.info('[queue] another window is building versions; waiting for it');
-        if (!retryTimer && readQueue(context).pending.length > 0) {
+        (retrying ? logger.debug : logger.info)('[queue] another window is building versions; waiting for it');
+        // Tried again whatever the queue holds now (twentieth run): Set Up
+        // queues its other versions only after its foreground build, so a
+        // window told to wait during that build never tried again, and the
+        // queue stalled with the builder frozen or killed. Once the lease is
+        // free, a drain that finds nothing to build simply ends.
+        if (!retryTimer) {
             retryTimer = setTimeout(() => {
                 retryTimer = undefined;
-                void drainProvisionQueue(context, onProgress);
+                void drainProvisionQueue(context, onProgress, true);
             }, HEARTBEAT_MS);
             retryTimer.unref?.();
         }

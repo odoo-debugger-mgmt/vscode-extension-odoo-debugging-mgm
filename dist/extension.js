@@ -15830,12 +15830,18 @@ async function offerWorkspaceBinding() {
             void (0, workspaceRegistry_1.registerThisWorkspace)();
             offeredThisSession = false;
         }
-        // Once per session: this also runs after every store change, and an
-        // unanswered question is kept in the status bar meanwhile.
-        if (offeredThisSession) {
+        // Nothing to ask, the status bar included: a window moved to its own
+        // file kept "Which version here?", which bound it to that file's
+        // version (twentieth run).
+        if (!(0, workspaceBinding_1.shouldOfferBinding)((0, mainStore_1.currentMainStore)()?.kind, versions.getVersions().length, (0, workspaceBinding_1.readBinding)())) {
+            answered();
             return;
         }
-        if (!(0, workspaceBinding_1.shouldOfferBinding)((0, mainStore_1.currentMainStore)()?.kind, versions.getVersions().length, (0, workspaceBinding_1.readBinding)())) {
+        // Once per session: this also runs after every store change, and an
+        // unanswered question is kept in the status bar meanwhile - shown
+        // again for a window back on the shared store.
+        if (offeredThisSession) {
+            showPendingItem();
             return;
         }
         offeredThisSession = true;
@@ -21093,7 +21099,7 @@ async function persist(context, state, onProgress) {
  * Re-entrant calls return immediately: activation and a fresh enqueue can
  * both ask for a drain, and only one may run.
  */
-async function drainProvisionQueue(context, onProgress = () => undefined) {
+async function drainProvisionQueue(context, onProgress = () => undefined, retrying = false) {
     if (draining || !provisioner) {
         return;
     }
@@ -21102,11 +21108,16 @@ async function drainProvisionQueue(context, onProgress = () => undefined) {
     // too. Asked again later, for anything queued after its drain ended.
     const lease = (0, provisionLease_1.acquireLease)((0, setupState_1.readSetupState)().provisioningRoot);
     if (!lease) {
-        logger_1.logger.info('[queue] another window is building versions; waiting for it');
-        if (!retryTimer && readQueue(context).pending.length > 0) {
+        (retrying ? logger_1.logger.debug : logger_1.logger.info)('[queue] another window is building versions; waiting for it');
+        // Tried again whatever the queue holds now (twentieth run): Set Up
+        // queues its other versions only after its foreground build, so a
+        // window told to wait during that build never tried again, and the
+        // queue stalled with the builder frozen or killed. Once the lease is
+        // free, a drain that finds nothing to build simply ends.
+        if (!retryTimer) {
             retryTimer = setTimeout(() => {
                 retryTimer = undefined;
-                void drainProvisionQueue(context, onProgress);
+                void drainProvisionQueue(context, onProgress, true);
             }, provisionLease_1.HEARTBEAT_MS);
             retryTimer.unref?.();
         }
