@@ -1,0 +1,42 @@
+import * as assert from 'assert';
+import { buildViewWorkerArgs, viewWorkerEnv, VIEW_WORKER_APP_NAME } from '../services/views/viewWorkerArgs';
+import { ACTIVE_DATABASES_QUERY } from '../services/database';
+
+suite('View worker arguments', () => {
+    const base = { odooBinPath: '/odoo/odoo-bin', addonsPaths: ['/odoo/addons', '/custom'], dbName: 'shop-18' };
+
+    test('runs a shell with no http on the database and addons path', () => {
+        assert.deepStrictEqual(buildViewWorkerArgs(base), [
+            '/odoo/odoo-bin', 'shell', '--no-http', '--addons-path', '/odoo/addons,/custom', '-d', 'shop-18'
+        ]);
+    });
+
+    test('keeps connection parameters from extraParams', () => {
+        const args = buildViewWorkerArgs({ ...base, extraParams: '--db_host=localhost, --db_user=odoo' });
+        assert.deepStrictEqual(args.slice(-2), ['--db_host=localhost', '--db_user=odoo']);
+    });
+
+    test('never passes install, update, test, port or dev flags, in any spelling', () => {
+        const args = buildViewWorkerArgs({
+            ...base,
+            extraParams: '-u,sale,--update=stock,-i base,--init=crm,--test-enable,--test-tags=/sale,'
+                + '--test-file=x.py,--stop-after-init,-p,8070,--http-port=9000,--xmlrpc-port=9001,--dev=all,--log-level=warn'
+        });
+        const leaked = ['-u', 'sale', '--update=stock', '-i base', '--init=crm', '--test-enable', '--test-tags=/sale',
+            '--test-file=x.py', '--stop-after-init', '-p', '8070', '--http-port=9000', '--xmlrpc-port=9001', '--dev=all']
+            .filter(flag => args.includes(flag));
+        assert.deepStrictEqual(leaked, []);
+        assert.strictEqual(args[args.length - 1], '--log-level=warn');
+    });
+
+    test('names its connections for every Odoo spelling', () => {
+        const env = viewWorkerEnv({ PATH: '/usr/bin' });
+        assert.strictEqual(env.PATH, '/usr/bin');
+        assert.strictEqual(env.PGAPPNAME, VIEW_WORKER_APP_NAME);
+        assert.strictEqual(env.ODOO_PGAPPNAME, VIEW_WORKER_APP_NAME);
+    });
+
+    test('the running-database probe skips the worker', () => {
+        assert.ok(ACTIVE_DATABASES_QUERY.includes(`application_name IS DISTINCT FROM '${VIEW_WORKER_APP_NAME}'`));
+    });
+});

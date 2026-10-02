@@ -7,6 +7,7 @@ import * as vscode from "vscode";
 import * as path from 'node:path';
 import { ProjectModel } from "./models/project";
 import { SettingsModel } from "./models/settings";
+import type { DatabaseModel } from './models/db';
 import { getWorkspacePath, normalizePath, resolveOptionalPath, showError, showInfo, showWarning, showAutoInfo } from './utils';
 import { collectModuleDiscovery, resolvePsaeDirectories } from './services/psaeInternal';
 import { SettingsStore, isStoreReadError } from './settingsStore';
@@ -84,7 +85,7 @@ export function currentLaunchTarget(): LaunchTarget | undefined {
  * window that is the folder; in a generated project workspace, whose first
  * folder is a repository, it is the workspace the data came from.
  */
-function runDirectory(workspacePath: string): string {
+export function runDirectory(workspacePath: string): string {
     return currentDataLocation()?.root ?? workspacePath;
 }
 
@@ -261,13 +262,18 @@ export async function setupDebugger(): Promise<any> {
     return activeConfig;
 }
 
-async function prepareArgs(
+/**
+ * The --addons-path a version runs `db` with: core, enterprise and themes,
+ * the project's repositories as this database's version sees them, the
+ * included psae-internal folders and the legacy submodule paths. Shared by the
+ * server launch and the View Doctor's shell, so both load the same code.
+ */
+export async function collectAddonsPaths(
     project: ProjectModel,
     settings: SettingsModel,
-    options: { isShell?: boolean; versionId?: string } = {}
+    db: DatabaseModel,
+    versionId: string | undefined
 ): Promise<string[]> {
-    const isShell = options.isShell === true;
-
     // Build addons path using settings paths
     const addonsPaths: string[] = [];
     const addonPathSet = new Set<string>();
@@ -301,10 +307,6 @@ async function prepareArgs(
         addAddonPath(`${settings.odooPath}/addons`);
     }
 
-    const db = dbForVersion(project, options.versionId);
-    if (!db) {
-        throw new Error(NO_DATABASE);
-    }
     const projectModules = db.modules ?? [];
 
     // psae-internal directories: resolved through the shared service so the
@@ -312,7 +314,7 @@ async function prepareArgs(
     // Resolve every project repo to the directory this version runs from, so
     // two versions on different branches never share one copy of the code.
     const resolvedRepos = await resolveReposForDatabase(project, db, {
-        version: options.versionId ? VersionsService.getInstance().getVersion(options.versionId) : undefined
+        version: versionId ? VersionsService.getInstance().getVersion(versionId) : undefined
     });
     const discovery = collectModuleDiscovery(project, resolvedRepos);
 
@@ -376,6 +378,23 @@ async function prepareArgs(
             addAddonPath(subModulePath);
         }
     }
+
+    return addonsPaths;
+}
+
+async function prepareArgs(
+    project: ProjectModel,
+    settings: SettingsModel,
+    options: { isShell?: boolean; versionId?: string } = {}
+): Promise<string[]> {
+    const isShell = options.isShell === true;
+
+    const db = dbForVersion(project, options.versionId);
+    if (!db) {
+        throw new Error(NO_DATABASE);
+    }
+    const projectModules = db.modules ?? [];
+    const addonsPaths = await collectAddonsPaths(project, settings, db, options.versionId);
 
     let installs = projectModules
         .filter(module => module.state === 'install')

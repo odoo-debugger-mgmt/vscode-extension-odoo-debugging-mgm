@@ -7,6 +7,7 @@ import * as util from 'node:util';
 import { InstalledModuleInfo } from '../models/module';
 import { runtimeCache, invalidateInstalledModulesCache } from './runtimeCache';
 import { logger } from './logger';
+import { VIEW_WORKER_APP_NAME } from './views/viewWorkerArgs';
 
 const execFileAsync = util.promisify(execFile);
 
@@ -31,10 +32,13 @@ const TABLE_EXISTS_QUERY = `
     );
 `.trim();
 
-const ACTIVE_DATABASES_QUERY = `
+// The View Doctor's shell holds a connection while it is open; that is not
+// a server running, so it must not light the database up as one.
+export const ACTIVE_DATABASES_QUERY = `
     SELECT datname
     FROM pg_stat_activity
     WHERE datname IS NOT NULL
+      AND application_name IS DISTINCT FROM '${VIEW_WORKER_APP_NAME}'
     GROUP BY datname;
 `.trim();
 
