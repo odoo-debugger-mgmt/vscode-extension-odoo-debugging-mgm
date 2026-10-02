@@ -46,7 +46,8 @@
     "Extension Packs"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onFileSystem:odoo-view"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -86,6 +87,12 @@
           "name": "Upgrade"
         },
         {
+          "id": "viewDoctor",
+          "name": "Views",
+          "icon": "$(symbol-structure)",
+          "visibility": "collapsed"
+        },
+        {
           "id": "versionsManager",
           "name": "Versions",
           "icon": "$(versions)"
@@ -99,6 +106,12 @@
       ]
     },
     "commands": [
+      {
+        "command": "viewDoctor.refresh",
+        "title": "Refresh Views",
+        "category": "Odoo DevTools",
+        "icon": "$(refresh)"
+      },
       {
         "command": "projectSelector.create",
         "title": "Create Project",
@@ -822,6 +835,11 @@
         }
       ],
       "view/title": [
+        {
+          "command": "viewDoctor.refresh",
+          "when": "view == viewDoctor",
+          "group": "navigation@1"
+        },
         {
           "command": "projectSelector.create",
           "when": "view == projectSelector",
@@ -1559,6 +1577,11 @@
       ]
     },
     "viewsWelcome": [
+      {
+        "view": "viewDoctor",
+        "when": "odoo-debugger.is_active",
+        "contents": "Select a database to see the views it has turned off. While an upgrade is set up, this shows the upgraded database.\n[Switch Database](command:dbSelector.quickSearch)"
+      },
       {
         "view": "projectSelector",
         "when": "!odoo-debugger.is_active",

@@ -29,6 +29,12 @@ import { updateTestingContext, updateActiveContext, updateServerRunningContext, 
 import { registerServerLifecycle } from './services/server';
 import type { DatabaseModel } from './models/db';
 import { SortPreferences } from './sortPreferences';
+import { ViewDoctorTreeProvider } from './views/viewDoctorView';
+import { ViewService } from './services/views/viewService';
+import { ViewWorker } from './services/views/viewWorker';
+import { ViewWorkerPool } from './services/views/viewWorkerPool';
+import { resolveViewWorkerSpec } from './services/views/viewWorkerSpec';
+import { onBeforeDatabaseRelease } from './services/postgres';
 import { ProjectReposExplorerProvider } from './projectReposExplorer';
 import { logger, registerLogger } from './services/logger';
 import { logStaleReferences } from './services/reconcile';
@@ -106,6 +112,21 @@ export async function activate(context: vscode.ExtensionContext) {
     await initializeTestingContext();
     await initializeUpgradeContext();
 
+    // The View Doctor's shells: one per database, started on first use.
+    const viewWorkerScript = context.asAbsolutePath(path.join('resources', 'scripts', 'view_worker.py'));
+    const viewWorkers = new ViewWorkerPool(
+        async dbName => new ViewWorker(await resolveViewWorkerSpec(dbName, viewWorkerScript)),
+        {
+            onStarting: (dbName, ready) => void vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Window, title: `Starting an Odoo shell on ${dbName}…` },
+                () => ready.catch(() => undefined)
+            )
+        }
+    );
+    const viewService = new ViewService(viewWorkers);
+    context.subscriptions.push(viewWorkers, onBeforeDatabaseRelease(dbName => viewWorkers.release(dbName)));
+    let viewDoctorTreeView: vscode.TreeView<vscode.TreeItem> | undefined;
+
     const providers = {
         project: new ProjectTreeProvider(context, sortPreferences),
         repo: new RepoTreeProvider(context, sortPreferences),
@@ -114,7 +135,12 @@ export async function activate(context: vscode.ExtensionContext) {
         testing: new TestingTreeProvider(context),
         upgrade: new UpgradeTreeProvider(context),
         versions: new VersionsTreeProvider(sortPreferences),
-        projectReposExplorer: new ProjectReposExplorerProvider(sortPreferences)
+        projectReposExplorer: new ProjectReposExplorerProvider(sortPreferences),
+        views: new ViewDoctorTreeProvider(viewService, dbName => {
+            if (viewDoctorTreeView) {
+                viewDoctorTreeView.description = dbName;
+            }
+        })
     };
 
     // React to version changes fired by VersionsService.refresh(). Must be
@@ -167,6 +193,8 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(moduleTreeView);
     context.subscriptions.push(vscode.window.registerTreeDataProvider('testingSelector', providers.testing));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('upgradeSelector', providers.upgrade));
+    viewDoctorTreeView = vscode.window.createTreeView('viewDoctor', { treeDataProvider: providers.views, showCollapseAll: true });
+    context.subscriptions.push(viewDoctorTreeView);
     context.subscriptions.push(vscode.window.registerTreeDataProvider('versionsManager', providers.versions));
     context.subscriptions.push(vscode.window.registerTreeDataProvider('odt.projectReposExplorer', providers.projectReposExplorer));
 
@@ -253,7 +281,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     };
 
-    registerAllCommands({ context, providers, versionsService, sortPreferences, moduleTreeView, dbTreeView, refreshAll });
+    registerAllCommands({ context, providers, versionsService, sortPreferences, viewService, moduleTreeView, dbTreeView, refreshAll });
 
     // Another window wrote to a shared store, or this window switched stores:
     // re-read everything. Debounced, because one save elsewhere can touch

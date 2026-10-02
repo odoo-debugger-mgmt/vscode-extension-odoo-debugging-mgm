@@ -9,6 +9,8 @@ import type { VersionsTreeProvider } from '../versionsTreeProvider';
 import type { ProjectReposExplorerProvider } from '../projectReposExplorer';
 import type { VersionsService } from '../versionsService';
 import type { SortPreferences } from '../sortPreferences';
+import type { ViewDoctorTreeProvider } from '../views/viewDoctorView';
+import type { ViewService } from '../services/views/viewService';
 import { registerViewCommands } from './viewCommands';
 import { registerProjectCommands } from './projectCommands';
 import { registerRepoCommands } from './repoCommands';
@@ -26,6 +28,7 @@ import { registerDataStoreCommands } from './dataStoreCommands';
 import { registerRepoLocationCommand } from './repoLocationCommand';
 import { registerBindingCommand } from './bindingCommand';
 import { registerUpgradeSideCommands } from './upgradeSideCommands';
+import { registerViewDoctorCommands } from './viewDoctorCommands';
 
 export type RefreshReason = 'ui' | 'debugger' | 'all';
 
@@ -38,6 +41,7 @@ export interface Providers {
     upgrade: UpgradeTreeProvider;
     versions: VersionsTreeProvider;
     projectReposExplorer: ProjectReposExplorerProvider;
+    views: ViewDoctorTreeProvider;
 }
 
 /**
@@ -50,6 +54,8 @@ export interface CommandDeps {
     providers: Providers;
     versionsService: VersionsService;
     sortPreferences: SortPreferences;
+    /** Arch reads/writes and activation for the View Doctor. */
+    viewService: ViewService;
     /** TreeView handle for the Modules view (needed for reveal + multi-select). */
     moduleTreeView: vscode.TreeView<vscode.TreeItem>;
     /** TreeView handle for the Databases view (reveal keeps its highlight honest). */
@@ -76,4 +82,5 @@ export function registerAllCommands(deps: CommandDeps): void {
     registerRepoLocationCommand(deps);
     registerBindingCommand(deps);
     registerUpgradeSideCommands(deps);
+    registerViewDoctorCommands(deps);
 }
