@@ -15,6 +15,25 @@ export function quotePgIdentifier(identifier: string): string {
     return `"${identifier.replace(/"/g, '""')}"`;
 }
 
+type DatabaseReleaseListener = (dbName: string) => Promise<void>;
+const releaseListeners = new Set<DatabaseReleaseListener>();
+
+/**
+ * Registers something that holds connections to databases (the View
+ * Doctor's shells). Postgres refuses to drop, rename or copy a database that
+ * has other sessions, so each listener lets go of `dbName` first.
+ */
+export function onBeforeDatabaseRelease(listener: DatabaseReleaseListener): { dispose(): void } {
+    releaseListeners.add(listener);
+    return { dispose: () => releaseListeners.delete(listener) };
+}
+
+/** Asks every listener to let go of `dbName`; a failing listener never blocks the caller. */
+export async function releaseDatabase(dbName: string): Promise<void> {
+    await Promise.all([...releaseListeners].map(listener =>
+        listener(dbName).catch(error => logger.warn(`Could not release ${dbName}:`, error))));
+}
+
 /** Runs a single SQL statement against `dbName` and returns trimmed stdout. */
 export async function runSql(dbName: string, sql: string): Promise<string> {
     const { stdout } = await runCommand('psql', [
@@ -47,12 +66,16 @@ export async function databaseExists(dbName: string): Promise<boolean> {
 
 /** Creates a database, optionally cloning from a template (createdb -T). */
 export async function createDatabase(dbName: string, templateDbName?: string): Promise<void> {
+    if (templateDbName) {
+        await releaseDatabase(templateDbName);
+    }
     const args = templateDbName ? ['-T', templateDbName, dbName] : [dbName];
     await runCommand('createdb', args);
     clearInstalledModuleCache(dbName);
 }
 
 export async function dropDatabase(dbName: string, options: { ifExists?: boolean } = {}): Promise<void> {
+    await releaseDatabase(dbName);
     const args = options.ifExists ? ['--if-exists', dbName] : [dbName];
     await runCommand('dropdb', args);
     clearInstalledModuleCache(dbName);
@@ -64,6 +87,7 @@ export async function dropDatabaseIfExists(dbName: string): Promise<void> {
 }
 
 export async function renameDatabase(oldName: string, newName: string): Promise<void> {
+    await releaseDatabase(oldName);
     const sql = `ALTER DATABASE ${quotePgIdentifier(oldName)} RENAME TO ${quotePgIdentifier(newName)};`;
     await runCommand('psql', ['-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-c', sql]);
     clearInstalledModuleCache(oldName);
