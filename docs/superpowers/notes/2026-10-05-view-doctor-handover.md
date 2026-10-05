@@ -86,9 +86,17 @@ Choices the user made, which are not up for re-litigation:
 - **Port:** use `resolvePortForDatabase`. If nothing answers, offer "Start Both Servers".
 - **Cookie collision:** both servers are on localhost, so open the **original on `127.0.0.1` and the upgraded on `localhost`**. That way both stay logged in.
 - **Decisions already made for you:**
-  - Form views open the most recent record (`search([], limit=1, order='id desc')`), or a new record if there is none.
-  - List, kanban and other types open as is.
+  - **Render Both opens both sides on the *same* record, so the two renders are comparable** (user requirement). The upgraded DB is a copy of the original, so the same id is the same record.
+    - Add a worker command `recent_ids { model, limit }` that returns the most recent ids (`search([], limit=limit, order='id desc')`, e.g. limit 200), and run it on both DBs.
+    - Pick the highest id present in both lists, and pass it to `make_action` (`{ view_id, res_id }`) on each side.
+    - If no id is common to both, open a new record on both sides and say so ("No record exists in both databases; showing a new one.").
+    - The comparison never falls back to different records on the two sides.
+  - **A single Render in Browser** (one side) uses that side's most recent record, or a new record if there is none.
+  - **List, kanban and other multi-record types** open as is. Both sides then show the same data set, which is comparable by nature.
   - **QWeb report templates are out of scope for stage 2.** Show a clear message ("Reports need a record to render; open the report from Odoo") rather than building `/report/html/...` URLs.
+  - **Integration tests to add:**
+    - On a copy of the DB, `recent_ids` returns the same id on both a source DB and its copy, and `make_action` with that `res_id` creates an action that points at it.
+    - The "no common record" case opens a new record on both sides.
 
 **4. Tree wiring.**
 - Inline actions on rows: Open Arch (exists), Compare with Original, Render in Browser.
