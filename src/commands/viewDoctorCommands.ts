@@ -3,7 +3,9 @@ import type { CommandDeps } from './index';
 import { registerCommand } from './registerCommand';
 import { ViewItem } from '../views/viewDoctorView';
 import { clearViewDiagnostics, viewUri } from '../views/viewFileSystem';
-import { showBriefStatus, showError, showModalWarning } from '../services/notifications';
+import { showBriefStatus, showError, showInfo, showModalWarning } from '../services/notifications';
+import { SettingsStore } from '../settingsStore';
+import { compareTargets, diffArguments, findCounterpart, type PairProject } from '../views/viewPairing';
 import { errorMessage } from '../services/logger';
 import { readableArchError } from '../services/views/archErrors';
 
@@ -34,6 +36,32 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
         }
         const [parent] = await viewService.rows(item.dbName, [item.view.inheritId]);
         await openArch(item.dbName, item.view.inheritId, parent?.xmlid ?? null);
+    }));
+
+    context.subscriptions.push(registerCommand('viewDoctor.compare', async (arg: unknown) => {
+        const item = viewItem(arg);
+        if (!item) {
+            return;
+        }
+        try {
+            const project = (await SettingsStore.peekSelectedProject().catch(() => null))?.project as PairProject | undefined;
+            const originalDb = await compareTargets(project, item);
+            if (!originalDb) {
+                return;
+            }
+            const counterpart = await findCounterpart(item.view, originalDb);
+            if (counterpart === 'none') {
+                void showInfo(`${originalDb} has no ${item.view.type} view of ${item.view.model || 'this model'} to compare with.`);
+                return;
+            }
+            if (!counterpart) {
+                return;
+            }
+            await vscode.commands.executeCommand('vscode.diff',
+                ...diffArguments({ dbName: originalDb, view: counterpart }, { dbName: item.dbName, view: item.view }));
+        } catch (error) {
+            void showError(`Could not compare ${item.view.name}: ${errorMessage(error)}`);
+        }
     }));
 
     context.subscriptions.push(registerCommand('viewDoctor.activate', async (arg: unknown) => {
