@@ -3114,3 +3114,43 @@ Run by the controller, not an implementer subagent.
 - [ ] **Step 2:** Live check in the real window (memory `odoo-debugger-verification.md`, Xvfb recipe; the stage 2 scratch HOME and fixture at `/tmp/claude/odt2` can be reused): the Views title shows the Create Upgrade Script icon; an active row's right-click shows Add to Upgrade Script and an inactive row's does not; saving an arch adds the view under Edited here; Create Upgrade Script → a module → the prefilled version writes `migrations/<v>/end-update_views.py`, opens it, and offers Set Version; a second Add to the same folder merges into the same file.
 - [ ] **Step 3:** Final whole-branch review on the most capable model (`git diff f586ca7..HEAD`), against the spec §5, this plan's Global Constraints and Review Focus. Fix what it confirms, each fix with its own commit and, where it ships behaviour, a rebuilt `dist/`.
 - [ ] **Step 4:** Update the memory `v1-5-view-doctor.md` (stage 3 done, commits, new traps) and its MEMORY.md line. Do not merge or push.
+
+---
+
+## Execution record (2026-10-05)
+
+Done: commits 56bfcf8..8eea383 on v-1.5. 768 passing, 19 pending; the gated real-Odoo test passed on 17.0, 18.0 and 19.0; a live window check passed 7/7 (Edited here, Create into a module with the 19.0.1.0.1 prefill and Set Version, Add merging into the same file, Untitled, a hand-edited file left alone with a `_2` sibling written).
+
+### Rulings made while executing
+
+- Ruling: the round-1 re-review was a controller check (git diff 8ab975e 56bfcf8 empty, trailer grep) instead of a reviewer dispatch — a message-only amend has no code to review — cost if wrong: none.
+- Ruling: reviewer's Minor #1 (lone \r makes parseScript disagree with Python, so a merge can drop a hand-added entry) enters the fix loop — it breaks the Global Constraint "never overwrite a script file the extension cannot parse back exactly" and Task 6 relies on parseScript — cost if wrong: one small fix round.
+- Ruling: when the series is known, version folders must be the full form <series>.x.y or <series>.x.y.z (isVersionFolder(v, series)); fullVersion = adapt_version; needsManifestBump compares full forms and is false when the series is unknown; withSeries removed — a ≥3-dot folder is compared in full by every Odoo (verified convert_version 16/17/19 and adapt_version 17/19 in /home/odoo/odoo-dev) and is always a valid manifest version — cost if wrong: users cannot type a short folder like 1.0.1 (it worked on 17+).
+- Ruling: Task 7's brief is amended accordingly: versionPrefill takes the series and prefills bumpVersion(fullVersion(manifest ?? '1.0', series)) (bumpVersion(manifest) when no series); the InputBox validates isVersionFolder(input, series); normalizeDestination validates with isVersionFolder(version) (no series) — the plan code predates the rule — cost if wrong: none.
+- Ruling: Task 8 keeps manifest 1.0.0 → folder 1.0.1: on 17-19 that folder is majorless and still runs (installed[2:] 1.0.0 < 1.0.1 <= 1.0.1), so it tests the generated script, not the picker — cost if wrong: Task 8 fails on a version where that differs, and we switch it to the full form.
+- Ruling: fold review Minors #2 (core/enterprise roots not normalizePath'd, so relative settings disable the filter; designThemesPath not excluded) and #3 (post-write errors reported as "could not create") into fix round 1 — #2 guards the Global Constraint "never offer core or enterprise", both touch the same lines — cost if wrong: a slightly larger fix diff.
+- Ruling: Task 9 (docs copied verbatim from the plan + rebuilt dist) reviewed by the controller (diff read, tree clean) instead of a reviewer dispatch; the final whole-branch review covers the text — cost if wrong: a wording issue caught later.
+- Ruling: final fix wave takes Important 1 plus Minors 3 (say why a numbered sibling was written), 5 (module discovery failure must not block the Untitled option), 7 (README: after Set Version, -u needs upgrade-util on the upgrade path), 8 (CHANGELOG: Create covers views seen while still off, not every re-enabled view), 9 (no bare separator) — all cheap and user-facing — cost if wrong: none.
+- Ruling: Minor 2 (ruff format at 88 columns wraps the 118-column edit_view line, so the file stops parsing back) is not fixed: generated lines stay within upgrade-specific's 120-column limit, which is the corpus odoo-manager targeted; a reformatted file only means later Adds go to a numbered sibling, nothing is lost — cost if wrong: users with an 88-column ruff hook get end-update_views_2.py on the next Add.
+- Ruling: Minors 4 (Turn On waits for bookkeeping so the refresh shows the journal), 6 (unknown series accepts 4-5-part folders; master only) stay; all other deferred minors stay per the final review's triage.
+- Final: parked — manifest regex can still match a 'version': '<x>' inside an earlier string on the same line, and a '#' inside a string before the key on the same line hides it — Ruling: stays; keys sit one per line in real manifests — cost if wrong: Set Version inserts or edits the wrong spot in an odd manifest.
+
+### Minors left as they are
+
+- Task 1: updatedAt never set by buildNote (Task 4 service sets it)
+- Task 1: load() turns EACCES into an empty note, which a later write would overwrite; treat only ENOENT/parse errors as empty
+- Task 1: per-process queue only; installed build + F5 sandbox could lose a cross-process read-modify-write; queue map never pruned
+- Task 1: temp name pid.Date.now() could collide outside update(); baselined counts null hashes (mirrors Python); no dedupe of hand-edited ids; no test for save temp cleanup / written:null
+- Task 2: getDatabaseUuid has no unit test (query literal inline); parseFingerprints type-guard branches untested
+- Task 3: id-addressed entry key `id:<n>` has no database, so ids from two databases collide in one module folder; a view keyed by id then by xmlid gets two entries (planning ruling: accepted)
+- Task 3: keyOfLiteral uses JSON.parse, which differs from Python for hand-edited escapes like "\/"; no Number.isInteger guard on view.id in scriptEntry; NUL in name/arch makes Python refuse to compile (PostgreSQL text cannot hold NUL)
+- Task 4: each tree load adds 1-3 sequential psql calls (uuid always read in observe; journal rows after observe)
+- Task 4: a noted view deleted before it got a baseline keeps archMd5 undefined forever, so every tree load re-queries fingerprints (fix: baseline marks a missing fp as null when the map is readable)
+- Task 4: a note written while the uuid is unreadable has no stamp; untested: doctorGroups surviving a throwing observe, observe with an unreadable uuid
+- Task 5: ScriptSources.fingerprints contract should say "undefined on failure, never throw"; arches read sequentially
+- Task 6: setManifestVersion's insert goes after the first `{` even inside a header comment; a non-literal 'version' value is missed; comment lines are skipped since 8eea383, but a 'version': '<x>' inside an earlier string still matches
+- Task 6: CRLF manifest gets an LF line; merged CRLF script rewritten as LF; rename replaces a symlinked script and drops its mode; read→rename race window; EEXIST race surfaces as a raw error
+- Task 6: needsManifestBump('18.0.1.0.1','18.0.1.0.2','18.0') not asserted; needsManifestBump can't tell "no bump" from "cannot judge" (unknown series)
+- Task 7: "last used" label can show a version invalid for this database's series (prefill correctly refuses it); remembered destination saved before the write
+- Task 7: a showTextDocument error after the write still reads "Could not create the upgrade script"; the interactive flow is untested until Task 10's live check
+- Task 8: re-enabled view's ACTIVATE-only shape asserted on the build object, not on the written script/final arch; teardown not try/finally; latest_version regex could instead compare before/after
