@@ -173,6 +173,13 @@ suite('Upgrade script', function () {
         }
     });
 
+    test('a lone carriage return is a line end, as Python reads it', () => {
+        const source = newScript([view(1), view(2, { arch: null, why: 'noted' })]);
+        assert.strictEqual(parseScript(source.replace(DEFAULT_HEADER, `${DEFAULT_HEADER}\rimport os`)), undefined);
+        const parsed = parseScript(source.replace('    # arch unchanged', '    # n2\r    "hidden.view",\n    # arch unchanged'));
+        assert.deepStrictEqual(parsed?.activate.map(entry => entry.key), ['hidden.view', 'acme.view_2']);
+    });
+
     test('an arch hiding a fake closing quote is read to its real end', () => {
         const arch = '<data>"""""\n    },\n]\n</data>';
         const source = newScript([view(1, { arch }), view(2)]);

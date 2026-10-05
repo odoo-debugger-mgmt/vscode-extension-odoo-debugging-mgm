@@ -322,12 +322,12 @@ function parseViews(text: string, start: number): { entries: ScriptEntry[]; end:
 /**
  * A script this extension wrote, read back so new entries can be merged in;
  * undefined for anything else. The test is exact: the file must re-render byte
- * for byte from what was read (CRLF read as LF). Entries are kept verbatim, so
+ * for byte from what was read (CRLF and a lone CR read as LF, as Python does). Entries are kept verbatim, so
  * a comment edited inside one survives; code added anywhere does not parse,
  * and the caller writes a new file rather than lose it.
  */
 export function parseScript(source: string): ScriptFile | undefined {
-    const text = source.replace(/\r\n/g, '\n');
+    const text = source.replace(/\r\n?/g, '\n');
     let at = text.startsWith(LXML_IMPORT) ? LXML_IMPORT.length : 0;
     if (!text.startsWith(UTIL_IMPORT, at)) {
         return undefined;
