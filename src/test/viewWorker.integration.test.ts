@@ -22,6 +22,7 @@ import { buildViewWorkerArgs, viewWorkerEnv, VIEW_WORKER_APP_NAME } from '../ser
 import { ViewWorker, workerBootstrap, type WorkerTransport } from '../services/views/viewWorker';
 import { ViewWorkerPool } from '../services/views/viewWorkerPool';
 import { ViewService } from '../services/views/viewService';
+import { OdooFrameProxy } from '../services/views/odooFrameProxy';
 
 const python = process.env.ODT_VIEW_TEST_PYTHON;
 const odoo = process.env.ODT_VIEW_TEST_ODOO;
@@ -105,6 +106,30 @@ function freePort(): Promise<number> {
             probe.close(() => resolve(port));
         });
     });
+}
+
+/** A GET through the proxy, following redirects on its origin, with the cookie jar the webview would keep. */
+async function frameGet(port: number, path: string, cookies: string[]): Promise<{ status: number; headers: http.IncomingHttpHeaders; path: string }> {
+    for (let hop = 0; hop < 5; hop++) {
+        const reply = await new Promise<{ status: number; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
+            const request = http.request({ host: '127.0.0.1', port, path, headers: { cookie: cookies.join('; ') } }, response => {
+                response.resume();
+                response.on('end', () => resolve({ status: response.statusCode ?? 0, headers: response.headers }));
+            });
+            request.on('error', reject);
+            request.end();
+        });
+        for (const cookie of reply.headers['set-cookie'] ?? []) {
+            cookies.push(cookie.split(';')[0]);
+        }
+        const location = reply.headers.location;
+        if (reply.status < 300 || reply.status >= 400 || !location) {
+            return { ...reply, path };
+        }
+        assert.ok(location.startsWith('/'), `a redirect off the proxy: ${location}`);
+        path = location.split('#')[0];
+    }
+    throw new Error('too many redirects');
 }
 
 /** A JSON-RPC call with this session; resolves with `result`, rejects with Odoo's error. */
@@ -339,6 +364,38 @@ function jsonRpc(port: number, route: string, sid: string, extraCookie = ''): Pr
             // OdooBot, whose language the shell runs in, is French here.
             assert.strictEqual(info.user_context.lang, 'en_US');
         } finally {
+            await server.stop();
+        }
+    });
+
+    test('the frame proxy opens the rendered view on a real server, as admin, framable', async () => {
+        const action = await service.makeAction(copy, viewId);
+        const [record] = await service.recentIds(copy, 'res.partner');
+        const server = await startOdooServer(copy);
+        const proxy = new OdooFrameProxy({
+            targetPort: server.port,
+            mintSession: async () => {
+                const sid = await service.newSession(copy);
+                mintedSids.push(sid);
+                return sid;
+            }
+        });
+        try {
+            await proxy.listen();
+            const modern = !/^(1[0-6]\.|17\.0|saas~17\.1)/.test(action.series);
+            const next = modern ? `/odoo/action-${action.actionId}/${record}?debug=1` : `/web?debug=1#action=${action.actionId}&id=${record}&view_type=form`;
+            const cookies: string[] = [];
+            const page = await frameGet(proxy.port, proxy.gatePath(next), cookies);
+            assert.strictEqual(page.status, 200, `ended on ${page.path}`);
+            assert.ok(!page.path.startsWith('/web/login'), 'Odoo did not accept the minted session');
+            assert.strictEqual(page.headers['x-frame-options'], undefined);
+            assert.ok(!/frame-ancestors/.test(String(page.headers['content-security-policy'] ?? '')));
+            assert.ok(!cookies.some(cookie => cookie.startsWith('session_id=')), 'Odoo\'s session cookie reached the frame');
+            const gate = cookies.find(cookie => cookie.startsWith('odt_gate_'))!;
+            const info = await jsonRpc(proxy.port, '/web/session/get_session_info', 'ignored-by-the-proxy', gate);
+            assert.strictEqual(info.is_admin, true);
+        } finally {
+            await proxy.close();
             await server.stop();
         }
     });
