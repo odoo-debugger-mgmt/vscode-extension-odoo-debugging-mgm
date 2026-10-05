@@ -66,7 +66,12 @@ export class ViewFileSystemProvider implements vscode.FileSystemProvider {
     private readonly changes = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
     readonly onDidChangeFile = this.changes.event;
 
-    constructor(private readonly backend: ViewBackend, private readonly hooks: ViewFileHooks) {}
+    constructor(
+        private readonly backend: ViewBackend,
+        private readonly hooks: ViewFileHooks,
+        /** Views of such a database open read-only; kept out of the provider so it needs no settings. */
+        private readonly isReadOnly: (dbName: string) => boolean | Promise<boolean> = () => false
+    ) {}
 
     watch(): vscode.Disposable {
         return new vscode.Disposable(() => undefined);
@@ -81,11 +86,14 @@ export class ViewFileSystemProvider implements vscode.FileSystemProvider {
 
     async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
         const ref = this.ref(uri);
-        const mtime = await this.backend.writeDate(ref.dbName, ref.viewId);
+        const [mtime, readOnly] = await Promise.all([this.backend.writeDate(ref.dbName, ref.viewId), this.isReadOnly(ref.dbName)]);
         if (mtime === undefined) {
             throw vscode.FileSystemError.FileNotFound(uri);
         }
-        return { type: vscode.FileType.File, ctime: 0, mtime, size: viewFileSize(mtime) };
+        return {
+            type: vscode.FileType.File, ctime: 0, mtime, size: viewFileSize(mtime),
+            ...(readOnly ? { permissions: vscode.FilePermission.Readonly } : {})
+        };
     }
 
     async readFile(uri: vscode.Uri): Promise<Uint8Array> {
@@ -95,6 +103,10 @@ export class ViewFileSystemProvider implements vscode.FileSystemProvider {
 
     async writeFile(uri: vscode.Uri, content: Uint8Array, _options: { create: boolean; overwrite: boolean }): Promise<void> {
         const ref = this.ref(uri);
+        if (await this.isReadOnly(ref.dbName)) {
+            throw vscode.FileSystemError.NoPermissions(
+                `${ref.dbName} is the upgrade's original database, so its views are read-only. Turn on odooDebugger.views.allowEditOriginal to edit them.`);
+        }
         const text = Buffer.from(content).toString('utf-8');
         // Throws when Odoo rejects the arch: VS Code shows the message and keeps the editor dirty.
         const result = await this.backend.save(ref.dbName, ref.viewId, text);

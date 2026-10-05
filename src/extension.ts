@@ -49,6 +49,7 @@ import { readSetupState, shouldAdoptLegacySourceRepo, readRawSetupSettings, writ
 import { showBriefStatus, showInfo, showWarning } from './services/notifications';
 import { VIEW_SCHEME, ViewFileSystemProvider, parseViewUri, type ViewRef } from './views/viewFileSystem';
 import { ViewArchPoller } from './views/viewPoll';
+import { isReadOnlyOriginal, type PairProject } from './views/viewPairing';
 import { archErrorSummary, locateArchError, readableArchError } from './services/views/archErrors';
 import { getWriteDates } from './services/views/viewQueries';
 import { getDefaultVersionSettings, normalizePath, resolveOptionalPath } from './utils';
@@ -227,8 +228,20 @@ export async function activate(context: vscode.ExtensionContext) {
             }
             providers.views.refresh();
         }
+    }, async dbName => {
+        const allowEdit = vscode.workspace.getConfiguration('odooDebugger').get<boolean>('views.allowEditOriginal', false);
+        const result = await SettingsStore.peekSelectedProject().catch(() => null);
+        return isReadOnlyOriginal(result?.project as PairProject | undefined, dbName, allowEdit);
     });
     context.subscriptions.push(vscode.workspace.registerFileSystemProvider(VIEW_SCHEME, viewFiles, { isCaseSensitive: true }));
+    // Open arches re-read their permissions when the setting flips.
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+        if (event.affectsConfiguration('odooDebugger.views.allowEditOriginal')) {
+            viewFiles.notifyChanged(vscode.workspace.textDocuments
+                .filter(document => document.uri.scheme === VIEW_SCHEME)
+                .map(document => document.uri));
+        }
+    }));
 
     // Edits made in Odoo's own UI: one psql query per database every 3 s,
     // and only while an arch tab is open.

@@ -102,6 +102,16 @@ suite('View arch files', () => {
         assert.strictEqual(saved, 0);
     });
 
+    test('a read-only database\'s views stat read-only and refuse a save', async () => {
+        const backend = new FakeBackend();
+        const original = viewUri('shop-17', 12, 'x');
+        const provider = new ViewFileSystemProvider(backend, { onSaved: () => undefined }, async dbName => dbName === 'shop-17');
+        assert.strictEqual((await provider.stat(original)).permissions, vscode.FilePermission.Readonly);
+        assert.strictEqual((await provider.stat(uri)).permissions, undefined);
+        await assert.rejects(provider.writeFile(original, Buffer.from('<data/>'), { create: false, overwrite: true }), /read-only/);
+        assert.strictEqual(backend.arches.get(12), '<data>é</data>', 'nothing reached the database');
+    });
+
     test('views cannot be created, deleted, renamed or listed', () => {
         const provider = new ViewFileSystemProvider(new FakeBackend(), { onSaved: () => undefined });
         assert.throws(() => provider.delete(uri), vscode.FileSystemError);

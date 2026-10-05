@@ -2023,6 +2023,11 @@
           "default": false,
           "description": "After starting the Odoo server, open the web client in the browser once the server port accepts connections."
         },
+        "odooDebugger.views.allowEditOriginal": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow saving views of the upgrade's original database. Off by default, so the original stays as it was before the upgrade."
+        },
         "odooDebugger.editorActions.enabled": {
           "type": "boolean",
           "default": true,
