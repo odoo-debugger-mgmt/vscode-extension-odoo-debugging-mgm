@@ -170,6 +170,15 @@ export class ViewRenderPanel implements vscode.Disposable {
         }
     }
 
+    /**
+     * The toolbar's Reload: the page is rebuilt, which reloads every frame
+     * and asks again which servers answer, so a side whose server stopped
+     * says so and offers to start it, and one that came back shows again.
+     */
+    async reload(): Promise<void> {
+        await this.update();
+    }
+
     dispose(): void {
         const panel = this.panel;
         this.generation++;
@@ -231,7 +240,7 @@ export class ViewRenderPanel implements vscode.Disposable {
         try {
             switch (action) {
                 case 'reload':
-                    void this.panel?.webview.postMessage({ type: 'reload' });
+                    await this.reload();
                     return;
                 case 'previous':
                     if (session.previous()) {

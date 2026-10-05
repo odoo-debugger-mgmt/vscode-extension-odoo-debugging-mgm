@@ -109,6 +109,20 @@ suite('Render tab', () => {
         panel.dispose();
     });
 
+    test('Reload asks again which servers answer, so a stopped one shows its message and Start', async () => {
+        const { backend, host } = gated(new Map());
+        let asked = 0;
+        host.isPortOpen = async () => { asked++; return asked === 1; };
+        const panel = new ViewRenderPanel(backend, host);
+        await panel.show(requestFor(1, 'first'));
+        assert.strictEqual(asked, 1);
+        await panel.reload();
+        assert.strictEqual(asked, 2, 'Reload only reloaded the frames, so a stopped server still showed a proxy error');
+        panel.dispose();
+        await panel.reload();
+        assert.strictEqual(asked, 2, 'a closed tab asks nothing');
+    });
+
     test('a tab closed while a render prepares stays closed', async () => {
         let release!: () => void;
         const slow = new Promise<void>(resolve => { release = resolve; });
