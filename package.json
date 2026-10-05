@@ -113,6 +113,8 @@
       { "command": "viewDoctor.activate", "title": "Turn On", "category": "Odoo DevTools" },
       { "command": "viewDoctor.deactivate", "title": "Turn Off…", "category": "Odoo DevTools" },
       { "command": "viewDoctor.copyXmlid", "title": "Copy External ID", "category": "Odoo DevTools" },
+      { "command": "viewDoctor.createScript", "title": "Create Upgrade Script…", "category": "Odoo DevTools", "icon": "$(file-code)" },
+      { "command": "viewDoctor.addToScript", "title": "Add to Upgrade Script…", "category": "Odoo DevTools" },
       {
         "command": "viewDoctor.refresh",
         "title": "Refresh Views",
@@ -843,6 +845,11 @@
       ],
       "view/title": [
         {
+          "command": "viewDoctor.createScript",
+          "when": "view == viewDoctor",
+          "group": "navigation@0"
+        },
+        {
           "command": "viewDoctor.refresh",
           "when": "view == viewDoctor",
           "group": "navigation@1"
@@ -1113,6 +1120,7 @@
         { "command": "viewDoctor.render", "when": "view == viewDoctor && viewItem =~ /^odooView\\./", "group": "1_open@4" },
         { "command": "viewDoctor.activate", "when": "view == viewDoctor && viewItem =~ /^odooView\\.inactive/", "group": "2_state@1" },
         { "command": "viewDoctor.copyXmlid", "when": "view == viewDoctor && viewItem =~ /^odooView\\.\\w+\\.\\w+$/", "group": "3_copy@1" },
+        { "command": "viewDoctor.addToScript", "when": "view == viewDoctor && viewItem =~ /^odooView\\.active/", "group": "4_script@1" },
         { "command": "viewDoctor.deactivate", "when": "view == viewDoctor && viewItem =~ /^odooView\\.active/", "group": "9_danger@1" },
         {
           "command": "projectSelector.editSettings",
@@ -1378,6 +1386,7 @@
         { "command": "viewDoctor.activate", "when": "false" },
         { "command": "viewDoctor.deactivate", "when": "false" },
         { "command": "viewDoctor.copyXmlid", "when": "false" },
+        { "command": "viewDoctor.addToScript", "when": "false" },
         {
           "command": "upgradeSelector.toggleSourceModules",
           "when": "odoo-debugger.upgrade_enabled"

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { CommandDeps } from './index';
 import { registerCommand } from './registerCommand';
-import { ViewItem } from '../views/viewDoctorView';
+import { ViewItem, resolveViewDoctorTarget } from '../views/viewDoctorView';
 import { clearViewDiagnostics, viewUri } from '../views/viewFileSystem';
 import { showBriefStatus, showError, showInfo, showModalWarning } from '../services/notifications';
 import { SettingsStore } from '../settingsStore';
@@ -9,6 +9,7 @@ import { compareTargets, diffArguments, findCounterpart, upgradePair, type PairP
 import { errorMessage } from '../services/logger';
 import { qwebMessage } from '../services/views/renderPlan';
 import type { RenderTarget } from '../services/views/renderSession';
+import { createUpgradeScript } from '../views/upgradeScriptFlow';
 import { readableArchError } from '../services/views/archErrors';
 
 function viewItem(arg: unknown): ViewItem | undefined {
@@ -162,6 +163,32 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
             showBriefStatus('Copied.');
         } else {
             showBriefStatus(`${item.view.name} has no external ID.`);
+        }
+    }));
+
+    context.subscriptions.push(registerCommand('viewDoctor.createScript', async () => {
+        const project = (await SettingsStore.peekSelectedProject().catch(() => null))?.project;
+        const target = resolveViewDoctorTarget(project as Parameters<typeof resolveViewDoctorTarget>[0]);
+        if (!target) {
+            void showInfo('Select a database first.');
+            return;
+        }
+        try {
+            await createUpgradeScript(deps, target.dbName);
+        } catch (error) {
+            void showError(`Could not create the upgrade script: ${errorMessage(error)}`);
+        }
+    }));
+
+    context.subscriptions.push(registerCommand('viewDoctor.addToScript', async (arg: unknown) => {
+        const item = viewItem(arg);
+        if (!item) {
+            return;
+        }
+        try {
+            await createUpgradeScript(deps, item.dbName, item.view.id);
+        } catch (error) {
+            void showError(`Could not add ${item.view.name} to an upgrade script: ${errorMessage(error)}`);
         }
     }));
 }
