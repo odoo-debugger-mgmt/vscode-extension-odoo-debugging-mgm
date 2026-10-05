@@ -25,6 +25,17 @@ suite('Matching a view across databases', () => {
         assert.strictEqual(matchView(source, { rows: [other] }).kind, 'none');
     });
 
+    test('a list view and its tree original are one type (18.0 renamed it)', () => {
+        const list = row(40, { type: 'list', name: 'partner.list' });
+        const sameId = row(40, { type: 'tree', name: 'old name' });
+        assert.deepStrictEqual(matchView(list, { rows: [sameId] }), { kind: 'id', view: sameId });
+        const named = row(52, { type: 'tree', name: 'partner.list' });
+        assert.deepStrictEqual(matchView(list, { rows: [row(51, { type: 'tree' }), named] }), { kind: 'name', view: named });
+        const back = row(40, { type: 'list' });
+        assert.deepStrictEqual(matchView(sameId, { rows: [back] }), { kind: 'id', view: back });
+        assert.strictEqual(matchView(row(40, { type: 'form' }), { rows: [sameId] }).kind, 'none');
+    });
+
     test('then the one view with the same model, type and name', () => {
         const named = row(52, { name: 'partner.custom' });
         assert.deepStrictEqual(matchView(source, { rows: [row(51), named] }), { kind: 'name', view: named });

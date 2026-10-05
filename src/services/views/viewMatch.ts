@@ -18,11 +18,16 @@ export type ViewMatch =
     | { kind: 'pick'; candidates: ViewRow[] }
     | { kind: 'none' };
 
+/** 18.0 renamed the list view type from 'tree'; one view keeps its identity across that. */
+function viewKind(type: string): string {
+    return type === 'tree' ? 'list' : type;
+}
+
 export function matchView(source: ViewRow, found: CounterpartRows): ViewMatch {
     if (found.byXmlid) {
         return { kind: 'xmlid', view: found.byXmlid };
     }
-    const similar = found.rows.filter(view => view.model === source.model && view.type === source.type);
+    const similar = found.rows.filter(view => view.model === source.model && viewKind(view.type) === viewKind(source.type));
     const sameId = similar.find(view => view.id === source.id);
     if (sameId) {
         return { kind: 'id', view: sameId };

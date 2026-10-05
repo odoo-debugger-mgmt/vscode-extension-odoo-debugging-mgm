@@ -58,6 +58,16 @@ suite('View queries over text', () => {
         assert.throws(() => viewsLikeSql({ id: -1, model: 'res.partner', type: 'form' }), /Not a view id/);
     });
 
+    test('a list or tree view matches both types, any other only its own', () => {
+        for (const type of ['list', 'tree']) {
+            const sql = viewsLikeSql({ id: 5, model: 'res.partner', type });
+            assert.ok(sql.includes(`v.type IN (${sqlText('tree')}, ${sqlText('list')})`), sql);
+        }
+        const form = viewsLikeSql({ id: 5, model: 'res.partner', type: 'form' });
+        assert.ok(form.includes(`v.type = ${sqlText('form')}`), form);
+        assert.ok(!form.includes(sqlText('list')) && !form.includes(sqlText('tree')), form);
+    });
+
     test('an external id is split into module and name, and needs both', () => {
         const sql = viewByXmlidSql('studio_customization.odoo_studio_x.y');
         assert.ok(sql?.includes(`d.module = ${sqlText('studio_customization')}`));

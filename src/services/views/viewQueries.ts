@@ -186,7 +186,11 @@ export async function findViewByXmlid(dbName: string, xmlid: string): Promise<Vi
 
 /** The query for the view with this id and every view of the same model and type. */
 export function viewsLikeSql(view: Pick<ViewRow, 'id' | 'model' | 'type'>): string {
-    return viewRowsSql(`(v.id = ${sqlIdList([view.id])} OR (v.model = ${sqlText(view.model)} AND v.type = ${sqlText(view.type)}))`);
+    // 18.0 renamed the list type from 'tree': an upgraded list view is 'list', its original 'tree'.
+    const type = view.type === 'tree' || view.type === 'list'
+        ? `v.type IN (${sqlText('tree')}, ${sqlText('list')})`
+        : `v.type = ${sqlText(view.type)}`;
+    return viewRowsSql(`(v.id = ${sqlIdList([view.id])} OR (v.model = ${sqlText(view.model)} AND ${type}))`);
 }
 
 /** What matching a view of another database picks from: the same id, and its model and type's views. */
