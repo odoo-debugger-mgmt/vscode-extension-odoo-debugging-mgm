@@ -20,7 +20,7 @@ async function openArch(dbName: string, viewId: number, xmlid: string | null): P
 }
 
 export function registerViewDoctorCommands(deps: CommandDeps): void {
-    const { context, providers, viewService, viewDiagnostics, viewRender } = deps;
+    const { context, providers, viewService, viewNotes, viewDiagnostics, viewRender } = deps;
 
     context.subscriptions.push(registerCommand('viewDoctor.refresh', () => providers.views.refresh()));
 
@@ -116,6 +116,7 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
         }
         try {
             await viewService.activate(item.dbName, item.view.id);
+            await viewNotes.recordActivate(item.dbName, item.view.id);
             viewRender.reloadDatabase(item.dbName);
             // The reason a save left it off no longer holds.
             clearViewDiagnostics(viewDiagnostics, item.dbName, item.view.id);

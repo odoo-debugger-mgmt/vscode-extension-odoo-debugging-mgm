@@ -55,6 +55,8 @@ import { archErrorSummary, locateArchError, readableArchError } from './services
 import { getWriteDates } from './services/views/viewQueries';
 import { getDefaultVersionSettings, normalizePath, resolveOptionalPath } from './utils';
 import { StatusBarIndicators } from './views/statusBar';
+import { ViewNoteService } from './services/views/viewNoteService';
+import { ViewNoteStore } from './services/views/viewNotes';
 import { registerAllCommands, RefreshReason } from './commands';
 import { offerToReopenByPath } from './projectWorkspace';
 import { initializeBinding } from './services/workspaceBinding';
@@ -129,7 +131,9 @@ export async function activate(context: vscode.ExtensionContext) {
             )
         }
     );
-    const viewService = new ViewService(viewWorkers);
+    // What the upgrade disabled and what was changed here, per database, for upgrade scripts.
+    const viewNotes = new ViewNoteService(new ViewNoteStore(path.join(context.globalStorageUri.fsPath, 'view-notes')));
+    const viewService = new ViewService(viewWorkers, viewNotes);
     const viewRender = new ViewRenderPanel(viewService);
     context.subscriptions.push(viewRender);
     context.subscriptions.push(viewWorkers, onBeforeDatabaseRelease(dbName => viewWorkers.release(dbName)));
@@ -230,7 +234,8 @@ export async function activate(context: vscode.ExtensionContext) {
                 showBriefStatus(result.activated ? 'Saved, and the view is on.' : 'Saved.');
             }
             viewRender.reloadDatabase(ref.dbName);
-            providers.views.refresh();
+            // The tree shows the journal, so refresh once the save is in it.
+            void viewNotes.recordSave(ref.dbName, ref.viewId, result.activated).then(() => providers.views.refresh());
         }
     }, async dbName => {
         const allowEdit = vscode.workspace.getConfiguration('odooDebugger').get<boolean>('views.allowEditOriginal', false);
@@ -353,7 +358,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     };
 
-    registerAllCommands({ context, providers, versionsService, sortPreferences, viewService, viewDiagnostics, viewRender, moduleTreeView, dbTreeView, refreshAll });
+    registerAllCommands({ context, providers, versionsService, sortPreferences, viewService, viewNotes, viewDiagnostics, viewRender, moduleTreeView, dbTreeView, refreshAll });
 
     // Another window wrote to a shared store, or this window switched stores:
     // re-read everything. Debounced, because one save elsewhere can touch

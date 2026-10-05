@@ -40,4 +40,10 @@ suite('View Doctor groups', () => {
         assert.deepStrictEqual(groups.upgradeDisabled, []);
         assert.deepStrictEqual(groups.missingIds, [40]);
     });
+
+    test('lists the views changed here, by model then id, whatever their state', () => {
+        const groups = groupViews([], new Map(), [], [row(9, { model: 'b' }), row(3, { model: 'b', active: true }), row(5, { model: 'a' })]);
+        assert.deepStrictEqual(groups.edited.map(view => view.id), [5, 3, 9]);
+        assert.deepStrictEqual(groupViews([], new Map(), []).edited, []);
+    });
 });

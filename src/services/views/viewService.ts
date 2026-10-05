@@ -5,6 +5,8 @@
 import type { ViewWorkerPool } from './viewWorkerPool';
 import { getReportMessages, getViewRows, getWriteDates, listInactiveViews, type ViewRow } from './viewQueries';
 import { mergeReports, parseDisabledViews } from './disabledReport';
+import type { ViewNoteService } from './viewNoteService';
+import { logger } from '../logger';
 import { groupViews, type ViewGroups } from './viewGroups';
 
 export interface SaveResult {
@@ -35,7 +37,7 @@ export interface ViewBackend {
 }
 
 export class ViewService implements ViewBackend {
-    constructor(private readonly pool: ViewWorkerPool) {}
+    constructor(private readonly pool: ViewWorkerPool, private readonly notes?: ViewNoteService) {}
 
     async writeDate(dbName: string, viewId: number): Promise<number | undefined> {
         return (await getWriteDates(dbName, [viewId])).get(viewId);
@@ -77,12 +79,22 @@ export class ViewService implements ViewBackend {
         return getViewRows(dbName, ids);
     }
 
-    /** The tree's content: psql only, so it shows without waiting for a shell. */
+    /** The tree's content: psql only, so it shows without waiting for a shell. Keeps the note up to date on the way. */
     async doctorGroups(dbName: string): Promise<ViewGroups> {
         const [inactive, messages] = await Promise.all([listInactiveViews(dbName), getReportMessages(dbName)]);
         const reported = mergeReports(messages.map(message => parseDisabledViews(message.body)));
         const inactiveIds = new Set(inactive.map(view => view.id));
         const reEnabled = await getViewRows(dbName, [...reported.keys()].filter(id => !inactiveIds.has(id)));
-        return groupViews(inactive, reported, reEnabled);
+        let edited: ViewRow[] = [];
+        if (this.notes) {
+            try {
+                const rows = new Map([...inactive, ...reEnabled].map(view => [view.id, view]));
+                const note = await this.notes.observe(dbName, reported, rows);
+                edited = await getViewRows(dbName, note.journal.map(entry => entry.id));
+            } catch (error) {
+                logger.warn(`Could not update the view note of ${dbName}:`, error);
+            }
+        }
+        return groupViews(inactive, reported, reEnabled, edited);
     }
 }

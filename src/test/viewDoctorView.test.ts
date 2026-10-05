@@ -20,7 +20,8 @@ const groups: ViewGroups = {
     ],
     upgradeVersions: ['17.0', '18.0'],
     otherInactive: [row(20, { inheritId: null, rootId: 20 })],
-    missingIds: [99]
+    missingIds: [99],
+    edited: []
 };
 
 suite('Views tree', () => {
@@ -84,7 +85,7 @@ suite('Views tree', () => {
     });
 
     test('a database with nothing off says so', () => {
-        const rows = buildDoctorRows('shop-18', { upgradeDisabled: [], upgradeVersions: [], otherInactive: [], missingIds: [] });
+        const rows = buildDoctorRows('shop-18', { upgradeDisabled: [], upgradeVersions: [], otherInactive: [], missingIds: [], edited: [] });
         assert.deepStrictEqual(rows.map(item => item.label), ['No views are turned off in shop-18.']);
     });
 
@@ -94,5 +95,15 @@ suite('Views tree', () => {
         assert.strictEqual(await provider.getChildren(upgrade), upgrade.children);
         assert.deepStrictEqual(await provider.getChildren(upgrade.children[0]), []);
         provider.dispose();
+    });
+
+    test('shows the views changed here between the upgrade group and the other inactive views', () => {
+        const edited = { id: 4, name: 'Edited form', model: 'res.partner', type: 'form', active: true, inheritId: null, xmlid: 'acme.f', rootId: 4, isReport: false, writeDate: 0 };
+        const rows = buildDoctorRows('shop', { upgradeDisabled: [], upgradeVersions: [], otherInactive: [{ ...edited, id: 5, active: false }], missingIds: [], edited: [edited] });
+        assert.deepStrictEqual(rows.map(item => item.label), ['Edited here', 'Other inactive views']);
+        const group = rows[0] as ViewGroupItem;
+        assert.strictEqual(group.collapsibleState, vscode.TreeItemCollapsibleState.Expanded);
+        assert.strictEqual(group.description, '1');
+        assert.strictEqual(group.children[0].id, 'shop:edited:4:on');
     });
 });

@@ -19,9 +19,11 @@ export interface ViewGroups {
     otherInactive: ViewRow[];
     /** Listed by a report, but no longer in the database. */
     missingIds: number[];
+    /** Views this extension saved or turned on (the note's journal), whatever their state now. */
+    edited: ViewRow[];
 }
 
-export function groupViews(inactive: ViewRow[], reported: Map<number, string[]>, reportedRows: ViewRow[]): ViewGroups {
+export function groupViews(inactive: ViewRow[], reported: Map<number, string[]>, reportedRows: ViewRow[], edited: ViewRow[] = []): ViewGroups {
     const byId = new Map<number, ViewRow>();
     for (const view of [...inactive, ...reportedRows]) {
         byId.set(view.id, view);
@@ -50,5 +52,11 @@ export function groupViews(inactive: ViewRow[], reported: Map<number, string[]>,
     const otherInactive = inactive.filter(view =>
         !reported.has(view.id) && (view.type !== 'qweb' || view.isReport));
 
-    return { upgradeDisabled, upgradeVersions, otherInactive, missingIds };
+    return {
+        upgradeDisabled,
+        upgradeVersions,
+        otherInactive,
+        missingIds,
+        edited: [...edited].sort((a, b) => a.model.localeCompare(b.model) || a.id - b.id)
+    };
 }

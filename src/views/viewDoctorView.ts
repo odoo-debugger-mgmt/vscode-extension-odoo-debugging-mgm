@@ -32,7 +32,7 @@ export function resolveViewDoctorTarget(
 }
 
 export class ViewItem extends vscode.TreeItem {
-    constructor(readonly dbName: string, readonly view: ViewRow, section: 'upgrade' | 'other', versions: string[] = []) {
+    constructor(readonly dbName: string, readonly view: ViewRow, section: 'upgrade' | 'edited' | 'other', versions: string[] = []) {
         super(view.name, vscode.TreeItemCollapsibleState.None);
         // Keyed by state too: a row that changes state is a different row.
         this.id = `${dbName}:${section}:${view.id}:${view.active ? 'on' : 'off'}`;
@@ -84,6 +84,16 @@ export function buildDoctorRows(dbName: string, groups: ViewGroups): vscode.Tree
         }
         const parts = [`${off} off`, ...(on > 0 ? [`${on} re-enabled`] : []), ...(groups.upgradeVersions.length > 0 ? [groups.upgradeVersions.join(', ')] : [])];
         rows.push(new ViewGroupItem('Disabled by upgrade', `${dbName}:group:upgrade`, children, true, parts.join(' · ')));
+    }
+
+    if (groups.edited.length > 0) {
+        rows.push(new ViewGroupItem(
+            'Edited here',
+            `${dbName}:group:edited`,
+            groups.edited.map(view => new ViewItem(dbName, view, 'edited')),
+            true,
+            String(groups.edited.length)
+        ));
     }
 
     if (groups.otherInactive.length > 0) {

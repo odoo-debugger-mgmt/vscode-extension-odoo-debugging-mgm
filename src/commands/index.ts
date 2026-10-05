@@ -11,6 +11,7 @@ import type { VersionsService } from '../versionsService';
 import type { SortPreferences } from '../sortPreferences';
 import type { ViewRenderPanel } from '../views/viewRenderPanel';
 import type { ViewDoctorTreeProvider } from '../views/viewDoctorView';
+import type { ViewNoteService } from '../services/views/viewNoteService';
 import type { ViewService } from '../services/views/viewService';
 import { registerViewCommands } from './viewCommands';
 import { registerProjectCommands } from './projectCommands';
@@ -57,6 +58,8 @@ export interface CommandDeps {
     sortPreferences: SortPreferences;
     /** Arch reads/writes and activation for the View Doctor. */
     viewService: ViewService;
+    /** Each database's note of disabled views and the journal of changes made here. */
+    viewNotes: ViewNoteService;
     /** Odoo's reasons saved views stay off, on their arch files. */
     viewDiagnostics: vscode.DiagnosticCollection;
     /** The render tab, reused by every Render. */
