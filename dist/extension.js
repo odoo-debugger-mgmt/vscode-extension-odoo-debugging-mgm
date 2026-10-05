@@ -79,19 +79,21 @@ const environment_2 = __webpack_require__(51);
 const branches_1 = __webpack_require__(52);
 const setupState_1 = __webpack_require__(71);
 const notifications_1 = __webpack_require__(16);
-const viewFileSystem_1 = __webpack_require__(117);
-const viewPoll_1 = __webpack_require__(118);
-const archErrors_1 = __webpack_require__(119);
+const viewRenderPanel_1 = __webpack_require__(117);
+const viewFileSystem_1 = __webpack_require__(122);
+const viewPoll_1 = __webpack_require__(123);
+const viewPairing_1 = __webpack_require__(124);
+const archErrors_1 = __webpack_require__(126);
 const viewQueries_1 = __webpack_require__(107);
 const utils_1 = __webpack_require__(8);
-const statusBar_1 = __webpack_require__(120);
-const commands_1 = __webpack_require__(121);
-const projectWorkspace_1 = __webpack_require__(125);
+const statusBar_1 = __webpack_require__(127);
+const commands_1 = __webpack_require__(128);
+const projectWorkspace_1 = __webpack_require__(132);
 const workspaceBinding_1 = __webpack_require__(63);
 const workspaceRegistry_1 = __webpack_require__(82);
 const bindingCommand_1 = __webpack_require__(84);
-const goneElsewhere_1 = __webpack_require__(147);
-const storeSwitch_1 = __webpack_require__(148);
+const goneElsewhere_1 = __webpack_require__(154);
+const storeSwitch_1 = __webpack_require__(155);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -146,6 +148,8 @@ async function activate(context) {
         onStarting: (dbName, ready) => void vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Starting an Odoo shell on ${dbName}…` }, () => ready.catch(() => undefined))
     });
     const viewService = new viewService_1.ViewService(viewWorkers);
+    const viewRender = new viewRenderPanel_1.ViewRenderPanel(viewService);
+    context.subscriptions.push(viewRender);
     context.subscriptions.push(viewWorkers, (0, postgres_1.onBeforeDatabaseRelease)(dbName => viewWorkers.release(dbName)));
     let viewDoctorTreeView;
     const providers = {
@@ -221,7 +225,7 @@ async function activate(context) {
         }
     }));
     const viewFiles = new viewFileSystem_1.ViewFileSystemProvider(viewService, {
-        onSaved: (_ref, result, uri, text) => {
+        onSaved: (ref, result, uri, text) => {
             if (result.activationError) {
                 const where = (0, archErrors_1.locateArchError)(text, result.activationError);
                 const diagnostic = new vscode.Diagnostic(new vscode.Range(where.line, where.start, where.line, where.end), (0, archErrors_1.readableArchError)(result.activationError), vscode.DiagnosticSeverity.Error);
@@ -233,10 +237,23 @@ async function activate(context) {
                 viewDiagnostics.delete(uri);
                 (0, notifications_1.showBriefStatus)(result.activated ? 'Saved, and the view is on.' : 'Saved.');
             }
+            viewRender.reloadDatabase(ref.dbName);
             providers.views.refresh();
         }
+    }, async (dbName) => {
+        const allowEdit = vscode.workspace.getConfiguration('odooDebugger').get('views.allowEditOriginal', false);
+        const result = await settingsStore_1.SettingsStore.peekSelectedProject().catch(() => null);
+        return (0, viewPairing_1.isReadOnlyOriginal)(result?.project, dbName, allowEdit);
     });
     context.subscriptions.push(vscode.workspace.registerFileSystemProvider(viewFileSystem_1.VIEW_SCHEME, viewFiles, { isCaseSensitive: true }));
+    // Open arches re-read their permissions when the setting flips.
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+        if (event.affectsConfiguration('odooDebugger.views.allowEditOriginal')) {
+            viewFiles.notifyChanged(vscode.workspace.textDocuments
+                .filter(document => document.uri.scheme === viewFileSystem_1.VIEW_SCHEME)
+                .map(document => document.uri));
+        }
+    }));
     // Edits made in Odoo's own UI: one psql query per database every 3 s,
     // and only while an arch tab is open.
     const viewPoller = new viewPoll_1.ViewArchPoller(viewQueries_1.getWriteDates, (uris, edited) => {
@@ -329,7 +346,7 @@ async function activate(context) {
             await refreshViews();
         }
     };
-    (0, commands_1.registerAllCommands)({ context, providers, versionsService, sortPreferences, viewService, viewDiagnostics, moduleTreeView, dbTreeView, refreshAll });
+    (0, commands_1.registerAllCommands)({ context, providers, versionsService, sortPreferences, viewService, viewDiagnostics, viewRender, moduleTreeView, dbTreeView, refreshAll });
     // Another window wrote to a shared store, or this window switched stores:
     // re-read everything. Debounced, because one save elsewhere can touch
     // several documents and each is its own change.
@@ -21972,6 +21989,18 @@ class ViewService {
     async deactivate(dbName, viewId) {
         await this.pool.run(dbName, 'deactivate', { view_id: viewId });
     }
+    /** An admin session id the database's running server accepts. */
+    async newSession(dbName) {
+        return (await this.pool.run(dbName, 'new_session')).sid;
+    }
+    async makeAction(dbName, viewId) {
+        const raw = await this.pool.run(dbName, 'make_action', { view_id: viewId });
+        return { actionId: raw.action_id, model: raw.model, viewType: raw.view_type, rootId: raw.root_id, series: raw.series };
+    }
+    /** The newest ids of a model the render user can open, newest first. */
+    async recentIds(dbName, model, limit = 200) {
+        return (await this.pool.run(dbName, 'recent_ids', { model, limit })).ids;
+    }
     rows(dbName, ids) {
         return (0, viewQueries_1.getViewRows)(dbName, ids);
     }
@@ -21994,6 +22023,7 @@ exports.ViewService = ViewService;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.sqlIdList = sqlIdList;
+exports.sqlText = sqlText;
 exports.viewRowsSql = viewRowsSql;
 exports.parseViewRows = parseViewRows;
 exports.parseReportMessages = parseReportMessages;
@@ -22002,13 +22032,18 @@ exports.listInactiveViews = listInactiveViews;
 exports.getViewRows = getViewRows;
 exports.getReportMessages = getReportMessages;
 exports.getWriteDates = getWriteDates;
+exports.viewByXmlidSql = viewByXmlidSql;
+exports.findViewByXmlid = findViewByXmlid;
+exports.viewsLikeSql = viewsLikeSql;
+exports.findViewsLike = findViewsLike;
 /**
  * Read-only SQL for the View Doctor, through psql. Every query returns one
  * JSON value (json_agg / json_object_agg): view names and Discuss bodies are
  * free text with tabs and newlines, which the `|`-separated readers in
  * database.ts would split. Ported from odoo-manager's docker_manager.py
  * (list_disabled_views, _first_xmlid, the Discuss report query). Ids are
- * validated integers; nothing else is ever interpolated.
+ * validated integers and text goes in hex-encoded (sqlText); nothing else is
+ * ever interpolated.
  */
 const postgres_1 = __webpack_require__(47);
 /** Ids for embedding in SQL; throws on anything that is not a positive integer. */
@@ -22019,6 +22054,13 @@ function sqlIdList(ids) {
         }
     }
     return ids.join(',');
+}
+/**
+ * Text for embedding in SQL. Hex digits cannot close a literal, so no value
+ * - a model, a view name, an external id - can change the query.
+ */
+function sqlText(value) {
+    return `convert_from(decode('${Buffer.from(value, 'utf-8').toString('hex')}', 'hex'), 'UTF8')`;
 }
 /**
  * The view rows matching `where`, an expression over ir_ui_view aliased `v`.
@@ -22128,6 +22170,28 @@ async function getWriteDates(dbName, ids) {
     const sql = 'SELECT coalesce(json_object_agg(id, floor(extract(epoch FROM write_date) * 1000)), \'{}\'::json) '
         + `FROM ir_ui_view WHERE id IN (${sqlIdList(ids)});`;
     return parseWriteDates(await (0, postgres_1.runSql)(dbName, sql));
+}
+/** The query for the view with this external id; undefined for a string that is not module.name. */
+function viewByXmlidSql(xmlid) {
+    const dot = xmlid.indexOf('.');
+    if (dot <= 0 || dot === xmlid.length - 1) {
+        return undefined;
+    }
+    return viewRowsSql(`v.id IN (SELECT d.res_id FROM ir_model_data d WHERE d.model = 'ir.ui.view'
+        AND d.module = ${sqlText(xmlid.slice(0, dot))} AND d.name = ${sqlText(xmlid.slice(dot + 1))})`);
+}
+/** The view with this external id, if the database has one. */
+async function findViewByXmlid(dbName, xmlid) {
+    const sql = viewByXmlidSql(xmlid);
+    return sql ? parseViewRows(await (0, postgres_1.runSql)(dbName, sql))[0] : undefined;
+}
+/** The query for the view with this id and every view of the same model and type. */
+function viewsLikeSql(view) {
+    return viewRowsSql(`(v.id = ${sqlIdList([view.id])} OR (v.model = ${sqlText(view.model)} AND v.type = ${sqlText(view.type)}))`);
+}
+/** What matching a view of another database picks from: the same id, and its model and type's views. */
+async function findViewsLike(dbName, view) {
+    return parseViewRows(await (0, postgres_1.runSql)(dbName, viewsLikeSql(view)));
 }
 
 
@@ -23728,6 +23792,995 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ViewRenderPanel = void 0;
+exports.escapeHtml = escapeHtml;
+exports.renderPanelHtml = renderPanelHtml;
+/**
+ * The render tab: one or two Odoo web clients side by side, each in a frame
+ * behind its database's gated proxy. The page is rebuilt whenever what it
+ * shows changes; a save reloads the frames of its database by message, so
+ * the other side keeps whatever the user was doing in it.
+ */
+const vscode = __importStar(__webpack_require__(1));
+const node_crypto_1 = __webpack_require__(65);
+const odooFrameProxy_1 = __webpack_require__(118);
+const renderSession_1 = __webpack_require__(120);
+const server_1 = __webpack_require__(101);
+const logger_1 = __webpack_require__(12);
+const notifications_1 = __webpack_require__(16);
+function escapeHtml(text) {
+    return text.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char));
+}
+const STYLE = `
+body { margin: 0; padding: 0; height: 100vh; display: flex; flex-direction: column; background: var(--vscode-editor-background); color: var(--vscode-foreground); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
+.toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--vscode-panel-border); }
+.toolbar .notice { color: var(--vscode-descriptionForeground); }
+button { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; padding: 3px 10px; cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: default; }
+.sides { flex: 1; display: flex; min-height: 0; }
+.side { flex: 1; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--vscode-panel-border); }
+.side:last-child { border-right: none; }
+.side header { padding: 4px 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.side header .detail { color: var(--vscode-descriptionForeground); }
+.side .message { color: var(--vscode-errorForeground); }
+iframe { flex: 1; width: 100%; border: none; background: #fff; }
+.empty { flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px; color: var(--vscode-descriptionForeground); text-align: center; }
+`;
+const SCRIPT = `
+const vscode = acquireVsCodeApi();
+for (const button of document.querySelectorAll('button[data-action]')) {
+    button.addEventListener('click', () => vscode.postMessage({ type: 'action', action: button.dataset.action }));
+}
+window.addEventListener('message', event => {
+    const message = event.data;
+    if (!message || message.type !== 'reload') {
+        return;
+    }
+    for (const frame of document.querySelectorAll('iframe[data-key]')) {
+        if (!message.keys || message.keys.includes(frame.dataset.key)) {
+            frame.src = frame.dataset.src;
+        }
+    }
+});
+`;
+function button(action, label, enabled = true) {
+    return `<button data-action="${action}"${enabled ? '' : ' disabled'}>${escapeHtml(label)}</button>`;
+}
+function renderPanelHtml(state, options) {
+    const origins = [...new Set(state.sides.flatMap(side => side.url ? [new URL(side.url).origin] : []))];
+    const csp = [
+        "default-src 'none'",
+        ...(origins.length > 0 ? [`frame-src ${origins.join(' ')}`] : []),
+        `style-src ${options.cspSource} 'nonce-${options.nonce}'`,
+        `script-src 'nonce-${options.nonce}'`
+    ].join('; ') + ';';
+    const record = state.record;
+    const toolbar = [
+        button('reload', 'Reload'),
+        ...(record ? [
+            button('previous', 'Previous record', record.canPrevious),
+            `<span>${escapeHtml(record.label)}</span>`,
+            button('next', 'Next record', record.canNext),
+            button('new', 'New record', record.canNew)
+        ] : []),
+        ...(state.notice ? [`<span class="notice">${escapeHtml(state.notice)}</span>`] : [])
+    ].join('\n');
+    const sides = state.sides.map(side => {
+        const header = [
+            `<strong>${escapeHtml(side.title)}</strong>`,
+            ...(side.detail ? [`<span class="detail">${escapeHtml(side.detail)}</span>`] : []),
+            ...(side.url && side.message ? [`<span class="message">${escapeHtml(side.message)}</span>`] : []),
+            ...(side.offerStart ? [button('start', options.startLabel ?? 'Start Server')] : [])
+        ].join(' ');
+        const body = side.url
+            ? `<iframe data-key="${escapeHtml(side.key)}" data-src="${escapeHtml(side.url)}" src="${escapeHtml(side.url)}"></iframe>`
+            : `<div class="empty">${escapeHtml(side.message ?? 'Nothing to show.')}</div>`;
+        return `<section class="side"><header>${header}</header>${body}</section>`;
+    }).join('\n');
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="${csp}">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style nonce="${options.nonce}">${STYLE}</style>
+</head>
+<body>
+<div class="toolbar">${toolbar}</div>
+<div class="sides">${sides}</div>
+<script nonce="${options.nonce}">${SCRIPT}</script>
+</body>
+</html>`;
+}
+class ViewRenderPanel {
+    backend;
+    panel;
+    session;
+    request;
+    proxies = new Map();
+    host;
+    /** Bumped by every show() and every close, so a slower earlier one can tell it is stale. */
+    generation = 0;
+    updates = 0;
+    starting = false;
+    constructor(backend, host) {
+        this.backend = backend;
+        this.host = host ?? {
+            portFor: async (dbName, versionId) => (await (0, server_1.resolvePortForDatabase)(dbName, versionId)).port,
+            isPortOpen: server_1.isPortOpen,
+            proxyFor: (dbName, port, mint) => this.proxyFor(dbName, port, mint),
+            externalOrigin: async (origin) => {
+                const uri = await vscode.env.asExternalUri(vscode.Uri.parse(origin));
+                return `${uri.scheme}://${uri.authority}`;
+            }
+        };
+    }
+    get isOpen() {
+        return !!this.panel;
+    }
+    get title() {
+        return this.request?.title;
+    }
+    async show(request) {
+        const generation = ++this.generation;
+        const session = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Preparing the render of ${request.title}…` }, () => renderSession_1.RenderSession.prepare(request.targets, this.backend, this.host));
+        if (generation !== this.generation) {
+            return;
+        }
+        this.session = session;
+        this.request = request;
+        const panel = this.ensurePanel();
+        panel.title = `Render: ${request.title}`;
+        await this.update();
+        if (generation !== this.generation) {
+            return;
+        }
+        panel.reveal(undefined, false);
+    }
+    /** A save in this database: its frames load the new arch. */
+    reloadDatabase(dbName) {
+        if (this.panel && this.session?.shows(dbName)) {
+            void this.panel.webview.postMessage({ type: 'reload', keys: [dbName] });
+        }
+    }
+    /**
+     * The toolbar's Reload: the page is rebuilt, which reloads every frame
+     * and asks again which servers answer, so a side whose server stopped
+     * says so and offers to start it, and one that came back shows again.
+     */
+    async reload() {
+        await this.update();
+    }
+    dispose() {
+        const panel = this.panel;
+        this.generation++;
+        this.panel = undefined;
+        this.session = undefined;
+        this.request = undefined;
+        panel?.dispose();
+        void this.closeProxies();
+    }
+    ensurePanel() {
+        if (this.panel) {
+            return this.panel;
+        }
+        const panel = vscode.window.createWebviewPanel('odooViewRender', 'Render', vscode.ViewColumn.Active, {
+            enableScripts: true,
+            retainContextWhenHidden: true,
+            localResourceRoots: []
+        });
+        panel.onDidDispose(() => {
+            this.generation++;
+            this.panel = undefined;
+            this.session = undefined;
+            this.request = undefined;
+            void this.closeProxies();
+        });
+        panel.webview.onDidReceiveMessage(message => void this.onMessage(message));
+        this.panel = panel;
+        return panel;
+    }
+    async update() {
+        const panel = this.panel;
+        const session = this.session;
+        if (!panel || !session) {
+            return;
+        }
+        const update = ++this.updates;
+        const state = await session.state();
+        if (update !== this.updates || this.panel !== panel || this.session !== session) {
+            return;
+        }
+        const notice = [this.request?.notice, state.notice].filter(Boolean).join(' ');
+        panel.webview.html = renderPanelHtml({ ...state, notice: notice || undefined }, {
+            nonce: (0, node_crypto_1.randomBytes)(16).toString('base64'),
+            cspSource: panel.webview.cspSource,
+            startLabel: this.request?.startLabel
+        });
+    }
+    async onMessage(message) {
+        const action = message?.type === 'action'
+            ? message.action
+            : undefined;
+        const session = this.session;
+        if (!session || !action) {
+            return;
+        }
+        try {
+            switch (action) {
+                case 'reload':
+                    await this.reload();
+                    return;
+                case 'previous':
+                    if (session.previous()) {
+                        await this.update();
+                    }
+                    return;
+                case 'next':
+                    if (session.next()) {
+                        await this.update();
+                    }
+                    return;
+                case 'new':
+                    if (session.newRecord()) {
+                        await this.update();
+                    }
+                    return;
+                case 'start':
+                    await this.startServers(session);
+                    return;
+            }
+        }
+        catch (error) {
+            logger_1.logger.warn('The render tab could not handle an action:', error);
+            void (0, notifications_1.showError)(`The render could not ${action}: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }
+    async startServers(session) {
+        if (!this.request || this.starting) {
+            return;
+        }
+        this.starting = true;
+        try {
+            await vscode.commands.executeCommand(this.request.startCommand);
+            const ports = session.ports();
+            const answered = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Waiting for the Odoo servers…', cancellable: true }, (_progress, token) => new Promise(resolve => {
+                token.onCancellationRequested(() => resolve(ports.map(() => true)));
+                void Promise.all(ports.map(port => (0, server_1.waitForPort)(port, 120_000))).then(resolve);
+            }));
+            const silent = ports.filter((_port, index) => !answered[index]);
+            if (silent.length > 0) {
+                void (0, notifications_1.showWarning)(`No Odoo server is answering on port ${silent.join(', ')} yet.`);
+            }
+            if (this.session === session) {
+                await this.update();
+            }
+        }
+        finally {
+            this.starting = false;
+        }
+    }
+    proxyFor(dbName, port, mint) {
+        const key = `${dbName}:${port}`;
+        let proxy = this.proxies.get(key);
+        if (!proxy) {
+            const created = new odooFrameProxy_1.OdooFrameProxy({ targetPort: port, mintSession: mint });
+            proxy = created.listen().then(() => created);
+            const pending = proxy;
+            proxy.catch(() => {
+                if (this.proxies.get(key) === pending) {
+                    this.proxies.delete(key);
+                }
+            });
+            this.proxies.set(key, proxy);
+        }
+        return proxy;
+    }
+    async closeProxies() {
+        const proxies = [...this.proxies.values()];
+        this.proxies.clear();
+        await Promise.all(proxies.map(async (proxy) => (await proxy.catch(() => undefined))?.close()));
+    }
+}
+exports.ViewRenderPanel = ViewRenderPanel;
+
+
+/***/ }),
+/* 118 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.OdooFrameProxy = exports.GATE_PATH = void 0;
+exports.rewriteLocation = rewriteLocation;
+exports.withoutFrameAncestors = withoutFrameAncestors;
+exports.forwardedCookie = forwardedCookie;
+exports.filterHandshakeHead = filterHandshakeHead;
+/**
+ * A reverse proxy to one database's Odoo server, for the render tab's frames.
+ *
+ * A webview's origin is never the same site as the server, so Odoo's own
+ * session cookie cannot work there: the proxy injects an admin session the
+ * database's shell minted instead, strips the headers that forbid framing,
+ * and hides Odoo's session cookie from the frame. Host passes through, so
+ * Odoo builds its URLs on the proxy's origin.
+ *
+ * That makes the proxy admin for anyone who reaches its port, so it is
+ * gated: the frame's first URL carries a one-time token, answered with a
+ * cookie only VS Code's webview ever holds, and every request or websocket
+ * without that cookie is refused before anything is forwarded. A websocket or
+ * a write that names a foreign Origin is refused too, cookie or not. The cookie is
+ * named after the proxy's port, because cookies ignore ports and the two
+ * sides' proxies share 127.0.0.1.
+ */
+const http = __importStar(__webpack_require__(119));
+const net = __importStar(__webpack_require__(37));
+const node_crypto_1 = __webpack_require__(65);
+exports.GATE_PATH = '/__odt/open';
+const DEFAULT_REFRESH_INTERVAL_MS = 30_000;
+const DEFAULT_TOKEN_TTL_MS = 120_000;
+const MAX_HANDSHAKE_HEAD = 64 * 1024;
+const LOOPBACK_ORIGIN = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::(\d+))?(?=[/?#]|$)/i;
+/** A redirect to the backend's own loopback origin, as a path; anything else as is. */
+function rewriteLocation(location, targetPort) {
+    const match = LOOPBACK_ORIGIN.exec(location);
+    if (!match || Number(match[1] ?? 80) !== targetPort) {
+        return location;
+    }
+    const rest = location.slice(match[0].length);
+    return rest.startsWith('/') ? rest : `/${rest}`;
+}
+/** The policy without frame-ancestors; undefined when nothing else is left. */
+function withoutFrameAncestors(csp) {
+    const kept = csp.split(';').map(part => part.trim()).filter(part => part && !/^frame-ancestors\b/i.test(part));
+    return kept.length > 0 ? kept.join('; ') : undefined;
+}
+/** The browser's cookies minus its own session and every gate, plus the injected session. */
+function forwardedCookie(header, sid) {
+    const kept = (header ?? '').split(';').map(part => part.trim())
+        .filter(part => part && !/^session_id=/i.test(part) && !/^odt_gate_\d+=/i.test(part));
+    return [...kept, `session_id=${sid}`].join('; ');
+}
+function cookieValues(header, name) {
+    const values = [];
+    for (const part of (header ?? '').split(';')) {
+        const [key, ...value] = part.trim().split('=');
+        if (key === name) {
+            values.push(value.join('='));
+        }
+    }
+    return values;
+}
+/** The response head without Odoo's session cookie lines; the session it set, if any. */
+function filterHandshakeHead(head) {
+    let sid;
+    const lines = head.split('\r\n').filter(line => {
+        const match = /^set-cookie:\s*session_id=([^;]*)/i.exec(line);
+        if (match && match[1]) {
+            sid = match[1];
+        }
+        return !match;
+    });
+    return { head: lines.join('\r\n'), sid };
+}
+/** A request from a page that is not this proxy's own origin. */
+function foreignOrigin(req) {
+    const origin = req.headers.origin;
+    if (origin === undefined) {
+        return false;
+    }
+    try {
+        return new URL(origin).host !== req.headers.host;
+    }
+    catch {
+        return true;
+    }
+}
+function sameSecret(candidate, secret) {
+    if (candidate === undefined) {
+        return false;
+    }
+    const given = Buffer.from(candidate, 'utf-8');
+    const expected = Buffer.from(secret, 'utf-8');
+    return given.length === expected.length && (0, node_crypto_1.timingSafeEqual)(given, expected);
+}
+/** A path on this origin: not protocol-relative, not a backslash trick, not absolute. */
+function isLocalPath(next) {
+    if (!next.startsWith('/') || next.startsWith('//') || next.includes('\\') || /[\u0000-\u001f\u007f]/.test(next)) {
+        return false;
+    }
+    try {
+        return new URL(next, 'http://proxy').origin === 'http://proxy';
+    }
+    catch {
+        return false;
+    }
+}
+function plain(res, status, text) {
+    if (!res.headersSent) {
+        res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+    }
+    res.end(text);
+}
+const REFUSED = 'This address only opens from the View Doctor in VS Code.';
+class OdooFrameProxy {
+    options;
+    server;
+    secret = (0, node_crypto_1.randomBytes)(32).toString('hex');
+    tokens = new Map();
+    sockets = new Set();
+    sid;
+    minting;
+    lastRefresh = Number.NEGATIVE_INFINITY;
+    listening;
+    boundPort = 0;
+    closed = false;
+    constructor(options) {
+        this.options = options;
+        this.server = http.createServer((req, res) => {
+            this.handle(req, res).catch(() => res.destroy());
+        });
+        this.server.on('connection', socket => this.track(socket));
+        this.server.on('upgrade', (req, socket, head) => {
+            this.upgrade(req, socket, head).catch(() => socket.destroy());
+        });
+    }
+    get targetPort() {
+        return this.options.targetPort;
+    }
+    get port() {
+        return this.boundPort;
+    }
+    get gateCookie() {
+        return `odt_gate_${this.boundPort}`;
+    }
+    listen() {
+        this.listening ??= new Promise((resolve, reject) => {
+            this.server.once('error', reject);
+            this.server.listen(0, '127.0.0.1', () => {
+                this.server.off('error', reject);
+                this.server.on('error', () => undefined);
+                this.boundPort = this.server.address().port;
+                resolve(this.boundPort);
+            });
+        });
+        return this.listening;
+    }
+    /** The session to inject, minted on first use; call it early to surface a failure. */
+    session() {
+        if (this.sid) {
+            return Promise.resolve(this.sid);
+        }
+        this.minting ??= this.options.mintSession()
+            .then(sid => {
+            this.sid = sid;
+            return sid;
+        })
+            .finally(() => {
+            this.minting = undefined;
+        });
+        return this.minting;
+    }
+    /** A frame's first URL path: the token works once, and sends the frame on to `next`. */
+    gatePath(next) {
+        const token = (0, node_crypto_1.randomBytes)(24).toString('hex');
+        const now = Date.now();
+        for (const [spent, expiry] of this.tokens) {
+            if (expiry <= now) {
+                this.tokens.delete(spent);
+            }
+        }
+        this.tokens.set(token, now + (this.options.tokenTtlMs ?? DEFAULT_TOKEN_TTL_MS));
+        return `${exports.GATE_PATH}?t=${token}&next=${encodeURIComponent(next)}`;
+    }
+    /** Stops listening and ends every open connection, websockets included. */
+    close() {
+        this.closed = true;
+        for (const socket of this.sockets) {
+            socket.destroy();
+        }
+        return new Promise(resolve => this.server.close(() => resolve()));
+    }
+    track(socket) {
+        this.sockets.add(socket);
+        socket.on('close', () => this.sockets.delete(socket));
+    }
+    gated(cookie) {
+        return cookieValues(cookie, this.gateCookie).some(value => sameSecret(value, this.secret));
+    }
+    async handle(req, res) {
+        let url;
+        try {
+            url = new URL(req.url ?? '/', 'http://proxy');
+        }
+        catch {
+            req.resume();
+            plain(res, 400, 'Bad request.');
+            return;
+        }
+        const gated = this.gated(req.headers.cookie);
+        if (url.pathname === exports.GATE_PATH) {
+            req.resume();
+            this.open(url, gated, res);
+            return;
+        }
+        if (!gated) {
+            req.resume();
+            plain(res, 403, REFUSED);
+            return;
+        }
+        if (req.method !== 'GET' && req.method !== 'HEAD' && foreignOrigin(req)) {
+            req.resume();
+            plain(res, 403, REFUSED);
+            return;
+        }
+        let sid;
+        try {
+            sid = await this.session();
+        }
+        catch (error) {
+            req.resume();
+            plain(res, 502, `Could not open an Odoo session: ${error instanceof Error ? error.message : String(error)}`);
+            return;
+        }
+        if (this.closed || res.destroyed) {
+            req.resume();
+            return;
+        }
+        const upstream = http.request({
+            host: '127.0.0.1',
+            port: this.options.targetPort,
+            method: req.method,
+            path: req.url,
+            headers: { ...req.headers, cookie: forwardedCookie(req.headers.cookie, sid) }
+        }, up => {
+            if (this.refusedSession(req, up)) {
+                up.resume();
+                this.retry(req, res, sid).catch(() => res.destroy());
+                return;
+            }
+            res.writeHead(up.statusCode ?? 502, this.responseHeaders(up.headers));
+            up.pipe(res);
+        });
+        upstream.on('error', error => {
+            if (res.headersSent) {
+                res.destroy();
+            }
+            else {
+                plain(res, 502, `No Odoo server answers on port ${this.options.targetPort}: ${error.message}`);
+            }
+        });
+        res.on('close', () => {
+            if (!res.writableFinished) {
+                upstream.destroy();
+            }
+        });
+        req.pipe(upstream);
+    }
+    open(url, gated, res) {
+        const token = url.searchParams.get('t') ?? '';
+        const next = url.searchParams.get('next') ?? '/';
+        // A spent token still opens for the frame that holds the cookie: that is a reload.
+        const expiry = this.tokens.get(token);
+        this.tokens.delete(token);
+        const allowed = (expiry !== undefined && expiry > Date.now()) || gated;
+        if (!allowed || !isLocalPath(next)) {
+            plain(res, 403, REFUSED);
+            return;
+        }
+        // Every (re)load of a frame passes here. From 19.0 the web client keeps
+        // get_views in IndexedDB and shows that copy first, so a reload after
+        // a save would show the arch from before it. Clearing the frame's
+        // storage (not its cookies) makes it ask Odoo again.
+        res.writeHead(302, {
+            location: next,
+            'set-cookie': `${this.gateCookie}=${this.secret}; Path=/; HttpOnly; Secure; SameSite=None`,
+            'clear-site-data': '"storage"',
+            'cache-control': 'no-store'
+        });
+        res.end();
+    }
+    /** Odoo turned the session away on a page load: worth one new session, now and then. */
+    refusedSession(req, up) {
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+            return false;
+        }
+        if (Date.now() - this.lastRefresh < (this.options.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS)) {
+            return false;
+        }
+        const status = up.statusCode ?? 0;
+        if (status === 401) {
+            return true;
+        }
+        const location = up.headers.location;
+        if (status < 300 || status >= 400 || !location) {
+            return false;
+        }
+        try {
+            return new URL(location, 'http://proxy').pathname === '/web/login';
+        }
+        catch {
+            return false;
+        }
+    }
+    async retry(req, res, refused) {
+        this.lastRefresh = Date.now();
+        if (this.sid === refused) {
+            this.sid = undefined;
+        }
+        try {
+            await this.session();
+        }
+        catch (error) {
+            plain(res, 502, `Could not open an Odoo session: ${error instanceof Error ? error.message : String(error)}`);
+            return;
+        }
+        if (res.destroyed) {
+            return;
+        }
+        try {
+            res.writeHead(302, { location: req.url ?? '/', 'cache-control': 'no-store' });
+        }
+        catch {
+            res.destroy();
+            return;
+        }
+        res.end();
+    }
+    responseHeaders(headers) {
+        const out = { ...headers };
+        delete out['x-frame-options'];
+        const csp = headers['content-security-policy'];
+        if (csp !== undefined) {
+            const kept = withoutFrameAncestors(String(csp));
+            if (kept) {
+                out['content-security-policy'] = kept;
+            }
+            else {
+                delete out['content-security-policy'];
+            }
+        }
+        const cookies = headers['set-cookie'];
+        if (cookies) {
+            const kept = cookies.filter(cookie => {
+                const match = /^\s*session_id=([^;]*)/i.exec(cookie);
+                if (!match) {
+                    return true;
+                }
+                // Odoo rotated the session: keep injecting the one it now expects.
+                if (match[1]) {
+                    this.sid = match[1];
+                }
+                return false;
+            });
+            if (kept.length > 0) {
+                out['set-cookie'] = kept;
+            }
+            else {
+                delete out['set-cookie'];
+            }
+        }
+        if (typeof headers.location === 'string') {
+            out.location = rewriteLocation(headers.location, this.options.targetPort);
+        }
+        return out;
+    }
+    async upgrade(req, socket, head) {
+        socket.on('error', () => undefined);
+        if (!this.gated(req.headers.cookie) || foreignOrigin(req)) {
+            socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+            return;
+        }
+        let sid;
+        try {
+            sid = await this.session();
+        }
+        catch {
+            socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+            return;
+        }
+        if (this.closed || socket.destroyed) {
+            socket.destroy();
+            return;
+        }
+        const upstream = net.connect(this.options.targetPort, '127.0.0.1', () => {
+            const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`];
+            for (let i = 0; i < req.rawHeaders.length; i += 2) {
+                if (req.rawHeaders[i].toLowerCase() !== 'cookie') {
+                    lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
+                }
+            }
+            lines.push(`Cookie: ${forwardedCookie(req.headers.cookie, sid)}`);
+            upstream.write(`${lines.join('\r\n')}\r\n\r\n`);
+            if (head.length > 0) {
+                upstream.write(head);
+            }
+            socket.pipe(upstream);
+            this.relayHandshake(upstream, socket);
+        });
+        this.track(upstream);
+        upstream.on('error', () => socket.destroy());
+        socket.on('close', () => upstream.destroy());
+    }
+    /** Odoo's answer to the frame, minus its session cookie, then the rest as is. */
+    relayHandshake(upstream, socket) {
+        let buffered = Buffer.alloc(0);
+        const onData = (chunk) => {
+            buffered = Buffer.concat([buffered, chunk]);
+            const end = buffered.indexOf('\r\n\r\n');
+            if (end < 0) {
+                if (buffered.length > MAX_HANDSHAKE_HEAD) {
+                    socket.destroy();
+                }
+                return;
+            }
+            upstream.off('data', onData);
+            const { head, sid } = filterHandshakeHead(buffered.subarray(0, end + 4).toString('latin1'));
+            if (sid) {
+                this.sid = sid;
+            }
+            socket.write(Buffer.from(head, 'latin1'));
+            if (buffered.length > end + 4) {
+                socket.write(buffered.subarray(end + 4));
+            }
+            upstream.pipe(socket);
+        };
+        upstream.on('data', onData);
+    }
+}
+exports.OdooFrameProxy = OdooFrameProxy;
+
+
+/***/ }),
+/* 119 */
+/***/ ((module) => {
+
+module.exports = require("node:http");
+
+/***/ }),
+/* 120 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.RenderSession = exports.RECENT_LIMIT = void 0;
+/**
+ * One render: for each database shown, the action that opens the view, the
+ * proxy its frame goes through and the records it has; then, for the record
+ * being shown, what each frame loads. Both sides always show the same record
+ * - the newest both databases have - or both a new one, so the two renders
+ * compare; never a different record on each side.
+ */
+const logger_1 = __webpack_require__(12);
+const renderPlan_1 = __webpack_require__(121);
+exports.RECENT_LIMIT = 200;
+async function prepareSide(target, backend, host) {
+    try {
+        const action = await backend.makeAction(target.dbName, target.viewId);
+        const port = await host.portFor(target.dbName, target.versionId);
+        const proxy = await host.proxyFor(target.dbName, port, () => backend.newSession(target.dbName));
+        const [, origin, ids] = await Promise.all([
+            proxy.session(),
+            host.externalOrigin(`http://127.0.0.1:${proxy.port}`),
+            action.viewType === 'form' ? backend.recentIds(target.dbName, action.model, exports.RECENT_LIMIT) : Promise.resolve([])
+        ]);
+        return { target, port, action, proxy, origin, ids };
+    }
+    catch (error) {
+        return { target, ids: [], error: (0, logger_1.errorMessage)(error) };
+    }
+}
+class RenderSession {
+    sides;
+    host;
+    records;
+    isForm;
+    notice;
+    /** Position in `records`; -1 is a new record. */
+    index;
+    constructor(sides, host, records, isForm, notice) {
+        this.sides = sides;
+        this.host = host;
+        this.records = records;
+        this.isForm = isForm;
+        this.notice = notice;
+        this.index = records.length > 0 ? 0 : -1;
+    }
+    static async prepare(targets, backend, host) {
+        const sides = await Promise.all(targets.map(target => prepareSide(target, backend, host)));
+        const ready = sides.filter(side => side.action);
+        const isForm = ready.length > 0 && ready.every(side => side.action?.viewType === 'form');
+        let records = [];
+        let notice;
+        if (isForm) {
+            records = ready.map(side => side.ids).reduce((a, b) => (0, renderPlan_1.commonIds)(a, b));
+            if (records.length === 0) {
+                notice = ready.length > 1 ? renderPlan_1.NO_COMMON_RECORD : `${ready[0].action?.model} has no record yet; showing a new one.`;
+            }
+        }
+        return new RenderSession(sides, host, records, isForm, notice);
+    }
+    async state() {
+        const resId = this.index >= 0 ? this.records[this.index] : undefined;
+        const sides = await Promise.all(this.sides.map(side => this.sideState(side, resId)));
+        const record = this.isForm ? {
+            label: resId ? `Record ${resId}` : 'New record',
+            canPrevious: this.index > 0 || (this.index === -1 && this.records.length > 0),
+            canNext: this.index >= 0 && this.index < this.records.length - 1,
+            canNew: this.index !== -1
+        } : undefined;
+        return { sides, notice: this.notice, record };
+    }
+    /** The newer shared record, or back from a new record to the newest. */
+    previous() {
+        if (this.index > 0 || (this.index === -1 && this.records.length > 0)) {
+            this.index = this.index === -1 ? 0 : this.index - 1;
+            return true;
+        }
+        return false;
+    }
+    /** The older shared record. */
+    next() {
+        if (this.index >= 0 && this.index < this.records.length - 1) {
+            this.index++;
+            return true;
+        }
+        return false;
+    }
+    newRecord() {
+        if (!this.isForm || this.index === -1) {
+            return false;
+        }
+        this.index = -1;
+        return true;
+    }
+    shows(dbName) {
+        return this.sides.some(side => side.target.dbName === dbName);
+    }
+    /** The server ports the sides point at, for waiting on a start. */
+    ports() {
+        return this.sides.flatMap(side => side.port === undefined ? [] : [side.port]);
+    }
+    async sideState(side, resId) {
+        const base = { key: side.target.dbName, title: side.target.title };
+        const { action, proxy, port, origin } = side;
+        if (side.error || !action || !proxy || port === undefined || !origin) {
+            return { ...base, message: side.error ?? 'This side cannot render.' };
+        }
+        const what = action.viewType === 'form' ? (resId ? `record ${resId}` : 'new record') : action.viewType;
+        const detail = `Odoo ${action.series} · ${action.model} · ${what}`;
+        if (!await this.host.isPortOpen(port)) {
+            return { ...base, detail, message: `No Odoo server is answering on port ${port}.`, offerStart: true };
+        }
+        const path = (0, renderPlan_1.framePath)({ series: action.series, actionId: action.actionId, model: action.model, viewType: action.viewType, resId });
+        return { ...base, detail, url: `${origin}${proxy.gatePath(path)}` };
+    }
+}
+exports.RenderSession = RenderSession;
+
+
+/***/ }),
+/* 121 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+/**
+ * Where a render frame points: the URL of a view-doctor action on one
+ * database's web client, per the series' router, and which record both
+ * sides of a comparison show.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.NO_COMMON_RECORD = void 0;
+exports.usesOdooRouter = usesOdooRouter;
+exports.framePath = framePath;
+exports.commonIds = commonIds;
+exports.qwebMessage = qwebMessage;
+exports.NO_COMMON_RECORD = 'No record exists in both databases; showing a new one.';
+/** saas~17.2 moved the web client to /odoo/... URLs; before it, the hash carries the state. */
+function usesOdooRouter(series) {
+    const match = /(\d+)\.(\d+)/.exec(series);
+    if (!match) {
+        return true;
+    }
+    const [major, minor] = [Number(match[1]), Number(match[2])];
+    return major > 17 || (major === 17 && minor >= 2);
+}
+function framePath(input) {
+    const record = input.viewType === 'form' ? input.resId : undefined;
+    if (usesOdooRouter(input.series)) {
+        return `/odoo/action-${input.actionId}${record ? `/${record}` : ''}?debug=1`;
+    }
+    const hash = [`action=${input.actionId}`, `model=${encodeURIComponent(input.model)}`, `view_type=${encodeURIComponent(input.viewType)}`];
+    if (record) {
+        hash.push(`id=${record}`);
+    }
+    return `/web?debug=1#${hash.join('&')}`;
+}
+/** Ids in both lists, newest first. */
+function commonIds(a, b) {
+    const other = new Set(b);
+    return [...new Set(a)].filter(id => other.has(id)).sort((x, y) => y - x);
+}
+/** What to say instead of rendering a QWeb view. */
+function qwebMessage(isReport) {
+    return isReport
+        ? 'Reports need a record to render; open the report from Odoo.'
+        : 'QWeb templates render inside the page that uses them; open it from Odoo.';
+}
+
+
+/***/ }),
+/* 122 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ViewFileSystemProvider = exports.VIEW_SCHEME = void 0;
 exports.viewUri = viewUri;
 exports.parseViewUri = parseViewUri;
@@ -23784,11 +24837,15 @@ function viewFileSize(mtime) {
 class ViewFileSystemProvider {
     backend;
     hooks;
+    isReadOnly;
     changes = new vscode.EventEmitter();
     onDidChangeFile = this.changes.event;
-    constructor(backend, hooks) {
+    constructor(backend, hooks, 
+    /** Views of such a database open read-only; kept out of the provider so it needs no settings. */
+    isReadOnly = () => false) {
         this.backend = backend;
         this.hooks = hooks;
+        this.isReadOnly = isReadOnly;
     }
     watch() {
         return new vscode.Disposable(() => undefined);
@@ -23801,11 +24858,14 @@ class ViewFileSystemProvider {
     }
     async stat(uri) {
         const ref = this.ref(uri);
-        const mtime = await this.backend.writeDate(ref.dbName, ref.viewId);
+        const [mtime, readOnly] = await Promise.all([this.backend.writeDate(ref.dbName, ref.viewId), this.isReadOnly(ref.dbName)]);
         if (mtime === undefined) {
             throw vscode.FileSystemError.FileNotFound(uri);
         }
-        return { type: vscode.FileType.File, ctime: 0, mtime, size: viewFileSize(mtime) };
+        return {
+            type: vscode.FileType.File, ctime: 0, mtime, size: viewFileSize(mtime),
+            ...(readOnly ? { permissions: vscode.FilePermission.Readonly } : {})
+        };
     }
     async readFile(uri) {
         const ref = this.ref(uri);
@@ -23813,6 +24873,9 @@ class ViewFileSystemProvider {
     }
     async writeFile(uri, content, _options) {
         const ref = this.ref(uri);
+        if (await this.isReadOnly(ref.dbName)) {
+            throw vscode.FileSystemError.NoPermissions(`${ref.dbName} is the upgrade's original database, so its views are read-only. Turn on odooDebugger.views.allowEditOriginal to edit them.`);
+        }
         const text = Buffer.from(content).toString('utf-8');
         // Throws when Odoo rejects the arch: VS Code shows the message and keeps the editor dirty.
         const result = await this.backend.save(ref.dbName, ref.viewId, text);
@@ -23843,7 +24906,7 @@ exports.ViewFileSystemProvider = ViewFileSystemProvider;
 
 
 /***/ }),
-/* 118 */
+/* 123 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -23921,7 +24984,166 @@ exports.ViewArchPoller = ViewArchPoller;
 
 
 /***/ }),
-/* 119 */
+/* 124 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.upgradePair = upgradePair;
+exports.isReadOnlyOriginal = isReadOnlyOriginal;
+exports.otherDatabaseChoices = otherDatabaseChoices;
+exports.pickOtherDatabase = pickOtherDatabase;
+exports.compareTargets = compareTargets;
+exports.findCounterpart = findCounterpart;
+exports.diffArguments = diffArguments;
+/**
+ * Which two databases a view is compared or rendered across: in Upgrade
+ * mode the original (From) and the upgraded (To) database, otherwise the
+ * tree's database and one the user picks.
+ */
+const vscode = __importStar(__webpack_require__(1));
+const upgrade_1 = __webpack_require__(41);
+const runningState_1 = __webpack_require__(87);
+const notifications_1 = __webpack_require__(16);
+const viewQueries_1 = __webpack_require__(107);
+const viewMatch_1 = __webpack_require__(125);
+const viewFileSystem_1 = __webpack_require__(122);
+function upgradePair(project) {
+    if (!project) {
+        return undefined;
+    }
+    const config = (0, upgrade_1.ensureUpgradeConfigModel)(project.upgradeConfig);
+    if (!config.isActive() || !config.from?.dbId || !config.to?.dbId) {
+        return undefined;
+    }
+    return {
+        original: { dbName: config.from.dbId, versionId: config.from.versionId, series: config.from.series },
+        upgraded: { dbName: config.to.dbId, versionId: config.to.versionId, series: config.to.series }
+    };
+}
+/** The upgrade's original database stays as it was, unless odooDebugger.views.allowEditOriginal is on. */
+function isReadOnlyOriginal(project, dbName, allowEditOriginal) {
+    return !allowEditOriginal && upgradePair(project)?.original.dbName === dbName;
+}
+/** The project's other databases, running ones first, so the default pick is one a server has open. */
+function otherDatabaseChoices(project, current, running) {
+    return (project?.dbs ?? [])
+        .filter(db => db.id !== current)
+        .map(db => ({ dbName: db.id, versionId: db.versionId, running: running.has(db.id) }))
+        .sort((a, b) => Number(b.running) - Number(a.running));
+}
+async function pickOtherDatabase(project, current) {
+    const running = new Set((await (0, runningState_1.getRunningInstances)()).map(instance => instance.dbName));
+    const choices = otherDatabaseChoices(project, current, running);
+    if (choices.length === 0) {
+        void (0, notifications_1.showInfo)(`The project has no other database to compare ${current} with.`);
+        return undefined;
+    }
+    const picked = await vscode.window.showQuickPick(choices.map(choice => ({ label: choice.dbName, description: choice.running ? 'running' : undefined, choice })), { title: `Compare with ${current}`, placeHolder: 'The database to show on the left' });
+    return picked?.choice;
+}
+/** The left side of a comparison with this tree row: the upgrade's original, or a database the user picks. */
+async function compareTargets(project, item) {
+    const pair = upgradePair(project);
+    if (pair && pair.upgraded.dbName === item.dbName) {
+        return pair.original.dbName;
+    }
+    return (await pickOtherDatabase(project, item.dbName))?.dbName;
+}
+/**
+ * The same view in another database. 'none' when that database has no view
+ * of its model and type; undefined when the user dismissed the pick.
+ */
+async function findCounterpart(view, dbName) {
+    const [byXmlid, rows] = await Promise.all([
+        view.xmlid ? (0, viewQueries_1.findViewByXmlid)(dbName, view.xmlid) : Promise.resolve(undefined),
+        (0, viewQueries_1.findViewsLike)(dbName, view)
+    ]);
+    const match = (0, viewMatch_1.matchView)(view, { byXmlid, rows });
+    if (match.kind === 'none') {
+        return 'none';
+    }
+    if (match.kind !== 'pick') {
+        return match.view;
+    }
+    const picked = await vscode.window.showQuickPick(match.candidates.map(candidate => ({
+        label: candidate.name,
+        description: `${candidate.xmlid ?? `#${candidate.id}`}${candidate.active ? '' : ' · off'}`,
+        detail: candidate.inheritId ? `Inherits view ${candidate.inheritId}` : 'Base view',
+        candidate
+    })), { title: `${view.name} in ${dbName}`, placeHolder: `No view in ${dbName} is certainly the same one: pick it`, matchOnDescription: true });
+    return picked?.candidate;
+}
+function diffArguments(original, upgraded) {
+    const uriOf = (side) => (0, viewFileSystem_1.viewUri)(side.dbName, side.view.id, side.view.xmlid ?? `view-${side.view.id}`);
+    return [uriOf(original), uriOf(upgraded), `${upgraded.view.name}: ${original.dbName} ↔ ${upgraded.dbName}`];
+}
+
+
+/***/ }),
+/* 125 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.matchView = matchView;
+function matchView(source, found) {
+    if (found.byXmlid) {
+        return { kind: 'xmlid', view: found.byXmlid };
+    }
+    const similar = found.rows.filter(view => view.model === source.model && view.type === source.type);
+    const sameId = similar.find(view => view.id === source.id);
+    if (sameId) {
+        return { kind: 'id', view: sameId };
+    }
+    const named = similar.filter(view => view.name === source.name);
+    if (named.length === 1) {
+        return { kind: 'name', view: named[0] };
+    }
+    if (similar.length === 0) {
+        return { kind: 'none' };
+    }
+    const isBase = (view) => view.inheritId === null;
+    const likeness = (view) => (view.name === source.name ? 2 : 0) + (isBase(view) === isBase(source) ? 1 : 0);
+    return { kind: 'pick', candidates: [...similar].sort((a, b) => likeness(b) - likeness(a) || a.id - b.id) };
+}
+
+
+/***/ }),
+/* 126 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -24001,7 +25223,7 @@ function locateArchError(arch, rawMessage) {
 
 
 /***/ }),
-/* 120 */
+/* 127 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24156,30 +25378,30 @@ exports.StatusBarIndicators = StatusBarIndicators;
 
 
 /***/ }),
-/* 121 */
+/* 128 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(122);
-const projectCommands_1 = __webpack_require__(124);
-const repoCommands_1 = __webpack_require__(130);
-const dbCommands_1 = __webpack_require__(131);
-const moduleCommands_1 = __webpack_require__(132);
-const testingCommands_1 = __webpack_require__(133);
-const versionCommands_1 = __webpack_require__(134);
-const debugCommands_1 = __webpack_require__(136);
-const reposExplorerCommands_1 = __webpack_require__(137);
-const editorCommands_1 = __webpack_require__(138);
-const helpCommands_1 = __webpack_require__(139);
-const upgradeCommand_1 = __webpack_require__(140);
+const viewCommands_1 = __webpack_require__(129);
+const projectCommands_1 = __webpack_require__(131);
+const repoCommands_1 = __webpack_require__(137);
+const dbCommands_1 = __webpack_require__(138);
+const moduleCommands_1 = __webpack_require__(139);
+const testingCommands_1 = __webpack_require__(140);
+const versionCommands_1 = __webpack_require__(141);
+const debugCommands_1 = __webpack_require__(143);
+const reposExplorerCommands_1 = __webpack_require__(144);
+const editorCommands_1 = __webpack_require__(145);
+const helpCommands_1 = __webpack_require__(146);
+const upgradeCommand_1 = __webpack_require__(147);
 const customAddonsCommand_1 = __webpack_require__(94);
-const dataStoreCommands_1 = __webpack_require__(142);
-const repoLocationCommand_1 = __webpack_require__(144);
+const dataStoreCommands_1 = __webpack_require__(149);
+const repoLocationCommand_1 = __webpack_require__(151);
 const bindingCommand_1 = __webpack_require__(84);
-const upgradeSideCommands_1 = __webpack_require__(145);
-const viewDoctorCommands_1 = __webpack_require__(146);
+const upgradeSideCommands_1 = __webpack_require__(152);
+const viewDoctorCommands_1 = __webpack_require__(153);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -24204,7 +25426,7 @@ function registerAllCommands(deps) {
 
 
 /***/ }),
-/* 122 */
+/* 129 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24244,7 +25466,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(123);
+const quickSearch_1 = __webpack_require__(130);
 const versionsService_1 = __webpack_require__(33);
 const sortOptions_1 = __webpack_require__(38);
 const notifications_1 = __webpack_require__(16);
@@ -24392,7 +25614,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 123 */
+/* 130 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24516,7 +25738,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 124 */
+/* 131 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24568,12 +25790,12 @@ const settingsStore_1 = __webpack_require__(6);
 const project_1 = __webpack_require__(90);
 const dbs_1 = __webpack_require__(64);
 const odooInstaller_1 = __webpack_require__(66);
-const projectWorkspace_1 = __webpack_require__(125);
-const setupFlow_1 = __webpack_require__(127);
+const projectWorkspace_1 = __webpack_require__(132);
+const setupFlow_1 = __webpack_require__(134);
 const setupState_1 = __webpack_require__(71);
 const context_1 = __webpack_require__(42);
 const versionProposal_1 = __webpack_require__(60);
-const versionPick_1 = __webpack_require__(129);
+const versionPick_1 = __webpack_require__(136);
 const gitService_1 = __webpack_require__(11);
 const provisionQueue_1 = __webpack_require__(102);
 const registerCommand_1 = __webpack_require__(85);
@@ -24740,7 +25962,7 @@ function registerProjectCommands(deps) {
 
 
 /***/ }),
-/* 125 */
+/* 132 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24793,7 +26015,7 @@ const logger_1 = __webpack_require__(12);
 const versionRepos_1 = __webpack_require__(80);
 const utils_1 = __webpack_require__(8);
 const versionsService_1 = __webpack_require__(33);
-const workspaceFolders_1 = __webpack_require__(126);
+const workspaceFolders_1 = __webpack_require__(133);
 async function getActiveProjectOrPrompt() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
@@ -24967,7 +26189,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 126 */
+/* 133 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -25027,7 +26249,7 @@ function repoFolderEntries(resolved, existingPaths) {
 
 
 /***/ }),
-/* 127 */
+/* 134 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25081,7 +26303,7 @@ const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const branches_1 = __webpack_require__(52);
 const customAddonsCommand_1 = __webpack_require__(94);
-const setupDetection_1 = __webpack_require__(128);
+const setupDetection_1 = __webpack_require__(135);
 const setupState_1 = __webpack_require__(71);
 /** The per-version key that every repository-discovery site already reads. */
 const CUSTOM_ADDONS_KEY = 'defaultVersion.customAddonsPath';
@@ -25263,7 +26485,7 @@ async function runSetup(options) {
 
 
 /***/ }),
-/* 128 */
+/* 135 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25480,7 +26702,7 @@ function detectCustomAddonsRoot(roots) {
 
 
 /***/ }),
-/* 129 */
+/* 136 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25629,14 +26851,14 @@ async function collectRepoBranches() {
 
 
 /***/ }),
-/* 130 */
+/* 137 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerRepoCommands = registerRepoCommands;
 const repos_1 = __webpack_require__(97);
-const projectWorkspace_1 = __webpack_require__(125);
+const projectWorkspace_1 = __webpack_require__(132);
 const registerCommand_1 = __webpack_require__(85);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
@@ -25649,7 +26871,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 131 */
+/* 138 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25900,7 +27122,7 @@ function registerDbCommands(deps) {
 
 
 /***/ }),
-/* 132 */
+/* 139 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26036,7 +27258,7 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 133 */
+/* 140 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -26093,7 +27315,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 134 */
+/* 141 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26142,7 +27364,7 @@ const utils_1 = __webpack_require__(8);
 const versionIdentity_1 = __webpack_require__(36);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(135);
+const branchPick_1 = __webpack_require__(142);
 const runtimeCache_1 = __webpack_require__(15);
 const environment_1 = __webpack_require__(51);
 const odooInstaller_1 = __webpack_require__(66);
@@ -26771,7 +27993,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 135 */
+/* 142 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26986,7 +28208,7 @@ async function pickRepoBranch(repoPath, title, placeHolder, suggested, exclude, 
 
 
 /***/ }),
-/* 136 */
+/* 143 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27124,7 +28346,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 137 */
+/* 144 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27417,7 +28639,7 @@ function registerReposExplorerCommands(deps) {
 
 
 /***/ }),
-/* 138 */
+/* 145 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27525,7 +28747,7 @@ function registerEditorCommands(deps) {
 
 
 /***/ }),
-/* 139 */
+/* 146 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27613,7 +28835,7 @@ function registerHelpCommands(deps) {
 
 
 /***/ }),
-/* 140 */
+/* 147 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27671,8 +28893,8 @@ const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(135);
-const upgradePlan_1 = __webpack_require__(141);
+const branchPick_1 = __webpack_require__(142);
+const upgradePlan_1 = __webpack_require__(148);
 const upgradeApply_1 = __webpack_require__(43);
 const upgradeSetup_1 = __webpack_require__(59);
 const branches_1 = __webpack_require__(52);
@@ -28273,7 +29495,7 @@ function registerUpgradeCommand(deps) {
 
 
 /***/ }),
-/* 141 */
+/* 148 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28399,7 +29621,7 @@ function describeUpgradePlan(plan, input) {
 
 
 /***/ }),
-/* 142 */
+/* 149 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28460,7 +29682,7 @@ const setupState_1 = __webpack_require__(71);
 const dataLocation_1 = __webpack_require__(17);
 const mainStore_1 = __webpack_require__(27);
 const workspaceSelection_1 = __webpack_require__(30);
-const dataImport_1 = __webpack_require__(143);
+const dataImport_1 = __webpack_require__(150);
 const registerCommand_1 = __webpack_require__(85);
 const gitExclude_1 = __webpack_require__(32);
 const SHARED_STORE_FILE = 'odoo-devtools.db';
@@ -28748,7 +29970,7 @@ function registerDataStoreCommands(deps) {
 
 
 /***/ }),
-/* 143 */
+/* 150 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -29005,7 +30227,7 @@ function buildExport(data, exportedAt = new Date()) {
 
 
 /***/ }),
-/* 144 */
+/* 151 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -29163,7 +30385,7 @@ function registerRepoLocationCommand(deps) {
 
 
 /***/ }),
-/* 145 */
+/* 152 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -29330,7 +30552,7 @@ function registerUpgradeSideCommands(deps) {
 
 
 /***/ }),
-/* 146 */
+/* 153 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -29372,10 +30594,13 @@ exports.registerViewDoctorCommands = registerViewDoctorCommands;
 const vscode = __importStar(__webpack_require__(1));
 const registerCommand_1 = __webpack_require__(85);
 const viewDoctorView_1 = __webpack_require__(105);
-const viewFileSystem_1 = __webpack_require__(117);
+const viewFileSystem_1 = __webpack_require__(122);
 const notifications_1 = __webpack_require__(16);
+const settingsStore_1 = __webpack_require__(6);
+const viewPairing_1 = __webpack_require__(124);
 const logger_1 = __webpack_require__(12);
-const archErrors_1 = __webpack_require__(119);
+const renderPlan_1 = __webpack_require__(121);
+const archErrors_1 = __webpack_require__(126);
 function viewItem(arg) {
     return arg instanceof viewDoctorView_1.ViewItem ? arg : undefined;
 }
@@ -29383,7 +30608,7 @@ async function openArch(dbName, viewId, xmlid) {
     await vscode.window.showTextDocument((0, viewFileSystem_1.viewUri)(dbName, viewId, xmlid ?? `view-${viewId}`), { preview: true });
 }
 function registerViewDoctorCommands(deps) {
-    const { context, providers, viewService, viewDiagnostics } = deps;
+    const { context, providers, viewService, viewDiagnostics, viewRender } = deps;
     context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.refresh', () => providers.views.refresh()));
     context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.openArch', async (arg) => {
         const item = viewItem(arg);
@@ -29398,6 +30623,74 @@ function registerViewDoctorCommands(deps) {
         }
         const [parent] = await viewService.rows(item.dbName, [item.view.inheritId]);
         await openArch(item.dbName, item.view.inheritId, parent?.xmlid ?? null);
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.compare', async (arg) => {
+        const item = viewItem(arg);
+        if (!item) {
+            return;
+        }
+        try {
+            const project = (await settingsStore_1.SettingsStore.peekSelectedProject().catch(() => null))?.project;
+            const originalDb = await (0, viewPairing_1.compareTargets)(project, item);
+            if (!originalDb) {
+                return;
+            }
+            const counterpart = await (0, viewPairing_1.findCounterpart)(item.view, originalDb);
+            if (counterpart === 'none') {
+                void (0, notifications_1.showInfo)(`${originalDb} has no ${item.view.type} view of ${item.view.model || 'this model'} to compare with.`);
+                return;
+            }
+            if (!counterpart) {
+                return;
+            }
+            await vscode.commands.executeCommand('vscode.diff', ...(0, viewPairing_1.diffArguments)({ dbName: originalDb, view: counterpart }, { dbName: item.dbName, view: item.view }));
+        }
+        catch (error) {
+            void (0, notifications_1.showError)(`Could not compare ${item.view.name}: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.render', async (arg) => {
+        const item = viewItem(arg);
+        if (!item) {
+            return;
+        }
+        if (item.view.type === 'qweb') {
+            void (0, notifications_1.showInfo)((0, renderPlan_1.qwebMessage)(item.view.isReport));
+            return;
+        }
+        try {
+            const project = (await settingsStore_1.SettingsStore.peekSelectedProject().catch(() => null))?.project;
+            const pair = (0, viewPairing_1.upgradePair)(project);
+            if (pair && pair.upgraded.dbName === item.dbName) {
+                const counterpart = await (0, viewPairing_1.findCounterpart)(item.view, pair.original.dbName);
+                if (counterpart === undefined) {
+                    return;
+                }
+                const targets = [];
+                if (counterpart !== 'none') {
+                    targets.push({ dbName: pair.original.dbName, versionId: pair.original.versionId, viewId: counterpart.id, title: `Original · ${pair.original.dbName}` });
+                }
+                targets.push({ dbName: item.dbName, versionId: pair.upgraded.versionId, viewId: item.view.id, title: `Upgraded · ${item.dbName}` });
+                await viewRender.show({
+                    title: item.view.name,
+                    targets,
+                    startCommand: 'odoo.startBothServers',
+                    startLabel: 'Start Both Servers',
+                    notice: counterpart === 'none' ? `${pair.original.dbName} has no matching view; showing the upgraded side only.` : undefined
+                });
+                return;
+            }
+            const db = project?.dbs?.find(entry => entry.id === item.dbName);
+            await viewRender.show({
+                title: item.view.name,
+                targets: [{ dbName: item.dbName, versionId: db?.versionId, viewId: item.view.id, title: item.dbName }],
+                startCommand: 'odoo.startServer',
+                startLabel: 'Start Server'
+            });
+        }
+        catch (error) {
+            void (0, notifications_1.showError)(`Could not render ${item.view.name}: ${(0, logger_1.errorMessage)(error)}`);
+        }
     }));
     context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.activate', async (arg) => {
         const item = viewItem(arg);
@@ -29458,7 +30751,7 @@ function registerViewDoctorCommands(deps) {
 
 
 /***/ }),
-/* 147 */
+/* 154 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -29509,7 +30802,7 @@ function selectionFacts(project, version) {
 
 
 /***/ }),
-/* 148 */
+/* 155 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
