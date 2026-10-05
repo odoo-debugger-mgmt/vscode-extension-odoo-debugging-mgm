@@ -4,7 +4,8 @@
  * free text with tabs and newlines, which the `|`-separated readers in
  * database.ts would split. Ported from odoo-manager's docker_manager.py
  * (list_disabled_views, _first_xmlid, the Discuss report query). Ids are
- * validated integers; nothing else is ever interpolated.
+ * validated integers and text goes in hex-encoded (sqlText); nothing else is
+ * ever interpolated.
  */
 import { runSql } from '../postgres';
 
@@ -38,6 +39,14 @@ export function sqlIdList(ids: number[]): string {
         }
     }
     return ids.join(',');
+}
+
+/**
+ * Text for embedding in SQL. Hex digits cannot close a literal, so no value
+ * - a model, a view name, an external id - can change the query.
+ */
+export function sqlText(value: string): string {
+    return `convert_from(decode('${Buffer.from(value, 'utf-8').toString('hex')}', 'hex'), 'UTF8')`;
 }
 
 /**
@@ -157,4 +166,30 @@ export async function getWriteDates(dbName: string, ids: number[]): Promise<Map<
     const sql = 'SELECT coalesce(json_object_agg(id, floor(extract(epoch FROM write_date) * 1000)), \'{}\'::json) '
         + `FROM ir_ui_view WHERE id IN (${sqlIdList(ids)});`;
     return parseWriteDates(await runSql(dbName, sql));
+}
+
+/** The query for the view with this external id; undefined for a string that is not module.name. */
+export function viewByXmlidSql(xmlid: string): string | undefined {
+    const dot = xmlid.indexOf('.');
+    if (dot <= 0 || dot === xmlid.length - 1) {
+        return undefined;
+    }
+    return viewRowsSql(`v.id IN (SELECT d.res_id FROM ir_model_data d WHERE d.model = 'ir.ui.view'
+        AND d.module = ${sqlText(xmlid.slice(0, dot))} AND d.name = ${sqlText(xmlid.slice(dot + 1))})`);
+}
+
+/** The view with this external id, if the database has one. */
+export async function findViewByXmlid(dbName: string, xmlid: string): Promise<ViewRow | undefined> {
+    const sql = viewByXmlidSql(xmlid);
+    return sql ? parseViewRows(await runSql(dbName, sql))[0] : undefined;
+}
+
+/** The query for the view with this id and every view of the same model and type. */
+export function viewsLikeSql(view: Pick<ViewRow, 'id' | 'model' | 'type'>): string {
+    return viewRowsSql(`(v.id = ${sqlIdList([view.id])} OR (v.model = ${sqlText(view.model)} AND v.type = ${sqlText(view.type)}))`);
+}
+
+/** What matching a view of another database picks from: the same id, and its model and type's views. */
+export async function findViewsLike(dbName: string, view: Pick<ViewRow, 'id' | 'model' | 'type'>): Promise<ViewRow[]> {
+    return parseViewRows(await runSql(dbName, viewsLikeSql(view)));
 }

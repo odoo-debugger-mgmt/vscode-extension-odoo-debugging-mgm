@@ -1,5 +1,6 @@
 import * as assert from 'assert';
-import { parseReportMessages, parseViewRows, parseWriteDates, sqlIdList, viewRowsSql } from '../services/views/viewQueries';
+import { parseReportMessages, parseViewRows, parseWriteDates, sqlIdList, viewRowsSql, sqlText, viewByXmlidSql, viewsLikeSql } from '../services/views/viewQueries';
+import { runSql } from '../services/postgres';
 
 suite('View queries', () => {
     test('embeds only positive integer ids', () => {
@@ -43,5 +44,37 @@ suite('View queries', () => {
         assert.deepStrictEqual(parseReportMessages(''), []);
         assert.deepStrictEqual([...parseWriteDates('{"12": 1727000000123, "13": null}')], [[12, 1727000000123], [13, 0]]);
         assert.deepStrictEqual([...parseWriteDates('')], []);
+    });
+});
+
+suite('View queries over text', () => {
+    test('text is hex-encoded, so no quote in it reaches the SQL', () => {
+        const evil = "x'); DROP TABLE ir_ui_view; --";
+        const sql = viewsLikeSql({ id: 5, model: evil, type: 'form' });
+        assert.ok(!sql.includes(evil), sql);
+        assert.ok(!sql.includes("x');"), sql);
+        assert.ok(sql.includes(`decode('${Buffer.from(evil, 'utf-8').toString('hex')}', 'hex')`));
+        assert.ok(sql.includes('v.id = 5 OR'));
+        assert.throws(() => viewsLikeSql({ id: -1, model: 'res.partner', type: 'form' }), /Not a view id/);
+    });
+
+    test('an external id is split into module and name, and needs both', () => {
+        const sql = viewByXmlidSql('studio_customization.odoo_studio_x.y');
+        assert.ok(sql?.includes(`d.module = ${sqlText('studio_customization')}`));
+        assert.ok(sql?.includes(`d.name = ${sqlText('odoo_studio_x.y')}`));
+        assert.strictEqual(viewByXmlidSql('no_dot'), undefined);
+        assert.strictEqual(viewByXmlidSql('.name'), undefined);
+    });
+
+    test('PostgreSQL reads the text back exactly', async function () {
+        const value = "it's — ✓ \\ \"q\"";
+        let output: string;
+        try {
+            output = await runSql('postgres', `SELECT ${sqlText(value)};`);
+        } catch {
+            this.skip();
+            return;
+        }
+        assert.strictEqual(output, value);
     });
 });
