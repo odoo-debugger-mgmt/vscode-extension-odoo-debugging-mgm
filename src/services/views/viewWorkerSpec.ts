@@ -18,14 +18,10 @@ export interface WorkerAvailabilityInput {
     inProject: boolean;
     versionName?: string;
     provisioned: boolean;
-    platform: NodeJS.Platform;
 }
 
 /** Why no shell can be started for this database, or undefined when one can. */
 export function viewWorkerUnavailableReason(input: WorkerAvailabilityInput): string | undefined {
-    if (input.platform === 'win32') {
-        return 'The View Doctor needs Linux or macOS: it talks to the Odoo shell over extra pipes Windows does not pass on.';
-    }
     if (!input.inProject) {
         return `"${input.dbName}" is not a database of the selected project.`;
     }
@@ -48,8 +44,7 @@ export async function resolveViewWorkerSpec(dbName: string, scriptPath: string):
         dbName,
         inProject: !!db,
         versionName: version?.name,
-        provisioned: !!settings && isVersionProvisioned(resolveOptionalPath(settings.pythonPath)),
-        platform: process.platform
+        provisioned: !!settings && isVersionProvisioned(resolveOptionalPath(settings.pythonPath))
     });
     if (reason || !result || !db || !version || !settings) {
         throw new Error(reason ?? `Cannot start an Odoo shell for "${dbName}".`);

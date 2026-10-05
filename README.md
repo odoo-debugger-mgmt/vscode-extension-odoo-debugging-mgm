@@ -170,7 +170,7 @@ setup with the current databases preselected.
 
 The **Views** view lists the views the selected database has turned off — while an upgrade is set up, the upgraded database. What the upgrade disabled comes first, then every other inactive view.
 
-Click a view to open its arch as an XML file. Saving writes it to the database through an Odoo shell that runs the database's own version (started on first use, stopped after ten idle minutes). A view that was off is turned on when Odoo can build it; otherwise the arch is still saved and Odoo's reason shows as an error in the editor. Right-click a view to turn it on or off, copy its external id, or open its parent. Linux and macOS only.
+Click a view to open its arch as an XML file. Saving writes it to the database through an Odoo shell that runs the database's own version (started on first use, stopped after ten idle minutes). A view that was off is turned on when Odoo can build it; otherwise the arch is still saved and Odoo's reason shows as an error in the editor. Right-click a view to turn it on or off, copy its external id, or open its parent.
 
 ### One copy per branch
 

@@ -2,12 +2,15 @@
 #
 # Loaded inside `odoo-bin shell` by the one-line bootstrap the extension pipes
 # to stdin (the shell exec()s all of stdin at EOF, so requests cannot come that
-# way). Requests arrive on fd 3 and replies leave on fd 4, one JSON object per
-# line: {"id": n, "cmd": "...", "args": {...}} -> {"id": n, "ok": true,
+# way). The worker connects to the socket in ODT_VIEW_ADDRESS - "unix:<path>",
+# or "tcp:127.0.0.1:<port>" on Windows - sends ODT_VIEW_TOKEN, then reads
+# requests and writes replies there, one JSON object per line:
+# {"id": n, "cmd": "...", "args": {...}} -> {"id": n, "ok": true,
 # "result": ...} or {"id": n, "ok": false, "error": "...", "trace": "..."}.
 # Runs on Odoo 15 to 19: every API that moved is looked up, not assumed.
 import json
 import os
+import socket
 import traceback
 
 import odoo
@@ -198,9 +201,28 @@ COMMANDS = {
 }
 
 
+def _open_channel():
+    """Connects to the extension and proves who it is. Both values leave the
+    environment first: processes Odoo starts (wkhtmltopdf, ...) inherit it."""
+    address = os.environ.pop('ODT_VIEW_ADDRESS')
+    token = os.environ.pop('ODT_VIEW_TOKEN')
+    kind, _, where = address.partition(':')
+    if kind == 'unix':
+        channel = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        channel.connect(where)
+    else:
+        host, _, port = where.rpartition(':')
+        channel = socket.create_connection((host, int(port)))
+    # newline='\n': on Windows text mode would otherwise write '\r\n'.
+    requests = channel.makefile('r', encoding='utf-8', newline='\n')
+    replies = channel.makefile('w', encoding='utf-8', newline='\n')
+    replies.write(token + '\n')
+    replies.flush()
+    return requests, replies
+
+
 def main(env):
-    requests = os.fdopen(3, 'r', encoding='utf-8')
-    replies = os.fdopen(4, 'w', encoding='utf-8')
+    requests, replies = _open_channel()
 
     def reply(payload):
         replies.write(json.dumps(payload) + '\n')

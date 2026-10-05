@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ViewWorker, ViewWorkerError, workerBootstrap, type WorkerSpawnSpec } from '../services/views/viewWorker';
 
@@ -15,7 +16,7 @@ function fakeSpec(mode: string): WorkerSpawnSpec {
 suite('View worker', function () {
     this.timeout(20000);
 
-    test('pipes the bootstrap to stdin and waits for the ready reply', async () => {
+    test('pipes the bootstrap to stdin and waits for the shell to connect and report ready', async () => {
         const worker = new ViewWorker(fakeSpec('ok'));
         try {
             const ready = await worker.start() as { series: string; bootstrap: string };
@@ -96,6 +97,55 @@ suite('View worker', function () {
     test('a missing python is a named error, not a hang', async () => {
         const worker = new ViewWorker({ ...fakeSpec('ok'), command: '/nonexistent/python3' }, { startTimeoutMs: 5000 });
         await assert.rejects(worker.start(), /Could not start \/nonexistent\/python3/);
+    });
+
+    test('a connection with the wrong token is turned away, and the shell still gets in', async () => {
+        const worker = new ViewWorker(fakeSpec('intruder'), { startTimeoutMs: 5000 });
+        try {
+            await worker.start();
+            assert.deepStrictEqual(await worker.request('echo', { a: 1 }), { a: 1 });
+        } finally {
+            await worker.dispose();
+        }
+    });
+
+    test('on Linux and macOS the socket lives in a private folder that is gone once the shell is in', async function () {
+        if (process.platform === 'win32') {
+            this.skip();
+        }
+        const worker = new ViewWorker(fakeSpec('ok'));
+        try {
+            await worker.start();
+            const { address } = await worker.request<{ address: string }>('env');
+            assert.match(address, /^unix:/);
+            assert.strictEqual(fs.existsSync(path.dirname(address.slice('unix:'.length))), false);
+        } finally {
+            await worker.dispose();
+        }
+    });
+
+    test('the loopback transport Windows uses carries the same protocol', async () => {
+        const worker = new ViewWorker(fakeSpec('ok'), { transport: 'tcp' });
+        try {
+            await worker.start();
+            const { address } = await worker.request<{ address: string }>('env');
+            assert.match(address, /^tcp:127\.0\.0\.1:\d+$/);
+            const arch = '<form string="Prénom ✓">' + 'x'.repeat(512 * 1024) + '</form>';
+            assert.strictEqual((await worker.request<{ arch: string }>('echo', { arch })).arch, arch);
+        } finally {
+            await worker.dispose();
+        }
+    });
+
+    test('dispose stops a shell that never connected', async () => {
+        const worker = new ViewWorker(fakeSpec('silent'), { startTimeoutMs: 60000 });
+        const started = worker.start().catch(() => undefined);
+        await new Promise(resolve => setTimeout(resolve, 300));
+        const disposing = Date.now();
+        await worker.dispose();
+        assert.ok(Date.now() - disposing < 2000, 'stopped without waiting for the kill timer');
+        assert.strictEqual(worker.isAlive, false);
+        await started;
     });
 
     test('the bootstrap quotes any path as a Python literal', () => {

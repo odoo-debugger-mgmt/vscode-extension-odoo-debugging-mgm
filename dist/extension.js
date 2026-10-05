@@ -22334,12 +22334,22 @@ exports.workerBootstrap = workerBootstrap;
  * One long-lived `odoo-bin shell` on one database, running view_worker.py.
  *
  * The shell exec()s all of stdin once it reaches EOF, so stdin carries only
- * a one-line bootstrap and is then closed. Requests go out on fd 3 and replies
- * come back on fd 4, one JSON object per line. That also keeps Odoo's logging
- * on stdout/stderr out of the replies; its last lines are kept, to explain a
- * shell that dies.
+ * a one-line bootstrap and is then closed. Requests and replies, one JSON
+ * object per line, go over a local socket instead: the worker connects to the
+ * address in ODT_VIEW_ADDRESS and proves itself with ODT_VIEW_TOKEN. That also
+ * keeps Odoo's logging on stdout/stderr out of the replies; its last lines are
+ * kept, to explain a shell that dies.
+ *
+ * The socket is a Unix socket in a folder only this user can open, or on
+ * Windows, which Python cannot reach a Unix socket from, a loopback port. The
+ * token is what keeps another local process from posing as the shell there.
  */
 const node_child_process_1 = __webpack_require__(14);
+const node_crypto_1 = __webpack_require__(65);
+const fs = __importStar(__webpack_require__(2));
+const net = __importStar(__webpack_require__(37));
+const os = __importStar(__webpack_require__(18));
+const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
 class ViewWorkerError extends Error {
     trace;
@@ -22365,7 +22375,10 @@ class ViewWorker {
     spec;
     options;
     child;
-    requests;
+    /** The shell's end of the socket, once it has connected with the token. */
+    channel;
+    server;
+    socketDir;
     pending = new Map();
     nextId = 1;
     ready;
@@ -22388,7 +22401,7 @@ class ViewWorker {
     }
     async request(cmd, args = {}) {
         await this.start();
-        const requests = this.requests;
+        const requests = this.channel;
         if (!this.isAlive || !requests) {
             throw new ViewWorkerError('The Odoo shell is not running.');
         }
@@ -22408,10 +22421,14 @@ class ViewWorker {
             requests.write(JSON.stringify({ id, cmd, args }) + '\n');
         });
     }
-    /** EOF on the request pipe lets Python finish cleanly; a kill follows if it does not. */
+    /**
+     * EOF on the socket lets Python finish cleanly; a kill follows if it does
+     * not. A shell that has not connected yet has nothing to read EOF from.
+     */
     dispose() {
         const child = this.child;
         if (!child || this.exited) {
+            this.closeServer();
             return Promise.resolve();
         }
         return new Promise(resolve => {
@@ -22420,10 +22437,17 @@ class ViewWorker {
                 clearTimeout(killer);
                 resolve();
             });
-            this.requests?.end();
+            if (this.channel) {
+                this.channel.end();
+            }
+            else {
+                child.kill();
+            }
         });
     }
-    spawn() {
+    async spawn() {
+        const token = (0, node_crypto_1.randomBytes)(24).toString('hex');
+        const address = await this.listen(token);
         return new Promise((resolve, reject) => {
             const startTimeoutMs = this.options.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS;
             this.pending.set(0, {
@@ -22436,14 +22460,11 @@ class ViewWorker {
             });
             const child = (0, node_child_process_1.spawn)(this.spec.command, this.spec.args, {
                 cwd: this.spec.cwd,
-                env: this.spec.env,
+                env: { ...(this.spec.env ?? process.env), ODT_VIEW_ADDRESS: address, ODT_VIEW_TOKEN: token },
                 shell: false,
-                stdio: ['pipe', 'pipe', 'pipe', 'pipe', 'pipe']
+                stdio: ['pipe', 'pipe', 'pipe']
             });
             this.child = child;
-            // Null when the spawn itself failed; 'error' below reports that.
-            this.requests = (child.stdio[3] ?? undefined);
-            const replies = (child.stdio[4] ?? undefined);
             const remember = (chunk) => {
                 this.tail.push(...chunk.toString('utf-8').split('\n').filter(line => line.trim()));
                 if (this.tail.length > TAIL_LINES) {
@@ -22452,20 +22473,9 @@ class ViewWorker {
             };
             child.stdout?.on('data', remember);
             child.stderr?.on('data', remember);
-            let buffer = '';
-            replies?.setEncoding('utf-8');
-            replies?.on('data', (chunk) => {
-                buffer += chunk;
-                let newline = buffer.indexOf('\n');
-                while (newline >= 0) {
-                    const line = buffer.slice(0, newline);
-                    buffer = buffer.slice(newline + 1);
-                    newline = buffer.indexOf('\n');
-                    this.handleReply(line);
-                }
-            });
             child.on('error', error => {
                 this.exited = true;
+                this.closeServer();
                 this.failAll(new ViewWorkerError(`Could not start ${this.spec.command}: ${error.message}`));
             });
             child.on('exit', () => {
@@ -22474,17 +22484,87 @@ class ViewWorker {
             // 'close' comes after stdout and stderr are drained, so the tail is complete.
             child.on('close', code => {
                 this.exited = true;
+                this.closeServer();
+                this.channel?.destroy();
                 const status = code === null ? '' : ` (exit code ${code})`;
                 this.failAll(new ViewWorkerError(`The Odoo shell stopped${status}.${this.tailText()}`));
                 this.exitEmitter.fire();
             });
             // A failed write after an early exit is reported by 'close'; do not crash on EPIPE.
             child.stdin?.on('error', () => undefined);
-            this.requests?.on('error', () => undefined);
             if (child.pid !== undefined) {
                 child.stdin?.end(this.spec.bootstrap);
             }
         });
+    }
+    /** Listens where the shell will connect; resolves with the address to give it. */
+    listen(token) {
+        const transport = this.options.transport ?? (process.platform === 'win32' ? 'tcp' : 'unix');
+        const server = net.createServer(socket => this.accept(socket, token));
+        this.server = server;
+        return new Promise((resolve, reject) => {
+            server.once('error', reject);
+            if (transport === 'tcp') {
+                server.listen(0, '127.0.0.1', () => {
+                    resolve(`tcp:127.0.0.1:${server.address().port}`);
+                });
+                return;
+            }
+            // mkdtemp makes the folder 0700: no other user can reach the socket.
+            this.socketDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odt-view-'));
+            const socketPath = path.join(this.socketDir, 'worker.sock');
+            server.listen(socketPath, () => resolve(`unix:${socketPath}`));
+        });
+    }
+    /**
+     * The first line on a connection must be the token. The first connection
+     * that sends it becomes the channel and nothing else is accepted after it;
+     * any other connection is dropped.
+     */
+    accept(socket, token) {
+        if (this.channel) {
+            socket.destroy();
+            return;
+        }
+        let authenticated = false;
+        let buffer = '';
+        socket.setEncoding('utf-8');
+        socket.on('error', () => undefined);
+        socket.on('data', (chunk) => {
+            buffer += chunk;
+            let newline = buffer.indexOf('\n');
+            while (newline >= 0) {
+                const line = buffer.slice(0, newline);
+                buffer = buffer.slice(newline + 1);
+                newline = buffer.indexOf('\n');
+                if (authenticated) {
+                    this.handleReply(line);
+                    continue;
+                }
+                if (line !== token || this.channel) {
+                    socket.destroy();
+                    return;
+                }
+                authenticated = true;
+                this.channel = socket;
+                this.closeServer();
+            }
+        });
+        // The shell hung up without exiting: it can no longer be reached.
+        socket.on('close', () => {
+            if (this.channel === socket && !this.exited) {
+                this.child?.kill();
+            }
+        });
+    }
+    /** Stops accepting connections; the socket file and its folder go with it. */
+    closeServer() {
+        this.server?.close();
+        this.server = undefined;
+        if (this.socketDir) {
+            fs.rmSync(this.socketDir, { recursive: true, force: true });
+            this.socketDir = undefined;
+        }
     }
     handleReply(line) {
         let reply;
@@ -22657,9 +22737,6 @@ const viewWorkerArgs_1 = __webpack_require__(50);
 const viewWorker_1 = __webpack_require__(110);
 /** Why no shell can be started for this database, or undefined when one can. */
 function viewWorkerUnavailableReason(input) {
-    if (input.platform === 'win32') {
-        return 'The View Doctor needs Linux or macOS: it talks to the Odoo shell over extra pipes Windows does not pass on.';
-    }
     if (!input.inProject) {
         return `"${input.dbName}" is not a database of the selected project.`;
     }
@@ -22680,8 +22757,7 @@ async function resolveViewWorkerSpec(dbName, scriptPath) {
         dbName,
         inProject: !!db,
         versionName: version?.name,
-        provisioned: !!settings && (0, provisioning_1.isVersionProvisioned)((0, utils_1.resolveOptionalPath)(settings.pythonPath)),
-        platform: process.platform
+        provisioned: !!settings && (0, provisioning_1.isVersionProvisioned)((0, utils_1.resolveOptionalPath)(settings.pythonPath))
     });
     if (reason || !result || !db || !version || !settings) {
         throw new Error(reason ?? `Cannot start an Odoo shell for "${dbName}".`);

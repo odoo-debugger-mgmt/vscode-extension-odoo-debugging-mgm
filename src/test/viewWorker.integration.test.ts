@@ -3,6 +3,7 @@
  * ODT_VIEW_TEST_PYTHON, ODT_VIEW_TEST_ODOO (an odoo checkout) and
  * ODT_VIEW_TEST_DB (a database with base installed, for that checkout's
  * version) are set. Works on a copy of ODT_VIEW_TEST_DB, dropped afterwards.
+ * ODT_VIEW_TEST_TRANSPORT=tcp runs it over the loopback port Windows uses.
  */
 import * as assert from 'assert';
 import * as path from 'node:path';
@@ -11,14 +12,15 @@ import { createDatabase, databaseExists, dropDatabase, dropDatabaseIfExists, onB
 import { getActiveDatabaseNames } from '../services/database';
 import { invalidateActiveDatabasesCache } from '../services/runtimeCache';
 import { buildViewWorkerArgs, viewWorkerEnv, VIEW_WORKER_APP_NAME } from '../services/views/viewWorkerArgs';
-import { ViewWorker, workerBootstrap } from '../services/views/viewWorker';
+import { ViewWorker, workerBootstrap, type WorkerTransport } from '../services/views/viewWorker';
 import { ViewWorkerPool } from '../services/views/viewWorkerPool';
 import { ViewService } from '../services/views/viewService';
 
 const python = process.env.ODT_VIEW_TEST_PYTHON;
 const odoo = process.env.ODT_VIEW_TEST_ODOO;
 const sourceDb = process.env.ODT_VIEW_TEST_DB;
-const enabled = !!(python && odoo && sourceDb) && process.platform !== 'win32';
+const enabled = !!(python && odoo && sourceDb);
+const transport = process.env.ODT_VIEW_TEST_TRANSPORT as WorkerTransport | undefined;
 
 // OdooBot is made French, the language `odoo-bin shell` then runs in, and
 // the arch gets a French translation: the shell must still read and write
@@ -101,7 +103,7 @@ async function templatesCacheSignal(dbName: string): Promise<number> {
         args: buildViewWorkerArgs({ odooBinPath: `${odoo}/odoo-bin`, addonsPaths, dbName }),
         env: viewWorkerEnv(process.env),
         bootstrap: workerBootstrap(scriptPath)
-    });
+    }, { transport });
 
     suiteSetup(async () => {
         await dropDatabaseIfExists(copy);
