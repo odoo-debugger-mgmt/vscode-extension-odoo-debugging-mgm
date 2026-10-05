@@ -26,7 +26,7 @@ The user's four requests, and where each stands:
 
 Choices the user made, which are not up for re-litigation:
 - **Side by side** means the *same view* in the original DB and the upgraded DB as a diff, plus rendering both DBs.
-- **Rendering** opens in the **external browser**, not in VS Code panels.
+- **Rendering happens inside VS Code**: one tab with the two Odoo web clients side by side, in frames the extension controls. This replaced the original "external browser" choice on 2026-10-05, after a spike proved it works (`docs/superpowers/notes/2026-10-05-frame-spike.md`). The user wanted what odoo-manager does: two frames in one page, reloadable, on the same record.
 - **The tree** lists upgrade-disabled views first, then all other inactive views.
 - **The "view vs its parent" diff** is out of scope.
 - **Stage 3 scripts** go into a module's `migrations/<version>/` folder via a picker, or an untitled editor. **The extension never runs `git commit`.** An auto-commit with a message template was discussed and explicitly dropped.
@@ -58,7 +58,7 @@ Choices the user made, which are not up for re-litigation:
 - `src/upgrade.ts`: `readUpgradeConfig(project)`, which gives `config.from` and `config.to` as `{ dbId, versionId?, series }`.
 - The command `odoo.startBothServers`.
 
-## 3. Stage 2: what to build (spec §4)
+## 3. Stage 2: what to build (spec §4, as amended on 2026-10-05: rendering is inside VS Code)
 
 **1. Compare with Original** (an inline action on a tree row).
 - It runs `vscode.diff(fromUri, toUri, "<name>: <fromDb> ↔ <toDb>")`. The left side is the original DB, **read-only**; the right side is the upgraded DB, editable.
@@ -74,24 +74,47 @@ Choices the user made, which are not up for re-litigation:
 - `stat()` returns `permissions: vscode.FilePermission.Readonly` for views of the Upgrade-mode **From** DB, unless the setting `odooDebugger.views.allowEditOriginal` is true (default `false`).
 - The provider needs an injected `isReadOnly(dbName)` predicate. Keep the provider free of SettingsStore access, so it stays testable.
 
-**3. Render in Browser / Render Both.**
-- Add a new worker command `make_action { view_id }`. It creates or reuses an `ir.actions.act_window` for the view's **root** (stop at the first primary-mode ancestor, like `_root` in the worker), and returns `{ action_id, model, view_type }`.
-  - Reuse the action per (model, view), with a recognisable name such as `[View Doctor] <model> #<view id>`, so they don't pile up.
-  - Don't delete these actions.
-  - odoo-manager's version is `render_view` in `odoo_manager/docker_manager.py` around lines 2477–2530.
-- **URL:**
-  - `/odoo/action-<id>?debug=1` on saas~17.2 and later;
-  - `/web?debug=1#action=<id>` before that.
-  - The series comes from the worker's ready reply (`series`) or from `detectOdooSeries`.
-- **Port:** use `resolvePortForDatabase`. If nothing answers, offer "Start Both Servers".
-- **Cookie collision:** both servers are on localhost, so open the **original on `127.0.0.1` and the upgraded on `localhost`**. That way both stay logged in.
+**3. Render side by side, inside VS Code.**
+
+This supersedes spec §4's "Render Both in Browser". Read `docs/superpowers/notes/2026-10-05-frame-spike.md` first: it has the observed results, the working session-minting code and the probe proxy.
+
+- **Panel** (`src/views/viewRenderPanel.ts`, a `WebviewPanel`).
+  - One tab, two iframes side by side, each with a header naming the DB, version and record. In Upgrade mode the original is on the left and the upgraded DB on the right.
+  - Toolbar: **Reload both**, and **Same record / next record**.
+  - CSP: `frame-src` limited to the two proxy origins; scripts with a nonce.
+  - Outside Upgrade mode, **Render** shows one frame for the selected DB.
+  - **Reload on save:** when the arch file system saves a view whose database or root the panel shows (hook into the `onSaved` callback in `src/extension.ts`), post `reload` to the panel. The frame then reloads with the new arch, since the worker already signalled the server's caches.
+- **Proxy** (`src/services/views/odooFrameProxy.ts`).
+  - One proxy per database, on `127.0.0.1:0`, forwarding to the port that serves that DB (`resolvePortForDatabase`).
+  - Inject `Cookie: session_id=<sid>` and pass `Host` through.
+  - Strip `X-Frame-Options` and CSP `frame-ancestors`.
+  - Drop `Set-Cookie: session_id`, following any rotation.
+  - Rewrite `Location` from the backend origin to the proxy's.
+  - Pipe websocket upgrades.
+  - Close the proxy with the panel.
+  - **Gate it** (required: without it, any web page in the user's browser gets admin). The panel's first URL is `/__odt/open?t=<one-time token>&next=<path>`. The proxy answers with `Set-Cookie: odt_gate=<random secret>; Path=/; HttpOnly; Secure; SameSite=None` and a 302. From then on it refuses every request and upgrade without that cookie with 403, and injects nothing. The spike verified that this cookie is sent back from inside the webview.
+- **Session:** a new worker command `new_session { }`.
+  - It mints an admin session for the first active `base.group_system` user. The spike's code is in the note; verify `root.session_store` on 15/16.
+  - It returns `{ sid }`. Mint once per panel per DB, and again if the proxy sees a 401 or a redirect to `/web/login`.
+- **Action and URL:** a new worker command `make_action { view_id, res_id? }`.
+  - It creates or reuses an `ir.actions.act_window` for the view's **root**: stop at the first primary-mode ancestor, like `_root` in the worker.
+  - Name it recognisably (`[View Doctor] <model> #<view id>`) and reuse it per (model, view). Don't delete these.
+  - It returns `{ action_id, model, view_type }`.
+  - odoo-manager's equivalent is `render_view`, `odoo_manager/docker_manager.py` around lines 2477–2530.
+  - Frame URL, with `debug=1`:
+    - saas~17.2 and later: `/odoo/action-<id>/<res_id>`;
+    - before that: `/web#action=<id>&id=<res_id>&view_type=<type>`.
+  - The series comes from the worker's ready reply (`series`).
+- **Port:** if nothing answers on a side, show that in its frame's header and offer **Start Both Servers** (`odoo.startBothServers`).
+- **Remote dev** (SSH, WSL, Codespaces): pass the proxy URLs through `vscode.env.asExternalUri`.
+- **No cookie-collision workaround is needed.** The 127.0.0.1-vs-localhost trick from the spec was only for browser tabs.
 - **Decisions already made for you:**
   - **Render Both opens both sides on the *same* record, so the two renders are comparable** (user requirement). The upgraded DB is a copy of the original, so the same id is the same record.
     - Add a worker command `recent_ids { model, limit }` that returns the most recent ids (`search([], limit=limit, order='id desc')`, e.g. limit 200), and run it on both DBs.
     - Pick the highest id present in both lists, and pass it to `make_action` (`{ view_id, res_id }`) on each side.
     - If no id is common to both, open a new record on both sides and say so ("No record exists in both databases; showing a new one.").
     - The comparison never falls back to different records on the two sides.
-  - **A single Render in Browser** (one side) uses that side's most recent record, or a new record if there is none.
+  - **A single-frame Render** (outside Upgrade mode) uses that DB's most recent record, or a new record if there is none.
   - **List, kanban and other multi-record types** open as is. Both sides then show the same data set, which is comparable by nature.
   - **QWeb report templates are out of scope for stage 2.** Show a clear message ("Reports need a record to render; open the report from Odoo") rather than building `/report/html/...` URLs.
   - **Integration tests to add:**
@@ -99,8 +122,8 @@ Choices the user made, which are not up for re-litigation:
     - The "no common record" case opens a new record on both sides.
 
 **4. Tree wiring.**
-- Inline actions on rows: Open Arch (exists), Compare with Original, Render in Browser.
-- Render Both goes in the context menu, and only while Upgrade mode is active.
+- Inline actions on rows: Open Arch (exists), Compare with Original, Render.
+- In Upgrade mode, Render shows both sides; otherwise it shows one frame.
 - Destructive actions stay right-click-only behind a modal; none are added here.
 
 **5. Docs.** Update CHANGELOG `[Unreleased]` and the README "Disabled views (View Doctor)" section. Rebuild `dist/` with `npm run compile` in the last commit.
@@ -125,6 +148,8 @@ Stage 3 (upgrade script, spec §5) is deliberately not part of this handover's s
   - The bootstrap escapes non-ASCII, and the shell runs with `PYTHONIOENCODING=utf-8`.
   - The Windows path is **untested on a real Windows machine**. Don't claim otherwise.
 - **IDE diagnostics `OWL000`** in TS files are false positives. Trust `npx tsc -p . --noEmit`.
+- **Webviews and Odoo's cookies.** A webview's origin (`vscode-webview://`) is never the same site as `127.0.0.1`, so don't rely on Odoo's own session cookie in the frames: the proxy must inject it. A cookie the proxy sets itself with `SameSite=None; Secure` *is* sent back; that is what the gate uses.
+- **The proxy is admin for anyone who reaches its port** until it is gated. Never ship it without the gate.
 
 ## 5. How to verify
 
@@ -152,12 +177,28 @@ Stage 3 (upgrade script, spec §5) is deliberately not part of this handover's s
   - Add `ODT_VIEW_TEST_TRANSPORT=tcp` to exercise the Windows transport.
   - Use 17.0, 18.0 and 19.0. **`venv-15.0` (no PyPDF2) and `venv-16.0` (no setuptools) cannot start Odoo.** Don't modify the user's venvs.
   - Drop your `odt_view_*` databases when done. Touch no other database.
-  - A new `make_action` command deserves integration tests here, e.g. that it creates and then reuses one action, and that the returned ids/URL are valid on 17 vs 19.
+  - The new `make_action`, `recent_ids` and `new_session` commands deserve integration tests here. For `new_session`: a JSON-RPC `POST /web/session/get_session_info` with the minted `session_id` returns `is_admin: true`. That needs a running server; the spike's recipe below starts one.
+- **Proxy unit tests:** run against a tiny fake HTTP server in the test. They should check:
+  - the injected cookie;
+  - the stripped headers;
+  - the `Location` rewrite;
+  - session rotation followed;
+  - **the gate**: 403 and no injection without `odt_gate`, the token single-use;
+  - a websocket upgrade piped through.
+- **A real Odoo server for render tests**, started as in the spike:
+
+  ```bash
+  /home/odoo/odoo-dev/venv-19.0/bin/python /home/odoo/odoo-dev/odoo-19.0/odoo-bin \
+    --addons-path=... -d <db> --db-filter='^<db>$' --http-interface=127.0.0.1 -p 18070 \
+    --gevent-port=18073 --max-cron-threads=0
+  ```
+
+  Stop it, and delete the session files you minted under `~/.local/share/Odoo/sessions/`.
 - **Real window.** The recipe is in `docs/manual-test-brief.md` ("Driving the window on this machine"), plus the gotchas in the user's memory file `odoo-debugger-verification.md`:
   - Xvfb runs detached with the sandbox disabled;
   - launch `code` with `env -i` and a short scratch HOME;
   - seed `.vscode/odoo-debugger-data.json` directly.
-  - The browser side of "Render" can be checked by asserting the URL handed to `vscode.env.openExternal`; a real browser isn't required.
+  - The spike drove exactly this: screenshot the panel with both frames, save an arch, and see both frames reload.
 
 ## 6. How the maintainer wants work run
 

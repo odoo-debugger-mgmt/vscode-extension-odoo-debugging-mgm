@@ -159,7 +159,13 @@ views open in an editor, so edits made in Odoo's UI are picked up (like odoo-man
 - **Outside Upgrade mode:** pick the other DB from a QuickPick of the project's DBs, defaulting to a
   running one (`getRunningInstances`, `src/services/runningState.ts`).
 
-**Render Both in Browser** opens the root view on each side's server through `make_action`.
+> **Amended 2026-10-05.** Rendering moves into VS Code. The user asked for odoo-manager's model: two frames in one page, reloadable, on the same record. A spike proved it works (`docs/superpowers/notes/2026-10-05-frame-spike.md`).
+>
+> - **Render** opens a webview tab with the two Odoo web clients side by side, each behind an in-process proxy that injects an admin session the shell mints, strips the framing headers, and is gated by a cookie only the webview receives.
+> - Both frames show **the same record** (the newest id present in both databases), and reload when an arch is saved.
+> - The browser-tab design below is kept for reference only. The handover (`docs/superpowers/notes/2026-10-05-view-doctor-handover.md` §3) is the stage 2 brief.
+
+~~**Render Both in Browser**~~ (superseded) opens the root view on each side's server through `make_action`.
 - URLs: `/web?debug=1#action=<id>` (or `/odoo/action-<id>` on 17.2+).
 - The port comes from `resolvePortForDatabase` / `openServerInBrowser` (`src/services/server.ts:130-170`),
   which already warns when nothing answers. In that case it offers "Start Both Servers"
