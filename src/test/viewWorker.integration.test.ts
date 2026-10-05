@@ -6,6 +6,13 @@
  * ODT_VIEW_TEST_TRANSPORT=tcp runs it over the loopback port Windows uses.
  */
 import * as assert from 'assert';
+import * as fs from 'node:fs';
+import * as http from 'node:http';
+import * as net from 'node:net';
+import * as os from 'node:os';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { waitForPort } from '../services/server';
 import * as path from 'node:path';
 import { runCommand } from '../services/process';
 import { createDatabase, databaseExists, dropDatabase, dropDatabaseIfExists, onBeforeDatabaseRelease, runSql } from '../services/postgres';
@@ -88,6 +95,47 @@ async function templatesCacheSignal(dbName: string): Promise<number> {
     return Number(await runSql(dbName, `SELECT last_value FROM ${sequence};`));
 }
 
+/** A loopback port nothing listens on right now. */
+function freePort(): Promise<number> {
+    return new Promise((resolve, reject) => {
+        const probe = net.createServer();
+        probe.once('error', reject);
+        probe.listen(0, '127.0.0.1', () => {
+            const { port } = probe.address() as net.AddressInfo;
+            probe.close(() => resolve(port));
+        });
+    });
+}
+
+/** A JSON-RPC call with this session; resolves with `result`, rejects with Odoo's error. */
+function jsonRpc(port: number, route: string, sid: string, extraCookie = ''): Promise<any> {
+    const body = JSON.stringify({ jsonrpc: '2.0', method: 'call', params: {} });
+    return new Promise((resolve, reject) => {
+        const request = http.request({
+            host: '127.0.0.1', port, path: route, method: 'POST',
+            headers: { 'content-type': 'application/json', cookie: [extraCookie, `session_id=${sid}`].filter(Boolean).join('; ') }
+        }, response => {
+            let text = '';
+            response.setEncoding('utf-8');
+            response.on('data', chunk => text += chunk);
+            response.on('end', () => {
+                try {
+                    const parsed = JSON.parse(text);
+                    if (parsed.error) {
+                        reject(new Error(JSON.stringify(parsed.error)));
+                    } else {
+                        resolve(parsed.result);
+                    }
+                } catch {
+                    reject(new Error(`${response.statusCode}: ${text.slice(0, 300)}`));
+                }
+            });
+        });
+        request.on('error', reject);
+        request.end(body);
+    });
+}
+
 (enabled ? suite : suite.skip)('View worker against a real Odoo', function () {
     this.timeout(600000);
     const copy = `${sourceDb}_odt_view_test`;
@@ -98,6 +146,38 @@ async function templatesCacheSignal(dbName: string): Promise<number> {
     let service: ViewService;
     let release: { dispose(): void };
     let workersStarted = 0;
+    /** Sessions the tests minted, removed from Odoo's session store afterwards. */
+    const mintedSids: string[] = [];
+
+    /** Removes the session files this suite minted: sessions/<sid[:2]>/<prefix of sid> (16+) or werkzeug_<sid>.sess (15). */
+    const forgetSessions = () => {
+        const store = path.join(os.homedir(), '.local', 'share', 'Odoo', 'sessions');
+        for (const sid of mintedSids.splice(0)) {
+            fs.rmSync(path.join(store, `werkzeug_${sid}.sess`), { force: true });
+            const folder = path.join(store, sid.slice(0, 2));
+            for (const name of fs.existsSync(folder) ? fs.readdirSync(folder) : []) {
+                if (sid.startsWith(name)) {
+                    fs.rmSync(path.join(folder, name), { force: true });
+                }
+            }
+        }
+    };
+
+    /** An Odoo server on the database, on a free loopback port, with no cron. */
+    const startOdooServer = async (dbName: string) => {
+        const port = await freePort();
+        const server = spawn(python!, [
+            `${odoo}/odoo-bin`, '--addons-path', addonsPaths.join(','), '-d', dbName, `--db-filter=^${dbName}$`,
+            '--http-interface=127.0.0.1', '-p', String(port), '--max-cron-threads=0'
+        ], { stdio: 'ignore' });
+        const exited = once(server, 'exit');
+        if (!await waitForPort(port, 120000)) {
+            server.kill();
+            await exited;
+            assert.fail('the Odoo server did not start');
+        }
+        return { port, stop: async () => { server.kill(); await exited; } };
+    };
     const newWorker = (dbName: string) => new ViewWorker({
         command: python!,
         args: buildViewWorkerArgs({ odooBinPath: `${odoo}/odoo-bin`, addonsPaths, dbName }),
@@ -121,6 +201,7 @@ async function templatesCacheSignal(dbName: string): Promise<number> {
     });
 
     suiteTeardown(async () => {
+        forgetSessions();
         // The last test drops the copy with the shells open; this is for a run that failed earlier.
         await dropDatabaseIfExists(copy);
         release?.dispose();
@@ -212,6 +293,54 @@ async function templatesCacheSignal(dbName: string): Promise<number> {
         assert.ok(Number(ended) > 0, 'the shell had no connection to end');
         assert.ok((await service.getArch(copy, viewId)).includes('Prénom ✓'));
         assert.strictEqual(workersStarted, startedBefore + 1);
+    });
+
+    test('make_action opens the view\'s root, reused, with the record left to the URL', async () => {
+        const rootId = Number(await runSql(copy, "SELECT res_id FROM ir_model_data WHERE module = 'base' AND name = 'view_partner_form';"));
+        const first = await service.makeAction(copy, viewId);
+        assert.deepStrictEqual([first.model, first.viewType, first.rootId], ['res.partner', 'form', rootId]);
+        assert.match(first.series, /\d+\.\d+/);
+        const again = await service.makeAction(copy, viewId);
+        assert.strictEqual(again.actionId, first.actionId);
+        // A res_id on a reused action goes stale in the web client's cache.
+        assert.strictEqual(await runSql(copy,
+            `SELECT view_id || ':' || coalesce(res_id, 0) || ':' || view_mode FROM ir_act_window WHERE id = ${first.actionId};`), `${rootId}:0:form`);
+    });
+
+    test('make_action refuses a QWeb template and opens a search view as a list', async () => {
+        const qweb = Number(await runSql(copy, "SELECT id FROM ir_ui_view WHERE type = 'qweb' ORDER BY id LIMIT 1;"));
+        await assert.rejects(service.makeAction(copy, qweb), /QWeb templates/);
+        const search = Number(await runSql(copy, "SELECT res_id FROM ir_model_data WHERE module = 'base' AND name = 'view_res_partner_filter';"));
+        const action = await service.makeAction(copy, search);
+        assert.ok(['list', 'tree'].includes(action.viewType), action.viewType);
+        assert.strictEqual(await runSql(copy, `SELECT search_view_id FROM ir_act_window WHERE id = ${action.actionId};`), String(search));
+    });
+
+    test('recent_ids gives the same newest records in a database and its copy', async () => {
+        try {
+            const [original, copied] = await Promise.all([service.recentIds(sourceDb!, 'res.partner'), service.recentIds(copy, 'res.partner')]);
+            assert.ok(original.length > 0, 'no partner in the source database');
+            assert.deepStrictEqual(copied, original);
+            assert.deepStrictEqual([...original].sort((a, b) => b - a), original, 'newest first');
+            assert.deepStrictEqual(await service.recentIds(copy, 'odt.no.such.model'), []);
+        } finally {
+            // A shell left on the source database blocks the next run's copy of it.
+            await pool.release(sourceDb!);
+        }
+    });
+
+    test('new_session mints an admin session a running server accepts, in the admin\'s language', async () => {
+        const sid = await service.newSession(copy);
+        mintedSids.push(sid);
+        const server = await startOdooServer(copy);
+        try {
+            const info = await jsonRpc(server.port, '/web/session/get_session_info', sid);
+            assert.strictEqual(info.is_admin, true);
+            // OdooBot, whose language the shell runs in, is French here.
+            assert.strictEqual(info.user_context.lang, 'en_US');
+        } finally {
+            await server.stop();
+        }
     });
 
     test('dropping the database ends another window\'s shell on it too', async () => {

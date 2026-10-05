@@ -193,11 +193,98 @@ def cmd_deactivate(env, view_id):
     return {'active': False}
 
 
+def _render_user(env):
+    """The user the render frames act as: the first active internal user
+    with Settings access, lowest id first - `admin` on most databases. The
+    group field moved: all_group_ids on 19, groups_id before."""
+    users = env['res.users']
+    field = next((name for name in ('all_group_ids', 'groups_id', 'group_ids') if name in users._fields), None)
+    user = users.browse()
+    if field:
+        group = env.ref('base.group_system')
+        user = users.search([(field, 'in', group.ids), ('share', '=', False)], order='id', limit=1)
+    if not user:
+        raise Refused('No active user of this database has the Settings access a render needs.')
+    return user
+
+
+def cmd_new_session(env):
+    """An admin session saved in the session store the database's server
+    reads (both use the version's data dir), as odoo-manager's connect_as
+    mints one. context_get() reads env.user, which here is OdooBot: it runs
+    as the user, so the session gets the user's own language."""
+    from odoo.http import root
+    user = _render_user(env)
+    store = root.session_store
+    session = store.new()
+    session.db = env.cr.dbname
+    session.uid = user.id
+    session.login = user.login
+    session.session_token = user._compute_session_token(session.sid)
+    session.context = dict(user.with_user(user).context_get() or {})
+    store.save(session)
+    return {'sid': session.sid}
+
+
+def _list_type(env):
+    # 18.0 renamed the list view type from 'tree' to 'list'.
+    types = dict(env['ir.ui.view']._fields['type'].selection)
+    return 'list' if 'list' in types else 'tree'
+
+
+def cmd_make_action(env, view_id):
+    """A window action opening the view's root, made once per (model, view)
+    and reused; never deleted. The record goes in the URL, never on the
+    action: the web client caches actions by id, so a res_id written onto a
+    reused action can show a stale record."""
+    root = _root(_view(env, view_id))
+    if root.type == 'qweb':
+        raise Refused('QWeb templates render inside the page that uses them; open it from Odoo.')
+    if not root.model:
+        raise Refused('This view has no model to render.')
+    if root.model not in env:
+        raise Refused('Model %s is not installed in this database.' % root.model)
+    name = '[View Doctor] %s #%d' % (root.model, root.id)
+    vals = {'name': name, 'res_model': root.model, 'res_id': False, 'target': 'current'}
+    if root.type == 'search':
+        view_type = _list_type(env)
+        vals.update(view_mode=view_type, view_id=False, search_view_id=root.id)
+    else:
+        view_type = root.type
+        vals.update(view_mode=view_type, view_id=root.id, search_view_id=False)
+    actions = env['ir.actions.act_window']
+    action = actions.search([('name', '=', name), ('res_model', '=', root.model)], limit=1)
+    if action:
+        action.write(vals)
+    else:
+        action = actions.create(vals)
+    env.cr.commit()
+    _signal(env)
+    return {'action_id': action.id, 'model': root.model, 'view_type': view_type, 'root_id': root.id,
+            'series': odoo.release.serie}
+
+
+def cmd_recent_ids(env, model, limit=200):
+    """The newest records of a model that the render user can open, newest
+    first; none for a model this database does not have."""
+    if model not in env or env[model]._abstract:
+        return {'ids': []}
+    user = _render_user(env)
+    try:
+        records = env[model].with_user(user).search([], order='id desc', limit=int(limit))
+    except odoo.exceptions.AccessError:
+        return {'ids': []}
+    return {'ids': records.ids}
+
+
 COMMANDS = {
     'get_arch': cmd_get_arch,
     'save': cmd_save,
     'activate': cmd_activate,
     'deactivate': cmd_deactivate,
+    'new_session': cmd_new_session,
+    'make_action': cmd_make_action,
+    'recent_ids': cmd_recent_ids,
 }
 
 
