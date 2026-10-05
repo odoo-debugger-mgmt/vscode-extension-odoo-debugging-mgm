@@ -10,7 +10,7 @@ import { OdooFrameProxy } from '../services/views/odooFrameProxy';
 import { RenderSession, type FrameHost, type RenderBackend, type RenderState, type RenderTarget } from '../services/views/renderSession';
 import { isPortOpen, resolvePortForDatabase, waitForPort } from '../services/server';
 import { errorMessage, logger } from '../services/logger';
-import { showError } from '../services/notifications';
+import { showError, showWarning } from '../services/notifications';
 
 export interface RenderRequest {
     title: string;
@@ -18,6 +18,8 @@ export interface RenderRequest {
     targets: RenderTarget[];
     /** What a side with no server offers to run. */
     startCommand: string;
+    /** The label of the button that runs it. */
+    startLabel: string;
     notice?: string;
 }
 
@@ -63,7 +65,7 @@ function button(action: string, label: string, enabled = true): string {
     return `<button data-action="${action}"${enabled ? '' : ' disabled'}>${escapeHtml(label)}</button>`;
 }
 
-export function renderPanelHtml(state: RenderState, options: { nonce: string; cspSource: string }): string {
+export function renderPanelHtml(state: RenderState, options: { nonce: string; cspSource: string; startLabel?: string }): string {
     const origins = [...new Set(state.sides.flatMap(side => side.url ? [new URL(side.url).origin] : []))];
     const csp = [
         "default-src 'none'",
@@ -87,7 +89,7 @@ export function renderPanelHtml(state: RenderState, options: { nonce: string; cs
             `<strong>${escapeHtml(side.title)}</strong>`,
             ...(side.detail ? [`<span class="detail">${escapeHtml(side.detail)}</span>`] : []),
             ...(side.url && side.message ? [`<span class="message">${escapeHtml(side.message)}</span>`] : []),
-            ...(side.offerStart ? [button('start', state.sides.length > 1 ? 'Start Both Servers' : 'Start Server')] : [])
+            ...(side.offerStart ? [button('start', options.startLabel ?? 'Start Server')] : [])
         ].join(' ');
         const body = side.url
             ? `<iframe data-key="${escapeHtml(side.key)}" data-src="${escapeHtml(side.url)}" src="${escapeHtml(side.url)}"></iframe>`
@@ -116,6 +118,10 @@ export class ViewRenderPanel implements vscode.Disposable {
     private request: RenderRequest | undefined;
     private readonly proxies = new Map<string, Promise<OdooFrameProxy>>();
     private readonly host: FrameHost;
+    /** Bumped by every show() and every close, so a slower earlier one can tell it is stale. */
+    private generation = 0;
+    private updates = 0;
+    private starting = false;
 
     constructor(private readonly backend: RenderBackend, host?: FrameHost) {
         this.host = host ?? {
@@ -133,16 +139,27 @@ export class ViewRenderPanel implements vscode.Disposable {
         return !!this.panel;
     }
 
+    get title(): string | undefined {
+        return this.request?.title;
+    }
+
     async show(request: RenderRequest): Promise<void> {
+        const generation = ++this.generation;
         const session = await vscode.window.withProgress(
             { location: vscode.ProgressLocation.Notification, title: `Preparing the render of ${request.title}…` },
             () => RenderSession.prepare(request.targets, this.backend, this.host)
         );
+        if (generation !== this.generation) {
+            return;
+        }
         this.session = session;
         this.request = request;
         const panel = this.ensurePanel();
         panel.title = `Render: ${request.title}`;
         await this.update();
+        if (generation !== this.generation) {
+            return;
+        }
         panel.reveal(undefined, false);
     }
 
@@ -155,8 +172,10 @@ export class ViewRenderPanel implements vscode.Disposable {
 
     dispose(): void {
         const panel = this.panel;
+        this.generation++;
         this.panel = undefined;
         this.session = undefined;
+        this.request = undefined;
         panel?.dispose();
         void this.closeProxies();
     }
@@ -171,6 +190,7 @@ export class ViewRenderPanel implements vscode.Disposable {
             localResourceRoots: []
         });
         panel.onDidDispose(() => {
+            this.generation++;
             this.panel = undefined;
             this.session = undefined;
             this.request = undefined;
@@ -187,11 +207,16 @@ export class ViewRenderPanel implements vscode.Disposable {
         if (!panel || !session) {
             return;
         }
+        const update = ++this.updates;
         const state = await session.state();
+        if (update !== this.updates || this.panel !== panel || this.session !== session) {
+            return;
+        }
         const notice = [this.request?.notice, state.notice].filter(Boolean).join(' ');
         panel.webview.html = renderPanelHtml({ ...state, notice: notice || undefined }, {
             nonce: randomBytes(16).toString('base64'),
-            cspSource: panel.webview.cspSource
+            cspSource: panel.webview.cspSource,
+            startLabel: this.request?.startLabel
         });
     }
 
@@ -234,16 +259,29 @@ export class ViewRenderPanel implements vscode.Disposable {
     }
 
     private async startServers(session: RenderSession): Promise<void> {
-        if (!this.request) {
+        if (!this.request || this.starting) {
             return;
         }
-        await vscode.commands.executeCommand(this.request.startCommand);
-        await vscode.window.withProgress(
-            { location: vscode.ProgressLocation.Notification, title: 'Waiting for the Odoo servers…' },
-            () => Promise.all(session.ports().map(port => waitForPort(port, 120_000)))
-        );
-        if (this.session === session) {
-            await this.update();
+        this.starting = true;
+        try {
+            await vscode.commands.executeCommand(this.request.startCommand);
+            const ports = session.ports();
+            const answered = await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Notification, title: 'Waiting for the Odoo servers…', cancellable: true },
+                (_progress, token) => new Promise<boolean[]>(resolve => {
+                    token.onCancellationRequested(() => resolve(ports.map(() => true)));
+                    void Promise.all(ports.map(port => waitForPort(port, 120_000))).then(resolve);
+                })
+            );
+            const silent = ports.filter((_port, index) => !answered[index]);
+            if (silent.length > 0) {
+                void showWarning(`No Odoo server is answering on port ${silent.join(', ')} yet.`);
+            }
+            if (this.session === session) {
+                await this.update();
+            }
+        } finally {
+            this.starting = false;
         }
     }
 
@@ -253,7 +291,12 @@ export class ViewRenderPanel implements vscode.Disposable {
         if (!proxy) {
             const created = new OdooFrameProxy({ targetPort: port, mintSession: mint });
             proxy = created.listen().then(() => created);
-            proxy.catch(() => this.proxies.delete(key));
+            const pending = proxy;
+            proxy.catch(() => {
+                if (this.proxies.get(key) === pending) {
+                    this.proxies.delete(key);
+                }
+            });
             this.proxies.set(key, proxy);
         }
         return proxy;

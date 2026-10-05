@@ -92,6 +92,7 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
                     title: item.view.name,
                     targets,
                     startCommand: 'odoo.startBothServers',
+                    startLabel: 'Start Both Servers',
                     notice: counterpart === 'none' ? `${pair.original.dbName} has no matching view; showing the upgraded side only.` : undefined
                 });
                 return;
@@ -100,7 +101,8 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
             await viewRender.show({
                 title: item.view.name,
                 targets: [{ dbName: item.dbName, versionId: db?.versionId, viewId: item.view.id, title: item.dbName }],
-                startCommand: 'odoo.startServer'
+                startCommand: 'odoo.startServer',
+                startLabel: 'Start Server'
             });
         } catch (error) {
             void showError(`Could not render ${item.view.name}: ${errorMessage(error)}`);

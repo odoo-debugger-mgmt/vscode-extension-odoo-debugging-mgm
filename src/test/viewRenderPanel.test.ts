@@ -36,6 +36,9 @@ suite('Render tab', () => {
         assert.ok(html.includes('data-src="http://127.0.0.1:40001/__odt/open?t=a&amp;next=%2Fweb"'));
         assert.ok(html.includes('No Odoo server is answering on port 8018.'));
         assert.ok(html.includes('data-action="start"'));
+        assert.ok(html.includes('>Start Server</button>'));
+        const single = renderPanelHtml({ sides: [state.sides[1]] }, { nonce: 'n', cspSource: 'x', startLabel: 'Start Both Servers' });
+        assert.ok(single.includes('>Start Both Servers</button>'));
         assert.ok(html.includes('No record exists in both databases; showing a new one.'));
     });
 
@@ -62,12 +65,61 @@ suite('Render tab', () => {
             externalOrigin: async origin => origin
         };
         const panel = new ViewRenderPanel(backend, host);
-        const request = { title: 'partner.custom', targets: [{ dbName: 'shop-18', viewId: 4, title: 'shop-18' }], startCommand: 'odoo.startServer' };
+        const request = { title: 'partner.custom', targets: [{ dbName: 'shop-18', viewId: 4, title: 'shop-18' }], startCommand: 'odoo.startServer', startLabel: 'Start Server' };
         await panel.show(request);
         assert.strictEqual(panel.isOpen, true);
         await panel.show(request);
         panel.reloadDatabase('shop-18');
         panel.dispose();
+        assert.strictEqual(panel.isOpen, false);
+    });
+
+    function gated(delays: Map<number, Promise<void>>): { backend: RenderBackend; host: FrameHost } {
+        return {
+            backend: {
+                newSession: async () => 'sid',
+                makeAction: async (_db, viewId) => {
+                    await delays.get(viewId);
+                    return { actionId: 3, model: 'res.partner', viewType: 'list', rootId: 1, series: '18.0' };
+                },
+                recentIds: async () => []
+            },
+            host: {
+                portFor: async () => 8018,
+                isPortOpen: async () => false,
+                proxyFor: async () => ({ port: 40002, session: async () => 'sid', gatePath: next => next }),
+                externalOrigin: async origin => origin
+            }
+        };
+    }
+    const requestFor = (viewId: number, title: string) => ({
+        title, targets: [{ dbName: 'shop-18', viewId, title }], startCommand: 'odoo.startServer', startLabel: 'Start Server'
+    });
+
+    test('the render asked for last wins, even when an earlier one prepares slower', async () => {
+        let release!: () => void;
+        const slow = new Promise<void>(resolve => { release = resolve; });
+        const { backend, host } = gated(new Map([[1, slow]]));
+        const panel = new ViewRenderPanel(backend, host);
+        const first = panel.show(requestFor(1, 'first'));
+        await panel.show(requestFor(2, 'second'));
+        release();
+        await first;
+        assert.strictEqual(panel.title, 'second');
+        panel.dispose();
+    });
+
+    test('a tab closed while a render prepares stays closed', async () => {
+        let release!: () => void;
+        const slow = new Promise<void>(resolve => { release = resolve; });
+        const { backend, host } = gated(new Map([[2, slow]]));
+        const panel = new ViewRenderPanel(backend, host);
+        await panel.show(requestFor(1, 'first'));
+        assert.strictEqual(panel.isOpen, true);
+        const pending = panel.show(requestFor(2, 'second'));
+        panel.dispose();
+        release();
+        await pending;
         assert.strictEqual(panel.isOpen, false);
     });
 });
