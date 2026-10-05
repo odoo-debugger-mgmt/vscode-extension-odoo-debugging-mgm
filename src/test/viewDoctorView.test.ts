@@ -66,10 +66,10 @@ suite('Views tree', () => {
         const offered = (contextValue: string) => entries
             .filter(entry => new RegExp(/viewItem =~ \/(.*)\/$/.exec(entry.when ?? '')![1]).test(contextValue))
             .map(entry => entry.command.replace('viewDoctor.', ''));
-        assert.deepStrictEqual(offered('odooView.inactive.hasParent'), ['openArch', 'openParent', 'compare', 'activate', 'copyXmlid']);
-        assert.deepStrictEqual(offered('odooView.active.hasParent.noXmlid'), ['openArch', 'openParent', 'compare', 'deactivate']);
-        assert.deepStrictEqual(offered('odooView.inactive.root.noXmlid'), ['openArch', 'compare', 'activate']);
-        assert.deepStrictEqual(offered('odooView.active.root'), ['openArch', 'compare', 'copyXmlid', 'deactivate']);
+        assert.deepStrictEqual(offered('odooView.inactive.hasParent'), ['openArch', 'openParent', 'compare', 'render', 'activate', 'copyXmlid']);
+        assert.deepStrictEqual(offered('odooView.active.hasParent.noXmlid'), ['openArch', 'openParent', 'compare', 'render', 'deactivate']);
+        assert.deepStrictEqual(offered('odooView.inactive.root.noXmlid'), ['openArch', 'compare', 'render', 'activate']);
+        assert.deepStrictEqual(offered('odooView.active.root'), ['openArch', 'compare', 'render', 'copyXmlid', 'deactivate']);
     });
 
     test('every view row has its open and compare actions inline, and no destructive one', () => {
@@ -78,7 +78,8 @@ suite('Views tree', () => {
             .filter(entry => entry.command.startsWith('viewDoctor.') && (entry.group ?? '').startsWith('inline'));
         assert.deepStrictEqual(inline.map(entry => [entry.command, entry.group]), [
             ['viewDoctor.openArch', 'inline@1'],
-            ['viewDoctor.compare', 'inline@2']
+            ['viewDoctor.compare', 'inline@2'],
+            ['viewDoctor.render', 'inline@3']
         ]);
     });
 

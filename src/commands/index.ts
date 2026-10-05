@@ -9,6 +9,7 @@ import type { VersionsTreeProvider } from '../versionsTreeProvider';
 import type { ProjectReposExplorerProvider } from '../projectReposExplorer';
 import type { VersionsService } from '../versionsService';
 import type { SortPreferences } from '../sortPreferences';
+import type { ViewRenderPanel } from '../views/viewRenderPanel';
 import type { ViewDoctorTreeProvider } from '../views/viewDoctorView';
 import type { ViewService } from '../services/views/viewService';
 import { registerViewCommands } from './viewCommands';
@@ -58,6 +59,8 @@ export interface CommandDeps {
     viewService: ViewService;
     /** Odoo's reasons saved views stay off, on their arch files. */
     viewDiagnostics: vscode.DiagnosticCollection;
+    /** The render tab, reused by every Render. */
+    viewRender: ViewRenderPanel;
     /** TreeView handle for the Modules view (needed for reveal + multi-select). */
     moduleTreeView: vscode.TreeView<vscode.TreeItem>;
     /** TreeView handle for the Databases view (reveal keeps its highlight honest). */

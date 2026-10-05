@@ -5,8 +5,10 @@ import { ViewItem } from '../views/viewDoctorView';
 import { clearViewDiagnostics, viewUri } from '../views/viewFileSystem';
 import { showBriefStatus, showError, showInfo, showModalWarning } from '../services/notifications';
 import { SettingsStore } from '../settingsStore';
-import { compareTargets, diffArguments, findCounterpart, type PairProject } from '../views/viewPairing';
+import { compareTargets, diffArguments, findCounterpart, upgradePair, type PairProject } from '../views/viewPairing';
 import { errorMessage } from '../services/logger';
+import { qwebMessage } from '../services/views/renderPlan';
+import type { RenderTarget } from '../services/views/renderSession';
 import { readableArchError } from '../services/views/archErrors';
 
 function viewItem(arg: unknown): ViewItem | undefined {
@@ -18,7 +20,7 @@ async function openArch(dbName: string, viewId: number, xmlid: string | null): P
 }
 
 export function registerViewDoctorCommands(deps: CommandDeps): void {
-    const { context, providers, viewService, viewDiagnostics } = deps;
+    const { context, providers, viewService, viewDiagnostics, viewRender } = deps;
 
     context.subscriptions.push(registerCommand('viewDoctor.refresh', () => providers.views.refresh()));
 
@@ -61,6 +63,47 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
                 ...diffArguments({ dbName: originalDb, view: counterpart }, { dbName: item.dbName, view: item.view }));
         } catch (error) {
             void showError(`Could not compare ${item.view.name}: ${errorMessage(error)}`);
+        }
+    }));
+
+    context.subscriptions.push(registerCommand('viewDoctor.render', async (arg: unknown) => {
+        const item = viewItem(arg);
+        if (!item) {
+            return;
+        }
+        if (item.view.type === 'qweb') {
+            void showInfo(qwebMessage(item.view.isReport));
+            return;
+        }
+        try {
+            const project = (await SettingsStore.peekSelectedProject().catch(() => null))?.project as PairProject | undefined;
+            const pair = upgradePair(project);
+            if (pair && pair.upgraded.dbName === item.dbName) {
+                const counterpart = await findCounterpart(item.view, pair.original.dbName);
+                if (counterpart === undefined) {
+                    return;
+                }
+                const targets: RenderTarget[] = [];
+                if (counterpart !== 'none') {
+                    targets.push({ dbName: pair.original.dbName, versionId: pair.original.versionId, viewId: counterpart.id, title: `Original · ${pair.original.dbName}` });
+                }
+                targets.push({ dbName: item.dbName, versionId: pair.upgraded.versionId, viewId: item.view.id, title: `Upgraded · ${item.dbName}` });
+                await viewRender.show({
+                    title: item.view.name,
+                    targets,
+                    startCommand: 'odoo.startBothServers',
+                    notice: counterpart === 'none' ? `${pair.original.dbName} has no matching view; showing the upgraded side only.` : undefined
+                });
+                return;
+            }
+            const db = project?.dbs?.find(entry => entry.id === item.dbName);
+            await viewRender.show({
+                title: item.view.name,
+                targets: [{ dbName: item.dbName, versionId: db?.versionId, viewId: item.view.id, title: item.dbName }],
+                startCommand: 'odoo.startServer'
+            });
+        } catch (error) {
+            void showError(`Could not render ${item.view.name}: ${errorMessage(error)}`);
         }
     }));
 

@@ -47,6 +47,7 @@ import { sanitizeProjectRepoBranchAssignments } from './services/environment';
 import { getRepoBranch } from './services/branches';
 import { readSetupState, shouldAdoptLegacySourceRepo, readRawSetupSettings, writeSetupSettings } from './services/setupState';
 import { showBriefStatus, showInfo, showWarning } from './services/notifications';
+import { ViewRenderPanel } from './views/viewRenderPanel';
 import { VIEW_SCHEME, ViewFileSystemProvider, parseViewUri, type ViewRef } from './views/viewFileSystem';
 import { ViewArchPoller } from './views/viewPoll';
 import { isReadOnlyOriginal, type PairProject } from './views/viewPairing';
@@ -129,6 +130,8 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     );
     const viewService = new ViewService(viewWorkers);
+    const viewRender = new ViewRenderPanel(viewService);
+    context.subscriptions.push(viewRender);
     context.subscriptions.push(viewWorkers, onBeforeDatabaseRelease(dbName => viewWorkers.release(dbName)));
     let viewDoctorTreeView: vscode.TreeView<vscode.TreeItem> | undefined;
 
@@ -211,7 +214,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     }));
     const viewFiles = new ViewFileSystemProvider(viewService, {
-        onSaved: (_ref, result, uri, text) => {
+        onSaved: (ref, result, uri, text) => {
             if (result.activationError) {
                 const where = locateArchError(text, result.activationError);
                 const diagnostic = new vscode.Diagnostic(
@@ -226,6 +229,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 viewDiagnostics.delete(uri);
                 showBriefStatus(result.activated ? 'Saved, and the view is on.' : 'Saved.');
             }
+            viewRender.reloadDatabase(ref.dbName);
             providers.views.refresh();
         }
     }, async dbName => {
@@ -349,7 +353,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     };
 
-    registerAllCommands({ context, providers, versionsService, sortPreferences, viewService, viewDiagnostics, moduleTreeView, dbTreeView, refreshAll });
+    registerAllCommands({ context, providers, versionsService, sortPreferences, viewService, viewDiagnostics, viewRender, moduleTreeView, dbTreeView, refreshAll });
 
     // Another window wrote to a shared store, or this window switched stores:
     // re-read everything. Debounced, because one save elsewhere can touch
