@@ -148,6 +148,45 @@ suite('View worker', function () {
         await started;
     });
 
+    test('stopped while it is still setting up, the start fails instead of hanging', async () => {
+        const worker = new ViewWorker(fakeSpec('ok'), { startTimeoutMs: 60000 });
+        const started = worker.start();
+        await worker.dispose();
+        const settled = await Promise.race([
+            started.then(() => 'started', (error: Error) => error.message),
+            new Promise(resolve => setTimeout(() => resolve('still pending'), 2000))
+        ]);
+        assert.match(String(settled), /stopped before it started/);
+        assert.strictEqual(worker.isAlive, false);
+    });
+
+    test('a command that cannot even be spawned is a named error, not a timeout', async () => {
+        const worker = new ViewWorker({ ...fakeSpec('ok'), command: 'python\0' }, { startTimeoutMs: 60000 });
+        const settled = await Promise.race([
+            worker.start().then(() => 'started', (error: Error) => error.message),
+            new Promise(resolve => setTimeout(() => resolve('still pending'), 2000))
+        ]);
+        assert.match(String(settled), /^Could not start python/);
+    });
+
+    test('a connection that floods before sending a token is cut off, and the shell still gets in', async () => {
+        const worker = new ViewWorker(fakeSpec('flood'), { startTimeoutMs: 5000 });
+        try {
+            await worker.start();
+            assert.deepStrictEqual(await worker.request('echo', { a: 1 }), { a: 1 });
+        } finally {
+            await worker.dispose();
+        }
+    });
+
+    test('the bootstrap reaches Python intact whatever the pipe encoding: non-ASCII is escaped', () => {
+        assert.strictEqual(
+            workerBootstrap('C:\\Users\\José\\😀.py'),
+            'exec(compile(open("C:\\\\Users\\\\Jos\\u00e9\\\\\\U0001f600.py", encoding=\'utf-8\').read(), '
+                + '"C:\\\\Users\\\\Jos\\u00e9\\\\\\U0001f600.py", \'exec\'))\n'
+        );
+    });
+
     test('the bootstrap quotes any path as a Python literal', () => {
         assert.strictEqual(
             workerBootstrap('/a b/it\'s "x".py'),

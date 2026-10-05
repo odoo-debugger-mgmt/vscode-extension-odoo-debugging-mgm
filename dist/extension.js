@@ -9230,9 +9230,13 @@ function buildViewWorkerArgs(input) {
  * The worker's environment. Odoo 15 leaves application_name to libpq
  * (PGAPPNAME), 16-18 read ODOO_PGAPPNAME, 19 deprecates that for PGAPPNAME:
  * setting both names the connections on every version.
+ *
+ * PYTHONIOENCODING: on Windows, Python reads a piped stdin and writes its log
+ * in the ANSI code page, so the bootstrap and the error tail would be decoded
+ * wrongly - the extension writes and reads both as UTF-8.
  */
 function viewWorkerEnv(base) {
-    return { ...base, PGAPPNAME: exports.VIEW_WORKER_APP_NAME, ODOO_PGAPPNAME: exports.VIEW_WORKER_APP_NAME };
+    return { ...base, PGAPPNAME: exports.VIEW_WORKER_APP_NAME, ODOO_PGAPPNAME: exports.VIEW_WORKER_APP_NAME, PYTHONIOENCODING: 'utf-8' };
 }
 
 
@@ -22362,12 +22366,30 @@ class ViewWorkerError extends Error {
     }
 }
 exports.ViewWorkerError = ViewWorkerError;
-/** A JSON string literal is a valid Python string literal, whatever the path holds. */
+/**
+ * A JSON string literal is a valid Python string literal, whatever the path
+ * holds. Non-ASCII is escaped too (as Python reads it, \U for characters
+ * beyond the BMP), so the line survives a stdin decoded in any code page.
+ */
 function workerBootstrap(scriptPath) {
-    const literal = JSON.stringify(scriptPath);
+    const literal = Array.from(JSON.stringify(scriptPath), char => {
+        const code = char.codePointAt(0) ?? 0;
+        if (code < 0x80) {
+            return char;
+        }
+        return code > 0xffff ? `\\U${code.toString(16).padStart(8, '0')}` : `\\u${code.toString(16).padStart(4, '0')}`;
+    }).join('');
     return `exec(compile(open(${literal}, encoding='utf-8').read(), ${literal}, 'exec'))\n`;
 }
+/** Compares in constant time, so a wrong token says nothing about the right one. */
+function sameToken(candidate, token) {
+    const given = Buffer.from(candidate, 'utf-8');
+    const expected = Buffer.from(token, 'utf-8');
+    return given.length === expected.length && (0, node_crypto_1.timingSafeEqual)(given, expected);
+}
 const TAIL_LINES = 30;
+/** Longer than any token: a connection still talking past this is not the shell. */
+const MAX_TOKEN_LINE = 128;
 const DEFAULT_START_TIMEOUT_MS = 180_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 const KILL_AFTER_MS = 3000;
@@ -22379,6 +22401,9 @@ class ViewWorker {
     channel;
     server;
     socketDir;
+    /** Connections that have not sent the token yet. */
+    unproven = new Set();
+    disposed = false;
     pending = new Map();
     nextId = 1;
     ready;
@@ -22402,7 +22427,7 @@ class ViewWorker {
     async request(cmd, args = {}) {
         await this.start();
         const requests = this.channel;
-        if (!this.isAlive || !requests) {
+        if (!this.isAlive || !requests || requests.destroyed || !requests.writable) {
             throw new ViewWorkerError('The Odoo shell is not running.');
         }
         const id = this.nextId++;
@@ -22426,6 +22451,8 @@ class ViewWorker {
      * not. A shell that has not connected yet has nothing to read EOF from.
      */
     dispose() {
+        // A start still setting up its socket sees this and gives up.
+        this.disposed = true;
         const child = this.child;
         if (!child || this.exited) {
             this.closeServer();
@@ -22447,23 +22474,48 @@ class ViewWorker {
     }
     async spawn() {
         const token = (0, node_crypto_1.randomBytes)(24).toString('hex');
-        const address = await this.listen(token);
+        let address;
+        try {
+            address = await this.listen(token);
+        }
+        catch (error) {
+            this.closeServer();
+            throw error instanceof ViewWorkerError
+                ? error
+                : new ViewWorkerError(`Could not open a socket for the Odoo shell: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        if (this.disposed) {
+            this.closeServer();
+            throw new ViewWorkerError('The Odoo shell was stopped before it started.');
+        }
         return new Promise((resolve, reject) => {
             const startTimeoutMs = this.options.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS;
             this.pending.set(0, {
                 resolve,
                 reject,
                 timer: setTimeout(() => {
+                    this.closeServer();
                     this.failAll(new ViewWorkerError(`The Odoo shell did not start within ${Math.round(startTimeoutMs / 1000)} s.${this.tailText()}`));
                     this.child?.kill('SIGKILL');
                 }, startTimeoutMs)
             });
-            const child = (0, node_child_process_1.spawn)(this.spec.command, this.spec.args, {
-                cwd: this.spec.cwd,
-                env: { ...(this.spec.env ?? process.env), ODT_VIEW_ADDRESS: address, ODT_VIEW_TOKEN: token },
-                shell: false,
-                stdio: ['pipe', 'pipe', 'pipe']
-            });
+            let child;
+            try {
+                child = (0, node_child_process_1.spawn)(this.spec.command, this.spec.args, {
+                    cwd: this.spec.cwd,
+                    env: { ...(this.spec.env ?? process.env), ODT_VIEW_ADDRESS: address, ODT_VIEW_TOKEN: token },
+                    shell: false,
+                    stdio: ['pipe', 'pipe', 'pipe']
+                });
+            }
+            catch (error) {
+                // Some failures throw rather than emit 'error': an argument Node
+                // rejects, or on Windows a .bat/.cmd python shim (EINVAL).
+                this.exited = true;
+                this.closeServer();
+                this.failAll(new ViewWorkerError(`Could not start ${this.spec.command}: ${error instanceof Error ? error.message : String(error)}`));
+                return;
+            }
             this.child = child;
             const remember = (chunk) => {
                 this.tail.push(...chunk.toString('utf-8').split('\n').filter(line => line.trim()));
@@ -22503,35 +22555,49 @@ class ViewWorker {
         const server = net.createServer(socket => this.accept(socket, token));
         this.server = server;
         return new Promise((resolve, reject) => {
+            const listening = (address) => {
+                server.off('error', reject);
+                // Errors from then on (an accept failing) must not crash the host.
+                server.on('error', () => undefined);
+                resolve(address);
+            };
             server.once('error', reject);
+            // A dispose() while listening closes the server before it is up.
+            server.once('close', () => reject(new ViewWorkerError('The Odoo shell was stopped before it started.')));
             if (transport === 'tcp') {
                 server.listen(0, '127.0.0.1', () => {
-                    resolve(`tcp:127.0.0.1:${server.address().port}`);
+                    listening(`tcp:127.0.0.1:${server.address().port}`);
                 });
                 return;
             }
             // mkdtemp makes the folder 0700: no other user can reach the socket.
             this.socketDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odt-view-'));
             const socketPath = path.join(this.socketDir, 'worker.sock');
-            server.listen(socketPath, () => resolve(`unix:${socketPath}`));
+            server.listen(socketPath, () => listening(`unix:${socketPath}`));
         });
     }
     /**
      * The first line on a connection must be the token. The first connection
      * that sends it becomes the channel and nothing else is accepted after it;
-     * any other connection is dropped.
+     * any other connection is dropped, as is one that sends more than a token
+     * could be without a line break.
      */
     accept(socket, token) {
         if (this.channel) {
             socket.destroy();
             return;
         }
+        this.unproven.add(socket);
         let authenticated = false;
         let buffer = '';
         socket.setEncoding('utf-8');
         socket.on('error', () => undefined);
         socket.on('data', (chunk) => {
             buffer += chunk;
+            if (!authenticated && buffer.indexOf('\n') < 0 && buffer.length > MAX_TOKEN_LINE) {
+                socket.destroy();
+                return;
+            }
             let newline = buffer.indexOf('\n');
             while (newline >= 0) {
                 const line = buffer.slice(0, newline);
@@ -22541,7 +22607,8 @@ class ViewWorker {
                     this.handleReply(line);
                     continue;
                 }
-                if (line !== token || this.channel) {
+                this.unproven.delete(socket);
+                if (!sameToken(line, token) || this.channel) {
                     socket.destroy();
                     return;
                 }
@@ -22550,17 +22617,32 @@ class ViewWorker {
                 this.closeServer();
             }
         });
-        // The shell hung up without exiting: it can no longer be reached.
         socket.on('close', () => {
-            if (this.channel === socket && !this.exited) {
-                this.child?.kill();
+            this.unproven.delete(socket);
+            if (this.channel !== socket || this.exited) {
+                return;
             }
+            // The shell hung up. Normally it is exiting (Odoo is closing its
+            // cursor); only one that is still there after a while is stuck.
+            const child = this.child;
+            setTimeout(() => {
+                if (child && !this.exited) {
+                    child.kill('SIGKILL');
+                }
+            }, KILL_AFTER_MS).unref?.();
         });
     }
-    /** Stops accepting connections; the socket file and its folder go with it. */
+    /**
+     * Stops accepting connections, drops the ones that never sent the token,
+     * and removes the socket file and its folder.
+     */
     closeServer() {
         this.server?.close();
         this.server = undefined;
+        for (const socket of this.unproven) {
+            socket.destroy();
+        }
+        this.unproven.clear();
         if (this.socketDir) {
             fs.rmSync(this.socketDir, { recursive: true, force: true });
             this.socketDir = undefined;

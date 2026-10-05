@@ -202,8 +202,10 @@ COMMANDS = {
 
 
 def _open_channel():
-    """Connects to the extension and proves who it is. Both values leave the
-    environment first: processes Odoo starts (wkhtmltopdf, ...) inherit it."""
+    """Connects to the extension and proves who it is. Both values then leave
+    the environment, so processes Odoo starts from here on (wkhtmltopdf, ...)
+    do not inherit them; the token is single-use either way, as the extension
+    stops listening once the shell is in."""
     address = os.environ.pop('ODT_VIEW_ADDRESS')
     token = os.environ.pop('ODT_VIEW_TOKEN')
     kind, _, where = address.partition(':')
@@ -213,6 +215,9 @@ def _open_channel():
     else:
         host, _, port = where.rpartition(':')
         channel = socket.create_connection((host, int(port)))
+    # Waiting for the next request can take minutes: never time out, whatever
+    # an addon set as the process-wide default.
+    channel.settimeout(None)
     # newline='\n': on Windows text mode would otherwise write '\r\n'.
     requests = channel.makefile('r', encoding='utf-8', newline='\n')
     replies = channel.makefile('w', encoding='utf-8', newline='\n')

@@ -90,7 +90,11 @@ export function buildViewWorkerArgs(input: ViewWorkerArgsInput): string[] {
  * The worker's environment. Odoo 15 leaves application_name to libpq
  * (PGAPPNAME), 16-18 read ODOO_PGAPPNAME, 19 deprecates that for PGAPPNAME:
  * setting both names the connections on every version.
+ *
+ * PYTHONIOENCODING: on Windows, Python reads a piped stdin and writes its log
+ * in the ANSI code page, so the bootstrap and the error tail would be decoded
+ * wrongly - the extension writes and reads both as UTF-8.
  */
 export function viewWorkerEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-    return { ...base, PGAPPNAME: VIEW_WORKER_APP_NAME, ODOO_PGAPPNAME: VIEW_WORKER_APP_NAME };
+    return { ...base, PGAPPNAME: VIEW_WORKER_APP_NAME, ODOO_PGAPPNAME: VIEW_WORKER_APP_NAME, PYTHONIOENCODING: 'utf-8' };
 }

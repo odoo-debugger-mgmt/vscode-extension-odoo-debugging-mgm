@@ -5,9 +5,10 @@
  * ODT_VIEW_ADDRESS, sends ODT_VIEW_TOKEN, and exchanges JSON lines there, with
  * log noise on stdout. Spawned, never run as a test.
  *
- * argv: <mode> - 'ok', 'never-ready', 'crash', 'silent' (never connects) or
+ * argv: <mode> - 'ok', 'never-ready', 'crash', 'silent' (never connects),
  * 'intruder' (a client with a wrong token connects first, and must be turned
- * away before the real one)
+ * away before the real one) or 'flood' (a client streams data with no newline
+ * first, and must be cut off)
  */
 import * as net from 'node:net';
 
@@ -86,14 +87,14 @@ process.stdin.on('end', () => {
         setInterval(() => undefined, 1000);
         return;
     }
-    if (mode !== 'intruder') {
+    if (mode !== 'intruder' && mode !== 'flood') {
         serve();
         return;
     }
-    // Only once the wrong token has been turned away does the real one connect:
-    // a worker that let the intruder in never gets ready.
+    // Only once the intruder has been turned away does the real one connect:
+    // a worker that let it in, or kept buffering it, never gets ready.
     const intruder = connect();
     intruder.on('error', () => undefined);
-    intruder.write('not-the-token\n');
+    intruder.write(mode === 'flood' ? 'x'.repeat(1024 * 1024) : 'not-the-token\n');
     intruder.on('close', serve);
 });

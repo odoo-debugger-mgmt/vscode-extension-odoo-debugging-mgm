@@ -57,6 +57,10 @@ suite('View worker arguments', () => {
         assert.strictEqual(env.ODOO_PGAPPNAME, VIEW_WORKER_APP_NAME);
     });
 
+    test('makes Python read its stdin and write its log as UTF-8 on every platform', () => {
+        assert.strictEqual(viewWorkerEnv({}).PYTHONIOENCODING, 'utf-8');
+    });
+
     test('the running-database probe skips the worker and the extension\'s own queries', () => {
         assert.ok(ACTIVE_DATABASES_QUERY.includes(`NOT IN ('${VIEW_WORKER_APP_NAME}', '${OWN_QUERY_APP_NAME}')`));
     });
