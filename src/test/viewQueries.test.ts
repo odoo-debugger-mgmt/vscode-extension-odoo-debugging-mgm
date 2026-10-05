@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { parseReportMessages, parseViewRows, parseWriteDates, sqlIdList, viewRowsSql, sqlText, viewByXmlidSql, viewsLikeSql } from '../services/views/viewQueries';
+import { parseReportMessages, parseViewRows, parseWriteDates, sqlIdList, viewRowsSql, sqlText, viewByXmlidSql, viewsLikeSql, firstXmlidSql, fingerprintsSql, parseFingerprints } from '../services/views/viewQueries';
 import { runSql } from '../services/postgres';
 
 suite('View queries', () => {
@@ -86,5 +86,37 @@ suite('View queries over text', () => {
             return;
         }
         assert.strictEqual(output, value);
+    });
+});
+
+suite('View fingerprints', () => {
+    test('hash the raw column, read arch_updated, and take module and noupdate from the external id Odoo shows', () => {
+        const sql = fingerprintsSql([3, 1, 3]);
+        assert.match(sql, /md5\(v\.arch_db::text\)/);
+        assert.match(sql, /v\.arch_updated/);
+        assert.match(sql, /extract\(epoch FROM v\.write_date\) \* 1000/);
+        assert.match(sql, /WHERE v\.id IN \(1,3\)/);
+        assert.ok(sql.includes(firstXmlidSql('d.module')));
+        assert.ok(sql.includes(firstXmlidSql('d.noupdate')));
+    });
+
+    test('every external id lookup picks the one Odoo shows', () => {
+        const lookup = firstXmlidSql("d.module || '.' || d.name");
+        assert.match(lookup, /ORDER BY d\.module, d\.name LIMIT 1/);
+        assert.ok(viewRowsSql('v.active = false').includes(lookup));
+    });
+
+    test('refuse anything that is not a view id', () => {
+        assert.throws(() => fingerprintsSql([1, 0]));
+        assert.throws(() => fingerprintsSql([Number.NaN]));
+    });
+
+    test('parse into typed fingerprints, keyed by id', () => {
+        const parsed = parseFingerprints('{"7": {"arch_md5": "abc", "written": 1700000000000, "arch_updated": true, "module": "acme", "noupdate": false},'
+            + ' "9": {"arch_md5": null, "written": null, "arch_updated": null, "module": null, "noupdate": null}}');
+        assert.deepStrictEqual(parsed.get(7), { archMd5: 'abc', written: 1700000000000, archUpdated: true, module: 'acme', noupdate: false });
+        assert.deepStrictEqual(parsed.get(9), { archMd5: null, written: null, archUpdated: null, module: null, noupdate: null });
+        assert.strictEqual(parseFingerprints('').size, 0);
+        assert.throws(() => parseFingerprints('[]'));
     });
 });

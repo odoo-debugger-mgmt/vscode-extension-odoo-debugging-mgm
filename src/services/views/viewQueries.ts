@@ -8,6 +8,7 @@
  * ever interpolated.
  */
 import { runSql } from '../postgres';
+import type { Fingerprint } from './viewNotes';
 
 export interface ViewRow {
     id: number;
@@ -50,6 +51,17 @@ export function sqlText(value: string): string {
 }
 
 /**
+ * A column of the view `v`'s first external id. ir.ui.view.xml_id is
+ * computed, with no column: Odoo takes the first ir_model_data row in that
+ * model's order (module, name). Every query that names or classifies a view
+ * by its external id goes through this, so a view with several is the same
+ * view everywhere.
+ */
+export function firstXmlidSql(column: string): string {
+    return `(SELECT ${column} FROM ir_model_data d WHERE d.model = 'ir.ui.view' AND d.res_id = v.id ORDER BY d.module, d.name LIMIT 1)`;
+}
+
+/**
  * The view rows matching `where`, an expression over ir_ui_view aliased `v`.
  * The root comes from a walk up inherit_id bounded at 50 steps, so a corrupt
  * cycle cannot hang the query. A root counts as a report when any of its
@@ -75,9 +87,7 @@ SELECT coalesce(json_agg(json_build_object(
     'type', v.type,
     'active', v.active,
     'inherit_id', v.inherit_id,
-    'xmlid', (SELECT d.module || '.' || d.name FROM ir_model_data d
-              WHERE d.model = 'ir.ui.view' AND d.res_id = v.id
-              ORDER BY d.module, d.name LIMIT 1),
+    'xmlid', ${firstXmlidSql("d.module || '.' || d.name")},
     'root_id', r.root_id,
     'is_report', EXISTS (
         SELECT 1 FROM ir_model_data rd
@@ -196,4 +206,54 @@ export function viewsLikeSql(view: Pick<ViewRow, 'id' | 'model' | 'type'>): stri
 /** What matching a view of another database picks from: the same id, and its model and type's views. */
 export async function findViewsLike(dbName: string, view: Pick<ViewRow, 'id' | 'model' | 'type'>): Promise<ViewRow[]> {
     return parseViewRows(await runSql(dbName, viewsLikeSql(view)));
+}
+
+/**
+ * What tells whether views' arches were edited, for many at once (port of
+ * odoo-manager's get_view_fingerprints). arch_md5 hashes the raw arch_db as
+ * text, so one query covers the text column of 15 and the per-language jsonb
+ * of 16+. written is write_date: any ORM write moves it, turning a view on
+ * included, so it only ever proves a view untouched. arch_updated flips only
+ * when the arch itself is written. module/noupdate tell a module's own view
+ * from one that lives only in the database.
+ */
+export function fingerprintsSql(ids: number[]): string {
+    const unique = [...new Set(ids)].sort((a, b) => a - b);
+    return `SELECT coalesce(json_object_agg(v.id, json_build_object(
+    'arch_md5', md5(v.arch_db::text),
+    'written', floor(extract(epoch FROM v.write_date) * 1000),
+    'arch_updated', v.arch_updated,
+    'module', ${firstXmlidSql('d.module')},
+    'noupdate', ${firstXmlidSql('d.noupdate')}
+)), '{}'::json)
+FROM ir_ui_view v WHERE v.id IN (${sqlIdList(unique)});`;
+}
+
+export function parseFingerprints(output: string): Map<number, Fingerprint> {
+    const raw = parseJson(output, '{}');
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new Error('Unexpected output from the fingerprint query.');
+    }
+    return new Map(Object.entries(raw as Record<string, Record<string, unknown>>).map(([id, fp]) => [Number(id), {
+        archMd5: typeof fp?.arch_md5 === 'string' ? fp.arch_md5 : null,
+        written: typeof fp?.written === 'number' ? fp.written : null,
+        archUpdated: typeof fp?.arch_updated === 'boolean' ? fp.arch_updated : null,
+        module: typeof fp?.module === 'string' ? fp.module : null,
+        noupdate: typeof fp?.noupdate === 'boolean' ? fp.noupdate : null
+    }]));
+}
+
+/** Fingerprints of these views; an id with no view is absent. Throws when they cannot be read. */
+export async function getViewFingerprints(dbName: string, ids: number[]): Promise<Map<number, Fingerprint>> {
+    if (ids.length === 0) {
+        return new Map();
+    }
+    return parseFingerprints(await runSql(dbName, fingerprintsSql(ids)));
+}
+
+/** The database's database.uuid, which a database recreated under the same name does not share. */
+export async function getDatabaseUuid(dbName: string): Promise<string | undefined> {
+    const raw = parseJson(await runSql(dbName,
+        "SELECT coalesce(json_agg(value), '[]'::json) FROM ir_config_parameter WHERE key = 'database.uuid';"), '[]');
+    return Array.isArray(raw) && typeof raw[0] === 'string' && raw[0] ? raw[0] : undefined;
 }
