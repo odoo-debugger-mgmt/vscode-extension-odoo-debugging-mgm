@@ -1,9 +1,10 @@
 /**
  * Where an upgrade script lands in a module: migrations/<version>/
- * end-update_views.py. Odoo runs migrations/<v>/ for a module being updated
- * when installed < v <= the manifest's version, versions with fewer than two
- * dots being prefixed with the series first (odoo/modules/migration.py,
- * convert_version). end- scripts run after every module has loaded.
+ * end-update_views.py. When a series is known, the folder must be a valid
+ * manifest version: <series>.x.y or <series>.x.y.z, ensuring Odoo compares
+ * it in full (never majorless) and accepts it in __manifest__.py via
+ * adapt_version. Without a series, it is 2–5 numeric parts.
+ * end- scripts run after every module has loaded.
  *
  * A script already there is merged into when this extension wrote it
  * (parseScript); anything else is never overwritten: the next numbered
@@ -16,8 +17,15 @@ import { mergeEntries, newScriptFile, parseScript, renderScript, scriptEntry, ty
 export const SCRIPT_NAME = 'end-update_views';
 const MAX_SIBLINGS = 100;
 
-export function isVersionFolder(version: string): boolean {
-    return /^\d+(\.\d+){1,5}$/.test(version);
+/** A folder name Odoo will run and accept as a manifest version: <series>.x.y or <series>.x.y.z; without a known series, 2 to 5 numeric parts. */
+export function isVersionFolder(version: string, series?: string): boolean {
+    if (series) {
+        // With series: must match <escaped series>.x.y or <escaped series>.x.y.z
+        const escaped = series.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`^${escaped}\\.\\d+\\.\\d+(\\.\\d+)?$`).test(version);
+    }
+    // Without series: 2 to 5 numeric parts
+    return /^\d+(\.\d+){1,4}$/.test(version);
 }
 
 export function manifestVersion(text: string): string | undefined {
@@ -51,9 +59,12 @@ export function seriesOf(odooVersion: string | undefined): string | undefined {
     return saas ? `saas~${saas[1]}` : undefined;
 }
 
-/** convert_version: a version with fewer than two dots gets the series in front. */
-export function withSeries(version: string, series: string | undefined): string {
-    return version.split('.').length >= 3 || !series ? version : `${series}.${version}`;
+/** adapt_version: the manifest version with the series in front, unless it already starts with "<series>."; unchanged without a series. */
+export function fullVersion(version: string, series: string | undefined): string {
+    if (!series || version.startsWith(`${series}.`)) {
+        return version;
+    }
+    return `${series}.${version}`;
 }
 
 export function compareVersions(a: string, b: string): number {
@@ -71,9 +82,9 @@ export function compareVersions(a: string, b: string): number {
     return 0;
 }
 
-/** Whether Odoo would skip migrations/<folder>/ until the manifest version goes up to it. */
+/** Whether Odoo would skip migrations/<folder>/ until the manifest version goes up to it; false when the series is unknown (cannot judge). */
 export function needsManifestBump(folder: string, manifest: string | undefined, series: string | undefined): boolean {
-    return compareVersions(withSeries(folder, series), withSeries(manifest ?? '1.0', series)) > 0;
+    return series !== undefined && compareVersions(folder, fullVersion(manifest ?? '1.0', series)) > 0;
 }
 
 /** The manifest with its version set, quotes kept; a manifest with none gets one first in its dict. */

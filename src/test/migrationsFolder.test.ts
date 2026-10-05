@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
-    bumpVersion, compareVersions, isVersionFolder, manifestVersion, needsManifestBump, seriesOf, setManifestVersion, withSeries, writeScriptToFolder
+    bumpVersion, compareVersions, fullVersion, isVersionFolder, manifestVersion, needsManifestBump, seriesOf, setManifestVersion, writeScriptToFolder
 } from '../services/views/migrationsFolder';
 import { parseScript, type ScriptView } from '../services/views/upgradeScript';
 
@@ -27,28 +27,35 @@ suite('Migrations folder', () => {
         assert.strictEqual(bumpVersion('17.0.1.0.0-beta'), undefined);
     });
 
-    test('accepts only plain version folders', () => {
-        for (const ok of ['1.1', '18.0.1.0.1', '1.0.0']) {
-            assert.ok(isVersionFolder(ok), ok);
-        }
-        for (const bad of ['', '1', '../1.0', '1.0/..', '1.0 ', 'saas~17.2.1', '1..0', '1.0.0.0.0.0.0']) {
-            assert.ok(!isVersionFolder(bad), bad);
-        }
+    test('version folders Odoo will run and accept as manifest version', () => {
+        // With series: must be <series>.x.y or <series>.x.y.z
+        assert.ok(isVersionFolder('18.0.1.0.1', '18.0'));
+        assert.ok(isVersionFolder('18.0.1.1', '18.0'));
+        assert.ok(!isVersionFolder('1.0.1', '18.0'));
+        assert.ok(!isVersionFolder('17.0.1.0.1', '18.0'));
+        assert.ok(!isVersionFolder('18.0.1.0.0.1', '18.0'));
+        assert.ok(!isVersionFolder('../1.0', '18.0'));
+        assert.ok(isVersionFolder('saas~17.4.1.0.1', 'saas~17.4'));
+        assert.ok(!isVersionFolder('saasX17.4.1.0.1', 'saas~17.4'));
+        // Without series: 2 to 5 numeric parts
+        assert.ok(isVersionFolder('1.0.1'));
+        assert.ok(!isVersionFolder('1'));
     });
 
-    test('compares versions the way Odoo decides whether a migration runs', () => {
+    test('version comparison and manifest bumping', () => {
         assert.strictEqual(seriesOf('17.0'), '17.0');
         assert.strictEqual(seriesOf('saas-17.4'), 'saas~17.4');
         assert.strictEqual(seriesOf('master'), undefined);
-        assert.strictEqual(withSeries('1.1', '18.0'), '18.0.1.1');
-        assert.strictEqual(withSeries('18.0.1.0.1', '18.0'), '18.0.1.0.1');
+        assert.strictEqual(fullVersion('1.0', '18.0'), '18.0.1.0');
+        assert.strictEqual(fullVersion('18.0.1.0.3', '18.0'), '18.0.1.0.3');
+        assert.strictEqual(fullVersion('1.0', undefined), '1.0');
         assert.strictEqual(compareVersions('18.0.1.0', '18.0.1.0.0'), 0);
         assert.ok(compareVersions('18.0.1.0.10', '18.0.1.0.9') > 0);
         assert.ok(needsManifestBump('18.0.1.0.1', '18.0.1.0.0', '18.0'));
-        assert.ok(needsManifestBump('1.1', undefined, '18.0'));
+        assert.ok(needsManifestBump('18.0.1.1', undefined, '18.0'));
         assert.ok(needsManifestBump('18.0.1.0.1', '1.0', '18.0'));
         assert.ok(!needsManifestBump('18.0.1.0.1', '18.0.1.0.1', '18.0'));
-        assert.ok(!needsManifestBump('1.0.1', '1.0.2', undefined));
+        assert.ok(!needsManifestBump('1.0.1', '1.0.0', undefined));
     });
 
     test('sets the manifest version, keeping its quotes, or adds one', () => {
