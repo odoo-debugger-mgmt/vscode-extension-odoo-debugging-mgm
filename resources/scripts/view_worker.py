@@ -254,10 +254,14 @@ def cmd_make_action(env, view_id):
         vals.update(view_mode=view_type, view_id=root.id, search_view_id=False)
     actions = env['ir.actions.act_window']
     action = actions.search([('name', '=', name), ('res_model', '=', root.model)], limit=1)
-    if action:
+    if not action:
+        action = actions.create(vals)
+    elif any(action._fields[key].convert_to_write(action[key], action) != value for key, value in vals.items()):
         action.write(vals)
     else:
-        action = actions.create(vals)
+        # Nothing to change: the original database is left as it is.
+        return {'action_id': action.id, 'model': root.model, 'view_type': view_type, 'root_id': root.id,
+                'series': odoo.release.serie}
     env.cr.commit()
     _signal(env)
     return {'action_id': action.id, 'model': root.model, 'view_type': view_type, 'root_id': root.id,
@@ -271,8 +275,13 @@ def cmd_recent_ids(env, model, limit=200):
         return {'ids': []}
     user = _render_user(env)
     try:
-        records = env[model].with_user(user).search([], order='id desc', limit=int(limit))
-    except odoo.exceptions.AccessError:
+        # The default company, as the frame opens it, decides what is visible.
+        records = env[model].with_user(user).with_context(allowed_company_ids=[user.company_id.id]).search(
+            [], order='id desc', limit=int(limit))
+    except Exception as error:
+        if _connection_lost(env, error):
+            raise
+        env.cr.rollback()
         return {'ids': []}
     return {'ids': records.ids}
 

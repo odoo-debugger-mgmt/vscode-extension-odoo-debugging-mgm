@@ -174,7 +174,7 @@ Click a view to open its arch as an XML file. Saving writes it to the database t
 
 **Compare with Original** (on a view's row) opens the same view of the original database next to it in the diff editor. In Upgrade mode the original is the upgrade's From database and opens read-only; fix the right side and save. Outside Upgrade mode you pick the database to compare with. The view is found by external id, then id, then name; when none is certain, you pick it.
 
-**Render** opens the view in Odoo, inside a VS Code tab, logged in as the database's first administrator. In Upgrade mode both databases show side by side, on the newest record they both have; step to older records, or a new one, from the toolbar. Saving an arch reloads that side. The tab talks to Odoo through a local proxy that only that tab can use. A side whose server is not running offers to start it. QWeb templates and reports are not rendered; open them from Odoo.
+**Render** opens the view in Odoo, inside a VS Code tab, logged in as the database's first administrator. In Upgrade mode both databases show side by side, on the newest record they both have; step to older records, or a new one, from the toolbar. Saving an arch reloads that side. The tab talks to Odoo through a local proxy that only that tab can use. A side whose server is not running offers to start it. Render leaves one action, named "[View Doctor] <model> #<id>", in each database it renders, the original included. QWeb templates and reports are not rendered; open them from Odoo.
 
 ### One copy per branch
 

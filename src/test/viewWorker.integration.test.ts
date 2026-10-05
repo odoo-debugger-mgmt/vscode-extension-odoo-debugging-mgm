@@ -132,8 +132,10 @@ async function frameGet(port: number, path: string, cookies: string[]): Promise<
     throw new Error('too many redirects');
 }
 
+interface SessionInfo { is_admin?: boolean; user_context?: { lang?: string } }
+
 /** A JSON-RPC call with this session; resolves with `result`, rejects with Odoo's error. */
-function jsonRpc(port: number, route: string, sid: string, extraCookie = ''): Promise<any> {
+function jsonRpc(port: number, route: string, sid: string, extraCookie = ''): Promise<SessionInfo> {
     const body = JSON.stringify({ jsonrpc: '2.0', method: 'call', params: {} });
     return new Promise((resolve, reject) => {
         const request = http.request({
@@ -325,8 +327,11 @@ function jsonRpc(port: number, route: string, sid: string, extraCookie = ''): Pr
         const first = await service.makeAction(copy, viewId);
         assert.deepStrictEqual([first.model, first.viewType, first.rootId], ['res.partner', 'form', rootId]);
         assert.match(first.series, /\d+\.\d+/);
+        const stamp = () => runSql(copy, `SELECT write_date FROM ir_act_window WHERE id = ${first.actionId};`);
+        const written = await stamp();
         const again = await service.makeAction(copy, viewId);
         assert.strictEqual(again.actionId, first.actionId);
+        assert.strictEqual(await stamp(), written, 'a second make_action rewrote the action');
         // A res_id on a reused action goes stale in the web client's cache.
         assert.strictEqual(await runSql(copy,
             `SELECT view_id || ':' || coalesce(res_id, 0) || ':' || view_mode FROM ir_act_window WHERE id = ${first.actionId};`), `${rootId}:0:form`);
@@ -362,7 +367,7 @@ function jsonRpc(port: number, route: string, sid: string, extraCookie = ''): Pr
             const info = await jsonRpc(server.port, '/web/session/get_session_info', sid);
             assert.strictEqual(info.is_admin, true);
             // OdooBot, whose language the shell runs in, is French here.
-            assert.strictEqual(info.user_context.lang, 'en_US');
+            assert.strictEqual(info.user_context?.lang, 'en_US');
         } finally {
             await server.stop();
         }

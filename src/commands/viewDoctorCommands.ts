@@ -116,6 +116,7 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
         }
         try {
             await viewService.activate(item.dbName, item.view.id);
+            viewRender.reloadDatabase(item.dbName);
             // The reason a save left it off no longer holds.
             clearViewDiagnostics(viewDiagnostics, item.dbName, item.view.id);
             showBriefStatus(`${item.view.name} is on.`);
@@ -140,6 +141,7 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
         }
         try {
             await viewService.deactivate(item.dbName, item.view.id);
+            viewRender.reloadDatabase(item.dbName);
             showBriefStatus(`${item.view.name} is off.`);
         } catch (error) {
             void showError(`${item.view.name} could not be turned off: ${errorMessage(error)}`);

@@ -22187,7 +22187,11 @@ async function findViewByXmlid(dbName, xmlid) {
 }
 /** The query for the view with this id and every view of the same model and type. */
 function viewsLikeSql(view) {
-    return viewRowsSql(`(v.id = ${sqlIdList([view.id])} OR (v.model = ${sqlText(view.model)} AND v.type = ${sqlText(view.type)}))`);
+    // 18.0 renamed the list type from 'tree': an upgraded list view is 'list', its original 'tree'.
+    const type = view.type === 'tree' || view.type === 'list'
+        ? `v.type IN (${sqlText('tree')}, ${sqlText('list')})`
+        : `v.type = ${sqlText(view.type)}`;
+    return viewRowsSql(`(v.id = ${sqlIdList([view.id])} OR (v.model = ${sqlText(view.model)} AND ${type}))`);
 }
 /** What matching a view of another database picks from: the same id, and its model and type's views. */
 async function findViewsLike(dbName, view) {
@@ -25120,11 +25124,15 @@ function diffArguments(original, upgraded) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.matchView = matchView;
+/** 18.0 renamed the list view type from 'tree'; one view keeps its identity across that. */
+function viewKind(type) {
+    return type === 'tree' ? 'list' : type;
+}
 function matchView(source, found) {
     if (found.byXmlid) {
         return { kind: 'xmlid', view: found.byXmlid };
     }
-    const similar = found.rows.filter(view => view.model === source.model && view.type === source.type);
+    const similar = found.rows.filter(view => view.model === source.model && viewKind(view.type) === viewKind(source.type));
     const sameId = similar.find(view => view.id === source.id);
     if (sameId) {
         return { kind: 'id', view: sameId };
@@ -30699,6 +30707,7 @@ function registerViewDoctorCommands(deps) {
         }
         try {
             await viewService.activate(item.dbName, item.view.id);
+            viewRender.reloadDatabase(item.dbName);
             // The reason a save left it off no longer holds.
             (0, viewFileSystem_1.clearViewDiagnostics)(viewDiagnostics, item.dbName, item.view.id);
             (0, notifications_1.showBriefStatus)(`${item.view.name} is on.`);
@@ -30724,6 +30733,7 @@ function registerViewDoctorCommands(deps) {
         }
         try {
             await viewService.deactivate(item.dbName, item.view.id);
+            viewRender.reloadDatabase(item.dbName);
             (0, notifications_1.showBriefStatus)(`${item.view.name} is off.`);
         }
         catch (error) {

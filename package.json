@@ -2034,7 +2034,7 @@
         "odooDebugger.views.allowEditOriginal": {
           "type": "boolean",
           "default": false,
-          "description": "Allow saving views of the upgrade's original database. Off by default, so the original stays as it was before the upgrade."
+          "description": "Allow saving views of the upgrade's original database. Off by default, so its views stay as they were before the upgrade."
         },
         "odooDebugger.editorActions.enabled": {
           "type": "boolean",
