@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as http from 'node:http';
 import * as net from 'node:net';
-import { OdooFrameProxy, forwardedCookie, rewriteLocation, withoutFrameAncestors } from '../services/views/odooFrameProxy';
+import { OdooFrameProxy, filterHandshakeHead, forwardedCookie, rewriteLocation, withoutFrameAncestors } from '../services/views/odooFrameProxy';
 
 interface Reply { status: number; headers: http.IncomingHttpHeaders; body: string }
 
@@ -25,6 +25,22 @@ async function openGate(proxy: OdooFrameProxy, next = '/odoo'): Promise<string> 
     return String(reply.headers['set-cookie']?.[0]).split(';')[0];
 }
 
+/** A raw upgrade request; resolves with what came back up to the end of the head, or when the socket closes. */
+function upgradeRaw(port: number, headers: string[]): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const socket = net.connect(port, '127.0.0.1', () => {
+            socket.write(`GET /websocket HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n${headers.map(line => `${line}\r\n`).join('')}\r\n`);
+        });
+        let received = '';
+        socket.setEncoding('utf-8');
+        socket.setTimeout(2000, () => { socket.destroy(); reject(new Error(`no answer: ${received}`)); });
+        const done = () => { socket.destroy(); resolve(received); };
+        socket.on('data', chunk => { received += chunk; if (received.includes('\r\n\r\n')) { done(); } });
+        socket.on('close', done);
+        socket.on('error', reject);
+    });
+}
+
 suite('Odoo frame proxy', () => {
     let upstream: http.Server;
     let upstreamPort: number;
@@ -32,12 +48,14 @@ suite('Odoo frame proxy', () => {
     let respond: (req: http.IncomingMessage, res: http.ServerResponse) => void;
     let proxies: OdooFrameProxy[];
     let mints: number;
+    let upgradeHead: string;
 
-    const makeProxy = async (sids: string[] = ['sid-1', 'sid-2', 'sid-3'], options: { refreshIntervalMs?: number; targetPort?: number } = {}) => {
+    const makeProxy = async (sids: string[] = ['sid-1', 'sid-2', 'sid-3'], options: { refreshIntervalMs?: number; targetPort?: number; tokenTtlMs?: number; mint?: () => Promise<string> } = {}) => {
         const proxy = new OdooFrameProxy({
             targetPort: options.targetPort ?? upstreamPort,
-            mintSession: async () => sids[Math.min(mints++, sids.length - 1)],
-            refreshIntervalMs: options.refreshIntervalMs
+            mintSession: options.mint ?? (async () => sids[Math.min(mints++, sids.length - 1)]),
+            refreshIntervalMs: options.refreshIntervalMs,
+            tokenTtlMs: options.tokenTtlMs
         });
         proxies.push(proxy);
         await proxy.listen();
@@ -47,12 +65,13 @@ suite('Odoo frame proxy', () => {
     setup(async () => {
         seen = [];
         mints = 0;
+        upgradeHead = 'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n';
         proxies = [];
         respond = (_req, res) => { res.writeHead(200, { 'content-type': 'text/plain' }); res.end('odoo'); };
         upstream = http.createServer((req, res) => { seen.push(req.headers); respond(req, res); });
         upstream.on('upgrade', (req, socket) => {
             seen.push(req.headers);
-            socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n');
+            socket.write(upgradeHead);
             socket.pipe(socket);
         });
         await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
@@ -223,6 +242,104 @@ suite('Odoo frame proxy', () => {
         const refused = await request(failing.port, '/odoo', { cookie: await openGate(failing) });
         assert.strictEqual(refused.status, 502);
         assert.ok(refused.body.includes('no admin'));
+    });
+
+    test('an odd request target gets an answer, never an unhandled rejection', async () => {
+        const rejections: unknown[] = [];
+        const onRejection = (reason: unknown) => rejections.push(reason);
+        process.on('unhandledRejection', onRejection);
+        try {
+            const proxy = await makeProxy();
+            const answer = await new Promise<string>((resolve, reject) => {
+                const socket = net.connect(proxy.port, '127.0.0.1', () => socket.write('GET // HTTP/1.1\r\nHost: x\r\n\r\n'));
+                let received = '';
+                socket.setEncoding('utf-8');
+                socket.setTimeout(1000, () => { socket.destroy(); reject(new Error('no answer')); });
+                socket.on('data', chunk => { received += chunk; if (received.includes('\r\n\r\n')) { socket.destroy(); resolve(received); } });
+                socket.on('error', reject);
+            });
+            assert.match(answer, /^HTTP\/1\.1 (400|403)/);
+            await new Promise(resolve => setTimeout(resolve, 50));
+            assert.deepStrictEqual(rejections, []);
+            assert.strictEqual(seen.length, 0);
+        } finally {
+            process.off('unhandledRejection', onRejection);
+        }
+    });
+
+    test('a foreign Origin is refused on upgrades and writes, even with the gate, but not on navigations', async () => {
+        const proxy = await makeProxy();
+        const gate = await openGate(proxy);
+        assert.ok((await upgradeRaw(proxy.port, [`Cookie: ${gate}`, 'Origin: http://evil.example'])).startsWith('HTTP/1.1 403'));
+        assert.ok((await upgradeRaw(proxy.port, [`Cookie: ${gate}`, 'Origin: null'])).startsWith('HTTP/1.1 403'));
+        assert.strictEqual(seen.length, 0);
+        assert.ok((await upgradeRaw(proxy.port, [`Cookie: ${gate}`, `Origin: http://127.0.0.1:${proxy.port}`])).startsWith('HTTP/1.1 101'));
+        const post = (origin: string, method: string) => new Promise<number>((resolve, reject) => {
+            const req = http.request({ host: '127.0.0.1', port: proxy.port, path: '/web/dataset/call_kw', method, headers: { cookie: gate, origin } }, res => { res.resume(); resolve(res.statusCode ?? 0); });
+            req.on('error', reject);
+            req.end();
+        });
+        const before = seen.length;
+        assert.strictEqual(await post('http://evil.example', 'POST'), 403);
+        assert.strictEqual(seen.length, before);
+        assert.strictEqual(await post(`http://127.0.0.1:${proxy.port}`, 'POST'), 200);
+        assert.strictEqual(await post('http://evil.example', 'GET'), 200);
+    });
+
+    test('the websocket handshake does not hand Odoo\'s session cookie to the frame', async () => {
+        upgradeHead = 'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nSet-Cookie: SESSION_ID=rotated-ws; Path=/\r\nSet-Cookie: tz=UTC; Path=/\r\nConnection: Upgrade\r\n\r\n';
+        const proxy = await makeProxy();
+        const gate = await openGate(proxy);
+        const head = await upgradeRaw(proxy.port, [`Cookie: ${gate}`]);
+        assert.ok(head.startsWith('HTTP/1.1 101'), head);
+        assert.ok(!/session_id/i.test(head), head);
+        assert.ok(head.includes('Set-Cookie: tz=UTC'), head);
+        await request(proxy.port, '/odoo', { cookie: gate });
+        assert.strictEqual(seen[seen.length - 1].cookie, 'session_id=rotated-ws');
+        assert.strictEqual(
+            filterHandshakeHead('HTTP/1.1 101 X\r\nset-cookie: session_id=a; Path=/\r\nUpgrade: websocket\r\n\r\n').head,
+            'HTTP/1.1 101 X\r\nUpgrade: websocket\r\n\r\n');
+    });
+
+    test('a client that left while the session was minted opens nothing upstream', async () => {
+        let release!: (sid: string) => void;
+        const proxy = await makeProxy(undefined, { mint: () => new Promise<string>(resolve => { release = resolve; }) });
+        const gate = await openGate(proxy);
+        const socket = net.connect(proxy.port, '127.0.0.1');
+        await new Promise<void>(resolve => socket.on('connect', resolve));
+        socket.on('error', () => undefined);
+        socket.write(`GET /websocket HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nCookie: ${gate}\r\n\r\n`);
+        await new Promise(resolve => setTimeout(resolve, 100));
+        socket.destroy();
+        await new Promise(resolve => setTimeout(resolve, 50));
+        await proxy.close();
+        release('late');
+        await new Promise(resolve => setTimeout(resolve, 100));
+        assert.strictEqual(seen.length, 0);
+    });
+
+    test('a gate target with control characters is refused', async () => {
+        const proxy = await makeProxy();
+        assert.strictEqual((await request(proxy.port, proxy.gatePath('/\t/evil.example'))).status, 403);
+        assert.strictEqual((await request(proxy.port, proxy.gatePath('/a\u0001b'))).status, 403);
+    });
+
+    test('the gate passes if any of its duplicate cookies matches', async () => {
+        const proxy = await makeProxy();
+        const gate = await openGate(proxy);
+        const name = gate.split('=')[0];
+        assert.strictEqual((await request(proxy.port, '/odoo', { cookie: `${name}=junk; ${gate}` })).status, 200);
+        assert.strictEqual((await request(proxy.port, '/odoo', { cookie: `${name}=junk` })).status, 403);
+    });
+
+    test('a gate token expires', async () => {
+        const proxy = await makeProxy(undefined, { tokenTtlMs: 30 });
+        const stale = proxy.gatePath('/odoo');
+        const fresh = proxy.gatePath('/odoo');
+        await new Promise(resolve => setTimeout(resolve, 80));
+        assert.strictEqual((await request(proxy.port, stale)).status, 403);
+        assert.strictEqual((await request(proxy.port, fresh)).status, 403);
+        assert.strictEqual((await request(proxy.port, proxy.gatePath('/odoo'))).status, 302);
     });
 
     test('header helpers', () => {
