@@ -31371,7 +31371,15 @@ async function createUpgradeScript(deps, dbName, viewId) {
         return;
     }
     const project = (await settingsStore_1.SettingsStore.peekSelectedProject().catch(() => null))?.project;
-    const modules = project ? await scriptModules(project, dbName) : [];
+    let modules = [];
+    if (project) {
+        try {
+            modules = await scriptModules(project, dbName);
+        }
+        catch (error) {
+            logger_1.logger.warn(`Could not list the project's modules for the upgrade script: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }
     const db = project?.dbs?.find(entry => entry.id === dbName);
     const series = (0, migrationsFolder_1.seriesOf)((0, versionRepos_1.versionOfDatabase)(db)?.odooVersion);
     const destination = await (0, scriptDestination_1.pickDestination)({
@@ -31395,7 +31403,9 @@ async function createUpgradeScript(deps, dbName, viewId) {
     const { module, version } = destination;
     const written = await (0, migrationsFolder_1.writeScriptToFolder)(path.join(module.path, 'migrations', version), build.views);
     await vscode.window.showTextDocument(vscode.Uri.file(written.path));
-    const where = `${written.merged ? 'Added to' : 'Wrote'} ${module.name}/${path.relative(module.path, written.path).split(path.sep).join('/')}`;
+    const sibling = path.basename(written.path) !== 'end-update_views.py';
+    const where = `${written.merged ? 'Added to' : 'Wrote'} ${module.name}/${path.relative(module.path, written.path).split(path.sep).join('/')}`
+        + (sibling ? ' (end-update_views.py was changed by hand, so it was left as it is)' : '');
     const manifestPath = path.join(module.path, '__manifest__.py');
     const manifestText = await fs.readFile(manifestPath, 'utf-8').catch(() => undefined);
     if (manifestText === undefined || !(0, migrationsFolder_1.needsManifestBump)(version, (0, migrationsFolder_1.manifestVersion)(manifestText), series)) {
@@ -31904,7 +31914,7 @@ function isVersionFolder(version, series) {
     return /^\d+(\.\d+){1,4}$/.test(version);
 }
 function manifestVersion(text) {
-    const match = /(['"])version\1\s*:\s*(['"])([^'"\n]*)\2/.exec(text);
+    const match = /^[^#\n]*?(['"])version\1\s*:\s*(['"])([^'"\n]*)\2/m.exec(text);
     return match?.[3].trim() || undefined;
 }
 /** The version one patch up; Odoo's default 1.0 bumped when there is none; undefined when it is not plain numbers. */
@@ -31958,7 +31968,7 @@ function needsManifestBump(folder, manifest, series) {
 }
 /** The manifest with its version set, quotes kept; a manifest with none gets one first in its dict. */
 function setManifestVersion(text, version) {
-    const existing = /((['"])version\2\s*:\s*)(['"])[^'"\n]*\3/;
+    const existing = /^([^#\n]*?(['"])version\2\s*:\s*)(['"])[^'"\n]*\3/m;
     if (existing.test(text)) {
         return text.replace(existing, (_match, key, _keyQuote, quote) => `${key}${quote}${version}${quote}`);
     }
@@ -32136,7 +32146,10 @@ function destinationItems(modules, owners, total, remembered) {
         items.push({ label: 'Modules', kind: vscode.QuickPickItemKind.Separator }, ...rest);
     }
     if (remembered?.kind !== 'untitled') {
-        items.push({ label: '', kind: vscode.QuickPickItemKind.Separator }, untitled);
+        if (items.length > 0) {
+            items.push({ label: '', kind: vscode.QuickPickItemKind.Separator });
+        }
+        items.push(untitled);
     }
     return items;
 }

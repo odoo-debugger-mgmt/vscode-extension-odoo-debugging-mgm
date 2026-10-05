@@ -29,7 +29,7 @@ export function isVersionFolder(version: string, series?: string): boolean {
 }
 
 export function manifestVersion(text: string): string | undefined {
-    const match = /(['"])version\1\s*:\s*(['"])([^'"\n]*)\2/.exec(text);
+    const match = /^[^#\n]*?(['"])version\1\s*:\s*(['"])([^'"\n]*)\2/m.exec(text);
     return match?.[3].trim() || undefined;
 }
 
@@ -89,7 +89,7 @@ export function needsManifestBump(folder: string, manifest: string | undefined, 
 
 /** The manifest with its version set, quotes kept; a manifest with none gets one first in its dict. */
 export function setManifestVersion(text: string, version: string): string {
-    const existing = /((['"])version\2\s*:\s*)(['"])[^'"\n]*\3/;
+    const existing = /^([^#\n]*?(['"])version\2\s*:\s*)(['"])[^'"\n]*\3/m;
     if (existing.test(text)) {
         return text.replace(existing, (_match, key: string, _keyQuote: string, quote: string) => `${key}${quote}${version}${quote}`);
     }

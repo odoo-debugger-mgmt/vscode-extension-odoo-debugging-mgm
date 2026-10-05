@@ -6,7 +6,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { errorMessage } from '../services/logger';
+import { errorMessage, logger } from '../services/logger';
 import { normalizePath } from '../utils';
 import { SettingsStore } from '../settingsStore';
 import type { ProjectModel } from '../models/project';
@@ -60,7 +60,14 @@ export async function createUpgradeScript(deps: ScriptFlowDeps, dbName: string, 
     }
 
     const project = (await SettingsStore.peekSelectedProject().catch(() => null))?.project as ProjectJson | undefined;
-    const modules = project ? await scriptModules(project, dbName) : [];
+    let modules: ModuleChoice[] = [];
+    if (project) {
+        try {
+            modules = await scriptModules(project, dbName);
+        } catch (error) {
+            logger.warn(`Could not list the project's modules for the upgrade script: ${errorMessage(error)}`);
+        }
+    }
     const db = project?.dbs?.find(entry => entry.id === dbName);
     const series = seriesOf(versionOfDatabase(db)?.odooVersion);
     const destination = await pickDestination({
@@ -86,7 +93,9 @@ export async function createUpgradeScript(deps: ScriptFlowDeps, dbName: string, 
     const { module, version } = destination;
     const written = await writeScriptToFolder(path.join(module.path, 'migrations', version), build.views);
     await vscode.window.showTextDocument(vscode.Uri.file(written.path));
-    const where = `${written.merged ? 'Added to' : 'Wrote'} ${module.name}/${path.relative(module.path, written.path).split(path.sep).join('/')}`;
+    const sibling = path.basename(written.path) !== 'end-update_views.py';
+    const where = `${written.merged ? 'Added to' : 'Wrote'} ${module.name}/${path.relative(module.path, written.path).split(path.sep).join('/')}`
+        + (sibling ? ' (end-update_views.py was changed by hand, so it was left as it is)' : '');
     const manifestPath = path.join(module.path, '__manifest__.py');
     const manifestText = await fs.readFile(manifestPath, 'utf-8').catch(() => undefined);
     if (manifestText === undefined || !needsManifestBump(version, manifestVersion(manifestText), series)) {

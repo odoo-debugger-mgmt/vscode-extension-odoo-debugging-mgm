@@ -94,7 +94,10 @@ export function destinationItems(modules: ModuleChoice[], owners: Map<string, nu
         items.push({ label: 'Modules', kind: vscode.QuickPickItemKind.Separator }, ...rest);
     }
     if (remembered?.kind !== 'untitled') {
-        items.push({ label: '', kind: vscode.QuickPickItemKind.Separator }, untitled);
+        if (items.length > 0) {
+            items.push({ label: '', kind: vscode.QuickPickItemKind.Separator });
+        }
+        items.push(untitled);
     }
     return items;
 }

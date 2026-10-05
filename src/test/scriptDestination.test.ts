@@ -40,6 +40,7 @@ suite('Upgrade script destination', () => {
         assert.strictEqual(items[1].description, 'owns 3 of the 4 views');
         const single = destinationItems([mod('owner1')], new Map([['owner1', 1]]), 1, undefined);
         assert.strictEqual(single[0].description, 'owns the view');
+        assert.deepStrictEqual(destinationItems([], new Map(), 0, undefined).map(item => item.label), ['$(new-file) Untitled Python Editor']);
         const untitled = destinationItems([mod('acme')], new Map(), 1, { kind: 'untitled' });
         assert.deepStrictEqual(untitled.map(item => item.label), ['$(new-file) Untitled Python Editor', 'Modules', 'acme']);
     });

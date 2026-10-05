@@ -27,6 +27,15 @@ suite('Migrations folder', () => {
         assert.strictEqual(bumpVersion('17.0.1.0.0-beta'), undefined);
     });
 
+    test('a commented-out version line is not the manifest version', () => {
+        const commented = "{\n    'name': 'Acme',\n    # 'version': '1.0',\n    'version': '2.0',\n}";
+        assert.strictEqual(manifestVersion(commented), '2.0');
+        assert.strictEqual(setManifestVersion(commented, '2.1'), "{\n    'name': 'Acme',\n    # 'version': '1.0',\n    'version': '2.1',\n}");
+        const only = "{\n    'name': 'Acme',\n    # 'version': '1.0',\n}";
+        assert.strictEqual(manifestVersion(only), undefined);
+        assert.strictEqual(setManifestVersion(only, '1.1'), "{\n    'version': '1.1',\n    'name': 'Acme',\n    # 'version': '1.0',\n}");
+    });
+
     test('version folders Odoo will run and accept as manifest version', () => {
         // With series: must be <series>.x.y or <series>.x.y.z
         assert.ok(isVersionFolder('18.0.1.0.1', '18.0'));
