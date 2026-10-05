@@ -105,7 +105,7 @@ export interface WrittenScript {
     merged: boolean;
 }
 
-async function writeAtomic(file: string, text: string): Promise<void> {
+export async function writeAtomic(file: string, text: string): Promise<void> {
     const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
     try {
         await fs.writeFile(temp, text);

@@ -6,17 +6,19 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { errorMessage } from '../services/logger';
+import { normalizePath } from '../utils';
 import { SettingsStore } from '../settingsStore';
 import type { ProjectModel } from '../models/project';
 import { collectModuleDiscovery } from '../services/psaeInternal';
 import { resolveReposForDatabase, versionOfDatabase } from '../services/versionRepos';
-import { showBriefStatus, showInfo } from '../services/notifications';
+import { showBriefStatus, showError, showInfo } from '../services/notifications';
 import type { ViewService } from '../services/views/viewService';
 import type { ViewNoteService } from '../services/views/viewNoteService';
 import { psqlNoteQueries } from '../services/views/viewNoteService';
 import { buildScriptViews, nothingToScript, scriptSummary, type ScriptSources } from '../services/views/scriptBuilder';
 import { newScript } from '../services/views/upgradeScript';
-import { manifestVersion, needsManifestBump, seriesOf, setManifestVersion, writeScriptToFolder } from '../services/views/migrationsFolder';
+import { manifestVersion, needsManifestBump, seriesOf, setManifestVersion, writeAtomic, writeScriptToFolder } from '../services/views/migrationsFolder';
 import { ownerCounts, pickDestination, withoutCoreModules, type ModuleChoice } from './scriptDestination';
 
 export interface ScriptFlowDeps {
@@ -33,7 +35,8 @@ async function scriptModules(project: ProjectJson, dbName: string): Promise<Modu
     const settings = versionOfDatabase(db)?.settings;
     return withoutCoreModules(
         modules.map(module => ({ name: module.name, path: module.path, repoName: module.repoName })),
-        [settings?.odooPath ?? '', settings?.enterprisePath ?? '']
+        [settings?.odooPath, settings?.enterprisePath, settings?.designThemesPath]
+            .filter((root): root is string => !!root).map(root => normalizePath(root))
     );
 }
 
@@ -92,9 +95,17 @@ export async function createUpgradeScript(deps: ScriptFlowDeps, dbName: string, 
     }
     const choice = await showInfo(`${scriptSummary(build, where)} Odoo runs migrations/${version}/ only once ${module.name}'s version is ${version} or higher.`, 'Set Version');
     if (choice === 'Set Version') {
-        // Read again: the manifest may have changed while the message was open.
-        const current = await fs.readFile(manifestPath, 'utf-8');
-        await fs.writeFile(manifestPath, setManifestVersion(current, version));
-        showBriefStatus(`${module.name} is now version ${version}.`);
+        try {
+            // Read again: the manifest may have changed while the message was open.
+            const current = await fs.readFile(manifestPath, 'utf-8');
+            if (!needsManifestBump(version, manifestVersion(current), series)) {
+                showBriefStatus(`${module.name} is already at ${version} or higher.`);
+                return;
+            }
+            await writeAtomic(manifestPath, setManifestVersion(current, version));
+            showBriefStatus(`${module.name} is now version ${version}.`);
+        } catch (error) {
+            void showError(`Could not set ${module.name}'s version: ${errorMessage(error)}`);
+        }
     }
 }
