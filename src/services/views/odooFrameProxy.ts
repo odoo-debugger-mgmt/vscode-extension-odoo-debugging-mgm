@@ -299,9 +299,14 @@ export class OdooFrameProxy {
             plain(res, 403, REFUSED);
             return;
         }
+        // Every (re)load of a frame passes here. From 19.0 the web client keeps
+        // get_views in IndexedDB and shows that copy first, so a reload after
+        // a save would show the arch from before it. Clearing the frame's
+        // storage (not its cookies) makes it ask Odoo again.
         res.writeHead(302, {
             location: next,
             'set-cookie': `${this.gateCookie}=${this.secret}; Path=/; HttpOnly; Secure; SameSite=None`,
+            'clear-site-data': '"storage"',
             'cache-control': 'no-store'
         });
         res.end();

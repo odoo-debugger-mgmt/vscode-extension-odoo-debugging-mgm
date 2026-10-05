@@ -107,6 +107,18 @@ suite('Odoo frame proxy', () => {
         assert.strictEqual(seen.length, 0, 'the gate itself never reaches Odoo');
     });
 
+    test('every pass through the gate clears what the frame stored, so a reload shows the database as it is now', async () => {
+        const proxy = await makeProxy();
+        const gate = proxy.gatePath('/odoo/action-5/7?debug=1');
+        const first = await request(proxy.port, gate);
+        assert.strictEqual(first.headers['clear-site-data'], '"storage"');
+        const reload = await request(proxy.port, gate, { cookie: String(first.headers['set-cookie']?.[0]).split(';')[0] });
+        assert.strictEqual(reload.status, 302);
+        assert.strictEqual(reload.headers['clear-site-data'], '"storage"');
+        // A refused gate clears nothing.
+        assert.strictEqual((await request(proxy.port, gate)).headers['clear-site-data'], undefined);
+    });
+
     test('a gate that leads off this origin is refused', async () => {
         const proxy = await makeProxy();
         for (const next of ['//evil.example/', 'https://evil.example/', '/\\evil.example', 'odoo']) {
