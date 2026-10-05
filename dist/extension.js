@@ -87,13 +87,15 @@ const archErrors_1 = __webpack_require__(126);
 const viewQueries_1 = __webpack_require__(107);
 const utils_1 = __webpack_require__(8);
 const statusBar_1 = __webpack_require__(127);
-const commands_1 = __webpack_require__(128);
-const projectWorkspace_1 = __webpack_require__(132);
+const viewNoteService_1 = __webpack_require__(128);
+const viewNotes_1 = __webpack_require__(129);
+const commands_1 = __webpack_require__(130);
+const projectWorkspace_1 = __webpack_require__(134);
 const workspaceBinding_1 = __webpack_require__(63);
 const workspaceRegistry_1 = __webpack_require__(82);
 const bindingCommand_1 = __webpack_require__(84);
-const goneElsewhere_1 = __webpack_require__(154);
-const storeSwitch_1 = __webpack_require__(155);
+const goneElsewhere_1 = __webpack_require__(161);
+const storeSwitch_1 = __webpack_require__(162);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -147,7 +149,9 @@ async function activate(context) {
     const viewWorkers = new viewWorkerPool_1.ViewWorkerPool(async (dbName) => new viewWorker_1.ViewWorker(await (0, viewWorkerSpec_1.resolveViewWorkerSpec)(dbName, viewWorkerScript)), {
         onStarting: (dbName, ready) => void vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Starting an Odoo shell on ${dbName}…` }, () => ready.catch(() => undefined))
     });
-    const viewService = new viewService_1.ViewService(viewWorkers);
+    // What the upgrade disabled and what was changed here, per database, for upgrade scripts.
+    const viewNotes = new viewNoteService_1.ViewNoteService(new viewNotes_1.ViewNoteStore(path.join(context.globalStorageUri.fsPath, 'view-notes')));
+    const viewService = new viewService_1.ViewService(viewWorkers, viewNotes);
     const viewRender = new viewRenderPanel_1.ViewRenderPanel(viewService);
     context.subscriptions.push(viewRender);
     context.subscriptions.push(viewWorkers, (0, postgres_1.onBeforeDatabaseRelease)(dbName => viewWorkers.release(dbName)));
@@ -238,7 +242,8 @@ async function activate(context) {
                 (0, notifications_1.showBriefStatus)(result.activated ? 'Saved, and the view is on.' : 'Saved.');
             }
             viewRender.reloadDatabase(ref.dbName);
-            providers.views.refresh();
+            // The tree shows the journal, so refresh once the save is in it.
+            void viewNotes.recordSave(ref.dbName, ref.viewId, result.activated).then(() => providers.views.refresh());
         }
     }, async (dbName) => {
         const allowEdit = vscode.workspace.getConfiguration('odooDebugger').get('views.allowEditOriginal', false);
@@ -346,7 +351,7 @@ async function activate(context) {
             await refreshViews();
         }
     };
-    (0, commands_1.registerAllCommands)({ context, providers, versionsService, sortPreferences, viewService, viewDiagnostics, viewRender, moduleTreeView, dbTreeView, refreshAll });
+    (0, commands_1.registerAllCommands)({ context, providers, versionsService, sortPreferences, viewService, viewNotes, viewDiagnostics, viewRender, moduleTreeView, dbTreeView, refreshAll });
     // Another window wrote to a shared store, or this window switched stores:
     // re-read everything. Debounced, because one save elsewhere can touch
     // several documents and each is its own change.
@@ -21902,6 +21907,9 @@ function buildDoctorRows(dbName, groups) {
         const parts = [`${off} off`, ...(on > 0 ? [`${on} re-enabled`] : []), ...(groups.upgradeVersions.length > 0 ? [groups.upgradeVersions.join(', ')] : [])];
         rows.push(new ViewGroupItem('Disabled by upgrade', `${dbName}:group:upgrade`, children, true, parts.join(' · ')));
     }
+    if (groups.edited.length > 0) {
+        rows.push(new ViewGroupItem('Edited here', `${dbName}:group:edited`, groups.edited.map(view => new ViewItem(dbName, view, 'edited')), true, String(groups.edited.length)));
+    }
     if (groups.otherInactive.length > 0) {
         rows.push(new ViewGroupItem('Other inactive views', `${dbName}:group:other`, groups.otherInactive.map(view => new ViewItem(dbName, view, 'other')), false, String(groups.otherInactive.length)));
     }
@@ -21968,11 +21976,14 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ViewService = void 0;
 const viewQueries_1 = __webpack_require__(107);
 const disabledReport_1 = __webpack_require__(108);
+const logger_1 = __webpack_require__(12);
 const viewGroups_1 = __webpack_require__(109);
 class ViewService {
     pool;
-    constructor(pool) {
+    notes;
+    constructor(pool, notes) {
         this.pool = pool;
+        this.notes = notes;
     }
     async writeDate(dbName, viewId) {
         return (await (0, viewQueries_1.getWriteDates)(dbName, [viewId])).get(viewId);
@@ -22004,13 +22015,24 @@ class ViewService {
     rows(dbName, ids) {
         return (0, viewQueries_1.getViewRows)(dbName, ids);
     }
-    /** The tree's content: psql only, so it shows without waiting for a shell. */
+    /** The tree's content: psql only, so it shows without waiting for a shell. Keeps the note up to date on the way. */
     async doctorGroups(dbName) {
         const [inactive, messages] = await Promise.all([(0, viewQueries_1.listInactiveViews)(dbName), (0, viewQueries_1.getReportMessages)(dbName)]);
         const reported = (0, disabledReport_1.mergeReports)(messages.map(message => (0, disabledReport_1.parseDisabledViews)(message.body)));
         const inactiveIds = new Set(inactive.map(view => view.id));
         const reEnabled = await (0, viewQueries_1.getViewRows)(dbName, [...reported.keys()].filter(id => !inactiveIds.has(id)));
-        return (0, viewGroups_1.groupViews)(inactive, reported, reEnabled);
+        let edited = [];
+        if (this.notes) {
+            try {
+                const rows = new Map([...inactive, ...reEnabled].map(view => [view.id, view]));
+                const note = await this.notes.observe(dbName, reported, rows);
+                edited = await (0, viewQueries_1.getViewRows)(dbName, note.journal.map(entry => entry.id));
+            }
+            catch (error) {
+                logger_1.logger.warn(`Could not update the view note of ${dbName}:`, error);
+            }
+        }
+        return (0, viewGroups_1.groupViews)(inactive, reported, reEnabled, edited);
     }
 }
 exports.ViewService = ViewService;
@@ -22024,6 +22046,7 @@ exports.ViewService = ViewService;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.sqlIdList = sqlIdList;
 exports.sqlText = sqlText;
+exports.firstXmlidSql = firstXmlidSql;
 exports.viewRowsSql = viewRowsSql;
 exports.parseViewRows = parseViewRows;
 exports.parseReportMessages = parseReportMessages;
@@ -22036,6 +22059,10 @@ exports.viewByXmlidSql = viewByXmlidSql;
 exports.findViewByXmlid = findViewByXmlid;
 exports.viewsLikeSql = viewsLikeSql;
 exports.findViewsLike = findViewsLike;
+exports.fingerprintsSql = fingerprintsSql;
+exports.parseFingerprints = parseFingerprints;
+exports.getViewFingerprints = getViewFingerprints;
+exports.getDatabaseUuid = getDatabaseUuid;
 /**
  * Read-only SQL for the View Doctor, through psql. Every query returns one
  * JSON value (json_agg / json_object_agg): view names and Discuss bodies are
@@ -22063,6 +22090,16 @@ function sqlText(value) {
     return `convert_from(decode('${Buffer.from(value, 'utf-8').toString('hex')}', 'hex'), 'UTF8')`;
 }
 /**
+ * A column of the view `v`'s first external id. ir.ui.view.xml_id is
+ * computed, with no column: Odoo takes the first ir_model_data row in that
+ * model's order (module, name). Every query that names or classifies a view
+ * by its external id goes through this, so a view with several is the same
+ * view everywhere.
+ */
+function firstXmlidSql(column) {
+    return `(SELECT ${column} FROM ir_model_data d WHERE d.model = 'ir.ui.view' AND d.res_id = v.id ORDER BY d.module, d.name LIMIT 1)`;
+}
+/**
  * The view rows matching `where`, an expression over ir_ui_view aliased `v`.
  * The root comes from a walk up inherit_id bounded at 50 steps, so a corrupt
  * cycle cannot hang the query. A root counts as a report when any of its
@@ -22088,9 +22125,7 @@ SELECT coalesce(json_agg(json_build_object(
     'type', v.type,
     'active', v.active,
     'inherit_id', v.inherit_id,
-    'xmlid', (SELECT d.module || '.' || d.name FROM ir_model_data d
-              WHERE d.model = 'ir.ui.view' AND d.res_id = v.id
-              ORDER BY d.module, d.name LIMIT 1),
+    'xmlid', ${firstXmlidSql("d.module || '.' || d.name")},
     'root_id', r.root_id,
     'is_report', EXISTS (
         SELECT 1 FROM ir_model_data rd
@@ -22196,6 +22231,51 @@ function viewsLikeSql(view) {
 /** What matching a view of another database picks from: the same id, and its model and type's views. */
 async function findViewsLike(dbName, view) {
     return parseViewRows(await (0, postgres_1.runSql)(dbName, viewsLikeSql(view)));
+}
+/**
+ * What tells whether views' arches were edited, for many at once (port of
+ * odoo-manager's get_view_fingerprints). arch_md5 hashes the raw arch_db as
+ * text, so one query covers the text column of 15 and the per-language jsonb
+ * of 16+. written is write_date: any ORM write moves it, turning a view on
+ * included, so it only ever proves a view untouched. arch_updated flips only
+ * when the arch itself is written. module/noupdate tell a module's own view
+ * from one that lives only in the database.
+ */
+function fingerprintsSql(ids) {
+    const unique = [...new Set(ids)].sort((a, b) => a - b);
+    return `SELECT coalesce(json_object_agg(v.id, json_build_object(
+    'arch_md5', md5(v.arch_db::text),
+    'written', floor(extract(epoch FROM v.write_date) * 1000),
+    'arch_updated', v.arch_updated,
+    'module', ${firstXmlidSql('d.module')},
+    'noupdate', ${firstXmlidSql('d.noupdate')}
+)), '{}'::json)
+FROM ir_ui_view v WHERE v.id IN (${sqlIdList(unique)});`;
+}
+function parseFingerprints(output) {
+    const raw = parseJson(output, '{}');
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new Error('Unexpected output from the fingerprint query.');
+    }
+    return new Map(Object.entries(raw).map(([id, fp]) => [Number(id), {
+            archMd5: typeof fp?.arch_md5 === 'string' ? fp.arch_md5 : null,
+            written: typeof fp?.written === 'number' ? fp.written : null,
+            archUpdated: typeof fp?.arch_updated === 'boolean' ? fp.arch_updated : null,
+            module: typeof fp?.module === 'string' ? fp.module : null,
+            noupdate: typeof fp?.noupdate === 'boolean' ? fp.noupdate : null
+        }]));
+}
+/** Fingerprints of these views; an id with no view is absent. Throws when they cannot be read. */
+async function getViewFingerprints(dbName, ids) {
+    if (ids.length === 0) {
+        return new Map();
+    }
+    return parseFingerprints(await (0, postgres_1.runSql)(dbName, fingerprintsSql(ids)));
+}
+/** The database's database.uuid, which a database recreated under the same name does not share. */
+async function getDatabaseUuid(dbName) {
+    const raw = parseJson(await (0, postgres_1.runSql)(dbName, "SELECT coalesce(json_agg(value), '[]'::json) FROM ir_config_parameter WHERE key = 'database.uuid';"), '[]');
+    return Array.isArray(raw) && typeof raw[0] === 'string' && raw[0] ? raw[0] : undefined;
 }
 
 
@@ -22332,7 +22412,7 @@ function mergeReports(reports) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.groupViews = groupViews;
-function groupViews(inactive, reported, reportedRows) {
+function groupViews(inactive, reported, reportedRows, edited = []) {
     const byId = new Map();
     for (const view of [...inactive, ...reportedRows]) {
         byId.set(view.id, view);
@@ -22357,7 +22437,13 @@ function groupViews(inactive, reported, reportedRows) {
     upgradeDisabled.sort((a, b) => Number(a.active) - Number(b.active) || a.model.localeCompare(b.model) || a.id - b.id);
     upgradeVersions.sort();
     const otherInactive = inactive.filter(view => !reported.has(view.id) && (view.type !== 'qweb' || view.isReport));
-    return { upgradeDisabled, upgradeVersions, otherInactive, missingIds };
+    return {
+        upgradeDisabled,
+        upgradeVersions,
+        otherInactive,
+        missingIds,
+        edited: [...edited].sort((a, b) => a.model.localeCompare(b.model) || a.id - b.id)
+    };
 }
 
 
@@ -25391,46 +25477,105 @@ exports.StatusBarIndicators = StatusBarIndicators;
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(129);
-const projectCommands_1 = __webpack_require__(131);
-const repoCommands_1 = __webpack_require__(137);
-const dbCommands_1 = __webpack_require__(138);
-const moduleCommands_1 = __webpack_require__(139);
-const testingCommands_1 = __webpack_require__(140);
-const versionCommands_1 = __webpack_require__(141);
-const debugCommands_1 = __webpack_require__(143);
-const reposExplorerCommands_1 = __webpack_require__(144);
-const editorCommands_1 = __webpack_require__(145);
-const helpCommands_1 = __webpack_require__(146);
-const upgradeCommand_1 = __webpack_require__(147);
-const customAddonsCommand_1 = __webpack_require__(94);
-const dataStoreCommands_1 = __webpack_require__(149);
-const repoLocationCommand_1 = __webpack_require__(151);
-const bindingCommand_1 = __webpack_require__(84);
-const upgradeSideCommands_1 = __webpack_require__(152);
-const viewDoctorCommands_1 = __webpack_require__(153);
-/** Registers every command the extension contributes. */
-function registerAllCommands(deps) {
-    (0, viewCommands_1.registerViewCommands)(deps);
-    (0, projectCommands_1.registerProjectCommands)(deps);
-    (0, repoCommands_1.registerRepoCommands)(deps);
-    (0, dbCommands_1.registerDbCommands)(deps);
-    (0, moduleCommands_1.registerModuleCommands)(deps);
-    (0, testingCommands_1.registerTestingCommands)(deps);
-    (0, versionCommands_1.registerVersionCommands)(deps);
-    (0, debugCommands_1.registerDebugCommands)(deps);
-    (0, reposExplorerCommands_1.registerReposExplorerCommands)(deps);
-    (0, editorCommands_1.registerEditorCommands)(deps);
-    (0, helpCommands_1.registerHelpCommands)(deps);
-    (0, upgradeCommand_1.registerUpgradeCommand)(deps);
-    (0, customAddonsCommand_1.registerCustomAddonsCommand)(deps);
-    (0, dataStoreCommands_1.registerDataStoreCommands)(deps);
-    (0, repoLocationCommand_1.registerRepoLocationCommand)(deps);
-    (0, bindingCommand_1.registerBindingCommand)(deps);
-    (0, upgradeSideCommands_1.registerUpgradeSideCommands)(deps);
-    (0, viewDoctorCommands_1.registerViewDoctorCommands)(deps);
+exports.ViewNoteService = exports.psqlNoteQueries = void 0;
+/**
+ * Keeps each database's view note (viewNotes.ts) up to date: the views the
+ * upgrade report lists and that are still off are noted, with a baseline,
+ * whenever the tree reads the report; every save and Turn On through the
+ * extension goes in the journal. A note belongs to one database: one written
+ * for another database under the same name (dropped and recreated, or a
+ * different restore) has another database.uuid and reads as empty.
+ * Bookkeeping never fails what triggered it.
+ */
+const logger_1 = __webpack_require__(12);
+const viewQueries_1 = __webpack_require__(107);
+const viewNotes_1 = __webpack_require__(129);
+exports.psqlNoteQueries = {
+    fingerprints: async (dbName, ids) => {
+        try {
+            return await (0, viewQueries_1.getViewFingerprints)(dbName, ids);
+        }
+        catch (error) {
+            logger_1.logger.warn(`Could not fingerprint the views of ${dbName}:`, error);
+            return undefined;
+        }
+    },
+    databaseUuid: async (dbName) => {
+        try {
+            return await (0, viewQueries_1.getDatabaseUuid)(dbName);
+        }
+        catch {
+            return undefined;
+        }
+    }
+};
+/** The note when it is this database's, an empty one when it belongs to another under the same name. */
+function ownNote(note, uuid) {
+    return note.dbUuid && uuid && note.dbUuid !== uuid ? (0, viewNotes_1.emptyNote)() : note;
 }
+class ViewNoteService {
+    store;
+    queries;
+    now;
+    constructor(store, queries = exports.psqlNoteQueries, now = Date.now) {
+        this.store = store;
+        this.queries = queries;
+        this.now = now;
+    }
+    async read(dbName) {
+        const uuid = await this.queries.databaseUuid(dbName);
+        return ownNote(await this.store.load(dbName), uuid);
+    }
+    /**
+     * Notes what `listed` (view id -> versions whose report listed it) has
+     * that is still off in `rows`, and baselines older entries where that is
+     * provable. Fingerprints are read only when there is something to note or
+     * baseline, and the file is written only when the note changed.
+     */
+    async observe(dbName, listed, rows) {
+        const uuid = await this.queries.databaseUuid(dbName);
+        return this.store.update(dbName, async (stored) => {
+            const note = ownNote(stored, uuid);
+            const known = new Set(note.views.map(view => view.id));
+            const fresh = [...listed.keys()].filter(id => !known.has(id) && rows.get(id)?.active === false);
+            const unbaselined = note.views.filter(view => view.archMd5 === undefined).map(view => view.id);
+            const ids = [...fresh, ...unbaselined];
+            const fingerprints = ids.length > 0 ? await this.queries.fingerprints(dbName, ids) : new Map();
+            const withHashes = new Map(rows);
+            for (const id of fresh) {
+                const hash = fingerprints?.get(id)?.archMd5;
+                const row = rows.get(id);
+                if (row && typeof hash === 'string') {
+                    withHashes.set(id, { ...row, archMd5: hash });
+                }
+            }
+            const now = this.now();
+            const built = (0, viewNotes_1.buildNote)(note, listed, withHashes, now);
+            const based = (0, viewNotes_1.baseline)(built.note, fingerprints);
+            const write = built.summary.added > 0 || built.summary.extended > 0 || based.tried > 0;
+            return { note: write ? { ...based.note, dbUuid: uuid ?? note.dbUuid, updatedAt: now } : note, write };
+        });
+    }
+    async recordSave(dbName, viewId, activated) {
+        await this.journal(dbName, viewId, activated ? ['saved', 'activated'] : ['saved']);
+    }
+    async recordActivate(dbName, viewId) {
+        await this.journal(dbName, viewId, ['activated']);
+    }
+    async journal(dbName, viewId, kinds) {
+        try {
+            const uuid = await this.queries.databaseUuid(dbName);
+            await this.store.update(dbName, async (stored) => {
+                const note = ownNote(stored, uuid);
+                return { note: { ...(0, viewNotes_1.recordJournal)(note, viewId, kinds, this.now()), dbUuid: uuid ?? note.dbUuid }, write: true };
+            });
+        }
+        catch (error) {
+            logger_1.logger.warn(`Could not note the change to view ${viewId} in ${dbName}:`, error);
+        }
+    }
+}
+exports.ViewNoteService = ViewNoteService;
 
 
 /***/ }),
@@ -25472,9 +25617,365 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ViewNoteStore = exports.NOT_SHIPPED_MODULES = void 0;
+exports.emptyNote = emptyNote;
+exports.normalizeNote = normalizeNote;
+exports.buildNote = buildNote;
+exports.baseline = baseline;
+exports.isShipped = isShipped;
+exports.unchangedReason = unchangedReason;
+exports.recordJournal = recordJournal;
+exports.noteFileName = noteFileName;
+/**
+ * The View Doctor's note of a database's disabled views, and the journal of
+ * what the extension changed. Port of odoo-manager's view_note.py.
+ *
+ * The note is a baseline: the views upgrade-util's report in Discuss says the
+ * upgrade disabled *and that are still disabled when first listed*. Only what
+ * the report lists (a real upgraded database has hundreds of views off by
+ * design), and only what is still off (a listed view already on was fixed
+ * before anyone looked, and scripting it would claim work nobody did here).
+ *
+ * Each noted view keeps a hash of its arch as it was when noted, so the script
+ * can tell a view that was only re-enabled from one that was edited and leave
+ * the arch out for the first kind (unchangedReason). write_date cannot be that
+ * signal: turning a view on is an ORM write too.
+ *
+ * The journal is every view this extension saved or turned on, so a fix made
+ * on a view no report lists still reaches the script.
+ *
+ * One JSON file per database name, machine-local. Both the installed build
+ * and the F5 sandbox read it (globalStorageUri is not profile-isolated), and
+ * they see the same PostgreSQL, so sharing it is right; writes are atomic and
+ * reads tolerate anything.
+ */
+const fs = __importStar(__webpack_require__(20));
+const path = __importStar(__webpack_require__(3));
+/** External id modules no file ships: Studio's, and what data export/import creates. */
+exports.NOT_SHIPPED_MODULES = ['studio_customization', '__export__', '__import__'];
+function emptyNote() {
+    return { views: [], journal: [] };
+}
+function isId(value) {
+    return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+function finite(value) {
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+/** The note as read from disk: anything that is not a note becomes an empty one, field by field. */
+function normalizeNote(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        return emptyNote();
+    }
+    const source = raw;
+    const note = emptyNote();
+    if (typeof source.dbUuid === 'string') {
+        note.dbUuid = source.dbUuid;
+    }
+    const takenAt = finite(source.takenAt);
+    if (takenAt !== undefined) {
+        note.takenAt = takenAt;
+    }
+    const updatedAt = finite(source.updatedAt);
+    if (updatedAt !== undefined) {
+        note.updatedAt = updatedAt;
+    }
+    for (const entry of Array.isArray(source.views) ? source.views : []) {
+        const view = (entry ?? {});
+        if (!isId(view.id)) {
+            continue;
+        }
+        const noted = {
+            id: view.id,
+            name: typeof view.name === 'string' ? view.name : '',
+            model: typeof view.model === 'string' ? view.model : '',
+            type: typeof view.type === 'string' ? view.type : '',
+            xmlid: typeof view.xmlid === 'string' ? view.xmlid : null,
+            listedIn: Array.isArray(view.listedIn) ? view.listedIn.filter((v) => typeof v === 'string') : []
+        };
+        const notedAt = finite(view.notedAt);
+        if (notedAt !== undefined) {
+            noted.notedAt = notedAt;
+        }
+        if (typeof view.archMd5 === 'string' || view.archMd5 === null) {
+            noted.archMd5 = view.archMd5;
+        }
+        note.views.push(noted);
+    }
+    for (const entry of Array.isArray(source.journal) ? source.journal : []) {
+        const change = (entry ?? {});
+        if (isId(change.id)) {
+            note.journal.push({ id: change.id, saved: change.saved === true, activated: change.activated === true, at: finite(change.at) ?? 0 });
+        }
+    }
+    return note;
+}
+/**
+ * The note after reading the report again: `listed` maps each listed view id
+ * to the versions whose report listed it, `rows` the live rows (an id with no
+ * view is absent). Merged into `existing`: a noted view that has been fixed
+ * since no longer shows as disabled, and must not be forgotten. A view already
+ * noted is never dropped or re-counted. `existing` is not modified.
+ */
+function buildNote(existing, listed, rows, now) {
+    const views = new Map(existing.views.map(view => [view.id, { ...view, listedIn: [...view.listedIn] }]));
+    let added = 0;
+    let extended = 0;
+    let alreadyEnabled = 0;
+    let missing = 0;
+    for (const [id, versions] of listed) {
+        const known = views.get(id);
+        if (known) {
+            const more = versions.filter(version => !known.listedIn.includes(version));
+            if (more.length > 0) {
+                known.listedIn.push(...more);
+                extended++;
+            }
+            continue;
+        }
+        const row = rows.get(id);
+        if (!row) {
+            missing++;
+        }
+        else if (row.active) {
+            alreadyEnabled++;
+        }
+        else {
+            const view = { id, name: row.name, model: row.model, type: row.type, xmlid: row.xmlid, listedIn: [...versions], notedAt: now };
+            // Left out, not null, when it could not be read: baseline() may still supply it.
+            if (row.archMd5 !== undefined) {
+                view.archMd5 = row.archMd5;
+            }
+            views.set(id, view);
+            added++;
+        }
+    }
+    return {
+        note: { ...existing, takenAt: existing.takenAt ?? now, views: [...views.values()], journal: [...existing.journal] },
+        summary: { listed: listed.size, added, extended, alreadyEnabled, missing, noted: views.size }
+    };
+}
+/**
+ * Gives every noted view without a baseline one, where its current arch is
+ * provably the one it had when noted: its row has not been written since
+ * (any ORM write, an edit or turning it on, moves write_date). One written
+ * since cannot be proven later, so it is marked tried (null) and not asked
+ * about again; unchangedReason then falls back to Odoo's arch_updated flag.
+ * `fingerprints` undefined (unreadable) touches nothing; a view with no
+ * fingerprint (deleted) is left alone. `note` is not modified.
+ */
+function baseline(note, fingerprints) {
+    if (!fingerprints) {
+        return { note, baselined: 0, tried: 0 };
+    }
+    let baselined = 0;
+    let tried = 0;
+    const views = note.views.map(view => {
+        const fp = fingerprints.get(view.id);
+        if (view.archMd5 !== undefined || !fp) {
+            return view;
+        }
+        tried++;
+        const noted = view.notedAt ?? note.takenAt;
+        if (noted !== undefined && fp.written !== null && fp.written < noted) {
+            baselined++;
+            return { ...view, archMd5: fp.archMd5 };
+        }
+        return { ...view, archMd5: null };
+    });
+    return { note: { ...note, views }, baselined, tried };
+}
+/** Whether the view's arch comes from its module's files, which every upgrade loads again. */
+function isShipped(fp) {
+    return fp.noupdate === false && !!fp.module && !exports.NOT_SHIPPED_MODULES.includes(fp.module);
+}
+/**
+ * Why a re-enabled view's arch need not be written into the script, or null
+ * when it must. Leaving an arch out is the risky direction (a wrong
+ * "unchanged" drops a fix without a word), so it takes proof:
+ * - 'noted': the arch hashes exactly as when the view was noted;
+ * - 'not-edited': nobody edited the arch through the ORM. arch_updated flips
+ *   when the arch is written, not when `active` is, and a module resets it
+ *   when it loads the view; null counts as never edited. Used without a
+ *   baseline, or when a shipped view differs from its baseline but was not
+ *   edited (a module update rewrote it, and the upgrade loads it again).
+ * Every doubt keeps the arch.
+ */
+function unchangedReason(entry, fp) {
+    if (!fp) {
+        return null;
+    }
+    const edited = fp.archUpdated === true;
+    const noted = entry?.archMd5;
+    if (noted) {
+        if (noted === fp.archMd5) {
+            return 'noted';
+        }
+        return isShipped(fp) && !edited ? 'not-edited' : null;
+    }
+    return edited ? null : 'not-edited';
+}
+/** The note with this view's save or Turn On recorded. `note` is not modified. */
+function recordJournal(note, viewId, kinds, now) {
+    const journal = note.journal.map(entry => ({ ...entry }));
+    let entry = journal.find(change => change.id === viewId);
+    if (!entry) {
+        entry = { id: viewId, saved: false, activated: false, at: now };
+        journal.push(entry);
+    }
+    entry.saved ||= kinds.includes('saved');
+    entry.activated ||= kinds.includes('activated');
+    entry.at = now;
+    return { ...note, journal };
+}
+/** The note's file name: every byte outside [A-Za-z0-9_-] percent-encoded, so no name reaches outside the folder. */
+function noteFileName(dbName) {
+    if (!dbName) {
+        throw new Error('No database name.');
+    }
+    let name = '';
+    for (const byte of Buffer.from(dbName, 'utf-8')) {
+        const char = String.fromCharCode(byte);
+        name += /[A-Za-z0-9_-]/.test(char) ? char : `%${byte.toString(16).toUpperCase().padStart(2, '0')}`;
+    }
+    return `${name}.json`;
+}
+class ViewNoteStore {
+    dir;
+    queue = new Map();
+    constructor(dir) {
+        this.dir = dir;
+    }
+    /** The database's note; empty when there is none or it cannot be read. */
+    async load(dbName) {
+        try {
+            return normalizeNote(JSON.parse(await fs.readFile(path.join(this.dir, noteFileName(dbName)), 'utf-8')));
+        }
+        catch {
+            return emptyNote();
+        }
+    }
+    /** Written beside the target and renamed into place: a reader never sees half a note. */
+    async save(dbName, note) {
+        await fs.mkdir(this.dir, { recursive: true });
+        const file = path.join(this.dir, noteFileName(dbName));
+        const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
+        try {
+            await fs.writeFile(temp, JSON.stringify(note, null, 2));
+            await fs.rename(temp, file);
+        }
+        catch (error) {
+            await fs.rm(temp, { force: true });
+            throw error;
+        }
+    }
+    /** Read, change and maybe write one database's note, one change at a time. */
+    update(dbName, change) {
+        const previous = this.queue.get(dbName) ?? Promise.resolve();
+        const next = previous.catch(() => undefined).then(async () => {
+            const result = await change(await this.load(dbName));
+            if (result.write) {
+                await this.save(dbName, result.note);
+            }
+            return result.note;
+        });
+        this.queue.set(dbName, next);
+        return next;
+    }
+}
+exports.ViewNoteStore = ViewNoteStore;
+
+
+/***/ }),
+/* 130 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerAllCommands = registerAllCommands;
+const viewCommands_1 = __webpack_require__(131);
+const projectCommands_1 = __webpack_require__(133);
+const repoCommands_1 = __webpack_require__(139);
+const dbCommands_1 = __webpack_require__(140);
+const moduleCommands_1 = __webpack_require__(141);
+const testingCommands_1 = __webpack_require__(142);
+const versionCommands_1 = __webpack_require__(143);
+const debugCommands_1 = __webpack_require__(145);
+const reposExplorerCommands_1 = __webpack_require__(146);
+const editorCommands_1 = __webpack_require__(147);
+const helpCommands_1 = __webpack_require__(148);
+const upgradeCommand_1 = __webpack_require__(149);
+const customAddonsCommand_1 = __webpack_require__(94);
+const dataStoreCommands_1 = __webpack_require__(151);
+const repoLocationCommand_1 = __webpack_require__(153);
+const bindingCommand_1 = __webpack_require__(84);
+const upgradeSideCommands_1 = __webpack_require__(154);
+const viewDoctorCommands_1 = __webpack_require__(155);
+/** Registers every command the extension contributes. */
+function registerAllCommands(deps) {
+    (0, viewCommands_1.registerViewCommands)(deps);
+    (0, projectCommands_1.registerProjectCommands)(deps);
+    (0, repoCommands_1.registerRepoCommands)(deps);
+    (0, dbCommands_1.registerDbCommands)(deps);
+    (0, moduleCommands_1.registerModuleCommands)(deps);
+    (0, testingCommands_1.registerTestingCommands)(deps);
+    (0, versionCommands_1.registerVersionCommands)(deps);
+    (0, debugCommands_1.registerDebugCommands)(deps);
+    (0, reposExplorerCommands_1.registerReposExplorerCommands)(deps);
+    (0, editorCommands_1.registerEditorCommands)(deps);
+    (0, helpCommands_1.registerHelpCommands)(deps);
+    (0, upgradeCommand_1.registerUpgradeCommand)(deps);
+    (0, customAddonsCommand_1.registerCustomAddonsCommand)(deps);
+    (0, dataStoreCommands_1.registerDataStoreCommands)(deps);
+    (0, repoLocationCommand_1.registerRepoLocationCommand)(deps);
+    (0, bindingCommand_1.registerBindingCommand)(deps);
+    (0, upgradeSideCommands_1.registerUpgradeSideCommands)(deps);
+    (0, viewDoctorCommands_1.registerViewDoctorCommands)(deps);
+}
+
+
+/***/ }),
+/* 131 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(130);
+const quickSearch_1 = __webpack_require__(132);
 const versionsService_1 = __webpack_require__(33);
 const sortOptions_1 = __webpack_require__(38);
 const notifications_1 = __webpack_require__(16);
@@ -25622,7 +26123,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 130 */
+/* 132 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25746,7 +26247,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 131 */
+/* 133 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25798,12 +26299,12 @@ const settingsStore_1 = __webpack_require__(6);
 const project_1 = __webpack_require__(90);
 const dbs_1 = __webpack_require__(64);
 const odooInstaller_1 = __webpack_require__(66);
-const projectWorkspace_1 = __webpack_require__(132);
-const setupFlow_1 = __webpack_require__(134);
+const projectWorkspace_1 = __webpack_require__(134);
+const setupFlow_1 = __webpack_require__(136);
 const setupState_1 = __webpack_require__(71);
 const context_1 = __webpack_require__(42);
 const versionProposal_1 = __webpack_require__(60);
-const versionPick_1 = __webpack_require__(136);
+const versionPick_1 = __webpack_require__(138);
 const gitService_1 = __webpack_require__(11);
 const provisionQueue_1 = __webpack_require__(102);
 const registerCommand_1 = __webpack_require__(85);
@@ -25970,7 +26471,7 @@ function registerProjectCommands(deps) {
 
 
 /***/ }),
-/* 132 */
+/* 134 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26023,7 +26524,7 @@ const logger_1 = __webpack_require__(12);
 const versionRepos_1 = __webpack_require__(80);
 const utils_1 = __webpack_require__(8);
 const versionsService_1 = __webpack_require__(33);
-const workspaceFolders_1 = __webpack_require__(133);
+const workspaceFolders_1 = __webpack_require__(135);
 async function getActiveProjectOrPrompt() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
@@ -26197,7 +26698,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 133 */
+/* 135 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -26257,7 +26758,7 @@ function repoFolderEntries(resolved, existingPaths) {
 
 
 /***/ }),
-/* 134 */
+/* 136 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26311,7 +26812,7 @@ const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const branches_1 = __webpack_require__(52);
 const customAddonsCommand_1 = __webpack_require__(94);
-const setupDetection_1 = __webpack_require__(135);
+const setupDetection_1 = __webpack_require__(137);
 const setupState_1 = __webpack_require__(71);
 /** The per-version key that every repository-discovery site already reads. */
 const CUSTOM_ADDONS_KEY = 'defaultVersion.customAddonsPath';
@@ -26493,7 +26994,7 @@ async function runSetup(options) {
 
 
 /***/ }),
-/* 135 */
+/* 137 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26710,7 +27211,7 @@ function detectCustomAddonsRoot(roots) {
 
 
 /***/ }),
-/* 136 */
+/* 138 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26859,14 +27360,14 @@ async function collectRepoBranches() {
 
 
 /***/ }),
-/* 137 */
+/* 139 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerRepoCommands = registerRepoCommands;
 const repos_1 = __webpack_require__(97);
-const projectWorkspace_1 = __webpack_require__(132);
+const projectWorkspace_1 = __webpack_require__(134);
 const registerCommand_1 = __webpack_require__(85);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
@@ -26879,7 +27380,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 138 */
+/* 140 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27130,7 +27631,7 @@ function registerDbCommands(deps) {
 
 
 /***/ }),
-/* 139 */
+/* 141 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27266,7 +27767,7 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 140 */
+/* 142 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -27323,7 +27824,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 141 */
+/* 143 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27372,7 +27873,7 @@ const utils_1 = __webpack_require__(8);
 const versionIdentity_1 = __webpack_require__(36);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(142);
+const branchPick_1 = __webpack_require__(144);
 const runtimeCache_1 = __webpack_require__(15);
 const environment_1 = __webpack_require__(51);
 const odooInstaller_1 = __webpack_require__(66);
@@ -28001,7 +28502,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 142 */
+/* 144 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28216,7 +28717,7 @@ async function pickRepoBranch(repoPath, title, placeHolder, suggested, exclude, 
 
 
 /***/ }),
-/* 143 */
+/* 145 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28354,7 +28855,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 144 */
+/* 146 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28647,7 +29148,7 @@ function registerReposExplorerCommands(deps) {
 
 
 /***/ }),
-/* 145 */
+/* 147 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28755,7 +29256,7 @@ function registerEditorCommands(deps) {
 
 
 /***/ }),
-/* 146 */
+/* 148 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28843,7 +29344,7 @@ function registerHelpCommands(deps) {
 
 
 /***/ }),
-/* 147 */
+/* 149 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28901,8 +29402,8 @@ const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(142);
-const upgradePlan_1 = __webpack_require__(148);
+const branchPick_1 = __webpack_require__(144);
+const upgradePlan_1 = __webpack_require__(150);
 const upgradeApply_1 = __webpack_require__(43);
 const upgradeSetup_1 = __webpack_require__(59);
 const branches_1 = __webpack_require__(52);
@@ -29503,7 +30004,7 @@ function registerUpgradeCommand(deps) {
 
 
 /***/ }),
-/* 148 */
+/* 150 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -29629,7 +30130,7 @@ function describeUpgradePlan(plan, input) {
 
 
 /***/ }),
-/* 149 */
+/* 151 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -29690,7 +30191,7 @@ const setupState_1 = __webpack_require__(71);
 const dataLocation_1 = __webpack_require__(17);
 const mainStore_1 = __webpack_require__(27);
 const workspaceSelection_1 = __webpack_require__(30);
-const dataImport_1 = __webpack_require__(150);
+const dataImport_1 = __webpack_require__(152);
 const registerCommand_1 = __webpack_require__(85);
 const gitExclude_1 = __webpack_require__(32);
 const SHARED_STORE_FILE = 'odoo-devtools.db';
@@ -29978,7 +30479,7 @@ function registerDataStoreCommands(deps) {
 
 
 /***/ }),
-/* 150 */
+/* 152 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30235,7 +30736,7 @@ function buildExport(data, exportedAt = new Date()) {
 
 
 /***/ }),
-/* 151 */
+/* 153 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30393,7 +30894,7 @@ function registerRepoLocationCommand(deps) {
 
 
 /***/ }),
-/* 152 */
+/* 154 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30560,7 +31061,7 @@ function registerUpgradeSideCommands(deps) {
 
 
 /***/ }),
-/* 153 */
+/* 155 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30608,6 +31109,7 @@ const settingsStore_1 = __webpack_require__(6);
 const viewPairing_1 = __webpack_require__(124);
 const logger_1 = __webpack_require__(12);
 const renderPlan_1 = __webpack_require__(121);
+const upgradeScriptFlow_1 = __webpack_require__(156);
 const archErrors_1 = __webpack_require__(126);
 function viewItem(arg) {
     return arg instanceof viewDoctorView_1.ViewItem ? arg : undefined;
@@ -30616,7 +31118,7 @@ async function openArch(dbName, viewId, xmlid) {
     await vscode.window.showTextDocument((0, viewFileSystem_1.viewUri)(dbName, viewId, xmlid ?? `view-${viewId}`), { preview: true });
 }
 function registerViewDoctorCommands(deps) {
-    const { context, providers, viewService, viewDiagnostics, viewRender } = deps;
+    const { context, providers, viewService, viewNotes, viewDiagnostics, viewRender } = deps;
     context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.refresh', () => providers.views.refresh()));
     context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.openArch', async (arg) => {
         const item = viewItem(arg);
@@ -30707,6 +31209,7 @@ function registerViewDoctorCommands(deps) {
         }
         try {
             await viewService.activate(item.dbName, item.view.id);
+            await viewNotes.recordActivate(item.dbName, item.view.id);
             viewRender.reloadDatabase(item.dbName);
             // The reason a save left it off no longer holds.
             (0, viewFileSystem_1.clearViewDiagnostics)(viewDiagnostics, item.dbName, item.view.id);
@@ -30757,11 +31260,938 @@ function registerViewDoctorCommands(deps) {
             (0, notifications_1.showBriefStatus)(`${item.view.name} has no external ID.`);
         }
     }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.createScript', async () => {
+        const project = (await settingsStore_1.SettingsStore.peekSelectedProject().catch(() => null))?.project;
+        const target = (0, viewDoctorView_1.resolveViewDoctorTarget)(project);
+        if (!target) {
+            void (0, notifications_1.showInfo)('Select a database first.');
+            return;
+        }
+        try {
+            await (0, upgradeScriptFlow_1.createUpgradeScript)(deps, target.dbName);
+        }
+        catch (error) {
+            void (0, notifications_1.showError)(`Could not create the upgrade script: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.addToScript', async (arg) => {
+        const item = viewItem(arg);
+        if (!item) {
+            return;
+        }
+        try {
+            await (0, upgradeScriptFlow_1.createUpgradeScript)(deps, item.dbName, item.view.id);
+        }
+        catch (error) {
+            void (0, notifications_1.showError)(`Could not add ${item.view.name} to an upgrade script: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
 }
 
 
 /***/ }),
-/* 154 */
+/* 156 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.createUpgradeScript = createUpgradeScript;
+/**
+ * Create Upgrade Script and Add to Upgrade Script: build the views, ask where
+ * the script goes, write or open it, and say what was left out. Offers to
+ * bump the module's manifest when the folder would otherwise never run.
+ */
+const fs = __importStar(__webpack_require__(20));
+const path = __importStar(__webpack_require__(3));
+const vscode = __importStar(__webpack_require__(1));
+const logger_1 = __webpack_require__(12);
+const utils_1 = __webpack_require__(8);
+const settingsStore_1 = __webpack_require__(6);
+const psaeInternal_1 = __webpack_require__(96);
+const versionRepos_1 = __webpack_require__(80);
+const notifications_1 = __webpack_require__(16);
+const viewNoteService_1 = __webpack_require__(128);
+const scriptBuilder_1 = __webpack_require__(157);
+const upgradeScript_1 = __webpack_require__(158);
+const migrationsFolder_1 = __webpack_require__(159);
+const scriptDestination_1 = __webpack_require__(160);
+async function scriptModules(project, dbName) {
+    const db = project.dbs?.find(entry => entry.id === dbName);
+    const { modules } = (0, psaeInternal_1.collectModuleDiscovery)(project, await (0, versionRepos_1.resolveReposForDatabase)(project, db));
+    const settings = (0, versionRepos_1.versionOfDatabase)(db)?.settings;
+    return (0, scriptDestination_1.withoutCoreModules)(modules.map(module => ({ name: module.name, path: module.path, repoName: module.repoName })), [settings?.odooPath, settings?.enterprisePath, settings?.designThemesPath]
+        .filter((root) => !!root).map(root => (0, utils_1.normalizePath)(root)));
+}
+async function createUpgradeScript(deps, dbName, viewId) {
+    const sources = {
+        prepare: async (db) => {
+            const groups = await deps.viewService.doctorGroups(db);
+            return { note: await deps.viewNotes.read(db), reEnabled: groups.upgradeDisabled.filter(view => view.active) };
+        },
+        rows: (db, ids) => deps.viewService.rows(db, ids),
+        fingerprints: (db, ids) => viewNoteService_1.psqlNoteQueries.fingerprints(db, ids),
+        arch: (db, id) => deps.viewService.getArch(db, id)
+    };
+    const build = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Building the upgrade script…' }, () => (0, scriptBuilder_1.buildScriptViews)(sources, dbName, viewId));
+    if (build.views.length === 0) {
+        void (0, notifications_1.showInfo)((0, scriptBuilder_1.nothingToScript)(build, dbName));
+        return;
+    }
+    const project = (await settingsStore_1.SettingsStore.peekSelectedProject().catch(() => null))?.project;
+    const modules = project ? await scriptModules(project, dbName) : [];
+    const db = project?.dbs?.find(entry => entry.id === dbName);
+    const series = (0, migrationsFolder_1.seriesOf)((0, versionRepos_1.versionOfDatabase)(db)?.odooVersion);
+    const destination = await (0, scriptDestination_1.pickDestination)({
+        modules,
+        owners: (0, scriptDestination_1.ownerCounts)(build.views),
+        total: build.views.length,
+        memento: deps.context.workspaceState,
+        projectKey: project?.uid ?? project?.name ?? 'default',
+        title: viewId === undefined ? 'Create Upgrade Script' : 'Add to Upgrade Script',
+        series
+    });
+    if (!destination) {
+        return;
+    }
+    if (destination.kind === 'untitled') {
+        const document = await vscode.workspace.openTextDocument({ language: 'python', content: (0, upgradeScript_1.newScript)(build.views) });
+        await vscode.window.showTextDocument(document);
+        void (0, notifications_1.showInfo)((0, scriptBuilder_1.scriptSummary)(build, 'Untitled script'));
+        return;
+    }
+    const { module, version } = destination;
+    const written = await (0, migrationsFolder_1.writeScriptToFolder)(path.join(module.path, 'migrations', version), build.views);
+    await vscode.window.showTextDocument(vscode.Uri.file(written.path));
+    const where = `${written.merged ? 'Added to' : 'Wrote'} ${module.name}/${path.relative(module.path, written.path).split(path.sep).join('/')}`;
+    const manifestPath = path.join(module.path, '__manifest__.py');
+    const manifestText = await fs.readFile(manifestPath, 'utf-8').catch(() => undefined);
+    if (manifestText === undefined || !(0, migrationsFolder_1.needsManifestBump)(version, (0, migrationsFolder_1.manifestVersion)(manifestText), series)) {
+        void (0, notifications_1.showInfo)((0, scriptBuilder_1.scriptSummary)(build, where));
+        return;
+    }
+    const choice = await (0, notifications_1.showInfo)(`${(0, scriptBuilder_1.scriptSummary)(build, where)} Odoo runs migrations/${version}/ only once ${module.name}'s version is ${version} or higher.`, 'Set Version');
+    if (choice === 'Set Version') {
+        try {
+            // Read again: the manifest may have changed while the message was open.
+            const current = await fs.readFile(manifestPath, 'utf-8');
+            if (!(0, migrationsFolder_1.needsManifestBump)(version, (0, migrationsFolder_1.manifestVersion)(current), series)) {
+                (0, notifications_1.showBriefStatus)(`${module.name} is already at ${version} or higher.`);
+                return;
+            }
+            await (0, migrationsFolder_1.writeAtomic)(manifestPath, (0, migrationsFolder_1.setManifestVersion)(current, version));
+            (0, notifications_1.showBriefStatus)(`${module.name} is now version ${version}.`);
+        }
+        catch (error) {
+            void (0, notifications_1.showError)(`Could not set ${module.name}'s version: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }
+}
+
+
+/***/ }),
+/* 157 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.scriptIds = scriptIds;
+exports.selectForScript = selectForScript;
+exports.buildScriptViews = buildScriptViews;
+exports.leftOutText = leftOutText;
+exports.scriptSummary = scriptSummary;
+exports.nothingToScript = nothingToScript;
+const viewNotes_1 = __webpack_require__(129);
+/** Every view the note knows: noted first, then the journal's. */
+function scriptIds(note) {
+    return [...new Set([...note.views.map(view => view.id), ...note.journal.map(entry => entry.id)])];
+}
+function selectForScript(note, ids, rows, fingerprints) {
+    const noted = new Map(note.views.map(view => [view.id, view]));
+    const selection = { include: [], stillDisabled: [], deleted: [] };
+    for (const id of ids) {
+        const row = rows.get(id);
+        if (!row) {
+            selection.deleted.push(id);
+        }
+        else if (!row.active) {
+            selection.stillDisabled.push(row);
+        }
+        else {
+            const entry = noted.get(id);
+            selection.include.push({ row, listedIn: entry?.listedIn ?? [], why: (0, viewNotes_1.unchangedReason)(entry, fingerprints?.get(id)) });
+        }
+    }
+    selection.include.sort((a, b) => a.row.model.localeCompare(b.row.model) || a.row.id - b.row.id);
+    return selection;
+}
+/** The views for a script of `dbName`: all the note covers, or the one view `viewId`. */
+async function buildScriptViews(sources, dbName, viewId) {
+    const { note, reEnabled } = await sources.prepare(dbName);
+    const ids = viewId === undefined ? scriptIds(note) : [viewId];
+    const rows = new Map((ids.length > 0 ? await sources.rows(dbName, ids) : []).map(view => [view.id, view]));
+    const activeIds = ids.filter(id => rows.get(id)?.active);
+    const fingerprints = activeIds.length > 0 ? await sources.fingerprints(dbName, activeIds) : new Map();
+    const selection = selectForScript(note, ids, rows, fingerprints);
+    const views = [];
+    const noArch = [];
+    for (const { row, listedIn, why } of selection.include) {
+        let arch = null;
+        if (why === null) {
+            arch = await sources.arch(dbName, row.id);
+            if (!arch.trim()) {
+                noArch.push(row);
+                continue;
+            }
+        }
+        views.push({ id: row.id, xmlid: row.xmlid, model: row.model, type: row.type, name: row.name, listedIn, dbName, arch, why });
+    }
+    const covered = new Set(ids);
+    const notNoted = viewId === undefined ? reEnabled.filter(view => !covered.has(view.id)) : [];
+    return { views, stillDisabled: selection.stillDisabled, deleted: selection.deleted, noArch, notNoted };
+}
+function plural(count, word) {
+    return `${count} ${word}${count === 1 ? '' : 's'}`;
+}
+function leftOutText(build) {
+    const parts = [];
+    if (build.stillDisabled.length > 0) {
+        parts.push(`${build.stillDisabled.length} still off`);
+    }
+    if (build.deleted.length > 0) {
+        parts.push(`${build.deleted.length} deleted`);
+    }
+    if (build.noArch.length > 0) {
+        parts.push(`${build.noArch.length} with no arch`);
+    }
+    if (build.notNoted.length > 0) {
+        const count = build.notNoted.length;
+        parts.push(`${plural(count, 're-enabled view')} fixed before the note was taken (use Add to Upgrade Script on ${count === 1 ? 'it' : 'each'})`);
+    }
+    return parts.length > 0 ? `Left out: ${parts.join(', ')}.` : '';
+}
+function scriptSummary(build, where) {
+    const only = build.views.filter(view => view.arch === null).length;
+    return [`${where}: ${plural(build.views.length, 'view')}${only > 0 ? `, ${only} only re-enabled` : ''}.`, leftOutText(build)].filter(Boolean).join(' ');
+}
+function nothingToScript(build, dbName) {
+    return [`Nothing to script in ${dbName} yet: no fixed or edited view is on.`, leftOutText(build)].filter(Boolean).join(' ');
+}
+
+
+/***/ }),
+/* 158 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DEFAULT_HEADER = void 0;
+exports.oneLine = oneLine;
+exports.pyTripleQuoted = pyTripleQuoted;
+exports.entryKey = entryKey;
+exports.scriptEntry = scriptEntry;
+exports.newScriptFile = newScriptFile;
+exports.mergeEntries = mergeEntries;
+exports.renderScript = renderScript;
+exports.newScript = newScript;
+exports.parseScript = parseScript;
+exports.DEFAULT_HEADER = [
+    "# Views fixed with Odoo DevTools' View Doctor, written back during the upgrade.",
+    '# Needs upgrade-util on the upgrade path (--upgrade-path=<upgrade-util>/src) for `from odoo.upgrade import util`.',
+    "# An end- script runs after every module has loaded, so no module's data file overwrites these views.",
+    '# Every view listed is made active. VIEWS also get their arch back; ACTIVATE are only re-enabled.'
+].join('\n');
+const LXML_IMPORT = 'from lxml import etree\n\n';
+const UTIL_IMPORT = 'from odoo.upgrade import util\n\n';
+const ACTIVATE_OPEN = 'ACTIVATE = [\n';
+const VIEWS_OPEN = 'VIEWS = [\n';
+const ARCH_OPEN = '        "arch": """\\\n';
+const ARCH_CLOSE = '""",\n    },\n';
+const ACTIVATE_SQL = 'cr.execute("UPDATE ir_ui_view SET active = true WHERE id = %s", [view_id])';
+const ACTIVATE_STEP = [
+    '    for target in ACTIVATE:',
+    '        view_id = target if isinstance(target, int) else util.ref(cr, target)',
+    '        if view_id:',
+    `            ${ACTIVATE_SQL}`
+].join('\n') + '\n';
+const VIEWS_STEP = [
+    '    for view in VIEWS:',
+    '        xmlid = view.get("xmlid")',
+    '        view_id = view.get("view_id")',
+    '        with util.skippable_cm(), util.edit_view(cr, xmlid, view_id, skip_if_not_noupdate=False, active=True) as arch:',
+    '            new_arch = etree.fromstring(view["arch"])',
+    '            arch.tag = new_arch.tag',
+    '            arch.text = new_arch.text',
+    '            arch.attrib.clear()',
+    '            arch.attrib.update(new_arch.attrib)',
+    '            arch[:] = new_arch[:]'
+].join('\n') + '\n';
+const WHY = {
+    noted: 'arch unchanged since it was noted',
+    'not-edited': 'arch never edited in the database'
+};
+/**
+ * `text` on one line, for a comment. View names come from the database and
+ * Studio lets anyone type a newline into one, which would end the comment and
+ * turn the rest into code. Python's own line ends are \n and \r; the other
+ * separators are collapsed too, to be safe.
+ */
+function oneLine(text, limit) {
+    const line = String(text).split(/[\s\x1c-\x1f\x85]+/).filter(Boolean).join(' ');
+    const chars = Array.from(line);
+    return limit && chars.length > limit ? `${chars.slice(0, limit - 1).join('')}…` : line;
+}
+/**
+ * The body of a Python triple-quoted string. Left literal in the usual case
+ * (a human reads and edits this XML); escaped only when a backslash or an
+ * embedded """ would break the literal. The caller always puts a newline
+ * before the closing quotes, so a trailing " is harmless.
+ */
+function pyTripleQuoted(text) {
+    return text.includes('\\') || text.includes('"""')
+        ? text.replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"')
+        : text;
+}
+function entryKey(view) {
+    return view.xmlid ?? `id:${view.id}`;
+}
+function head(view) {
+    const label = [view.model, view.type].filter(Boolean).join(' ') || 'view';
+    let line = `# ${oneLine(label)} — id ${view.id} in ${oneLine(view.dbName)}`;
+    const steps = view.listedIn.map(step => oneLine(step));
+    if (steps.length === 1) {
+        line += ` (disabled by the ${steps[0]} upgrade)`;
+    }
+    else if (steps.length > 1) {
+        line += ` (disabled by the ${steps.slice(0, -1).join(', ')} and ${steps[steps.length - 1]} upgrades)`;
+    }
+    return line;
+}
+function noXmlidNote(view) {
+    return `# NOTE: no xml_id, so this view is addressed by database id — valid in ${oneLine(view.dbName)} only.`;
+}
+function activateEntry(view) {
+    const lines = [head(view)];
+    if (view.name) {
+        lines.push(`# ${oneLine(view.name, 100)}`);
+    }
+    const why = `# ${view.why ? WHY[view.why] : 'arch unchanged'} — only re-enabled`;
+    if (view.xmlid) {
+        lines.push(why, `${JSON.stringify(view.xmlid)},`);
+    }
+    else {
+        lines.push(noXmlidNote(view), why, `${view.id},`);
+    }
+    return { key: entryKey(view), list: 'activate', text: lines.map(line => `    ${line}\n`).join('') };
+}
+function viewsEntry(view) {
+    const arch = (view.arch ?? '').replace(/\r\n?/g, '\n').trim();
+    if (!arch) {
+        throw new Error(`view ${view.id} has no arch to write`);
+    }
+    const lines = [head(view)];
+    if (view.name) {
+        lines.push(`# ${oneLine(view.name, 100)}`);
+    }
+    if (view.xmlid) {
+        lines.push(`"xmlid": ${JSON.stringify(view.xmlid)},`);
+    }
+    else {
+        lines.splice(1, 0, noXmlidNote(view));
+        lines.push(`"view_id": ${view.id},`);
+    }
+    const body = lines.map(line => `        ${line}\n`).join('');
+    return { key: entryKey(view), list: 'views', text: `    {\n${body}${ARCH_OPEN}${pyTripleQuoted(arch)}\n${ARCH_CLOSE}` };
+}
+/** The view's entry: ACTIVATE when its arch is left out, VIEWS otherwise. */
+function scriptEntry(view) {
+    return view.arch === null ? activateEntry(view) : viewsEntry(view);
+}
+function newScriptFile() {
+    return { header: exports.DEFAULT_HEADER, activate: [], views: [] };
+}
+/** `file` with `entries` added; a view already listed is replaced where it stands, or moved to the other list. */
+function mergeEntries(file, entries) {
+    const activate = [...file.activate];
+    const views = [...file.views];
+    for (const entry of entries) {
+        const [target, other] = entry.list === 'activate' ? [activate, views] : [views, activate];
+        const elsewhere = other.findIndex(existing => existing.key === entry.key);
+        if (elsewhere >= 0) {
+            other.splice(elsewhere, 1);
+        }
+        const here = target.findIndex(existing => existing.key === entry.key);
+        if (here >= 0) {
+            target[here] = entry;
+        }
+        else {
+            target.push(entry);
+        }
+    }
+    return { header: file.header, activate, views };
+}
+/** The file's full text. Only what is needed: no lxml without VIEWS, no ACTIVATE list when nothing is only re-enabled. */
+function renderScript(file) {
+    if (file.activate.length === 0 && file.views.length === 0) {
+        throw new Error('no views to write');
+    }
+    const sections = [];
+    const steps = [];
+    if (file.activate.length > 0) {
+        sections.push(`${ACTIVATE_OPEN}${file.activate.map(entry => entry.text).join('')}]\n`);
+        steps.push(ACTIVATE_STEP);
+    }
+    if (file.views.length > 0) {
+        sections.push(`${VIEWS_OPEN}${file.views.map(entry => entry.text).join('')}]\n`);
+        steps.push(VIEWS_STEP);
+    }
+    const imports = file.views.length > 0 ? LXML_IMPORT : '';
+    return `${imports}${UTIL_IMPORT}${file.header}\n\n${sections.join('\n')}\n\ndef migrate(cr, version):\n${steps.join('\n')}`;
+}
+function newScript(views) {
+    return renderScript(mergeEntries(newScriptFile(), views.map(scriptEntry)));
+}
+/** The key of a literal as this file writes it: a JSON-style "string", or digits for an id. */
+function keyOfLiteral(literal, allowId) {
+    if (/^\d+$/.test(literal)) {
+        return allowId ? `id:${Number(literal)}` : undefined;
+    }
+    try {
+        const value = JSON.parse(literal);
+        return typeof value === 'string' && value ? value : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+/** Where the """ closing an arch starts, honouring backslash escapes; -1 when it never closes. */
+function closingQuotes(text, from) {
+    for (let i = from; i < text.length; i++) {
+        if (text[i] === '\\') {
+            i++;
+        }
+        else if (text.startsWith('"""', i)) {
+            return i;
+        }
+    }
+    return -1;
+}
+function parseActivate(text, start) {
+    const entries = [];
+    let at = start;
+    let entryStart = start;
+    for (;;) {
+        const eol = text.indexOf('\n', at);
+        if (eol < 0) {
+            return undefined;
+        }
+        const line = text.slice(at, eol);
+        if (line === ']') {
+            return at === entryStart ? { entries, end: eol + 1 } : undefined;
+        }
+        if (!line.startsWith('    #')) {
+            const value = /^ {4}("(?:[^"\\]|\\.)*"|\d+),$/.exec(line);
+            const key = value ? keyOfLiteral(value[1], true) : undefined;
+            if (!key) {
+                return undefined;
+            }
+            entries.push({ key, list: 'activate', text: text.slice(entryStart, eol + 1) });
+            entryStart = eol + 1;
+        }
+        at = eol + 1;
+    }
+}
+function parseViews(text, start) {
+    const entries = [];
+    let at = start;
+    for (;;) {
+        if (text.startsWith(']\n', at)) {
+            return { entries, end: at + 2 };
+        }
+        if (!text.startsWith('    {\n', at)) {
+            return undefined;
+        }
+        const entryStart = at;
+        at += '    {\n'.length;
+        let key;
+        while (!text.startsWith(ARCH_OPEN, at)) {
+            const eol = text.indexOf('\n', at);
+            if (eol < 0) {
+                return undefined;
+            }
+            const line = text.slice(at, eol);
+            const keyed = /^ {8}"(xmlid|view_id)": ("(?:[^"\\]|\\.)*"|\d+),$/.exec(line);
+            if (keyed && key === undefined) {
+                key = keyed[1] === 'view_id'
+                    ? (/^\d+$/.test(keyed[2]) ? `id:${Number(keyed[2])}` : undefined)
+                    : keyOfLiteral(keyed[2], false);
+                if (!key) {
+                    return undefined;
+                }
+            }
+            else if (!line.startsWith('        #')) {
+                return undefined;
+            }
+            at = eol + 1;
+        }
+        if (!key) {
+            return undefined;
+        }
+        const close = closingQuotes(text, at + ARCH_OPEN.length);
+        if (close < 0 || !text.startsWith(ARCH_CLOSE, close)) {
+            return undefined;
+        }
+        at = close + ARCH_CLOSE.length;
+        entries.push({ key, list: 'views', text: text.slice(entryStart, at) });
+    }
+}
+/**
+ * A script this extension wrote, read back so new entries can be merged in;
+ * undefined for anything else. The test is exact: the file must re-render byte
+ * for byte from what was read (CRLF and a lone CR read as LF, as Python does). Entries are kept verbatim, so
+ * a comment edited inside one survives; code added anywhere does not parse,
+ * and the caller writes a new file rather than lose it.
+ */
+function parseScript(source) {
+    const text = source.replace(/\r\n?/g, '\n');
+    let at = text.startsWith(LXML_IMPORT) ? LXML_IMPORT.length : 0;
+    if (!text.startsWith(UTIL_IMPORT, at)) {
+        return undefined;
+    }
+    at += UTIL_IMPORT.length;
+    const headerEnd = text.indexOf('\n\n', at);
+    if (headerEnd < 0) {
+        return undefined;
+    }
+    const header = text.slice(at, headerEnd);
+    if (!header || !header.split('\n').every(line => line.startsWith('#'))) {
+        return undefined;
+    }
+    at = headerEnd + 2;
+    const file = { header, activate: [], views: [] };
+    if (text.startsWith(ACTIVATE_OPEN, at)) {
+        const parsed = parseActivate(text, at + ACTIVATE_OPEN.length);
+        if (!parsed) {
+            return undefined;
+        }
+        file.activate = parsed.entries;
+        at = parsed.end;
+        if (text.startsWith(`\n${VIEWS_OPEN}`, at)) {
+            at += 1;
+        }
+    }
+    if (text.startsWith(VIEWS_OPEN, at)) {
+        const parsed = parseViews(text, at + VIEWS_OPEN.length);
+        if (!parsed) {
+            return undefined;
+        }
+        file.views = parsed.entries;
+    }
+    if (file.activate.length === 0 && file.views.length === 0) {
+        return undefined;
+    }
+    return renderScript(file) === text ? file : undefined;
+}
+
+
+/***/ }),
+/* 159 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.SCRIPT_NAME = void 0;
+exports.isVersionFolder = isVersionFolder;
+exports.manifestVersion = manifestVersion;
+exports.bumpVersion = bumpVersion;
+exports.seriesOf = seriesOf;
+exports.fullVersion = fullVersion;
+exports.compareVersions = compareVersions;
+exports.needsManifestBump = needsManifestBump;
+exports.setManifestVersion = setManifestVersion;
+exports.writeAtomic = writeAtomic;
+exports.writeScriptToFolder = writeScriptToFolder;
+/**
+ * Where an upgrade script lands in a module: migrations/<version>/
+ * end-update_views.py. When a series is known, the folder must be a valid
+ * manifest version: <series>.x.y or <series>.x.y.z, ensuring Odoo compares
+ * it in full (never majorless) and accepts it in __manifest__.py via
+ * adapt_version. Without a series, it is 2–5 numeric parts.
+ * end- scripts run after every module has loaded.
+ *
+ * A script already there is merged into when this extension wrote it
+ * (parseScript); anything else is never overwritten: the next numbered
+ * sibling is used instead.
+ */
+const fs = __importStar(__webpack_require__(20));
+const path = __importStar(__webpack_require__(3));
+const upgradeScript_1 = __webpack_require__(158);
+exports.SCRIPT_NAME = 'end-update_views';
+const MAX_SIBLINGS = 100;
+/** A folder name Odoo will run and accept as a manifest version: <series>.x.y or <series>.x.y.z; without a known series, 2 to 5 numeric parts. */
+function isVersionFolder(version, series) {
+    if (series) {
+        // With series: must match <escaped series>.x.y or <escaped series>.x.y.z
+        const escaped = series.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`^${escaped}\\.\\d+\\.\\d+(\\.\\d+)?$`).test(version);
+    }
+    // Without series: 2 to 5 numeric parts
+    return /^\d+(\.\d+){1,4}$/.test(version);
+}
+function manifestVersion(text) {
+    const match = /(['"])version\1\s*:\s*(['"])([^'"\n]*)\2/.exec(text);
+    return match?.[3].trim() || undefined;
+}
+/** The version one patch up; Odoo's default 1.0 bumped when there is none; undefined when it is not plain numbers. */
+function bumpVersion(version) {
+    const base = version ?? '1.0';
+    if (!/^\d+(\.\d+)*$/.test(base)) {
+        return undefined;
+    }
+    const parts = base.split('.');
+    if (parts.length === 1) {
+        parts.push('0');
+    }
+    parts[parts.length - 1] = String(Number(parts[parts.length - 1]) + 1);
+    return parts.join('.');
+}
+/** Odoo's release.major_version for a version's branch: 17.0, saas~17.4; undefined for master and the like. */
+function seriesOf(odooVersion) {
+    if (!odooVersion) {
+        return undefined;
+    }
+    if (/^\d+\.\d+$/.test(odooVersion)) {
+        return odooVersion;
+    }
+    const saas = /^saas-(\d+\.\d+)$/.exec(odooVersion);
+    return saas ? `saas~${saas[1]}` : undefined;
+}
+/** adapt_version: the manifest version with the series in front, unless it already starts with "<series>."; unchanged without a series. */
+function fullVersion(version, series) {
+    if (!series || version.startsWith(`${series}.`)) {
+        return version;
+    }
+    return `${series}.${version}`;
+}
+function compareVersions(a, b) {
+    const left = a.split('.');
+    const right = b.split('.');
+    for (let i = 0; i < Math.max(left.length, right.length); i++) {
+        const x = left[i] ?? '0';
+        const y = right[i] ?? '0';
+        const numeric = /^\d+$/.test(x) && /^\d+$/.test(y);
+        const diff = numeric ? Number(x) - Number(y) : x.localeCompare(y);
+        if (diff !== 0) {
+            return Math.sign(diff);
+        }
+    }
+    return 0;
+}
+/** Whether Odoo would skip migrations/<folder>/ until the manifest version goes up to it; false when the series is unknown (cannot judge). */
+function needsManifestBump(folder, manifest, series) {
+    return series !== undefined && compareVersions(folder, fullVersion(manifest ?? '1.0', series)) > 0;
+}
+/** The manifest with its version set, quotes kept; a manifest with none gets one first in its dict. */
+function setManifestVersion(text, version) {
+    const existing = /((['"])version\2\s*:\s*)(['"])[^'"\n]*\3/;
+    if (existing.test(text)) {
+        return text.replace(existing, (_match, key, _keyQuote, quote) => `${key}${quote}${version}${quote}`);
+    }
+    const open = text.indexOf('{');
+    if (open < 0) {
+        throw new Error('The manifest has no dictionary to add the version to.');
+    }
+    return `${text.slice(0, open + 1)}\n    'version': '${version}',${text.slice(open + 1)}`;
+}
+async function writeAtomic(file, text) {
+    const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    try {
+        await fs.writeFile(temp, text);
+        await fs.rename(temp, file);
+    }
+    catch (error) {
+        await fs.rm(temp, { force: true });
+        throw error;
+    }
+}
+/**
+ * Writes `views` into `dir`/end-update_views.py, merging into it when this
+ * extension wrote it, else into the first end-update_views_<n>.py that it
+ * wrote or that does not exist yet.
+ */
+async function writeScriptToFolder(dir, views) {
+    if (views.length === 0) {
+        throw new Error('No views to write.');
+    }
+    const entries = views.map(upgradeScript_1.scriptEntry);
+    await fs.mkdir(dir, { recursive: true });
+    for (let n = 1; n <= MAX_SIBLINGS; n++) {
+        const file = path.join(dir, `${exports.SCRIPT_NAME}${n === 1 ? '' : `_${n}`}.py`);
+        let existing;
+        try {
+            existing = await fs.readFile(file, 'utf-8');
+        }
+        catch (error) {
+            if (error.code !== 'ENOENT') {
+                throw error;
+            }
+            // 'wx': if something appeared since the read, fail rather than overwrite it.
+            await fs.writeFile(file, (0, upgradeScript_1.renderScript)((0, upgradeScript_1.mergeEntries)((0, upgradeScript_1.newScriptFile)(), entries)), { flag: 'wx' });
+            return { path: file, merged: false };
+        }
+        const parsed = (0, upgradeScript_1.parseScript)(existing);
+        if (parsed) {
+            await writeAtomic(file, (0, upgradeScript_1.renderScript)((0, upgradeScript_1.mergeEntries)(parsed, entries)));
+            return { path: file, merged: true };
+        }
+    }
+    throw new Error(`${dir} has no ${exports.SCRIPT_NAME} file this extension can add to.`);
+}
+
+
+/***/ }),
+/* 160 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.destinationKey = destinationKey;
+exports.normalizeDestination = normalizeDestination;
+exports.ownerCounts = ownerCounts;
+exports.withoutCoreModules = withoutCoreModules;
+exports.destinationItems = destinationItems;
+exports.versionPrefill = versionPrefill;
+exports.pickDestination = pickDestination;
+/**
+ * Where Create / Add to Upgrade Script puts the script: a module's
+ * migrations/<version>/ folder, or an untitled editor. The last choice is
+ * remembered per project in workspaceState and offered first. Only the
+ * project's own modules are offered, never core or enterprise ones.
+ */
+const fs = __importStar(__webpack_require__(2));
+const path = __importStar(__webpack_require__(3));
+const vscode = __importStar(__webpack_require__(1));
+const viewNotes_1 = __webpack_require__(129);
+const migrationsFolder_1 = __webpack_require__(159);
+const UNTITLED_LABEL = '$(new-file) Untitled Python Editor';
+function destinationKey(projectKey) {
+    return `viewDoctor.scriptDestination:${projectKey}`;
+}
+function normalizeDestination(raw) {
+    if (!raw || typeof raw !== 'object') {
+        return undefined;
+    }
+    const value = raw;
+    if (value.kind === 'untitled') {
+        return { kind: 'untitled' };
+    }
+    if (value.kind === 'module' && typeof value.module === 'string' && value.module
+        && typeof value.version === 'string' && (0, migrationsFolder_1.isVersionFolder)(value.version)) {
+        return { kind: 'module', module: value.module, version: value.version };
+    }
+    return undefined;
+}
+/** How many of the views each module owns by external id; Studio and export ids own nothing. */
+function ownerCounts(views) {
+    const owners = new Map();
+    for (const { xmlid } of views) {
+        const dot = xmlid?.indexOf('.') ?? -1;
+        const module = xmlid && dot > 0 ? xmlid.slice(0, dot) : undefined;
+        if (module && !viewNotes_1.NOT_SHIPPED_MODULES.includes(module)) {
+            owners.set(module, (owners.get(module) ?? 0) + 1);
+        }
+    }
+    return owners;
+}
+function isInside(child, root) {
+    const relative = path.relative(path.resolve(root), path.resolve(child));
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+/** The modules outside the version's Odoo and enterprise checkouts. */
+function withoutCoreModules(modules, coreRoots) {
+    const roots = coreRoots.filter(Boolean);
+    return modules.filter(module => !roots.some(root => isInside(module.path, root)));
+}
+function destinationItems(modules, owners, total, remembered) {
+    const untitled = { label: UNTITLED_LABEL, description: 'not saved anywhere', destination: { kind: 'untitled' } };
+    const byName = new Map(modules.map(module => [module.name, module]));
+    const moduleItem = (module, description) => ({ label: module.name, description, detail: module.path, destination: { kind: 'module', module } });
+    const first = [];
+    const used = new Set();
+    if (remembered?.kind === 'untitled') {
+        first.push({ ...untitled, description: 'last used' });
+    }
+    else if (remembered?.kind === 'module' && byName.has(remembered.module)) {
+        first.push(moduleItem(byName.get(remembered.module), `last used · migrations/${remembered.version}`));
+        used.add(remembered.module);
+    }
+    const owning = [...owners].filter(([name]) => byName.has(name) && !used.has(name))
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    for (const [name, count] of owning) {
+        first.push(moduleItem(byName.get(name), total === 1 ? 'owns the view' : `owns ${count} of the ${total} views`));
+        used.add(name);
+    }
+    const rest = modules.filter(module => !used.has(module.name)).sort((a, b) => a.name.localeCompare(b.name))
+        .map(module => moduleItem(module, module.repoName));
+    const items = [...first];
+    if (rest.length > 0) {
+        items.push({ label: 'Modules', kind: vscode.QuickPickItemKind.Separator }, ...rest);
+    }
+    if (remembered?.kind !== 'untitled') {
+        items.push({ label: '', kind: vscode.QuickPickItemKind.Separator }, untitled);
+    }
+    return items;
+}
+function versionPrefill(module, remembered, manifestText, folderExists, series) {
+    if (remembered?.kind === 'module' && remembered.module === module.name && (0, migrationsFolder_1.isVersionFolder)(remembered.version, series)
+        && folderExists(path.join(module.path, 'migrations', remembered.version))) {
+        return remembered.version;
+    }
+    const version = manifestText === undefined ? undefined : (0, migrationsFolder_1.manifestVersion)(manifestText);
+    const bumped = series ? (0, migrationsFolder_1.bumpVersion)((0, migrationsFolder_1.fullVersion)(version ?? '1.0', series)) : (0, migrationsFolder_1.bumpVersion)(version);
+    // Only a folder Odoo will run and accept as a manifest version is offered.
+    return bumped && (0, migrationsFolder_1.isVersionFolder)(bumped, series) ? bumped : '';
+}
+function readManifest(modulePath) {
+    try {
+        return fs.readFileSync(path.join(modulePath, '__manifest__.py'), 'utf-8');
+    }
+    catch {
+        return undefined;
+    }
+}
+async function pickDestination(options) {
+    const key = destinationKey(options.projectKey);
+    const remembered = normalizeDestination(options.memento.get(key));
+    const picked = await vscode.window.showQuickPick(destinationItems(options.modules, options.owners, options.total, remembered), {
+        title: options.title,
+        placeHolder: 'Where should the upgrade script go?',
+        matchOnDescription: true
+    });
+    if (!picked?.destination) {
+        return undefined;
+    }
+    if (picked.destination.kind === 'untitled') {
+        await options.memento.update(key, { kind: 'untitled' });
+        return { kind: 'untitled' };
+    }
+    const module = picked.destination.module;
+    const value = await vscode.window.showInputBox({
+        title: options.title,
+        prompt: `Version folder under ${module.name}/migrations/. Odoo runs it when the module's version goes up to it.`,
+        value: versionPrefill(module, remembered, readManifest(module.path), fs.existsSync, options.series),
+        validateInput: input => (0, migrationsFolder_1.isVersionFolder)(input.trim(), options.series) ? undefined
+            : options.series ? `A version such as ${options.series}.1.0.1.` : 'A version such as 1.0.1.'
+    });
+    if (value === undefined) {
+        return undefined;
+    }
+    const version = value.trim();
+    await options.memento.update(key, { kind: 'module', module: module.name, version });
+    return { kind: 'module', module, version };
+}
+
+
+/***/ }),
+/* 161 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -30812,7 +32242,7 @@ function selectionFacts(project, version) {
 
 
 /***/ }),
-/* 155 */
+/* 162 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 

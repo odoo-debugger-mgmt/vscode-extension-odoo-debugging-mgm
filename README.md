@@ -176,6 +176,12 @@ Click a view to open its arch as an XML file. Saving writes it to the database t
 
 **Render** opens the view in Odoo, inside a VS Code tab, logged in as the database's first administrator. In Upgrade mode both databases show side by side, on the newest record they both have; step to older records, or a new one, from the toolbar. Saving an arch reloads that side. The tab talks to Odoo through a local proxy that only that tab can use. A side whose server is not running offers to start it. Render leaves one action, named "[View Doctor] <model> #<id>", in each database it renders, the original included. QWeb templates and reports are not rendered; open them from Odoo.
 
+**Create Upgrade Script** (on the Views title) turns your fixes into an `upgrade-util` script, so the next upgrade of the original database does them for you. It covers every view the upgrade disabled that is on again, and every view you saved or turned on from VS Code (listed under **Edited here**). **Add to Upgrade Script** (right-click an active view) adds just that view. Choose one of the project's modules and a version folder — prefilled with the module's version one patch up, series first (`18.0.1.0.1`) — or an untitled editor. The script is written to `migrations/<version>/end-update_views.py`; when that file is already there, the new views are added to it, and a file you changed by hand is never overwritten (a numbered file is written next to it instead). Odoo runs the folder only once the module's version reaches it, so the extension offers to set the version in `__manifest__.py`. Nothing is committed for you.
+
+Each view is put back by external id, or by database id when it has none (the script says so: that id only holds in that database). A view whose arch was never edited is only turned back on; the others get their whole arch back, through `util.edit_view`. Views still off, deleted, or fixed before the extension first saw them off are left out, and the message says how many. The script needs [upgrade-util](https://github.com/odoo/upgrade-util) on the upgrade path (`--upgrade-path=<upgrade-util>/src`).
+
+What the upgrade disabled is noted the first time the Views tree lists it, per database, on this machine only.
+
 ### One copy per branch
 
 During an upgrade you need two versions running against **their own** custom
