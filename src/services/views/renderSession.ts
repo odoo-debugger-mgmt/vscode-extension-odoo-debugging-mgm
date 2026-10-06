@@ -3,7 +3,9 @@
  * proxy its frame goes through and the records it has; then, for the record
  * being shown, what each frame loads. Both sides always show the same record
  * - the newest both databases have - or both a new one, so the two renders
- * compare; never a different record on each side.
+ * compare. The one exception: a report whose model differs between the two
+ * databases, where an id names unrelated records; each side then shows its
+ * own newest record.
  */
 import { errorMessage } from '../logger';
 import type { RenderAction, ReportTarget } from './viewService';
@@ -11,6 +13,9 @@ import { NO_COMMON_RECORD, commonIds, framePath, reportPath } from './renderPlan
 import { pdfFileName, reportPdfPath } from './reportPdf';
 
 export const RECENT_LIMIT = 200;
+
+/** The report types that /report/pdf renders; qweb-text makes plain text. */
+const PDF_REPORT_TYPES = new Set(['qweb-pdf', 'qweb-html']);
 
 export interface RenderTarget {
     dbName: string;
@@ -51,7 +56,7 @@ export interface RenderSideState {
     url?: string;
     message?: string;
     offerStart?: boolean;
-    /** A report side showing a record: it can give its PDF. */
+    /** A report side showing a record, of a report that makes a PDF: it can give its PDF. */
     pdf?: boolean;
 }
 
@@ -138,7 +143,9 @@ export class RenderSession {
         private readonly mode: RenderMode,
         private readonly notice: string | undefined,
         /** Shown in place of a report's frames when there is no record to render it with. */
-        private readonly noRecord: string | undefined
+        private readonly noRecord: string | undefined,
+        /** Report sides on different models: each shows its own newest record, with no stepping. */
+        private readonly ownRecords = false
     ) {
         this.index = records.length > 0 ? 0 : -1;
     }
@@ -152,25 +159,30 @@ export class RenderSession {
         let records: number[] = [];
         let notice: string | undefined;
         let noRecord: string | undefined;
-        if (mode !== 'other') {
+        // The same id on two models names unrelated records: do not pair them.
+        const ownRecords = mode === 'report' && new Set(ready.map(side => side.report?.model)).size > 1;
+        if (ownRecords) {
+            const models = ready.map(side => `${side.report?.model} in ${side.target.dbName}`).join(', ');
+            notice = `The report renders a different model in each database (${models}); each side shows its own newest record.`;
+        } else if (mode !== 'other') {
             records = ready.map(side => side.ids).reduce((a, b) => commonIds(a, b));
         }
         if (mode === 'form' && records.length === 0) {
             notice = ready.length > 1 ? NO_COMMON_RECORD : `${ready[0].action?.model} has no record yet; showing a new one.`;
         }
-        if (mode === 'report' && records.length === 0) {
+        if (mode === 'report' && !ownRecords && records.length === 0) {
             const model = ready[0].report?.model;
             noRecord = ready.length > 1
                 ? `No ${model} record exists in both databases to render this report with.`
                 : `No ${model} record to render this report with.`;
         }
-        return new RenderSession(sides, host, records, mode, notice, noRecord);
+        return new RenderSession(sides, host, records, mode, notice, noRecord, ownRecords);
     }
 
     async state(options: { debug?: boolean } = {}): Promise<RenderState> {
         const resId = this.index >= 0 ? this.records[this.index] : undefined;
         const debug = options.debug ?? true;
-        const sides = await Promise.all(this.sides.map(side => this.sideState(side, resId, debug)));
+        const sides = await Promise.all(this.sides.map(side => this.sideState(side, this.recordOf(side), debug)));
         let record: RenderRecordState | undefined;
         if (this.mode === 'form') {
             record = {
@@ -219,8 +231,8 @@ export class RenderSession {
     /** What the PDF of the record a report side shows needs; undefined for any other side. */
     pdfSource(key: string): PdfSource | undefined {
         const side = this.sides.find(entry => entry.target.dbName === key);
-        const resId = this.index >= 0 ? this.records[this.index] : undefined;
-        if (!side?.report || !side.proxy || side.port === undefined || resId === undefined) {
+        const resId = side ? this.recordOf(side) : undefined;
+        if (!side?.report || !PDF_REPORT_TYPES.has(side.report.reportType) || !side.proxy || side.port === undefined || resId === undefined) {
             return undefined;
         }
         const { report, proxy } = side;
@@ -231,6 +243,14 @@ export class RenderSession {
             fileName: pdfFileName(side.target.dbName, report.reportName, resId),
             session: () => proxy.session()
         };
+    }
+
+    /** The record a side shows: the shared one, or its own newest when the report's models differ. */
+    private recordOf(side: PreparedSide): number | undefined {
+        if (this.ownRecords) {
+            return side.ids[0];
+        }
+        return this.index >= 0 ? this.records[this.index] : undefined;
     }
 
     /** The server ports the sides point at, for waiting on a start. */
@@ -252,7 +272,8 @@ export class RenderSession {
             if (!await this.host.isPortOpen(port)) {
                 return { ...base, detail, message: `No Odoo server is answering on port ${port}.`, offerStart: true };
             }
-            return { ...base, detail, url: `${origin}${proxy.gatePath(reportPath(report.reportName, resId, debug))}`, pdf: true };
+            const url = `${origin}${proxy.gatePath(reportPath(report.reportName, resId, debug))}`;
+            return { ...base, detail, url, ...(PDF_REPORT_TYPES.has(report.reportType) ? { pdf: true } : {}) };
         }
         const { action, proxy, port, origin } = side;
         if (side.error || !action || !proxy || port === undefined || !origin) {

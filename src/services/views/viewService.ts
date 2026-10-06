@@ -41,6 +41,8 @@ export interface ReportTarget {
     /** Narrows the records to render it with (account.move: no plain journal entries). */
     domain: unknown[];
     series: string;
+    /** ir.actions.report's report_type: qweb-pdf, qweb-html or qweb-text. Only the first two make a PDF. */
+    reportType: string;
 }
 
 /** What the arch file system needs; ViewService is the real one. */
@@ -117,9 +119,12 @@ export class ViewService implements ViewBackend {
 
     /** The report a QWeb view's template renders; null when no report uses it. */
     async reportTarget(dbName: string, viewId: number): Promise<ReportTarget | null> {
-        const raw = await this.pool.run<{ report_name: string; name: string; model: string; domain?: unknown[]; series: string } | null>(
+        const raw = await this.pool.run<{ report_name: string; name: string; model: string; domain?: unknown[]; series: string; report_type?: string } | null>(
             dbName, 'report_target', { view_id: viewId });
-        return raw ? { reportName: raw.report_name, name: raw.name, model: raw.model, domain: raw.domain ?? [], series: raw.series } : null;
+        return raw ? {
+            reportName: raw.report_name, name: raw.name, model: raw.model, domain: raw.domain ?? [], series: raw.series,
+            reportType: raw.report_type ?? 'qweb-pdf'
+        } : null;
     }
 
     rows(dbName: string, ids: number[]): Promise<ViewRow[]> {

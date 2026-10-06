@@ -159,7 +159,8 @@ export class ViewRenderPanel implements vscode.Disposable {
     private readonly pdf: PdfHooks;
     /** A private folder (0700) for this tab's PDFs, made on first use and removed with the tab. */
     private pdfFolder: Promise<string> | undefined;
-    private fetchingPdf = false;
+    /** The generation whose PDF is being fetched; a click in a later tab or render is not held up by it. */
+    private fetchingPdf: number | undefined;
     /** Bumped by every show() and every close, so a slower earlier one can tell it is stale. */
     private generation = 0;
     private updates = 0;
@@ -325,40 +326,68 @@ export class ViewRenderPanel implements vscode.Disposable {
 
     private async openPdf(session: RenderSession, key: string): Promise<void> {
         const source = session.pdfSource(key);
+        const generation = this.generation;
         // One PDF at a time, so two quick clicks cannot write the same file at once.
-        if (!source || this.fetchingPdf) {
+        if (!source || this.fetchingPdf === generation) {
             return;
         }
         if (vscode.env.remoteName) {
             void this.pdf.showInfo('PDF opens only in a local VS Code window for now. Print it from Odoo instead.');
             return;
         }
-        this.fetchingPdf = true;
+        // The tab closed or a new render started: what this click fetched is not for it.
+        const stale = () => generation !== this.generation;
+        this.fetchingPdf = generation;
+        let folder: Promise<string> | undefined;
         let file: string | undefined;
         try {
             file = await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Notification, title: `Getting the PDF from ${source.dbName}…` },
                 async () => {
                     const pdf = await this.pdf.fetch(source.port, source.path, await source.session());
-                    if (!this.panel) {
-                        // The tab closed meanwhile, and its folder with it.
+                    if (stale()) {
                         return undefined;
                     }
-                    const target = path.join(await this.pdfFolderPath(), source.fileName);
+                    folder = this.pdfFolderPath();
+                    const target = path.join(await folder, source.fileName);
+                    if (stale()) {
+                        return undefined;
+                    }
                     await fs.promises.writeFile(target, pdf, { mode: 0o600 });
                     return target;
                 }
             );
         } catch (error) {
-            void this.pdf.showError(error instanceof PdfRefusedError && error.sessionDropped
-                ? 'Odoo no longer accepts the render\'s session; press Reload and try again.'
-                : `Could not get the PDF: ${errorMessage(error)}`);
-            return;
+            if (!stale()) {
+                void this.pdf.showError(error instanceof PdfRefusedError && error.sessionDropped
+                    ? 'Odoo no longer accepts the render\'s session; press Reload and try again.'
+                    : `Could not get the PDF: ${errorMessage(error)}`);
+                return;
+            }
         } finally {
-            this.fetchingPdf = false;
+            if (this.fetchingPdf === generation) {
+                this.fetchingPdf = undefined;
+            }
+        }
+        if (stale()) {
+            await this.discardPdf(folder, file);
+            return;
         }
         if (file && !await this.pdf.open(file)) {
             void this.pdf.showInfo(`No app opened the PDF; it is at ${file}.`);
+        }
+    }
+
+    /**
+     * A stale click's leftovers: its file, and its folder when that belonged
+     * to a tab that has closed since (removePdfFolder may have run already).
+     */
+    private async discardPdf(folder: Promise<string> | undefined, file: string | undefined): Promise<void> {
+        const dir = await folder?.catch(() => undefined);
+        if (dir && folder !== this.pdfFolder) {
+            await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+        } else if (file) {
+            await fs.promises.rm(file, { force: true }).catch(() => undefined);
         }
     }
 

@@ -195,7 +195,7 @@ suite('Render tab', () => {
     const reportBackend: RenderBackend = {
         newSession: async () => 'sid',
         makeAction: async () => assert.fail('a report makes no action'),
-        reportTarget: async () => ({ reportName: 'account.report_invoice', name: 'Invoices', model: 'account.move', domain: [], series: '18.0' }),
+        reportTarget: async () => ({ reportName: 'account.report_invoice', name: 'Invoices', model: 'account.move', domain: [], series: '18.0', reportType: 'qweb-pdf' }),
         recentIds: async () => [8]
     };
     const reportHost: FrameHost = {
@@ -290,5 +290,51 @@ suite('Render tab', () => {
             await new Promise(resolve => setTimeout(resolve, 10));
         }
         assert.ok(!fs.existsSync(folder), 'closing the tab left its PDF folder');
+    });
+
+    test('a PDF that arrives after its tab closed is not opened or kept, and does not block the reopened tab', async () => {
+        const opened: string[] = [];
+        const held: Array<() => void> = [];
+        const hooks: PdfHooks = {
+            fetch: async () => {
+                await new Promise<void>(resolve => { held.push(resolve); });
+                return Buffer.from('%PDF-1.4 fake', 'latin1');
+            },
+            open: async file => { opened.push(file); return true; },
+            showError: message => assert.fail(`unexpected: ${message}`),
+            showInfo: message => assert.fail(`unexpected: ${message}`)
+        };
+        const waitHeld = async (count: number) => {
+            for (let tries = 0; tries < 200 && held.length < count; tries++) {
+                await new Promise(resolve => setTimeout(resolve, 5));
+            }
+            assert.strictEqual(held.length, count, 'the fetch did not start');
+        };
+        const before = pdfFolders();
+        const panel = new ViewRenderPanel(reportBackend, reportHost, undefined, hooks);
+        try {
+            await panel.show(reportRequest);
+            const stale = clickPdf(panel);
+            await waitHeld(1);
+            panel.dispose();
+
+            await panel.show(reportRequest);
+            const fresh = clickPdf(panel);
+            await waitHeld(2);
+            held[0]();
+            await stale;
+            assert.deepStrictEqual(opened, [], 'the closed tab\'s PDF opened');
+            held[1]();
+            await fresh;
+            assert.strictEqual(opened.length, 1, 'the reopened tab could not get its PDF');
+        } finally {
+            panel.dispose();
+        }
+        let left = pdfFolders();
+        for (let tries = 0; tries < 100 && left.length > before.length; tries++) {
+            await new Promise(resolve => setTimeout(resolve, 10));
+            left = pdfFolders();
+        }
+        assert.deepStrictEqual(left, before, 'a PDF folder was left behind');
     });
 });

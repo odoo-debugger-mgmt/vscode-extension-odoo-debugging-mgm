@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { findViewByXmlid, getViewRows, viewModels, viewsOfModel, type ViewRow } from '../services/views/viewQueries';
 import { showInfo } from '../services/notifications';
-import { findViewItems, viewPickItems, viewTree, type FindChoice, type FindItem } from './viewPicker';
+import { findViewItems, nothingMatches, viewPickItems, viewTree, type FindChoice, type FindItem } from './viewPicker';
 
 export type OpenView = (dbName: string, view: ViewRow) => Promise<void>;
 
@@ -17,7 +17,10 @@ export async function pickView(dbName: string, rows: ViewRow[], title: string, o
     }
 }
 
-function askWhat(dbName: string, models: Awaited<ReturnType<typeof viewModels>>): Promise<FindChoice | undefined> {
+/** The picked choice; or, for Enter on a value no item matches, what to say; undefined when closed. */
+type Answer = { choice: FindChoice } | { unmatched: string };
+
+function askWhat(dbName: string, models: Awaited<ReturnType<typeof viewModels>>): Promise<Answer | undefined> {
     const quickPick = vscode.window.createQuickPick<FindItem>();
     quickPick.title = `Find a view in ${dbName}`;
     quickPick.placeholder = 'A view id, an external ID, or a model';
@@ -27,7 +30,9 @@ function askWhat(dbName: string, models: Awaited<ReturnType<typeof viewModels>>)
             quickPick.items = findViewItems(value, models);
         });
         quickPick.onDidAccept(() => {
-            resolve(quickPick.selectedItems[0]?.choice);
+            const choice = quickPick.selectedItems[0]?.choice;
+            const unmatched = choice ? undefined : nothingMatches(dbName, quickPick.value);
+            resolve(choice ? { choice } : unmatched ? { unmatched } : undefined);
             quickPick.hide();
         });
         quickPick.onDidHide(() => {
@@ -39,10 +44,15 @@ function askWhat(dbName: string, models: Awaited<ReturnType<typeof viewModels>>)
 }
 
 export async function findView(dbName: string, open: OpenView): Promise<void> {
-    const choice = await askWhat(dbName, await viewModels(dbName));
-    if (!choice) {
+    const answer = await askWhat(dbName, await viewModels(dbName));
+    if (!answer) {
         return;
     }
+    if ('unmatched' in answer) {
+        void showInfo(answer.unmatched);
+        return;
+    }
+    const { choice } = answer;
     if (choice.kind === 'id') {
         const [view] = await getViewRows(dbName, [choice.id]);
         if (view) {

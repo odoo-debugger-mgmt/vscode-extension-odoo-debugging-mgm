@@ -379,7 +379,7 @@ def cmd_report_target(env, view_id):
         if report:
             domain = [['move_type', '!=', 'entry']] if report.model == 'account.move' else []
             return {'report_name': report.report_name, 'name': report.name, 'model': report.model,
-                    'domain': domain, 'series': odoo.release.serie}
+                    'domain': domain, 'series': odoo.release.serie, 'report_type': report.report_type}
     return None
 
 

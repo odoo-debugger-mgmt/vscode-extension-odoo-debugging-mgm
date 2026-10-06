@@ -526,13 +526,14 @@ function jsonRpc(port: number, route: string, sid: string, extraCookie = ''): Pr
     });
 
     test('report_target finds a report through its template and its patches; a form has none', async () => {
-        const [reportName, model, templateId] = (await runSql(copy, `
-            SELECT a.report_name || '|' || a.model || '|' || d.res_id FROM ir_act_report_xml a
+        const [reportName, model, templateId, reportType] = (await runSql(copy, `
+            SELECT a.report_name || '|' || a.model || '|' || d.res_id || '|' || a.report_type FROM ir_act_report_xml a
             JOIN ir_model_data d ON d.model = 'ir.ui.view' AND d.module || '.' || d.name = a.report_name
             ORDER BY a.id LIMIT 1;`)).split('|');
         assert.ok(reportName, 'base installs no report with a template');
         const report = await service.reportTarget(copy, Number(templateId));
-        assert.deepStrictEqual([report?.reportName, report?.model, report?.domain], [reportName, model, []]);
+        assert.deepStrictEqual([report?.reportName, report?.model, report?.domain, report?.reportType], [reportName, model, [], reportType]);
+        assert.ok(['qweb-pdf', 'qweb-html', 'qweb-text'].includes(report?.reportType ?? ''), `report_type ${report?.reportType}`);
         assert.match(report?.series ?? '', /\d+\.\d+/);
 
         const arch = (await archIsJsonb(copy)) ? `jsonb_build_object('en_US', '<data/>')` : `'<data/>'`;

@@ -35,14 +35,16 @@ suite('View service reports', () => {
     test('resolves a report through the shell, and passes its domain to recent_ids', async () => {
         const calls: Array<[string, string, unknown]> = [];
         const service = new ViewService(fakePool({
-            report_target: { report_name: 'account.report_invoice', name: 'Invoices', model: 'account.move', domain: [['move_type', '!=', 'entry']], series: '18.0' },
+            report_target: { report_name: 'account.report_invoice', name: 'Invoices', model: 'account.move', domain: [['move_type', '!=', 'entry']], series: '18.0', report_type: 'qweb-text' },
             recent_ids: { ids: [3] }
         }, calls));
         const report = await service.reportTarget('shop-18', 40);
-        assert.deepStrictEqual(report, { reportName: 'account.report_invoice', name: 'Invoices', model: 'account.move', domain: [['move_type', '!=', 'entry']], series: '18.0' });
+        assert.deepStrictEqual(report, { reportName: 'account.report_invoice', name: 'Invoices', model: 'account.move', domain: [['move_type', '!=', 'entry']], series: '18.0', reportType: 'qweb-text' });
         assert.deepStrictEqual(await service.recentIds('shop-18', report!.model, 5, report!.domain), [3]);
         assert.deepStrictEqual(calls[1], ['shop-18', 'recent_ids', { model: 'account.move', limit: 5, domain: [['move_type', '!=', 'entry']] }]);
         assert.strictEqual(await new ViewService(fakePool({ report_target: null }, [])).reportTarget('shop-18', 41), null);
+        const older = await new ViewService(fakePool({ report_target: { report_name: 'r', name: 'R', model: 'res.partner', series: '17.0' } }, [])).reportTarget('shop-17', 42);
+        assert.strictEqual(older?.reportType, 'qweb-pdf', 'a shell that does not say defaults to a PDF report');
     });
 });
 

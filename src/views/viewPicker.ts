@@ -81,3 +81,12 @@ export function findViewItems(value: string, models: ViewModelCount[]): FindItem
         choice: { kind: 'model', model: entry.model } as FindChoice
     }))];
 }
+
+/**
+ * What Enter with nothing selected says: the typed value matches no item.
+ * Undefined when nothing was typed, so the pick just closes.
+ */
+export function nothingMatches(dbName: string, value: string): string | undefined {
+    const typed = value.trim();
+    return typed ? `Nothing matches '${typed}' in ${dbName}.` : undefined;
+}

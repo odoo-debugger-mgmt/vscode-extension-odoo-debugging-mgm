@@ -126,7 +126,7 @@ suite('Render session', () => {
         assert.strictEqual(state.notice, undefined);
     });
 
-    const invoice = (series: string): ReportTarget => ({ reportName: 'account.report_invoice', name: 'Invoices', model: 'account.move', domain: [['move_type', '!=', 'entry']], series });
+    const invoice = (series: string): ReportTarget => ({ reportName: 'account.report_invoice', name: 'Invoices', model: 'account.move', domain: [['move_type', '!=', 'entry']], series, reportType: 'qweb-pdf' });
     const reportOf = (target: RenderTarget): RenderTarget => ({ ...target, kind: 'report' });
 
     test('a report shows the same invoice on both sides, as HTML, and steps without a new record', async () => {
@@ -189,5 +189,42 @@ suite('Render session', () => {
         reports.next();
         assert.strictEqual(reports.pdfSource('shop-18')?.path, '/report/pdf/account.report_invoice/5', 'follows the record shown');
         assert.strictEqual(reports.pdfSource('nope'), undefined);
+    });
+
+    test('report sides on different models each show their own newest record, without stepping', async () => {
+        const moved: ReportTarget = { ...invoice('18.0'), model: 'account.move.line', domain: [] };
+        const fake = backend({ 'shop-17': [9, 7], 'shop-18': [12, 9] }, {}, { 'shop-17': invoice('17.0'), 'shop-18': moved });
+        const session = await RenderSession.prepare([reportOf(original), reportOf(upgraded)], fake, host());
+        const state = await session.state();
+        assert.deepStrictEqual(state.sides.map(side => nextOf(side.url)),
+            ['/report/html/account.report_invoice/9?debug=1', '/report/html/account.report_invoice/12?debug=1'], 'not the shared id 9');
+        assert.strictEqual(state.notice,
+            'The report renders a different model in each database (account.move in shop-17, account.move.line in shop-18); each side shows its own newest record.');
+        assert.strictEqual(state.record, undefined);
+        assert.strictEqual(state.sides[1].detail, 'Odoo 18.0 · Invoices · record 12');
+        assert.strictEqual(session.next(), false);
+        assert.strictEqual(session.pdfSource('shop-18')?.path, '/report/pdf/account.report_invoice/12');
+        assert.strictEqual(session.pdfSource('shop-17')?.path, '/report/pdf/account.report_invoice/9');
+
+        const empty = await RenderSession.prepare([reportOf(original), reportOf(upgraded)],
+            backend({ 'shop-17': [9] }, {}, { 'shop-17': invoice('17.0'), 'shop-18': moved }), host());
+        const sides = (await empty.state()).sides;
+        assert.strictEqual(nextOf(sides[0].url), '/report/html/account.report_invoice/9?debug=1');
+        assert.strictEqual(sides[1].message, 'No account.move.line record to render this report with.');
+        assert.strictEqual(empty.pdfSource('shop-18'), undefined);
+    });
+
+    test('only a report that makes a PDF offers one: a text report does not', async () => {
+        const text: ReportTarget = { ...invoice('18.0'), reportType: 'qweb-text' };
+        const session = await RenderSession.prepare([reportOf(upgraded)], backend({ 'shop-18': [8] }, {}, { 'shop-18': text }), host());
+        const state = await session.state();
+        assert.strictEqual(nextOf(state.sides[0].url), '/report/html/account.report_invoice/8?debug=1');
+        assert.ok(!state.sides[0].pdf);
+        assert.strictEqual(session.pdfSource('shop-18'), undefined);
+
+        const html: ReportTarget = { ...invoice('18.0'), reportType: 'qweb-html' };
+        const htmlSession = await RenderSession.prepare([reportOf(upgraded)], backend({ 'shop-18': [8] }, {}, { 'shop-18': html }), host());
+        assert.strictEqual((await htmlSession.state()).sides[0].pdf, true);
+        assert.ok(htmlSession.pdfSource('shop-18'));
     });
 });

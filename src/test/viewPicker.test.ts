@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { findViewItems, viewPickItems, viewTree } from '../views/viewPicker';
+import { findViewItems, nothingMatches, viewPickItems, viewTree } from '../views/viewPicker';
 import type { ViewRow } from '../services/views/viewQueries';
 
 function row(id: number, inheritId: number | null, overrides: Partial<ViewRow> = {}): ViewRow {
@@ -36,5 +36,7 @@ suite('View pickers', () => {
         assert.deepStrictEqual(findViewItems('sale.order', models).map(item => item.choice.kind), ['model', 'model'], 'a model is not offered as an external id');
         assert.deepStrictEqual(findViewItems('0', models).map(item => item.choice.kind), ['model', 'model']);
         assert.strictEqual(findViewItems('', models)[1].description, '1 view');
+        assert.strictEqual(nothingMatches('shop-18', ' foo.bar? '), "Nothing matches 'foo.bar?' in shop-18.");
+        assert.strictEqual(nothingMatches('shop-18', '  '), undefined, 'Enter on an empty pick closes it silently');
     });
 });
