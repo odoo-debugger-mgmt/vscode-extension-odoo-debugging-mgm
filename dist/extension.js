@@ -63,39 +63,40 @@ const context_1 = __webpack_require__(42);
 const server_1 = __webpack_require__(101);
 const sortPreferences_1 = __webpack_require__(104);
 const viewDoctorView_1 = __webpack_require__(105);
-const viewService_1 = __webpack_require__(106);
-const viewWorker_1 = __webpack_require__(110);
-const viewWorkerPool_1 = __webpack_require__(111);
-const viewWorkerSpec_1 = __webpack_require__(112);
+const viewService_1 = __webpack_require__(110);
+const viewWorker_1 = __webpack_require__(114);
+const viewWorkerPool_1 = __webpack_require__(115);
+const viewWorkerSpec_1 = __webpack_require__(116);
 const postgres_1 = __webpack_require__(47);
-const projectReposExplorer_1 = __webpack_require__(113);
+const projectReposExplorer_1 = __webpack_require__(117);
 const logger_1 = __webpack_require__(12);
 const reconcile_1 = __webpack_require__(79);
 const runningState_1 = __webpack_require__(87);
-const wrongCopyGuard_1 = __webpack_require__(115);
-const versionMigration_1 = __webpack_require__(116);
+const wrongCopyGuard_1 = __webpack_require__(119);
+const versionMigration_1 = __webpack_require__(120);
 const versionProposal_1 = __webpack_require__(60);
 const environment_2 = __webpack_require__(51);
 const branches_1 = __webpack_require__(52);
 const setupState_1 = __webpack_require__(71);
 const notifications_1 = __webpack_require__(16);
-const viewRenderPanel_1 = __webpack_require__(117);
-const viewFileSystem_1 = __webpack_require__(122);
-const viewPoll_1 = __webpack_require__(123);
-const viewPairing_1 = __webpack_require__(124);
-const archErrors_1 = __webpack_require__(126);
+const viewRenderPanel_1 = __webpack_require__(121);
+const viewFileSystem_1 = __webpack_require__(109);
+const viewPoll_1 = __webpack_require__(127);
+const viewPairing_1 = __webpack_require__(106);
+const xpathDiagnostics_1 = __webpack_require__(128);
+const viewSaveHook_1 = __webpack_require__(129);
 const viewQueries_1 = __webpack_require__(107);
 const utils_1 = __webpack_require__(8);
-const statusBar_1 = __webpack_require__(127);
-const viewNoteService_1 = __webpack_require__(128);
-const viewNotes_1 = __webpack_require__(129);
-const commands_1 = __webpack_require__(130);
-const projectWorkspace_1 = __webpack_require__(134);
+const statusBar_1 = __webpack_require__(131);
+const viewNoteService_1 = __webpack_require__(132);
+const viewNotes_1 = __webpack_require__(133);
+const commands_1 = __webpack_require__(134);
+const projectWorkspace_1 = __webpack_require__(138);
 const workspaceBinding_1 = __webpack_require__(63);
 const workspaceRegistry_1 = __webpack_require__(82);
 const bindingCommand_1 = __webpack_require__(84);
-const goneElsewhere_1 = __webpack_require__(161);
-const storeSwitch_1 = __webpack_require__(162);
+const goneElsewhere_1 = __webpack_require__(168);
+const storeSwitch_1 = __webpack_require__(169);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -152,7 +153,10 @@ async function activate(context) {
     // What the upgrade disabled and what was changed here, per database, for upgrade scripts.
     const viewNotes = new viewNoteService_1.ViewNoteService(new viewNotes_1.ViewNoteStore(path.join(context.globalStorageUri.fsPath, 'view-notes')));
     const viewService = new viewService_1.ViewService(viewWorkers, viewNotes);
-    const viewRender = new viewRenderPanel_1.ViewRenderPanel(viewService);
+    const viewRender = new viewRenderPanel_1.ViewRenderPanel(viewService, undefined, {
+        debug: () => context.workspaceState.get('viewDoctor.renderDebug', true),
+        setDebug: debug => context.workspaceState.update('viewDoctor.renderDebug', debug)
+    });
     context.subscriptions.push(viewRender);
     context.subscriptions.push(viewWorkers, (0, postgres_1.onBeforeDatabaseRelease)(dbName => viewWorkers.release(dbName)));
     let viewDoctorTreeView;
@@ -169,8 +173,12 @@ async function activate(context) {
             if (viewDoctorTreeView) {
                 viewDoctorTreeView.description = dbName;
             }
+        }, {
+            showAlsoOff: () => context.workspaceState.get(viewDoctorView_1.SHOW_ALSO_OFF_KEY, false),
+            onComparing: comparing => void vscode.commands.executeCommand('setContext', 'odoo-debugger.viewDoctor.comparing', comparing)
         })
     };
+    void vscode.commands.executeCommand('setContext', 'odoo-debugger.viewDoctor.showAlsoOff', context.workspaceState.get(viewDoctorView_1.SHOW_ALSO_OFF_KEY, false));
     // React to version changes fired by VersionsService.refresh(). Must be
     // registered before the migrations below, which may fire it, and outside
     // the provider so re-activation cannot double-register the command.
@@ -222,29 +230,31 @@ async function activate(context) {
     // Odoo's reason a saved view stays off, on the line it is about.
     const viewDiagnostics = vscode.languages.createDiagnosticCollection('odoo-views');
     context.subscriptions.push(viewDiagnostics);
+    // The XPath check's results, with quick fixes, apart from Odoo's own reasons.
+    const xpathDiagnostics = new xpathDiagnostics_1.XpathDiagnostics();
+    context.subscriptions.push(xpathDiagnostics, vscode.languages.registerCodeActionsProvider({ scheme: viewFileSystem_1.VIEW_SCHEME }, xpathDiagnostics, { providedCodeActionKinds: xpathDiagnostics_1.XpathDiagnostics.providedCodeActionKinds }));
     // A closed arch has no line left to point at.
     context.subscriptions.push(vscode.workspace.onDidCloseTextDocument(document => {
         if (document.uri.scheme === viewFileSystem_1.VIEW_SCHEME) {
             viewDiagnostics.delete(document.uri);
+            xpathDiagnostics.clear(document.uri);
         }
     }));
+    const onSaved = (0, viewSaveHook_1.createSaveHook)({
+        checkXpaths: (dbName, viewId, arch) => viewService.checkXpaths(dbName, viewId, arch),
+        checkOnSave: () => vscode.workspace.getConfiguration('odooDebugger').get('views.checkXpathsOnSave', true),
+        xpaths: xpathDiagnostics,
+        isOpen: uri => vscode.workspace.textDocuments.some(document => document.uri.toString() === uri.toString()),
+        activationDiagnostics: viewDiagnostics,
+        reloadDatabase: dbName => viewRender.reloadDatabase(dbName),
+        recordSave: (dbName, viewId, activated) => viewNotes.recordSave(dbName, viewId, activated),
+        refreshTree: () => providers.views.refresh(),
+        warn: text => void (0, notifications_1.showWarning)(text),
+        brief: text => (0, notifications_1.showBriefStatus)(text)
+    });
     const viewFiles = new viewFileSystem_1.ViewFileSystemProvider(viewService, {
-        onSaved: (ref, result, uri, text) => {
-            if (result.activationError) {
-                const where = (0, archErrors_1.locateArchError)(text, result.activationError);
-                const diagnostic = new vscode.Diagnostic(new vscode.Range(where.line, where.start, where.line, where.end), (0, archErrors_1.readableArchError)(result.activationError), vscode.DiagnosticSeverity.Error);
-                diagnostic.source = 'Odoo';
-                viewDiagnostics.set(uri, [diagnostic]);
-                void (0, notifications_1.showWarning)(`Saved. The view stays off: ${(0, archErrors_1.archErrorSummary)(result.activationError)}`);
-            }
-            else {
-                viewDiagnostics.delete(uri);
-                (0, notifications_1.showBriefStatus)(result.activated ? 'Saved, and the view is on.' : 'Saved.');
-            }
-            viewRender.reloadDatabase(ref.dbName);
-            // The tree shows the journal, so refresh once the save is in it.
-            void viewNotes.recordSave(ref.dbName, ref.viewId, result.activated).then(() => providers.views.refresh());
-        }
+        onSaved: (ref, result, uri, text) => void onSaved(ref, result, uri, text)
+            .catch(error => logger_1.logger.warn('Could not finish after saving the view:', error))
     }, async (dbName) => {
         const allowEdit = vscode.workspace.getConfiguration('odooDebugger').get('views.allowEditOriginal', false);
         const result = await settingsStore_1.SettingsStore.peekSelectedProject().catch(() => null);
@@ -351,7 +361,7 @@ async function activate(context) {
             await refreshViews();
         }
     };
-    (0, commands_1.registerAllCommands)({ context, providers, versionsService, sortPreferences, viewService, viewNotes, viewDiagnostics, viewRender, moduleTreeView, dbTreeView, refreshAll });
+    (0, commands_1.registerAllCommands)({ context, providers, versionsService, sortPreferences, viewService, viewNotes, viewDiagnostics, xpathDiagnostics, viewRender, moduleTreeView, dbTreeView, refreshAll });
     // Another window wrote to a shared store, or this window switched stores:
     // re-read everything. Debounced, because one save elsewhere can touch
     // several documents and each is its own change.
@@ -21825,7 +21835,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ViewDoctorTreeProvider = exports.ViewGroupItem = exports.ViewItem = void 0;
+exports.ViewDoctorTreeProvider = exports.ViewGroupItem = exports.ViewItem = exports.SHOW_ALSO_OFF_KEY = void 0;
 exports.resolveViewDoctorTarget = resolveViewDoctorTarget;
 exports.buildDoctorRows = buildDoctorRows;
 /**
@@ -21838,6 +21848,9 @@ const settingsStore_1 = __webpack_require__(6);
 const upgrade_1 = __webpack_require__(41);
 const logger_1 = __webpack_require__(12);
 const baseTreeProvider_1 = __webpack_require__(5);
+const viewPairing_1 = __webpack_require__(106);
+/** workspaceState: whether "Other inactive views" also lists those the original has off too. */
+exports.SHOW_ALSO_OFF_KEY = 'viewDoctor.showAlsoOff';
 function resolveViewDoctorTarget(project) {
     if (!project) {
         return undefined;
@@ -21852,16 +21865,21 @@ function resolveViewDoctorTarget(project) {
 class ViewItem extends vscode.TreeItem {
     dbName;
     view;
-    constructor(dbName, view, section, versions = []) {
+    constructor(dbName, view, section, versions = [], alsoOffIn) {
         super(view.name, vscode.TreeItemCollapsibleState.None);
         this.dbName = dbName;
         this.view = view;
         // Keyed by state too: a row that changes state is a different row.
         this.id = `${dbName}:${section}:${view.id}:${view.active ? 'on' : 'off'}`;
-        this.description = `${view.model || view.type} · ${view.xmlid ?? `#${view.id}`}`;
+        this.description = `${view.model || view.type} · ${view.xmlid ?? `#${view.id}`}${alsoOffIn ? ` · off in ${alsoOffIn} too` : ''}`;
         this.iconPath = new vscode.ThemeIcon(view.active ? 'pass' : 'circle-slash');
         this.contextValue = [
-            'odooView', view.active ? 'active' : 'inactive', view.inheritId ? 'hasParent' : 'root', ...(view.xmlid ? [] : ['noXmlid'])
+            'odooView',
+            view.active ? 'active' : 'inactive',
+            view.inheritId ? 'hasParent' : 'root',
+            // Its root is further up than its parent: Open Root has somewhere else to go.
+            ...(view.inheritId && view.rootId !== view.inheritId ? ['deep'] : []),
+            ...(view.xmlid ? [] : ['noXmlid'])
         ].join('.');
         const tooltip = new vscode.MarkdownString(undefined, true);
         tooltip.appendMarkdown(`**${view.name}** (${view.type}, id ${view.id})\n\n`);
@@ -21894,7 +21912,7 @@ function messageItem(text, icon) {
     item.iconPath = new vscode.ThemeIcon(icon);
     return item;
 }
-function buildDoctorRows(dbName, groups) {
+function buildDoctorRows(dbName, groups, options = {}) {
     const rows = [];
     if (groups.upgradeDisabled.length > 0 || groups.missingIds.length > 0) {
         const off = groups.upgradeDisabled.filter(view => !view.active).length;
@@ -21910,8 +21928,18 @@ function buildDoctorRows(dbName, groups) {
     if (groups.edited.length > 0) {
         rows.push(new ViewGroupItem('Edited here', `${dbName}:group:edited`, groups.edited.map(view => new ViewItem(dbName, view, 'edited')), true, String(groups.edited.length)));
     }
-    if (groups.otherInactive.length > 0) {
-        rows.push(new ViewGroupItem('Other inactive views', `${dbName}:group:other`, groups.otherInactive.map(view => new ViewItem(dbName, view, 'other')), false, String(groups.otherInactive.length)));
+    const alsoOff = groups.alsoOffInOriginal ?? [];
+    if (groups.otherInactive.length > 0 || alsoOff.length > 0) {
+        const original = options.originalDb ?? 'the original';
+        const shown = options.showAlsoOff
+            ? [...groups.otherInactive, ...alsoOff].sort((a, b) => a.model.localeCompare(b.model) || a.id - b.id)
+            : groups.otherInactive;
+        const alsoOffIds = new Set(alsoOff.map(view => view.id));
+        const children = shown.map(view => new ViewItem(dbName, view, 'other', [], alsoOffIds.has(view.id) ? original : undefined));
+        if (shown.length === 0) {
+            children.push(messageItem(`All ${alsoOff.length} are off in ${original} too.`, 'eye-closed'));
+        }
+        rows.push(new ViewGroupItem('Other inactive views', `${dbName}:group:other`, children, false, alsoOff.length > 0 ? `${shown.length} · ${alsoOff.length} also off in ${original}` : String(shown.length)));
     }
     if (rows.length === 0) {
         rows.push(messageItem(`No views are turned off in ${dbName}.`, 'check'));
@@ -21921,11 +21949,13 @@ function buildDoctorRows(dbName, groups) {
 class ViewDoctorTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     service;
     describe;
+    options;
     loaded;
-    constructor(service, describe) {
+    constructor(service, describe, options = {}) {
         super();
         this.service = service;
         this.describe = describe;
+        this.options = options;
     }
     refresh(element) {
         if (!element) {
@@ -21950,13 +21980,21 @@ class ViewDoctorTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     }
     async load() {
         const result = await settingsStore_1.SettingsStore.peekSelectedProject().catch(() => null);
-        const target = resolveViewDoctorTarget(result?.project);
+        const project = result?.project;
+        const target = resolveViewDoctorTarget(project);
         this.describe?.(target?.dbName);
+        const originalDb = target?.side === 'to' ? (0, viewPairing_1.upgradePair)(project)?.original.dbName : undefined;
+        const comparing = !!target && !!originalDb && originalDb !== target.dbName;
+        this.options.onComparing?.(comparing);
         if (!target) {
             return [];
         }
         try {
-            return buildDoctorRows(target.dbName, await this.service.doctorGroups(target.dbName));
+            const groups = await this.service.doctorGroups(target.dbName, comparing ? originalDb : undefined);
+            return buildDoctorRows(target.dbName, groups, {
+                originalDb: comparing ? originalDb : undefined,
+                showAlsoOff: this.options.showAlsoOff?.() ?? false
+            });
         }
         catch (error) {
             logger_1.logger.warn(`Could not read the views of ${target.dbName}:`, error);
@@ -21969,73 +22007,132 @@ exports.ViewDoctorTreeProvider = ViewDoctorTreeProvider;
 
 /***/ }),
 /* 106 */
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ViewService = void 0;
+exports.upgradePair = upgradePair;
+exports.isReadOnlyOriginal = isReadOnlyOriginal;
+exports.otherDatabaseChoices = otherDatabaseChoices;
+exports.pickOtherDatabase = pickOtherDatabase;
+exports.compareTargets = compareTargets;
+exports.findCounterpart = findCounterpart;
+exports.diffArguments = diffArguments;
+/**
+ * Which two databases a view is compared or rendered across: in Upgrade
+ * mode the original (From) and the upgraded (To) database, otherwise the
+ * tree's database and one the user picks.
+ */
+const vscode = __importStar(__webpack_require__(1));
+const upgrade_1 = __webpack_require__(41);
+const runningState_1 = __webpack_require__(87);
+const notifications_1 = __webpack_require__(16);
 const viewQueries_1 = __webpack_require__(107);
-const disabledReport_1 = __webpack_require__(108);
-const logger_1 = __webpack_require__(12);
-const viewGroups_1 = __webpack_require__(109);
-class ViewService {
-    pool;
-    notes;
-    constructor(pool, notes) {
-        this.pool = pool;
-        this.notes = notes;
+const viewMatch_1 = __webpack_require__(108);
+const viewFileSystem_1 = __webpack_require__(109);
+function upgradePair(project) {
+    if (!project) {
+        return undefined;
     }
-    async writeDate(dbName, viewId) {
-        return (await (0, viewQueries_1.getWriteDates)(dbName, [viewId])).get(viewId);
+    const config = (0, upgrade_1.ensureUpgradeConfigModel)(project.upgradeConfig);
+    if (!config.isActive() || !config.from?.dbId || !config.to?.dbId) {
+        return undefined;
     }
-    async getArch(dbName, viewId) {
-        return (await this.pool.run(dbName, 'get_arch', { view_id: viewId })).arch;
-    }
-    save(dbName, viewId, arch) {
-        return this.pool.run(dbName, 'save', { view_id: viewId, arch, activate: true });
-    }
-    async activate(dbName, viewId) {
-        await this.pool.run(dbName, 'activate', { view_id: viewId });
-    }
-    async deactivate(dbName, viewId) {
-        await this.pool.run(dbName, 'deactivate', { view_id: viewId });
-    }
-    /** An admin session id the database's running server accepts. */
-    async newSession(dbName) {
-        return (await this.pool.run(dbName, 'new_session')).sid;
-    }
-    async makeAction(dbName, viewId) {
-        const raw = await this.pool.run(dbName, 'make_action', { view_id: viewId });
-        return { actionId: raw.action_id, model: raw.model, viewType: raw.view_type, rootId: raw.root_id, series: raw.series };
-    }
-    /** The newest ids of a model the render user can open, newest first. */
-    async recentIds(dbName, model, limit = 200) {
-        return (await this.pool.run(dbName, 'recent_ids', { model, limit })).ids;
-    }
-    rows(dbName, ids) {
-        return (0, viewQueries_1.getViewRows)(dbName, ids);
-    }
-    /** The tree's content: psql only, so it shows without waiting for a shell. Keeps the note up to date on the way. */
-    async doctorGroups(dbName) {
-        const [inactive, messages] = await Promise.all([(0, viewQueries_1.listInactiveViews)(dbName), (0, viewQueries_1.getReportMessages)(dbName)]);
-        const reported = (0, disabledReport_1.mergeReports)(messages.map(message => (0, disabledReport_1.parseDisabledViews)(message.body)));
-        const inactiveIds = new Set(inactive.map(view => view.id));
-        const reEnabled = await (0, viewQueries_1.getViewRows)(dbName, [...reported.keys()].filter(id => !inactiveIds.has(id)));
-        let edited = [];
-        if (this.notes) {
-            try {
-                const rows = new Map([...inactive, ...reEnabled].map(view => [view.id, view]));
-                const note = await this.notes.observe(dbName, reported, rows);
-                edited = await (0, viewQueries_1.getViewRows)(dbName, note.journal.map(entry => entry.id));
-            }
-            catch (error) {
-                logger_1.logger.warn(`Could not update the view note of ${dbName}:`, error);
-            }
-        }
-        return (0, viewGroups_1.groupViews)(inactive, reported, reEnabled, edited);
-    }
+    return {
+        original: { dbName: config.from.dbId, versionId: config.from.versionId, series: config.from.series },
+        upgraded: { dbName: config.to.dbId, versionId: config.to.versionId, series: config.to.series }
+    };
 }
-exports.ViewService = ViewService;
+/** The upgrade's original database stays as it was, unless odooDebugger.views.allowEditOriginal is on. */
+function isReadOnlyOriginal(project, dbName, allowEditOriginal) {
+    return !allowEditOriginal && upgradePair(project)?.original.dbName === dbName;
+}
+/** The project's other databases, running ones first, so the default pick is one a server has open. */
+function otherDatabaseChoices(project, current, running) {
+    return (project?.dbs ?? [])
+        .filter(db => db.id !== current)
+        .map(db => ({ dbName: db.id, versionId: db.versionId, running: running.has(db.id) }))
+        .sort((a, b) => Number(b.running) - Number(a.running));
+}
+async function pickOtherDatabase(project, current) {
+    const running = new Set((await (0, runningState_1.getRunningInstances)()).map(instance => instance.dbName));
+    const choices = otherDatabaseChoices(project, current, running);
+    if (choices.length === 0) {
+        void (0, notifications_1.showInfo)(`The project has no other database to compare ${current} with.`);
+        return undefined;
+    }
+    const picked = await vscode.window.showQuickPick(choices.map(choice => ({ label: choice.dbName, description: choice.running ? 'running' : undefined, choice })), { title: `Compare with ${current}`, placeHolder: 'The database to show on the left' });
+    return picked?.choice;
+}
+/** The left side of a comparison with this tree row: the upgrade's original, or a database the user picks. */
+async function compareTargets(project, item) {
+    const pair = upgradePair(project);
+    if (pair && pair.upgraded.dbName === item.dbName) {
+        return pair.original.dbName;
+    }
+    return (await pickOtherDatabase(project, item.dbName))?.dbName;
+}
+/**
+ * The same view in another database. 'none' when that database has no view
+ * of its model and type; undefined when the user dismissed the pick.
+ */
+async function findCounterpart(view, dbName) {
+    const [byXmlid, rows] = await Promise.all([
+        view.xmlid ? (0, viewQueries_1.findViewByXmlid)(dbName, view.xmlid) : Promise.resolve(undefined),
+        (0, viewQueries_1.findViewsLike)(dbName, view)
+    ]);
+    const match = (0, viewMatch_1.matchView)(view, { byXmlid, rows });
+    if (match.kind === 'none') {
+        return 'none';
+    }
+    if (match.kind !== 'pick') {
+        return match.view;
+    }
+    const picked = await vscode.window.showQuickPick(match.candidates.map(candidate => ({
+        label: candidate.name,
+        description: `${candidate.xmlid ?? `#${candidate.id}`}${candidate.active ? '' : ' · off'}`,
+        detail: candidate.inheritId ? `Inherits view ${candidate.inheritId}` : 'Base view',
+        candidate
+    })), { title: `${view.name} in ${dbName}`, placeHolder: `No view in ${dbName} is certainly the same one: pick it`, matchOnDescription: true });
+    return picked?.candidate;
+}
+function diffArguments(original, upgraded) {
+    const uriOf = (side) => (0, viewFileSystem_1.viewUri)(side.dbName, side.view.id, side.view.xmlid ?? `view-${side.view.id}`);
+    return [uriOf(original), uriOf(upgraded), `${upgraded.view.name}: ${original.dbName} ↔ ${upgraded.dbName}`];
+}
 
 
 /***/ }),
@@ -22044,6 +22141,7 @@ exports.ViewService = ViewService;
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.VIEW_MODELS_SQL = void 0;
 exports.sqlIdList = sqlIdList;
 exports.sqlText = sqlText;
 exports.firstXmlidSql = firstXmlidSql;
@@ -22063,6 +22161,13 @@ exports.fingerprintsSql = fingerprintsSql;
 exports.parseFingerprints = parseFingerprints;
 exports.getViewFingerprints = getViewFingerprints;
 exports.getDatabaseUuid = getDatabaseUuid;
+exports.parseViewModels = parseViewModels;
+exports.viewModels = viewModels;
+exports.viewsOfModelSql = viewsOfModelSql;
+exports.viewsOfModel = viewsOfModel;
+exports.descendantsSql = descendantsSql;
+exports.descendants = descendants;
+exports.inactiveViewIds = inactiveViewIds;
 /**
  * Read-only SQL for the View Doctor, through psql. Every query returns one
  * JSON value (json_agg / json_object_agg): view names and Discuss bodies are
@@ -22277,10 +22382,354 @@ async function getDatabaseUuid(dbName) {
     const raw = parseJson(await (0, postgres_1.runSql)(dbName, "SELECT coalesce(json_agg(value), '[]'::json) FROM ir_config_parameter WHERE key = 'database.uuid';"), '[]');
     return Array.isArray(raw) && typeof raw[0] === 'string' && raw[0] ? raw[0] : undefined;
 }
+/** The models that have views, with how many; Find View offers them. */
+exports.VIEW_MODELS_SQL = `
+SELECT coalesce(json_agg(json_build_object('model', model, 'count', n) ORDER BY model), '[]'::json)
+FROM (SELECT model, count(*) AS n FROM ir_ui_view WHERE model IS NOT NULL AND model <> '' GROUP BY model) m;`.trim();
+function parseViewModels(output) {
+    const raw = parseJson(output, '[]');
+    if (!Array.isArray(raw)) {
+        throw new Error('Unexpected output from the model query.');
+    }
+    return raw.map(entry => {
+        const model = entry;
+        return { model: String(model.model ?? ''), count: Number(model.count ?? 0) };
+    });
+}
+async function viewModels(dbName) {
+    return parseViewModels(await (0, postgres_1.runSql)(dbName, exports.VIEW_MODELS_SQL));
+}
+/** Every view of a model, on or off. */
+function viewsOfModelSql(model) {
+    return viewRowsSql(`v.model = ${sqlText(model)}`);
+}
+async function viewsOfModel(dbName, model) {
+    return parseViewRows(await (0, postgres_1.runSql)(dbName, viewsOfModelSql(model)));
+}
+/** The view and every view inheriting from it, at any depth, on or off; bounded like the root walk. */
+function descendantsSql(viewId) {
+    return viewRowsSql(`v.id IN (
+    WITH RECURSIVE tree AS (
+        SELECT id, 0 AS depth FROM ir_ui_view WHERE id = ${sqlIdList([viewId])}
+        UNION ALL
+        SELECT c.id, t.depth + 1 FROM ir_ui_view c JOIN tree t ON c.inherit_id = t.id WHERE t.depth < 50
+    ) SELECT id FROM tree)`);
+}
+async function descendants(dbName, viewId) {
+    return parseViewRows(await (0, postgres_1.runSql)(dbName, descendantsSql(viewId)));
+}
+/** The ids of the views that are off: what "also off in the original" compares with. */
+async function inactiveViewIds(dbName) {
+    const raw = parseJson(await (0, postgres_1.runSql)(dbName, "SELECT coalesce(json_agg(id), '[]'::json) FROM ir_ui_view WHERE active = false;"), '[]');
+    if (!Array.isArray(raw)) {
+        throw new Error('Unexpected output from the inactive view query.');
+    }
+    return raw.filter((id) => Number.isSafeInteger(id));
+}
 
 
 /***/ }),
 /* 108 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.matchView = matchView;
+/** 18.0 renamed the list view type from 'tree'; one view keeps its identity across that. */
+function viewKind(type) {
+    return type === 'tree' ? 'list' : type;
+}
+function matchView(source, found) {
+    if (found.byXmlid) {
+        return { kind: 'xmlid', view: found.byXmlid };
+    }
+    const similar = found.rows.filter(view => view.model === source.model && viewKind(view.type) === viewKind(source.type));
+    const sameId = similar.find(view => view.id === source.id);
+    if (sameId) {
+        return { kind: 'id', view: sameId };
+    }
+    const named = similar.filter(view => view.name === source.name);
+    if (named.length === 1) {
+        return { kind: 'name', view: named[0] };
+    }
+    if (similar.length === 0) {
+        return { kind: 'none' };
+    }
+    const isBase = (view) => view.inheritId === null;
+    const likeness = (view) => (view.name === source.name ? 2 : 0) + (isBase(view) === isBase(source) ? 1 : 0);
+    return { kind: 'pick', candidates: [...similar].sort((a, b) => likeness(b) - likeness(a) || a.id - b.id) };
+}
+
+
+/***/ }),
+/* 109 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ViewFileSystemProvider = exports.VIEW_SCHEME = void 0;
+exports.viewUri = viewUri;
+exports.parseViewUri = parseViewUri;
+exports.clearViewDiagnostics = clearViewDiagnostics;
+exports.viewFileSize = viewFileSize;
+/**
+ * Views as files: odoo-view:/<db>/<id>/<xmlid>.xml. VS Code's own editor
+ * is the arch editor - XML highlighting, search, multi-cursor - and saving
+ * writes through the database's Odoo shell.
+ *
+ * mtime is the view's write_date, so a view edited in Odoo's UI after it was
+ * opened makes VS Code's save report a newer file. Size carries the
+ * write_date too, not the arch's length: before saving, VS Code reports a
+ * newer file only when the mtime advanced *and* the size differs from the one
+ * it last saw (it pairs the new size with the old mtime), so a size that never
+ * changes would let a save silently overwrite an edit made in Odoo.
+ */
+const vscode = __importStar(__webpack_require__(1));
+exports.VIEW_SCHEME = 'odoo-view';
+function viewUri(dbName, viewId, label) {
+    const safe = label.replace(/[^\w.-]+/g, '_') || `view-${viewId}`;
+    return vscode.Uri.from({ scheme: exports.VIEW_SCHEME, path: `/${encodeURIComponent(dbName)}/${viewId}/${safe}.xml` });
+}
+function parseViewUri(uri) {
+    const [, db, id] = uri.path.split('/');
+    const viewId = Number(id);
+    if (!db || !Number.isSafeInteger(viewId) || viewId <= 0) {
+        return undefined;
+    }
+    return { dbName: decodeURIComponent(db), viewId };
+}
+/**
+ * Drops the diagnostics on every URI of this view: the label part of its URI
+ * depends on how it was opened, so entries are matched by database and id.
+ */
+function clearViewDiagnostics(diagnostics, dbName, viewId) {
+    const matching = [];
+    diagnostics.forEach(uri => {
+        const ref = uri.scheme === exports.VIEW_SCHEME ? parseViewUri(uri) : undefined;
+        if (ref?.dbName === dbName && ref.viewId === viewId) {
+            matching.push(uri);
+        }
+    });
+    matching.forEach(uri => diagnostics.delete(uri));
+}
+/**
+ * A stand-in size that changes whenever the write_date does. Kept under a
+ * megabyte so no large-file guard ever trips on it; two dates collide only
+ * when they are a whole multiple of 1000 s apart to the millisecond.
+ */
+function viewFileSize(mtime) {
+    return 1 + (mtime % 1_000_000);
+}
+class ViewFileSystemProvider {
+    backend;
+    hooks;
+    isReadOnly;
+    changes = new vscode.EventEmitter();
+    onDidChangeFile = this.changes.event;
+    constructor(backend, hooks, 
+    /** Views of such a database open read-only; kept out of the provider so it needs no settings. */
+    isReadOnly = () => false) {
+        this.backend = backend;
+        this.hooks = hooks;
+        this.isReadOnly = isReadOnly;
+    }
+    watch() {
+        return new vscode.Disposable(() => undefined);
+    }
+    /** Tells VS Code these files changed elsewhere; clean editors reload. */
+    notifyChanged(uris) {
+        if (uris.length > 0) {
+            this.changes.fire(uris.map(uri => ({ type: vscode.FileChangeType.Changed, uri })));
+        }
+    }
+    async stat(uri) {
+        const ref = this.ref(uri);
+        const [mtime, readOnly] = await Promise.all([this.backend.writeDate(ref.dbName, ref.viewId), this.isReadOnly(ref.dbName)]);
+        if (mtime === undefined) {
+            throw vscode.FileSystemError.FileNotFound(uri);
+        }
+        return {
+            type: vscode.FileType.File, ctime: 0, mtime, size: viewFileSize(mtime),
+            ...(readOnly ? { permissions: vscode.FilePermission.Readonly } : {})
+        };
+    }
+    async readFile(uri) {
+        const ref = this.ref(uri);
+        return Buffer.from(await this.backend.getArch(ref.dbName, ref.viewId), 'utf-8');
+    }
+    async writeFile(uri, content, _options) {
+        const ref = this.ref(uri);
+        if (await this.isReadOnly(ref.dbName)) {
+            throw vscode.FileSystemError.NoPermissions(`${ref.dbName} is the upgrade's original database, so its views are read-only. Turn on odooDebugger.views.allowEditOriginal to edit them.`);
+        }
+        const text = Buffer.from(content).toString('utf-8');
+        // Throws when Odoo rejects the arch: VS Code shows the message and keeps the editor dirty.
+        const result = await this.backend.save(ref.dbName, ref.viewId, text);
+        this.changes.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+        this.hooks.onSaved(ref, result, uri, text);
+    }
+    readDirectory(_uri) {
+        throw vscode.FileSystemError.NoPermissions('Views are opened from the Views tree, one at a time.');
+    }
+    createDirectory(_uri) {
+        throw vscode.FileSystemError.NoPermissions('Views cannot be created here.');
+    }
+    delete(_uri) {
+        throw vscode.FileSystemError.NoPermissions('Views cannot be deleted here.');
+    }
+    rename(_oldUri, _newUri) {
+        throw vscode.FileSystemError.NoPermissions('Views cannot be renamed here.');
+    }
+    ref(uri) {
+        const ref = parseViewUri(uri);
+        if (!ref) {
+            throw vscode.FileSystemError.FileNotFound(uri);
+        }
+        return ref;
+    }
+}
+exports.ViewFileSystemProvider = ViewFileSystemProvider;
+
+
+/***/ }),
+/* 110 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ViewService = void 0;
+exports.originalInactiveIds = originalInactiveIds;
+const viewQueries_1 = __webpack_require__(107);
+const disabledReport_1 = __webpack_require__(111);
+const logger_1 = __webpack_require__(12);
+const viewGroups_1 = __webpack_require__(112);
+const xpathReport_1 = __webpack_require__(113);
+/**
+ * Which views the original database has off; undefined when there is no
+ * original to ask, or it cannot be read - the tree then shows everything.
+ */
+async function originalInactiveIds(read, dbName, originalDb) {
+    if (!originalDb || originalDb === dbName) {
+        return undefined;
+    }
+    try {
+        return new Set(await read(originalDb));
+    }
+    catch (error) {
+        logger_1.logger.warn(`Could not read which views are off in ${originalDb}; showing every inactive view:`, error);
+        return undefined;
+    }
+}
+class ViewService {
+    pool;
+    notes;
+    constructor(pool, notes) {
+        this.pool = pool;
+        this.notes = notes;
+    }
+    async writeDate(dbName, viewId) {
+        return (await (0, viewQueries_1.getWriteDates)(dbName, [viewId])).get(viewId);
+    }
+    async getArch(dbName, viewId) {
+        return (await this.pool.run(dbName, 'get_arch', { view_id: viewId })).arch;
+    }
+    save(dbName, viewId, arch) {
+        return this.pool.run(dbName, 'save', { view_id: viewId, arch, activate: true });
+    }
+    async activate(dbName, viewId) {
+        await this.pool.run(dbName, 'activate', { view_id: viewId });
+    }
+    async deactivate(dbName, viewId) {
+        await this.pool.run(dbName, 'deactivate', { view_id: viewId });
+    }
+    /** Checks `arch` - the editor's text, not the stored arch - against the parent's combined arch. */
+    async checkXpaths(dbName, viewId, arch) {
+        return (0, xpathReport_1.parseXpathReport)(await this.pool.run(dbName, 'check_xpaths', { view_id: viewId, arch }));
+    }
+    /** An admin session id the database's running server accepts. */
+    async newSession(dbName) {
+        return (await this.pool.run(dbName, 'new_session')).sid;
+    }
+    async makeAction(dbName, viewId) {
+        const raw = await this.pool.run(dbName, 'make_action', { view_id: viewId });
+        return { actionId: raw.action_id, model: raw.model, viewType: raw.view_type, rootId: raw.root_id, series: raw.series };
+    }
+    /** The newest ids of a model the render user can open, newest first. */
+    async recentIds(dbName, model, limit = 200, domain = []) {
+        return (await this.pool.run(dbName, 'recent_ids', { model, limit, domain })).ids;
+    }
+    /** The report a QWeb view's template renders; null when no report uses it. */
+    async reportTarget(dbName, viewId) {
+        const raw = await this.pool.run(dbName, 'report_target', { view_id: viewId });
+        return raw ? { reportName: raw.report_name, name: raw.name, model: raw.model, domain: raw.domain ?? [], series: raw.series } : null;
+    }
+    rows(dbName, ids) {
+        return (0, viewQueries_1.getViewRows)(dbName, ids);
+    }
+    /**
+     * The tree's content: psql only, so it shows without waiting for a shell.
+     * Keeps the note up to date on the way. With the upgrade's original
+     * database, the other inactive views it has off too are set apart.
+     */
+    async doctorGroups(dbName, originalDb) {
+        const [inactive, messages, alsoOff] = await Promise.all([
+            (0, viewQueries_1.listInactiveViews)(dbName), (0, viewQueries_1.getReportMessages)(dbName), originalInactiveIds(viewQueries_1.inactiveViewIds, dbName, originalDb)
+        ]);
+        const reported = (0, disabledReport_1.mergeReports)(messages.map(message => (0, disabledReport_1.parseDisabledViews)(message.body)));
+        const inactiveIds = new Set(inactive.map(view => view.id));
+        const reEnabled = await (0, viewQueries_1.getViewRows)(dbName, [...reported.keys()].filter(id => !inactiveIds.has(id)));
+        let edited = [];
+        if (this.notes) {
+            try {
+                const rows = new Map([...inactive, ...reEnabled].map(view => [view.id, view]));
+                const note = await this.notes.observe(dbName, reported, rows);
+                edited = await (0, viewQueries_1.getViewRows)(dbName, note.journal.map(entry => entry.id));
+            }
+            catch (error) {
+                logger_1.logger.warn(`Could not update the view note of ${dbName}:`, error);
+            }
+        }
+        return (0, viewGroups_1.groupViews)(inactive, reported, reEnabled, edited, alsoOff);
+    }
+}
+exports.ViewService = ViewService;
+
+
+/***/ }),
+/* 111 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -22406,13 +22855,13 @@ function mergeReports(reports) {
 
 
 /***/ }),
-/* 109 */
+/* 112 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.groupViews = groupViews;
-function groupViews(inactive, reported, reportedRows, edited = []) {
+function groupViews(inactive, reported, reportedRows, edited = [], alsoOffInOriginal) {
     const byId = new Map();
     for (const view of [...inactive, ...reportedRows]) {
         byId.set(view.id, view);
@@ -22436,11 +22885,13 @@ function groupViews(inactive, reported, reportedRows, edited = []) {
     }
     upgradeDisabled.sort((a, b) => Number(a.active) - Number(b.active) || a.model.localeCompare(b.model) || a.id - b.id);
     upgradeVersions.sort();
-    const otherInactive = inactive.filter(view => !reported.has(view.id) && (view.type !== 'qweb' || view.isReport));
+    const other = inactive.filter(view => !reported.has(view.id) && (view.type !== 'qweb' || view.isReport));
+    const alsoOff = alsoOffInOriginal ? other.filter(view => alsoOffInOriginal.has(view.id)) : [];
     return {
         upgradeDisabled,
         upgradeVersions,
-        otherInactive,
+        otherInactive: alsoOffInOriginal ? other.filter(view => !alsoOffInOriginal.has(view.id)) : other,
+        alsoOffInOriginal: alsoOff,
         missingIds,
         edited: [...edited].sort((a, b) => a.model.localeCompare(b.model) || a.id - b.id)
     };
@@ -22448,7 +22899,101 @@ function groupViews(inactive, reported, reportedRows, edited = []) {
 
 
 /***/ }),
-/* 110 */
+/* 113 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+/**
+ * What the View Doctor's XPath check (resources/scripts/xpath_check.py, run
+ * by the worker's check_xpaths) says about an inheriting view's locators:
+ * one entry per <xpath expr> or direct locator, matched against the parent's
+ * combined arch. Odoo's own composition silently drops a locator that matches
+ * nothing, so "saved, and the view is on" does not prove a fix works; this does.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseXpathReport = parseXpathReport;
+exports.brokenLocators = brokenLocators;
+exports.checkResultText = checkResultText;
+const STATUSES = ['ok', 'dead', 'ambiguous', 'invalid'];
+function count(value) {
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+function parseLocator(raw) {
+    const entry = (raw ?? {});
+    const status = STATUSES.includes(entry.status) ? entry.status : 'invalid';
+    const line = count(entry.line);
+    return {
+        kind: entry.kind === 'xpath' ? 'xpath' : 'direct',
+        expr: typeof entry.expr === 'string' ? entry.expr : '',
+        position: typeof entry.position === 'string' ? entry.position : 'inside',
+        status,
+        matches: count(entry.matches),
+        line: line && line > 0 ? line : null,
+        element: count(entry.element),
+        shorter: Array.isArray(entry.shorter) ? entry.shorter.filter((value) => typeof value === 'string') : [],
+        ...(typeof entry.detail === 'string' ? { detail: entry.detail } : {})
+    };
+}
+/** The checker's result; the counts are made again from the locators, so they always agree. */
+function parseXpathReport(raw) {
+    const value = (raw ?? {});
+    const summary = { ok: 0, dead: 0, ambiguous: 0, invalid: 0 };
+    if (typeof value.error === 'string') {
+        return { locators: [], summary, healthy: false, error: value.error };
+    }
+    const locators = Array.isArray(value.locators) ? value.locators.map(parseLocator) : [];
+    for (const locator of locators) {
+        summary[locator.status]++;
+    }
+    return { locators, summary, healthy: summary.dead === 0 && summary.invalid === 0 };
+}
+/** The locators that make a fix not work, as a clause ("2 locators match nothing"); undefined when there are none. */
+function brokenLocators(report) {
+    const { dead, invalid } = report.summary;
+    const parts = [];
+    if (dead > 0) {
+        parts.push(`${dead} ${dead === 1 ? 'locator matches' : 'locators match'} nothing`);
+    }
+    if (invalid > 0) {
+        parts.push(`${invalid} ${invalid === 1 ? 'locator is' : 'locators are'} not valid XPath`);
+    }
+    return parts.length > 0 ? parts.join(' and ') : undefined;
+}
+/** Check XPaths' one-line answer. */
+function checkResultText(report) {
+    if (report.error) {
+        return { level: 'warning', text: `Could not check the locators: ${report.error}` };
+    }
+    const total = report.locators.length;
+    if (total === 0) {
+        return { level: 'info', text: 'This view has no locators to check.' };
+    }
+    const { dead, ambiguous, invalid } = report.summary;
+    if (dead === 0 && ambiguous === 0 && invalid === 0) {
+        return { level: 'info', text: total === 1 ? 'The locator matches.' : `All ${total} locators match.` };
+    }
+    if (total === 1) {
+        const text = dead > 0 ? 'The locator matches nothing.'
+            : ambiguous > 0 ? 'The locator matches several nodes.'
+                : 'The locator is not valid XPath.';
+        return { level: 'warning', text };
+    }
+    const parts = [];
+    if (dead > 0) {
+        parts.push(`${dead} ${dead === 1 ? 'matches' : 'match'} nothing`);
+    }
+    if (ambiguous > 0) {
+        parts.push(`${ambiguous} ${ambiguous === 1 ? 'matches' : 'match'} several nodes`);
+    }
+    if (invalid > 0) {
+        parts.push(`${invalid} ${invalid === 1 ? 'is' : 'are'} not valid XPath`);
+    }
+    return { level: 'warning', text: `Of ${total} locators, ${parts.join(', ')}.` };
+}
+
+
+/***/ }),
+/* 114 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22841,13 +23386,13 @@ exports.ViewWorker = ViewWorker;
 
 
 /***/ }),
-/* 111 */
+/* 115 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ViewWorkerPool = void 0;
-const viewWorker_1 = __webpack_require__(110);
+const viewWorker_1 = __webpack_require__(114);
 const DEFAULT_IDLE_MS = 10 * 60_000;
 class ViewWorkerPool {
     factory;
@@ -22951,7 +23496,7 @@ exports.ViewWorkerPool = ViewWorkerPool;
 
 
 /***/ }),
-/* 112 */
+/* 116 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -22970,7 +23515,7 @@ const utils_1 = __webpack_require__(8);
 const provisioning_1 = __webpack_require__(67);
 const versionRepos_1 = __webpack_require__(80);
 const viewWorkerArgs_1 = __webpack_require__(50);
-const viewWorker_1 = __webpack_require__(110);
+const viewWorker_1 = __webpack_require__(114);
 /** Why no shell can be started for this database, or undefined when one can. */
 function viewWorkerUnavailableReason(input) {
     if (!input.inProject) {
@@ -23016,7 +23561,7 @@ async function resolveViewWorkerSpec(dbName, scriptPath) {
 
 
 /***/ }),
-/* 113 */
+/* 117 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23070,7 +23615,7 @@ const settingsStore_1 = __webpack_require__(6);
 const repo_1 = __webpack_require__(46);
 const utils_1 = __webpack_require__(8);
 const runtimeCache_1 = __webpack_require__(15);
-const filesExclude_1 = __webpack_require__(114);
+const filesExclude_1 = __webpack_require__(118);
 const baseTreeProvider_1 = __webpack_require__(5);
 const sortOptions_1 = __webpack_require__(38);
 const branches_1 = __webpack_require__(52);
@@ -23442,7 +23987,7 @@ async function selectProjectForExplorer() {
 
 
 /***/ }),
-/* 114 */
+/* 118 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23588,7 +24133,7 @@ function createFilesExcludeMatcher(scopeUri) {
 
 
 /***/ }),
-/* 115 */
+/* 119 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23723,7 +24268,7 @@ function registerWrongCopyGuard(context) {
 
 
 /***/ }),
-/* 116 */
+/* 120 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23844,7 +24389,7 @@ function migratable(diagnoses) {
 
 
 /***/ }),
-/* 117 */
+/* 121 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23893,11 +24438,25 @@ exports.renderPanelHtml = renderPanelHtml;
  */
 const vscode = __importStar(__webpack_require__(1));
 const node_crypto_1 = __webpack_require__(65);
-const odooFrameProxy_1 = __webpack_require__(118);
-const renderSession_1 = __webpack_require__(120);
+const fs = __importStar(__webpack_require__(2));
+const os = __importStar(__webpack_require__(18));
+const path = __importStar(__webpack_require__(3));
+const odooFrameProxy_1 = __webpack_require__(122);
+const reportPdf_1 = __webpack_require__(124);
+const renderSession_1 = __webpack_require__(125);
 const server_1 = __webpack_require__(101);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
+const PDF_HOOKS = {
+    fetch: (port, pdfPath, sid) => (0, reportPdf_1.fetchReportPdf)(port, pdfPath, sid),
+    open: file => vscode.env.openExternal(vscode.Uri.file(file)),
+    showError: notifications_1.showError,
+    showInfo: notifications_1.showInfo
+};
+function memorySettings() {
+    let debug = true;
+    return { debug: () => debug, setDebug: value => { debug = value; } };
+}
 function escapeHtml(text) {
     return text.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char));
 }
@@ -23905,6 +24464,7 @@ const STYLE = `
 body { margin: 0; padding: 0; height: 100vh; display: flex; flex-direction: column; background: var(--vscode-editor-background); color: var(--vscode-foreground); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
 .toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--vscode-panel-border); }
 .toolbar .notice { color: var(--vscode-descriptionForeground); }
+.toolbar label { display: flex; gap: 4px; align-items: center; }
 button { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; padding: 3px 10px; cursor: pointer; }
 button:disabled { opacity: 0.5; cursor: default; }
 .sides { flex: 1; display: flex; min-height: 0; }
@@ -23919,7 +24479,10 @@ iframe { flex: 1; width: 100%; border: none; background: #fff; }
 const SCRIPT = `
 const vscode = acquireVsCodeApi();
 for (const button of document.querySelectorAll('button[data-action]')) {
-    button.addEventListener('click', () => vscode.postMessage({ type: 'action', action: button.dataset.action }));
+    button.addEventListener('click', () => vscode.postMessage({ type: 'action', action: button.dataset.action, key: button.dataset.key }));
+}
+for (const toggle of document.querySelectorAll('input[data-toggle="debug"]')) {
+    toggle.addEventListener('change', () => vscode.postMessage({ type: 'action', action: 'debug', value: toggle.checked }));
 }
 window.addEventListener('message', event => {
     const message = event.data;
@@ -23947,11 +24510,12 @@ function renderPanelHtml(state, options) {
     const record = state.record;
     const toolbar = [
         button('reload', 'Reload'),
+        `<label><input type="checkbox" data-toggle="debug"${options.debug === false ? '' : ' checked'}> Debug</label>`,
         ...(record ? [
             button('previous', 'Previous record', record.canPrevious),
             `<span>${escapeHtml(record.label)}</span>`,
             button('next', 'Next record', record.canNext),
-            button('new', 'New record', record.canNew)
+            ...(record.showNew ? [button('new', 'New record', record.canNew)] : [])
         ] : []),
         ...(state.notice ? [`<span class="notice">${escapeHtml(state.notice)}</span>`] : [])
     ].join('\n');
@@ -23960,6 +24524,7 @@ function renderPanelHtml(state, options) {
             `<strong>${escapeHtml(side.title)}</strong>`,
             ...(side.detail ? [`<span class="detail">${escapeHtml(side.detail)}</span>`] : []),
             ...(side.url && side.message ? [`<span class="message">${escapeHtml(side.message)}</span>`] : []),
+            ...(side.url && side.pdf ? [`<button data-action="pdf" data-key="${escapeHtml(side.key)}">PDF</button>`] : []),
             ...(side.offerStart ? [button('start', options.startLabel ?? 'Start Server')] : [])
         ].join(' ');
         const body = side.url
@@ -23989,12 +24554,19 @@ class ViewRenderPanel {
     request;
     proxies = new Map();
     host;
+    settings;
+    pdf;
+    /** A private folder (0700) for this tab's PDFs, made on first use and removed with the tab. */
+    pdfFolder;
+    fetchingPdf = false;
     /** Bumped by every show() and every close, so a slower earlier one can tell it is stale. */
     generation = 0;
     updates = 0;
     starting = false;
-    constructor(backend, host) {
+    constructor(backend, host, settings, pdf) {
         this.backend = backend;
+        this.settings = settings ?? memorySettings();
+        this.pdf = pdf ?? PDF_HOOKS;
         this.host = host ?? {
             portFor: async (dbName, versionId) => (await (0, server_1.resolvePortForDatabase)(dbName, versionId)).port,
             isPortOpen: server_1.isPortOpen,
@@ -24048,6 +24620,7 @@ class ViewRenderPanel {
         this.session = undefined;
         this.request = undefined;
         panel?.dispose();
+        this.removePdfFolder();
         void this.closeProxies();
     }
     ensurePanel() {
@@ -24064,6 +24637,7 @@ class ViewRenderPanel {
             this.panel = undefined;
             this.session = undefined;
             this.request = undefined;
+            this.removePdfFolder();
             void this.closeProxies();
         });
         panel.webview.onDidReceiveMessage(message => void this.onMessage(message));
@@ -24077,7 +24651,7 @@ class ViewRenderPanel {
             return;
         }
         const update = ++this.updates;
-        const state = await session.state();
+        const state = await session.state({ debug: this.settings.debug() });
         if (update !== this.updates || this.panel !== panel || this.session !== session) {
             return;
         }
@@ -24085,13 +24659,13 @@ class ViewRenderPanel {
         panel.webview.html = renderPanelHtml({ ...state, notice: notice || undefined }, {
             nonce: (0, node_crypto_1.randomBytes)(16).toString('base64'),
             cspSource: panel.webview.cspSource,
-            startLabel: this.request?.startLabel
+            startLabel: this.request?.startLabel,
+            debug: this.settings.debug()
         });
     }
     async onMessage(message) {
-        const action = message?.type === 'action'
-            ? message.action
-            : undefined;
+        const data = (message ?? {});
+        const action = data.type === 'action' && typeof data.action === 'string' ? data.action : undefined;
         const session = this.session;
         if (!session || !action) {
             return;
@@ -24119,12 +24693,80 @@ class ViewRenderPanel {
                 case 'start':
                     await this.startServers(session);
                     return;
+                case 'debug':
+                    await this.settings.setDebug(data.value === true);
+                    // Rebuilding the page reloads both frames with the new flag.
+                    await this.update();
+                    return;
+                case 'pdf':
+                    if (typeof data.key === 'string') {
+                        await this.openPdf(session, data.key);
+                    }
+                    return;
             }
         }
         catch (error) {
             logger_1.logger.warn('The render tab could not handle an action:', error);
             void (0, notifications_1.showError)(`The render could not ${action}: ${(0, logger_1.errorMessage)(error)}`);
         }
+    }
+    async openPdf(session, key) {
+        const source = session.pdfSource(key);
+        // One PDF at a time, so two quick clicks cannot write the same file at once.
+        if (!source || this.fetchingPdf) {
+            return;
+        }
+        if (vscode.env.remoteName) {
+            void this.pdf.showInfo('PDF opens only in a local VS Code window for now. Print it from Odoo instead.');
+            return;
+        }
+        this.fetchingPdf = true;
+        let file;
+        try {
+            file = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Getting the PDF from ${source.dbName}…` }, async () => {
+                const pdf = await this.pdf.fetch(source.port, source.path, await source.session());
+                if (!this.panel) {
+                    // The tab closed meanwhile, and its folder with it.
+                    return undefined;
+                }
+                const target = path.join(await this.pdfFolderPath(), source.fileName);
+                await fs.promises.writeFile(target, pdf, { mode: 0o600 });
+                return target;
+            });
+        }
+        catch (error) {
+            void this.pdf.showError(error instanceof reportPdf_1.PdfRefusedError && error.sessionDropped
+                ? 'Odoo no longer accepts the render\'s session; press Reload and try again.'
+                : `Could not get the PDF: ${(0, logger_1.errorMessage)(error)}`);
+            return;
+        }
+        finally {
+            this.fetchingPdf = false;
+        }
+        if (file && !await this.pdf.open(file)) {
+            void this.pdf.showInfo(`No app opened the PDF; it is at ${file}.`);
+        }
+    }
+    /**
+     * Not a fixed name in the shared temp folder: another local user could
+     * make that file first and read the admin's report or swap what opens.
+     */
+    pdfFolderPath() {
+        if (!this.pdfFolder) {
+            const made = fs.promises.mkdtemp(path.join(os.tmpdir(), 'odt-report-'));
+            made.catch(() => {
+                if (this.pdfFolder === made) {
+                    this.pdfFolder = undefined;
+                }
+            });
+            this.pdfFolder = made;
+        }
+        return this.pdfFolder;
+    }
+    removePdfFolder() {
+        const folder = this.pdfFolder;
+        this.pdfFolder = undefined;
+        void folder?.then(dir => fs.promises.rm(dir, { recursive: true, force: true })).catch(() => undefined);
     }
     async startServers(session) {
         if (!this.request || this.starting) {
@@ -24176,7 +24818,7 @@ exports.ViewRenderPanel = ViewRenderPanel;
 
 
 /***/ }),
-/* 118 */
+/* 122 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24236,7 +24878,7 @@ exports.filterHandshakeHead = filterHandshakeHead;
  * named after the proxy's port, because cookies ignore ports and the two
  * sides' proxies share 127.0.0.1.
  */
-const http = __importStar(__webpack_require__(119));
+const http = __importStar(__webpack_require__(123));
 const net = __importStar(__webpack_require__(37));
 const node_crypto_1 = __webpack_require__(65);
 exports.GATE_PATH = '/__odt/open';
@@ -24655,185 +25297,13 @@ exports.OdooFrameProxy = OdooFrameProxy;
 
 
 /***/ }),
-/* 119 */
+/* 123 */
 /***/ ((module) => {
 
 module.exports = require("node:http");
 
 /***/ }),
-/* 120 */
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.RenderSession = exports.RECENT_LIMIT = void 0;
-/**
- * One render: for each database shown, the action that opens the view, the
- * proxy its frame goes through and the records it has; then, for the record
- * being shown, what each frame loads. Both sides always show the same record
- * - the newest both databases have - or both a new one, so the two renders
- * compare; never a different record on each side.
- */
-const logger_1 = __webpack_require__(12);
-const renderPlan_1 = __webpack_require__(121);
-exports.RECENT_LIMIT = 200;
-async function prepareSide(target, backend, host) {
-    try {
-        const action = await backend.makeAction(target.dbName, target.viewId);
-        const port = await host.portFor(target.dbName, target.versionId);
-        const proxy = await host.proxyFor(target.dbName, port, () => backend.newSession(target.dbName));
-        const [, origin, ids] = await Promise.all([
-            proxy.session(),
-            host.externalOrigin(`http://127.0.0.1:${proxy.port}`),
-            action.viewType === 'form' ? backend.recentIds(target.dbName, action.model, exports.RECENT_LIMIT) : Promise.resolve([])
-        ]);
-        return { target, port, action, proxy, origin, ids };
-    }
-    catch (error) {
-        return { target, ids: [], error: (0, logger_1.errorMessage)(error) };
-    }
-}
-class RenderSession {
-    sides;
-    host;
-    records;
-    isForm;
-    notice;
-    /** Position in `records`; -1 is a new record. */
-    index;
-    constructor(sides, host, records, isForm, notice) {
-        this.sides = sides;
-        this.host = host;
-        this.records = records;
-        this.isForm = isForm;
-        this.notice = notice;
-        this.index = records.length > 0 ? 0 : -1;
-    }
-    static async prepare(targets, backend, host) {
-        const sides = await Promise.all(targets.map(target => prepareSide(target, backend, host)));
-        const ready = sides.filter(side => side.action);
-        const isForm = ready.length > 0 && ready.every(side => side.action?.viewType === 'form');
-        let records = [];
-        let notice;
-        if (isForm) {
-            records = ready.map(side => side.ids).reduce((a, b) => (0, renderPlan_1.commonIds)(a, b));
-            if (records.length === 0) {
-                notice = ready.length > 1 ? renderPlan_1.NO_COMMON_RECORD : `${ready[0].action?.model} has no record yet; showing a new one.`;
-            }
-        }
-        return new RenderSession(sides, host, records, isForm, notice);
-    }
-    async state() {
-        const resId = this.index >= 0 ? this.records[this.index] : undefined;
-        const sides = await Promise.all(this.sides.map(side => this.sideState(side, resId)));
-        const record = this.isForm ? {
-            label: resId ? `Record ${resId}` : 'New record',
-            canPrevious: this.index > 0 || (this.index === -1 && this.records.length > 0),
-            canNext: this.index >= 0 && this.index < this.records.length - 1,
-            canNew: this.index !== -1
-        } : undefined;
-        return { sides, notice: this.notice, record };
-    }
-    /** The newer shared record, or back from a new record to the newest. */
-    previous() {
-        if (this.index > 0 || (this.index === -1 && this.records.length > 0)) {
-            this.index = this.index === -1 ? 0 : this.index - 1;
-            return true;
-        }
-        return false;
-    }
-    /** The older shared record. */
-    next() {
-        if (this.index >= 0 && this.index < this.records.length - 1) {
-            this.index++;
-            return true;
-        }
-        return false;
-    }
-    newRecord() {
-        if (!this.isForm || this.index === -1) {
-            return false;
-        }
-        this.index = -1;
-        return true;
-    }
-    shows(dbName) {
-        return this.sides.some(side => side.target.dbName === dbName);
-    }
-    /** The server ports the sides point at, for waiting on a start. */
-    ports() {
-        return this.sides.flatMap(side => side.port === undefined ? [] : [side.port]);
-    }
-    async sideState(side, resId) {
-        const base = { key: side.target.dbName, title: side.target.title };
-        const { action, proxy, port, origin } = side;
-        if (side.error || !action || !proxy || port === undefined || !origin) {
-            return { ...base, message: side.error ?? 'This side cannot render.' };
-        }
-        const what = action.viewType === 'form' ? (resId ? `record ${resId}` : 'new record') : action.viewType;
-        const detail = `Odoo ${action.series} · ${action.model} · ${what}`;
-        if (!await this.host.isPortOpen(port)) {
-            return { ...base, detail, message: `No Odoo server is answering on port ${port}.`, offerStart: true };
-        }
-        const path = (0, renderPlan_1.framePath)({ series: action.series, actionId: action.actionId, model: action.model, viewType: action.viewType, resId });
-        return { ...base, detail, url: `${origin}${proxy.gatePath(path)}` };
-    }
-}
-exports.RenderSession = RenderSession;
-
-
-/***/ }),
-/* 121 */
-/***/ ((__unused_webpack_module, exports) => {
-
-
-/**
- * Where a render frame points: the URL of a view-doctor action on one
- * database's web client, per the series' router, and which record both
- * sides of a comparison show.
- */
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.NO_COMMON_RECORD = void 0;
-exports.usesOdooRouter = usesOdooRouter;
-exports.framePath = framePath;
-exports.commonIds = commonIds;
-exports.qwebMessage = qwebMessage;
-exports.NO_COMMON_RECORD = 'No record exists in both databases; showing a new one.';
-/** saas~17.2 moved the web client to /odoo/... URLs; before it, the hash carries the state. */
-function usesOdooRouter(series) {
-    const match = /(\d+)\.(\d+)/.exec(series);
-    if (!match) {
-        return true;
-    }
-    const [major, minor] = [Number(match[1]), Number(match[2])];
-    return major > 17 || (major === 17 && minor >= 2);
-}
-function framePath(input) {
-    const record = input.viewType === 'form' ? input.resId : undefined;
-    if (usesOdooRouter(input.series)) {
-        return `/odoo/action-${input.actionId}${record ? `/${record}` : ''}?debug=1`;
-    }
-    const hash = [`action=${input.actionId}`, `model=${encodeURIComponent(input.model)}`, `view_type=${encodeURIComponent(input.viewType)}`];
-    if (record) {
-        hash.push(`id=${record}`);
-    }
-    return `/web?debug=1#${hash.join('&')}`;
-}
-/** Ids in both lists, newest first. */
-function commonIds(a, b) {
-    const other = new Set(b);
-    return [...new Set(a)].filter(id => other.has(id)).sort((x, y) => y - x);
-}
-/** What to say instead of rendering a QWeb view. */
-function qwebMessage(isReport) {
-    return isReport
-        ? 'Reports need a record to render; open the report from Odoo.'
-        : 'QWeb templates render inside the page that uses them; open it from Odoo.';
-}
-
-
-/***/ }),
-/* 122 */
+/* 124 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24871,132 +25341,321 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ViewFileSystemProvider = exports.VIEW_SCHEME = void 0;
-exports.viewUri = viewUri;
-exports.parseViewUri = parseViewUri;
-exports.clearViewDiagnostics = clearViewDiagnostics;
-exports.viewFileSize = viewFileSize;
+exports.PdfRefusedError = void 0;
+exports.reportPdfPath = reportPdfPath;
+exports.pdfFileName = pdfFileName;
+exports.fetchReportPdf = fetchReportPdf;
 /**
- * Views as files: odoo-view:/<db>/<id>/<xmlid>.xml. VS Code's own editor
- * is the arch editor - XML highlighting, search, multi-cursor - and saving
- * writes through the database's Odoo shell.
- *
- * mtime is the view's write_date, so a view edited in Odoo's UI after it was
- * opened makes VS Code's save report a newer file. Size carries the
- * write_date too, not the arch's length: before saving, VS Code reports a
- * newer file only when the mtime advanced *and* the size differs from the one
- * it last saw (it pairs the new size with the old mtime), so a size that never
- * changes would let a save silently overwrite an edit made in Odoo.
+ * A report's PDF, fetched straight from the database's Odoo server with the
+ * render tab's admin session - not through the frame proxy, which only the
+ * webview may use. VS Code webviews show no PDF, so the file is opened with
+ * the system's viewer instead.
  */
-const vscode = __importStar(__webpack_require__(1));
-exports.VIEW_SCHEME = 'odoo-view';
-function viewUri(dbName, viewId, label) {
-    const safe = label.replace(/[^\w.-]+/g, '_') || `view-${viewId}`;
-    return vscode.Uri.from({ scheme: exports.VIEW_SCHEME, path: `/${encodeURIComponent(dbName)}/${viewId}/${safe}.xml` });
-}
-function parseViewUri(uri) {
-    const [, db, id] = uri.path.split('/');
-    const viewId = Number(id);
-    if (!db || !Number.isSafeInteger(viewId) || viewId <= 0) {
-        return undefined;
+const http = __importStar(__webpack_require__(123));
+const MAX_PDF_BYTES = 200 * 1024 * 1024;
+/** Odoo answered something other than 200: a redirect to /web/login means it dropped the session. */
+class PdfRefusedError extends Error {
+    status;
+    location;
+    constructor(status, location) {
+        super(`Odoo answered ${status}${location ? ` (to ${location})` : ''}.`);
+        this.status = status;
+        this.location = location;
     }
-    return { dbName: decodeURIComponent(db), viewId };
-}
-/**
- * Drops the diagnostics on every URI of this view: the label part of its URI
- * depends on how it was opened, so entries are matched by database and id.
- */
-function clearViewDiagnostics(diagnostics, dbName, viewId) {
-    const matching = [];
-    diagnostics.forEach(uri => {
-        const ref = uri.scheme === exports.VIEW_SCHEME ? parseViewUri(uri) : undefined;
-        if (ref?.dbName === dbName && ref.viewId === viewId) {
-            matching.push(uri);
+    get sessionDropped() {
+        try {
+            return !!this.location && new URL(this.location, 'http://odoo').pathname === '/web/login';
         }
+        catch {
+            return false;
+        }
+    }
+}
+exports.PdfRefusedError = PdfRefusedError;
+function reportPdfPath(reportName, resId) {
+    return `/report/pdf/${encodeURIComponent(reportName)}/${resId}`;
+}
+/** A file name with nothing but word characters, dots and dashes from the database and report. */
+function pdfFileName(dbName, reportName, resId) {
+    return `odt-report-${[dbName, reportName, String(resId)].map(part => part.replace(/[^\w.-]+/g, '_')).join('-')}.pdf`;
+}
+function fetchReportPdf(port, path, sid, timeoutMs = 120_000) {
+    return new Promise((resolve, reject) => {
+        const request = http.get({ host: '127.0.0.1', port, path, headers: { cookie: `session_id=${sid}` }, timeout: timeoutMs }, response => {
+            const chunks = [];
+            let size = 0;
+            response.on('data', (chunk) => {
+                size += chunk.length;
+                if (size > MAX_PDF_BYTES) {
+                    request.destroy(new Error('The PDF is larger than 200 MB.'));
+                    return;
+                }
+                chunks.push(chunk);
+            });
+            response.on('end', () => {
+                if (response.statusCode !== 200) {
+                    reject(new PdfRefusedError(response.statusCode, response.headers.location));
+                    return;
+                }
+                const body = Buffer.concat(chunks);
+                if (body.subarray(0, 5).toString('latin1') !== '%PDF-') {
+                    reject(new Error('Odoo did not send a PDF. Is wkhtmltopdf installed where that server runs?'));
+                    return;
+                }
+                resolve(body);
+            });
+            response.on('error', reject);
+        });
+        request.on('timeout', () => request.destroy(new Error('Odoo took too long to make the PDF.')));
+        request.on('error', reject);
     });
-    matching.forEach(uri => diagnostics.delete(uri));
 }
-/**
- * A stand-in size that changes whenever the write_date does. Kept under a
- * megabyte so no large-file guard ever trips on it; two dates collide only
- * when they are a whole multiple of 1000 s apart to the millisecond.
- */
-function viewFileSize(mtime) {
-    return 1 + (mtime % 1_000_000);
-}
-class ViewFileSystemProvider {
-    backend;
-    hooks;
-    isReadOnly;
-    changes = new vscode.EventEmitter();
-    onDidChangeFile = this.changes.event;
-    constructor(backend, hooks, 
-    /** Views of such a database open read-only; kept out of the provider so it needs no settings. */
-    isReadOnly = () => false) {
-        this.backend = backend;
-        this.hooks = hooks;
-        this.isReadOnly = isReadOnly;
-    }
-    watch() {
-        return new vscode.Disposable(() => undefined);
-    }
-    /** Tells VS Code these files changed elsewhere; clean editors reload. */
-    notifyChanged(uris) {
-        if (uris.length > 0) {
-            this.changes.fire(uris.map(uri => ({ type: vscode.FileChangeType.Changed, uri })));
-        }
-    }
-    async stat(uri) {
-        const ref = this.ref(uri);
-        const [mtime, readOnly] = await Promise.all([this.backend.writeDate(ref.dbName, ref.viewId), this.isReadOnly(ref.dbName)]);
-        if (mtime === undefined) {
-            throw vscode.FileSystemError.FileNotFound(uri);
-        }
-        return {
-            type: vscode.FileType.File, ctime: 0, mtime, size: viewFileSize(mtime),
-            ...(readOnly ? { permissions: vscode.FilePermission.Readonly } : {})
-        };
-    }
-    async readFile(uri) {
-        const ref = this.ref(uri);
-        return Buffer.from(await this.backend.getArch(ref.dbName, ref.viewId), 'utf-8');
-    }
-    async writeFile(uri, content, _options) {
-        const ref = this.ref(uri);
-        if (await this.isReadOnly(ref.dbName)) {
-            throw vscode.FileSystemError.NoPermissions(`${ref.dbName} is the upgrade's original database, so its views are read-only. Turn on odooDebugger.views.allowEditOriginal to edit them.`);
-        }
-        const text = Buffer.from(content).toString('utf-8');
-        // Throws when Odoo rejects the arch: VS Code shows the message and keeps the editor dirty.
-        const result = await this.backend.save(ref.dbName, ref.viewId, text);
-        this.changes.fire([{ type: vscode.FileChangeType.Changed, uri }]);
-        this.hooks.onSaved(ref, result, uri, text);
-    }
-    readDirectory(_uri) {
-        throw vscode.FileSystemError.NoPermissions('Views are opened from the Views tree, one at a time.');
-    }
-    createDirectory(_uri) {
-        throw vscode.FileSystemError.NoPermissions('Views cannot be created here.');
-    }
-    delete(_uri) {
-        throw vscode.FileSystemError.NoPermissions('Views cannot be deleted here.');
-    }
-    rename(_oldUri, _newUri) {
-        throw vscode.FileSystemError.NoPermissions('Views cannot be renamed here.');
-    }
-    ref(uri) {
-        const ref = parseViewUri(uri);
-        if (!ref) {
-            throw vscode.FileSystemError.FileNotFound(uri);
-        }
-        return ref;
-    }
-}
-exports.ViewFileSystemProvider = ViewFileSystemProvider;
 
 
 /***/ }),
-/* 123 */
+/* 125 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.RenderSession = exports.RECENT_LIMIT = void 0;
+/**
+ * One render: for each database shown, the action that opens the view, the
+ * proxy its frame goes through and the records it has; then, for the record
+ * being shown, what each frame loads. Both sides always show the same record
+ * - the newest both databases have - or both a new one, so the two renders
+ * compare; never a different record on each side.
+ */
+const logger_1 = __webpack_require__(12);
+const renderPlan_1 = __webpack_require__(126);
+const reportPdf_1 = __webpack_require__(124);
+exports.RECENT_LIMIT = 200;
+async function prepareSide(target, backend, host) {
+    try {
+        const connect = async () => {
+            const port = await host.portFor(target.dbName, target.versionId);
+            const proxy = await host.proxyFor(target.dbName, port, () => backend.newSession(target.dbName));
+            return { port, proxy };
+        };
+        if (target.kind === 'report') {
+            const report = await backend.reportTarget(target.dbName, target.viewId);
+            if (!report) {
+                return { target, ids: [], error: `${target.dbName} has no report for this template.` };
+            }
+            const { port, proxy } = await connect();
+            const [, origin, ids] = await Promise.all([
+                proxy.session(),
+                host.externalOrigin(`http://127.0.0.1:${proxy.port}`),
+                backend.recentIds(target.dbName, report.model, exports.RECENT_LIMIT, report.domain)
+            ]);
+            return { target, port, report, proxy, origin, ids };
+        }
+        const action = await backend.makeAction(target.dbName, target.viewId);
+        const { port, proxy } = await connect();
+        const [, origin, ids] = await Promise.all([
+            proxy.session(),
+            host.externalOrigin(`http://127.0.0.1:${proxy.port}`),
+            action.viewType === 'form' ? backend.recentIds(target.dbName, action.model, exports.RECENT_LIMIT) : Promise.resolve([])
+        ]);
+        return { target, port, action, proxy, origin, ids };
+    }
+    catch (error) {
+        return { target, ids: [], error: (0, logger_1.errorMessage)(error) };
+    }
+}
+class RenderSession {
+    sides;
+    host;
+    records;
+    mode;
+    notice;
+    noRecord;
+    /** Position in `records`; -1 is a new record. */
+    index;
+    constructor(sides, host, records, mode, notice, 
+    /** Shown in place of a report's frames when there is no record to render it with. */
+    noRecord) {
+        this.sides = sides;
+        this.host = host;
+        this.records = records;
+        this.mode = mode;
+        this.notice = notice;
+        this.noRecord = noRecord;
+        this.index = records.length > 0 ? 0 : -1;
+    }
+    static async prepare(targets, backend, host) {
+        const sides = await Promise.all(targets.map(target => prepareSide(target, backend, host)));
+        const ready = sides.filter(side => side.action || side.report);
+        const mode = ready.length === 0 ? 'other'
+            : ready.every(side => side.report) ? 'report'
+                : ready.every(side => side.action?.viewType === 'form') ? 'form' : 'other';
+        let records = [];
+        let notice;
+        let noRecord;
+        if (mode !== 'other') {
+            records = ready.map(side => side.ids).reduce((a, b) => (0, renderPlan_1.commonIds)(a, b));
+        }
+        if (mode === 'form' && records.length === 0) {
+            notice = ready.length > 1 ? renderPlan_1.NO_COMMON_RECORD : `${ready[0].action?.model} has no record yet; showing a new one.`;
+        }
+        if (mode === 'report' && records.length === 0) {
+            const model = ready[0].report?.model;
+            noRecord = ready.length > 1
+                ? `No ${model} record exists in both databases to render this report with.`
+                : `No ${model} record to render this report with.`;
+        }
+        return new RenderSession(sides, host, records, mode, notice, noRecord);
+    }
+    async state(options = {}) {
+        const resId = this.index >= 0 ? this.records[this.index] : undefined;
+        const debug = options.debug ?? true;
+        const sides = await Promise.all(this.sides.map(side => this.sideState(side, resId, debug)));
+        let record;
+        if (this.mode === 'form') {
+            record = {
+                label: resId ? `Record ${resId}` : 'New record',
+                canPrevious: this.index > 0 || (this.index === -1 && this.records.length > 0),
+                canNext: this.index >= 0 && this.index < this.records.length - 1,
+                canNew: this.index !== -1,
+                showNew: true
+            };
+        }
+        else if (this.mode === 'report' && resId !== undefined) {
+            record = { label: `Record ${resId}`, canPrevious: this.index > 0, canNext: this.index < this.records.length - 1, canNew: false };
+        }
+        return { sides, notice: this.notice, record };
+    }
+    /** The newer shared record, or back from a new record to the newest. */
+    previous() {
+        if (this.index > 0 || (this.index === -1 && this.records.length > 0)) {
+            this.index = this.index === -1 ? 0 : this.index - 1;
+            return true;
+        }
+        return false;
+    }
+    /** The older shared record. */
+    next() {
+        if (this.index >= 0 && this.index < this.records.length - 1) {
+            this.index++;
+            return true;
+        }
+        return false;
+    }
+    newRecord() {
+        if (this.mode !== 'form' || this.index === -1) {
+            return false;
+        }
+        this.index = -1;
+        return true;
+    }
+    shows(dbName) {
+        return this.sides.some(side => side.target.dbName === dbName);
+    }
+    /** What the PDF of the record a report side shows needs; undefined for any other side. */
+    pdfSource(key) {
+        const side = this.sides.find(entry => entry.target.dbName === key);
+        const resId = this.index >= 0 ? this.records[this.index] : undefined;
+        if (!side?.report || !side.proxy || side.port === undefined || resId === undefined) {
+            return undefined;
+        }
+        const { report, proxy } = side;
+        return {
+            dbName: side.target.dbName,
+            port: side.port,
+            path: (0, reportPdf_1.reportPdfPath)(report.reportName, resId),
+            fileName: (0, reportPdf_1.pdfFileName)(side.target.dbName, report.reportName, resId),
+            session: () => proxy.session()
+        };
+    }
+    /** The server ports the sides point at, for waiting on a start. */
+    ports() {
+        return this.sides.flatMap(side => side.port === undefined ? [] : [side.port]);
+    }
+    async sideState(side, resId, debug) {
+        const base = { key: side.target.dbName, title: side.target.title };
+        if (side.report) {
+            const { report, proxy, port, origin } = side;
+            if (!proxy || port === undefined || !origin) {
+                return { ...base, message: side.error ?? 'This side cannot render.' };
+            }
+            const detail = `Odoo ${report.series} · ${report.name}${resId ? ` · record ${resId}` : ''}`;
+            if (resId === undefined) {
+                return { ...base, detail, message: this.noRecord ?? `No ${report.model} record to render this report with.` };
+            }
+            if (!await this.host.isPortOpen(port)) {
+                return { ...base, detail, message: `No Odoo server is answering on port ${port}.`, offerStart: true };
+            }
+            return { ...base, detail, url: `${origin}${proxy.gatePath((0, renderPlan_1.reportPath)(report.reportName, resId, debug))}`, pdf: true };
+        }
+        const { action, proxy, port, origin } = side;
+        if (side.error || !action || !proxy || port === undefined || !origin) {
+            return { ...base, message: side.error ?? 'This side cannot render.' };
+        }
+        const what = action.viewType === 'form' ? (resId ? `record ${resId}` : 'new record') : action.viewType;
+        const detail = `Odoo ${action.series} · ${action.model} · ${what}`;
+        if (!await this.host.isPortOpen(port)) {
+            return { ...base, detail, message: `No Odoo server is answering on port ${port}.`, offerStart: true };
+        }
+        const path = (0, renderPlan_1.framePath)({ series: action.series, actionId: action.actionId, model: action.model, viewType: action.viewType, resId, debug });
+        return { ...base, detail, url: `${origin}${proxy.gatePath(path)}` };
+    }
+}
+exports.RenderSession = RenderSession;
+
+
+/***/ }),
+/* 126 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+/**
+ * Where a render frame points: the URL of a view-doctor action on one
+ * database's web client, per the series' router, and which record both
+ * sides of a comparison show.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.QWEB_FRAGMENT_MESSAGE = exports.NO_COMMON_RECORD = void 0;
+exports.usesOdooRouter = usesOdooRouter;
+exports.framePath = framePath;
+exports.commonIds = commonIds;
+exports.reportPath = reportPath;
+exports.NO_COMMON_RECORD = 'No record exists in both databases; showing a new one.';
+/** saas~17.2 moved the web client to /odoo/... URLs; before it, the hash carries the state. */
+function usesOdooRouter(series) {
+    const match = /(\d+)\.(\d+)/.exec(series);
+    if (!match) {
+        return true;
+    }
+    const [major, minor] = [Number(match[1]), Number(match[2])];
+    return major > 17 || (major === 17 && minor >= 2);
+}
+function framePath(input) {
+    const record = input.viewType === 'form' ? input.resId : undefined;
+    const debug = input.debug === false ? 0 : 1;
+    if (usesOdooRouter(input.series)) {
+        return `/odoo/action-${input.actionId}${record ? `/${record}` : ''}?debug=${debug}`;
+    }
+    const hash = [`action=${input.actionId}`, `model=${encodeURIComponent(input.model)}`, `view_type=${encodeURIComponent(input.viewType)}`];
+    if (record) {
+        hash.push(`id=${record}`);
+    }
+    return `/web?debug=${debug}#${hash.join('&')}`;
+}
+/** Ids in both lists, newest first. */
+function commonIds(a, b) {
+    const other = new Set(b);
+    return [...new Set(a)].filter(id => other.has(id)).sort((x, y) => y - x);
+}
+/** What a QWeb template that no report renders says instead: it needs the page around it. */
+exports.QWEB_FRAGMENT_MESSAGE = 'QWeb templates render inside the page that uses them; open it from Odoo.';
+/** A report rendered as HTML on one record, as Odoo's Print menu does. */
+function reportPath(reportName, resId, debug = true) {
+    return `/report/html/${encodeURIComponent(reportName)}/${resId}?debug=${debug ? 1 : 0}`;
+}
+
+
+/***/ }),
+/* 127 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -25074,7 +25733,7 @@ exports.ViewArchPoller = ViewArchPoller;
 
 
 /***/ }),
-/* 124 */
+/* 128 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25112,132 +25771,302 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.upgradePair = upgradePair;
-exports.isReadOnlyOriginal = isReadOnlyOriginal;
-exports.otherDatabaseChoices = otherDatabaseChoices;
-exports.pickOtherDatabase = pickOtherDatabase;
-exports.compareTargets = compareTargets;
-exports.findCounterpart = findCounterpart;
-exports.diffArguments = diffArguments;
+exports.XpathDiagnostics = exports.XPATH_SOURCE = void 0;
+exports.blankNonElements = blankNonElements;
+exports.scanElements = scanElements;
+exports.positionAt = positionAt;
+exports.quoteForAttribute = quoteForAttribute;
+exports.xpathFindings = xpathFindings;
 /**
- * Which two databases a view is compared or rendered across: in Upgrade
- * mode the original (From) and the upgraded (To) database, otherwise the
- * tree's database and one the user picks.
+ * An XPath check (xpathReport.ts) placed on the arch's text: which characters
+ * each locator's diagnostic covers, its severity and message, and the quick
+ * fixes that swap a locator for a shorter one that finds the same node.
+ *
+ * A locator is found by its element's index among the arch's elements, not by
+ * line: lxml reports the line where a start tag *ends*, and a minified arch
+ * has every locator on one line. The text is scanned for start tags with
+ * comments, CDATA, processing instructions and the DOCTYPE blanked out, which
+ * is also what lxml leaves out of the count.
  */
 const vscode = __importStar(__webpack_require__(1));
-const upgrade_1 = __webpack_require__(41);
-const runningState_1 = __webpack_require__(87);
-const notifications_1 = __webpack_require__(16);
-const viewQueries_1 = __webpack_require__(107);
-const viewMatch_1 = __webpack_require__(125);
-const viewFileSystem_1 = __webpack_require__(122);
-function upgradePair(project) {
-    if (!project) {
-        return undefined;
-    }
-    const config = (0, upgrade_1.ensureUpgradeConfigModel)(project.upgradeConfig);
-    if (!config.isActive() || !config.from?.dbId || !config.to?.dbId) {
-        return undefined;
-    }
-    return {
-        original: { dbName: config.from.dbId, versionId: config.from.versionId, series: config.from.series },
-        upgraded: { dbName: config.to.dbId, versionId: config.to.versionId, series: config.to.series }
-    };
+const NON_ELEMENTS = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<!DOCTYPE(?:[^>[]|\[[\s\S]*?\])*>/gi;
+// Any name lxml accepts, not only ASCII: a skipped element would shift every later index.
+// Permissive on purpose: it runs on blanked text, and an arch lxml rejects gets
+// report.error and so no findings to place.
+const START_TAG = /<([^\s/>!?][^\s/>]*)((?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*\/?>/g;
+const ATTRIBUTE = /([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+/** The text with everything that is not markup of elements replaced by spaces, offset for offset (line breaks kept). */
+function blankNonElements(text) {
+    return text.replace(NON_ELEMENTS, match => match.replace(/[^\r\n]/g, ' '));
 }
-/** The upgrade's original database stays as it was, unless odooDebugger.views.allowEditOriginal is on. */
-function isReadOnlyOriginal(project, dbName, allowEditOriginal) {
-    return !allowEditOriginal && upgradePair(project)?.original.dbName === dbName;
-}
-/** The project's other databases, running ones first, so the default pick is one a server has open. */
-function otherDatabaseChoices(project, current, running) {
-    return (project?.dbs ?? [])
-        .filter(db => db.id !== current)
-        .map(db => ({ dbName: db.id, versionId: db.versionId, running: running.has(db.id) }))
-        .sort((a, b) => Number(b.running) - Number(a.running));
-}
-async function pickOtherDatabase(project, current) {
-    const running = new Set((await (0, runningState_1.getRunningInstances)()).map(instance => instance.dbName));
-    const choices = otherDatabaseChoices(project, current, running);
-    if (choices.length === 0) {
-        void (0, notifications_1.showInfo)(`The project has no other database to compare ${current} with.`);
-        return undefined;
+/** The arch's start tags, in document order. */
+function scanElements(text) {
+    const elements = [];
+    for (const tag of blankNonElements(text).matchAll(START_TAG)) {
+        const nameStart = (tag.index ?? 0) + 1;
+        const nameEnd = nameStart + tag[1].length;
+        const attributes = [];
+        for (const attribute of tag[2].matchAll(ATTRIBUTE)) {
+            const value = attribute[2] ?? attribute[3] ?? '';
+            // The closing quote; the attribute text starts right after the tag name.
+            const valueEnd = nameEnd + (attribute.index ?? 0) + attribute[0].length - 1;
+            attributes.push({ name: attribute[1], valueStart: valueEnd - value.length, valueEnd, quote: attribute[2] !== undefined ? '"' : "'" });
+        }
+        elements.push({ tag: tag[1], nameStart, nameEnd, attributes });
     }
-    const picked = await vscode.window.showQuickPick(choices.map(choice => ({ label: choice.dbName, description: choice.running ? 'running' : undefined, choice })), { title: `Compare with ${current}`, placeHolder: 'The database to show on the left' });
-    return picked?.choice;
+    return elements;
 }
-/** The left side of a comparison with this tree row: the upgrade's original, or a database the user picks. */
-async function compareTargets(project, item) {
-    const pair = upgradePair(project);
-    if (pair && pair.upgraded.dbName === item.dbName) {
-        return pair.original.dbName;
+function lineStarts(text) {
+    const starts = [0];
+    for (const lineBreak of text.matchAll(/\r\n|\r|\n/g)) {
+        starts.push((lineBreak.index ?? 0) + lineBreak[0].length);
     }
-    return (await pickOtherDatabase(project, item.dbName))?.dbName;
+    return starts;
+}
+/** A 0-based line and character, counting line breaks the way VS Code does. */
+function positionAt(text, offset) {
+    const starts = lineStarts(text);
+    let line = 0;
+    while (line + 1 < starts.length && starts[line + 1] <= offset) {
+        line++;
+    }
+    return { line, character: offset - starts[line] };
+}
+/** A 1-based line's content without its indentation and line break. */
+function lineSpan(text, line) {
+    const starts = lineStarts(text);
+    const index = Math.min(Math.max(line - 1, 0), starts.length - 1);
+    const start = starts[index];
+    const content = text.slice(start, index + 1 < starts.length ? starts[index + 1] : text.length).replace(/[\r\n]+$/, '');
+    const indent = content.length - content.trimStart().length;
+    return { start: start + indent, end: start + content.length };
+}
+/** `value` as the content of an attribute delimited by `quote`. */
+function quoteForAttribute(value, quote) {
+    const escaped = value.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    return quote === '"' ? escaped.replace(/"/g, '&quot;') : escaped.replace(/'/g, '&apos;');
+}
+function place(locator, elements, text) {
+    const element = locator.element === null ? undefined : elements[locator.element];
+    const expected = locator.kind === 'xpath' ? 'xpath' : /^\/\/([^[/]+)/.exec(locator.expr)?.[1];
+    if (element && element.tag === expected) {
+        const expr = locator.kind === 'xpath' ? element.attributes.find(attribute => attribute.name === 'expr') : undefined;
+        if (expr) {
+            return { span: { start: expr.valueStart, end: expr.valueEnd }, expr };
+        }
+        return { span: { start: element.nameStart, end: element.nameEnd } };
+    }
+    return { span: lineSpan(text, locator.line ?? 1) };
+}
+/** What to show for each locator worth showing: dead, ambiguous, invalid, or ok with a shorter equivalent. */
+function xpathFindings(report, text) {
+    if (report.error) {
+        return [];
+    }
+    const elements = scanElements(text);
+    const findings = [];
+    for (const locator of report.locators) {
+        const where = place(locator, elements, text);
+        const expr = where.expr;
+        const fixes = expr && (locator.status === 'ok' || locator.status === 'ambiguous')
+            ? locator.shorter.map(shorter => ({ title: `Use ${shorter}`, span: where.span, text: quoteForAttribute(shorter, expr.quote) }))
+            : [];
+        const finding = (severity, message) => ({ status: locator.status, severity, message, span: where.span, fixes });
+        switch (locator.status) {
+            case 'dead':
+                findings.push(finding('warning', `${locator.expr} matches nothing: this patch does nothing.`));
+                break;
+            case 'ambiguous':
+                findings.push(finding('warning', `${locator.expr} matches ${locator.matches ?? 'several'} nodes: Odoo patches the first.`));
+                break;
+            case 'invalid':
+                findings.push(finding('error', `${locator.expr} is not a valid XPath${locator.detail ? `: ${locator.detail}` : '.'}`));
+                break;
+            case 'ok':
+                // Faint on purpose: Studio's long paths work, they only read badly.
+                if (fixes.length > 0) {
+                    findings.push(finding('hint', `A shorter locator finds the same node: ${locator.shorter[0]}`));
+                }
+                break;
+        }
+    }
+    return findings;
+}
+exports.XPATH_SOURCE = 'Odoo XPath';
+const SEVERITIES = {
+    error: vscode.DiagnosticSeverity.Error,
+    warning: vscode.DiagnosticSeverity.Warning,
+    hint: vscode.DiagnosticSeverity.Hint
+};
+function toRange(span, text) {
+    const start = positionAt(text, span.start);
+    const end = positionAt(text, span.end);
+    return new vscode.Range(start.line, start.character, end.line, end.character);
+}
+function toDiagnostic(finding, text) {
+    const diagnostic = new vscode.Diagnostic(toRange(finding.span, text), finding.message, SEVERITIES[finding.severity]);
+    diagnostic.source = exports.XPATH_SOURCE;
+    diagnostic.code = finding.status;
+    return diagnostic;
 }
 /**
- * The same view in another database. 'none' when that database has no view
- * of its model and type; undefined when the user dismissed the pick.
+ * The XPath check's results on open arches, in their own collection so they
+ * never mix with Odoo's reason a view stays off, and the quick fixes for them.
+ * A fix is offered only while the document still holds the text that was
+ * checked: the offsets mean nothing once it changed.
  */
-async function findCounterpart(view, dbName) {
-    const [byXmlid, rows] = await Promise.all([
-        view.xmlid ? (0, viewQueries_1.findViewByXmlid)(dbName, view.xmlid) : Promise.resolve(undefined),
-        (0, viewQueries_1.findViewsLike)(dbName, view)
-    ]);
-    const match = (0, viewMatch_1.matchView)(view, { byXmlid, rows });
-    if (match.kind === 'none') {
-        return 'none';
+class XpathDiagnostics {
+    static providedCodeActionKinds = [vscode.CodeActionKind.QuickFix];
+    collection;
+    checked = new Map();
+    constructor(collection = vscode.languages.createDiagnosticCollection('odoo-view-xpaths')) {
+        this.collection = collection;
     }
-    if (match.kind !== 'pick') {
-        return match.view;
+    /** Shows a check of `text`, the arch at `uri` as it was checked. */
+    show(uri, text, report) {
+        const findings = xpathFindings(report, text);
+        this.checked.set(uri.toString(), { text, findings });
+        this.collection.set(uri, findings.map(finding => toDiagnostic(finding, text)));
     }
-    const picked = await vscode.window.showQuickPick(match.candidates.map(candidate => ({
-        label: candidate.name,
-        description: `${candidate.xmlid ?? `#${candidate.id}`}${candidate.active ? '' : ' · off'}`,
-        detail: candidate.inheritId ? `Inherits view ${candidate.inheritId}` : 'Base view',
-        candidate
-    })), { title: `${view.name} in ${dbName}`, placeHolder: `No view in ${dbName} is certainly the same one: pick it`, matchOnDescription: true });
-    return picked?.candidate;
+    clear(uri) {
+        this.checked.delete(uri.toString());
+        this.collection.delete(uri);
+    }
+    provideCodeActions(document, range) {
+        const checked = this.checked.get(document.uri.toString());
+        if (!checked || document.getText() !== checked.text) {
+            return [];
+        }
+        const actions = [];
+        for (const finding of checked.findings) {
+            const where = toRange(finding.span, checked.text);
+            if (finding.fixes.length === 0 || !where.intersection(range)) {
+                continue;
+            }
+            const diagnostic = toDiagnostic(finding, checked.text);
+            finding.fixes.forEach((fix, index) => {
+                const action = new vscode.CodeAction(fix.title, vscode.CodeActionKind.QuickFix);
+                action.edit = new vscode.WorkspaceEdit();
+                action.edit.replace(document.uri, toRange(fix.span, checked.text), fix.text);
+                action.diagnostics = [diagnostic];
+                action.isPreferred = index === 0;
+                actions.push(action);
+            });
+        }
+        return actions;
+    }
+    dispose() {
+        this.checked.clear();
+        this.collection.dispose();
+    }
 }
-function diffArguments(original, upgraded) {
-    const uriOf = (side) => (0, viewFileSystem_1.viewUri)(side.dbName, side.view.id, side.view.xmlid ?? `view-${side.view.id}`);
-    return [uriOf(original), uriOf(upgraded), `${upgraded.view.name}: ${original.dbName} ↔ ${upgraded.dbName}`];
-}
+exports.XpathDiagnostics = XpathDiagnostics;
 
 
 /***/ }),
-/* 125 */
-/***/ ((__unused_webpack_module, exports) => {
+/* 129 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.matchView = matchView;
-/** 18.0 renamed the list view type from 'tree'; one view keeps its identity across that. */
-function viewKind(type) {
-    return type === 'tree' ? 'list' : type;
+exports.saveMessage = saveMessage;
+exports.createSaveHook = createSaveHook;
+/**
+ * What follows an arch save: Odoo's reason a view stays off goes on its line,
+ * the render tab reloads that database, the note's journal records the save,
+ * and - for an inheriting view, unless odooDebugger.views.checkXpathsOnSave is
+ * off - the saved text's locators are checked, because a view Odoo turned on
+ * can still carry a patch that matches nothing. The message waits for that
+ * check, so it can say so; a failed check is only logged. A save that is not
+ * checked clears the earlier check, and a check that ends after the arch
+ * closed shows nothing.
+ */
+const vscode = __importStar(__webpack_require__(1));
+const xpathReport_1 = __webpack_require__(113);
+const archErrors_1 = __webpack_require__(130);
+const logger_1 = __webpack_require__(12);
+function saveMessage(result, report) {
+    if (result.activationError) {
+        return { warning: true, text: `Saved. The view stays off: ${(0, archErrors_1.archErrorSummary)(result.activationError)}` };
+    }
+    const saved = result.activated ? 'Saved, and the view is on' : 'Saved';
+    const broken = report ? (0, xpathReport_1.brokenLocators)(report) : undefined;
+    return broken ? { warning: true, text: `${saved} — but ${broken}.` } : { warning: false, text: `${saved}.` };
 }
-function matchView(source, found) {
-    if (found.byXmlid) {
-        return { kind: 'xmlid', view: found.byXmlid };
-    }
-    const similar = found.rows.filter(view => view.model === source.model && viewKind(view.type) === viewKind(source.type));
-    const sameId = similar.find(view => view.id === source.id);
-    if (sameId) {
-        return { kind: 'id', view: sameId };
-    }
-    const named = similar.filter(view => view.name === source.name);
-    if (named.length === 1) {
-        return { kind: 'name', view: named[0] };
-    }
-    if (similar.length === 0) {
-        return { kind: 'none' };
-    }
-    const isBase = (view) => view.inheritId === null;
-    const likeness = (view) => (view.name === source.name ? 2 : 0) + (isBase(view) === isBase(source) ? 1 : 0);
-    return { kind: 'pick', candidates: [...similar].sort((a, b) => likeness(b) - likeness(a) || a.id - b.id) };
+function createSaveHook(deps) {
+    return async (ref, result, uri, text) => {
+        if (result.activationError) {
+            const where = (0, archErrors_1.locateArchError)(text, result.activationError);
+            const diagnostic = new vscode.Diagnostic(new vscode.Range(where.line, where.start, where.line, where.end), (0, archErrors_1.readableArchError)(result.activationError), vscode.DiagnosticSeverity.Error);
+            diagnostic.source = 'Odoo';
+            deps.activationDiagnostics.set(uri, [diagnostic]);
+        }
+        else {
+            deps.activationDiagnostics.delete(uri);
+        }
+        deps.reloadDatabase(ref.dbName);
+        // The tree shows the journal, so refresh once the save is in it.
+        void deps.recordSave(ref.dbName, ref.viewId, result.activated).then(() => deps.refreshTree());
+        let report;
+        if (result.inheriting && deps.checkOnSave()) {
+            try {
+                report = await deps.checkXpaths(ref.dbName, ref.viewId, text);
+                if (report.error) {
+                    logger_1.logger.warn(`Could not check the locators of view ${ref.viewId} in ${ref.dbName}: ${report.error}`);
+                }
+                if (deps.isOpen(uri)) {
+                    deps.xpaths.show(uri, text, report);
+                }
+            }
+            catch (error) {
+                logger_1.logger.warn(`Could not check the locators of view ${ref.viewId} in ${ref.dbName}:`, error);
+            }
+        }
+        if (!report) {
+            // An earlier check's squiggles would sit at offsets the save moved.
+            deps.xpaths.clear(uri);
+        }
+        const message = saveMessage(result, report);
+        (message.warning ? deps.warn : deps.brief)(message.text);
+    };
 }
 
 
 /***/ }),
-/* 126 */
+/* 130 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -25250,7 +26079,7 @@ exports.locateArchError = locateArchError;
  * failing locator or field in quotes, or (for XML syntax) a line; an error
  * that names neither lands on the first line.
  */
-const disabledReport_1 = __webpack_require__(108);
+const disabledReport_1 = __webpack_require__(111);
 /**
  * Odoo's message as plain text. It HTML-escapes the attributes of a locator
  * it cannot find - `@name=&#39;partner_id&#39;` - on every version from 15
@@ -25317,7 +26146,7 @@ function locateArchError(arch, rawMessage) {
 
 
 /***/ }),
-/* 127 */
+/* 131 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25472,7 +26301,7 @@ exports.StatusBarIndicators = StatusBarIndicators;
 
 
 /***/ }),
-/* 128 */
+/* 132 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -25489,7 +26318,7 @@ exports.ViewNoteService = exports.psqlNoteQueries = void 0;
  */
 const logger_1 = __webpack_require__(12);
 const viewQueries_1 = __webpack_require__(107);
-const viewNotes_1 = __webpack_require__(129);
+const viewNotes_1 = __webpack_require__(133);
 exports.psqlNoteQueries = {
     fingerprints: async (dbName, ids) => {
         try {
@@ -25579,7 +26408,7 @@ exports.ViewNoteService = ViewNoteService;
 
 
 /***/ }),
-/* 129 */
+/* 133 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25887,30 +26716,30 @@ exports.ViewNoteStore = ViewNoteStore;
 
 
 /***/ }),
-/* 130 */
+/* 134 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(131);
-const projectCommands_1 = __webpack_require__(133);
-const repoCommands_1 = __webpack_require__(139);
-const dbCommands_1 = __webpack_require__(140);
-const moduleCommands_1 = __webpack_require__(141);
-const testingCommands_1 = __webpack_require__(142);
-const versionCommands_1 = __webpack_require__(143);
-const debugCommands_1 = __webpack_require__(145);
-const reposExplorerCommands_1 = __webpack_require__(146);
-const editorCommands_1 = __webpack_require__(147);
-const helpCommands_1 = __webpack_require__(148);
-const upgradeCommand_1 = __webpack_require__(149);
+const viewCommands_1 = __webpack_require__(135);
+const projectCommands_1 = __webpack_require__(137);
+const repoCommands_1 = __webpack_require__(143);
+const dbCommands_1 = __webpack_require__(144);
+const moduleCommands_1 = __webpack_require__(145);
+const testingCommands_1 = __webpack_require__(146);
+const versionCommands_1 = __webpack_require__(147);
+const debugCommands_1 = __webpack_require__(149);
+const reposExplorerCommands_1 = __webpack_require__(150);
+const editorCommands_1 = __webpack_require__(151);
+const helpCommands_1 = __webpack_require__(152);
+const upgradeCommand_1 = __webpack_require__(153);
 const customAddonsCommand_1 = __webpack_require__(94);
-const dataStoreCommands_1 = __webpack_require__(151);
-const repoLocationCommand_1 = __webpack_require__(153);
+const dataStoreCommands_1 = __webpack_require__(155);
+const repoLocationCommand_1 = __webpack_require__(157);
 const bindingCommand_1 = __webpack_require__(84);
-const upgradeSideCommands_1 = __webpack_require__(154);
-const viewDoctorCommands_1 = __webpack_require__(155);
+const upgradeSideCommands_1 = __webpack_require__(158);
+const viewDoctorCommands_1 = __webpack_require__(159);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -25935,7 +26764,7 @@ function registerAllCommands(deps) {
 
 
 /***/ }),
-/* 131 */
+/* 135 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25975,7 +26804,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(132);
+const quickSearch_1 = __webpack_require__(136);
 const versionsService_1 = __webpack_require__(33);
 const sortOptions_1 = __webpack_require__(38);
 const notifications_1 = __webpack_require__(16);
@@ -26123,7 +26952,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 132 */
+/* 136 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26247,7 +27076,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 133 */
+/* 137 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26299,12 +27128,12 @@ const settingsStore_1 = __webpack_require__(6);
 const project_1 = __webpack_require__(90);
 const dbs_1 = __webpack_require__(64);
 const odooInstaller_1 = __webpack_require__(66);
-const projectWorkspace_1 = __webpack_require__(134);
-const setupFlow_1 = __webpack_require__(136);
+const projectWorkspace_1 = __webpack_require__(138);
+const setupFlow_1 = __webpack_require__(140);
 const setupState_1 = __webpack_require__(71);
 const context_1 = __webpack_require__(42);
 const versionProposal_1 = __webpack_require__(60);
-const versionPick_1 = __webpack_require__(138);
+const versionPick_1 = __webpack_require__(142);
 const gitService_1 = __webpack_require__(11);
 const provisionQueue_1 = __webpack_require__(102);
 const registerCommand_1 = __webpack_require__(85);
@@ -26471,7 +27300,7 @@ function registerProjectCommands(deps) {
 
 
 /***/ }),
-/* 134 */
+/* 138 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26524,7 +27353,7 @@ const logger_1 = __webpack_require__(12);
 const versionRepos_1 = __webpack_require__(80);
 const utils_1 = __webpack_require__(8);
 const versionsService_1 = __webpack_require__(33);
-const workspaceFolders_1 = __webpack_require__(135);
+const workspaceFolders_1 = __webpack_require__(139);
 async function getActiveProjectOrPrompt() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
@@ -26698,7 +27527,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 135 */
+/* 139 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -26758,7 +27587,7 @@ function repoFolderEntries(resolved, existingPaths) {
 
 
 /***/ }),
-/* 136 */
+/* 140 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26812,7 +27641,7 @@ const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const branches_1 = __webpack_require__(52);
 const customAddonsCommand_1 = __webpack_require__(94);
-const setupDetection_1 = __webpack_require__(137);
+const setupDetection_1 = __webpack_require__(141);
 const setupState_1 = __webpack_require__(71);
 /** The per-version key that every repository-discovery site already reads. */
 const CUSTOM_ADDONS_KEY = 'defaultVersion.customAddonsPath';
@@ -26994,7 +27823,7 @@ async function runSetup(options) {
 
 
 /***/ }),
-/* 137 */
+/* 141 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27211,7 +28040,7 @@ function detectCustomAddonsRoot(roots) {
 
 
 /***/ }),
-/* 138 */
+/* 142 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27360,14 +28189,14 @@ async function collectRepoBranches() {
 
 
 /***/ }),
-/* 139 */
+/* 143 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerRepoCommands = registerRepoCommands;
 const repos_1 = __webpack_require__(97);
-const projectWorkspace_1 = __webpack_require__(134);
+const projectWorkspace_1 = __webpack_require__(138);
 const registerCommand_1 = __webpack_require__(85);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
@@ -27380,7 +28209,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 140 */
+/* 144 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27631,7 +28460,7 @@ function registerDbCommands(deps) {
 
 
 /***/ }),
-/* 141 */
+/* 145 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27767,7 +28596,7 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 142 */
+/* 146 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -27824,7 +28653,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 143 */
+/* 147 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27873,7 +28702,7 @@ const utils_1 = __webpack_require__(8);
 const versionIdentity_1 = __webpack_require__(36);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(144);
+const branchPick_1 = __webpack_require__(148);
 const runtimeCache_1 = __webpack_require__(15);
 const environment_1 = __webpack_require__(51);
 const odooInstaller_1 = __webpack_require__(66);
@@ -27884,7 +28713,7 @@ const server_1 = __webpack_require__(101);
 const dbResolution_1 = __webpack_require__(61);
 const settingsStore_1 = __webpack_require__(6);
 const setupState_1 = __webpack_require__(71);
-const versionMigration_1 = __webpack_require__(116);
+const versionMigration_1 = __webpack_require__(120);
 const upgrade_1 = __webpack_require__(40);
 const registerCommand_1 = __webpack_require__(85);
 const workspaceBinding_1 = __webpack_require__(63);
@@ -28502,7 +29331,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 144 */
+/* 148 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28717,7 +29546,7 @@ async function pickRepoBranch(repoPath, title, placeHolder, suggested, exclude, 
 
 
 /***/ }),
-/* 145 */
+/* 149 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28855,7 +29684,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 146 */
+/* 150 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28910,7 +29739,7 @@ const notifications_2 = __webpack_require__(16);
 const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const runtimeCache_1 = __webpack_require__(15);
-const projectReposExplorer_1 = __webpack_require__(113);
+const projectReposExplorer_1 = __webpack_require__(117);
 const utils_2 = __webpack_require__(8);
 const notifications_3 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
@@ -29148,7 +29977,7 @@ function registerReposExplorerCommands(deps) {
 
 
 /***/ }),
-/* 147 */
+/* 151 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -29256,7 +30085,7 @@ function registerEditorCommands(deps) {
 
 
 /***/ }),
-/* 148 */
+/* 152 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -29344,7 +30173,7 @@ function registerHelpCommands(deps) {
 
 
 /***/ }),
-/* 149 */
+/* 153 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -29402,8 +30231,8 @@ const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(144);
-const upgradePlan_1 = __webpack_require__(150);
+const branchPick_1 = __webpack_require__(148);
+const upgradePlan_1 = __webpack_require__(154);
 const upgradeApply_1 = __webpack_require__(43);
 const upgradeSetup_1 = __webpack_require__(59);
 const branches_1 = __webpack_require__(52);
@@ -30004,7 +30833,7 @@ function registerUpgradeCommand(deps) {
 
 
 /***/ }),
-/* 150 */
+/* 154 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30130,7 +30959,7 @@ function describeUpgradePlan(plan, input) {
 
 
 /***/ }),
-/* 151 */
+/* 155 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30191,7 +31020,7 @@ const setupState_1 = __webpack_require__(71);
 const dataLocation_1 = __webpack_require__(17);
 const mainStore_1 = __webpack_require__(27);
 const workspaceSelection_1 = __webpack_require__(30);
-const dataImport_1 = __webpack_require__(152);
+const dataImport_1 = __webpack_require__(156);
 const registerCommand_1 = __webpack_require__(85);
 const gitExclude_1 = __webpack_require__(32);
 const SHARED_STORE_FILE = 'odoo-devtools.db';
@@ -30479,7 +31308,7 @@ function registerDataStoreCommands(deps) {
 
 
 /***/ }),
-/* 152 */
+/* 156 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30736,7 +31565,7 @@ function buildExport(data, exportedAt = new Date()) {
 
 
 /***/ }),
-/* 153 */
+/* 157 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30894,7 +31723,7 @@ function registerRepoLocationCommand(deps) {
 
 
 /***/ }),
-/* 154 */
+/* 158 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -31061,7 +31890,7 @@ function registerUpgradeSideCommands(deps) {
 
 
 /***/ }),
-/* 155 */
+/* 159 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -31103,23 +31932,55 @@ exports.registerViewDoctorCommands = registerViewDoctorCommands;
 const vscode = __importStar(__webpack_require__(1));
 const registerCommand_1 = __webpack_require__(85);
 const viewDoctorView_1 = __webpack_require__(105);
-const viewFileSystem_1 = __webpack_require__(122);
+const viewFileSystem_1 = __webpack_require__(109);
 const notifications_1 = __webpack_require__(16);
 const settingsStore_1 = __webpack_require__(6);
-const viewPairing_1 = __webpack_require__(124);
+const viewPairing_1 = __webpack_require__(106);
 const logger_1 = __webpack_require__(12);
-const renderPlan_1 = __webpack_require__(121);
-const upgradeScriptFlow_1 = __webpack_require__(156);
-const archErrors_1 = __webpack_require__(126);
+const renderPlan_1 = __webpack_require__(126);
+const upgradeScriptFlow_1 = __webpack_require__(160);
+const archErrors_1 = __webpack_require__(130);
+const xpathReport_1 = __webpack_require__(113);
+const viewQueries_1 = __webpack_require__(107);
+const findViewFlow_1 = __webpack_require__(165);
+const viewTarget_1 = __webpack_require__(167);
 function viewItem(arg) {
     return arg instanceof viewDoctorView_1.ViewItem ? arg : undefined;
 }
 async function openArch(dbName, viewId, xmlid) {
     await vscode.window.showTextDocument((0, viewFileSystem_1.viewUri)(dbName, viewId, xmlid ?? `view-${viewId}`), { preview: true });
 }
+/** The view's open arch - revealed when no editor shows it - or the arch opened now. */
+async function archDocument(dbName, view) {
+    const open = vscode.workspace.textDocuments.find(document => {
+        const ref = document.uri.scheme === viewFileSystem_1.VIEW_SCHEME ? (0, viewFileSystem_1.parseViewUri)(document.uri) : undefined;
+        return ref?.dbName === dbName && ref.viewId === view.id;
+    });
+    if (open && vscode.window.visibleTextEditors.some(editor => editor.document === open)) {
+        return open;
+    }
+    return (await vscode.window.showTextDocument(open?.uri ?? (0, viewFileSystem_1.viewUri)(dbName, view.id, view.xmlid ?? `view-${view.id}`), { preview: true })).document;
+}
 function registerViewDoctorCommands(deps) {
-    const { context, providers, viewService, viewNotes, viewDiagnostics, viewRender } = deps;
+    const { context, providers, viewService, viewNotes, viewDiagnostics, xpathDiagnostics, viewRender } = deps;
+    /** The view a command acts on (a row, an arch editor, or the active editor); the error is shown when it is gone. */
+    const target = async (arg) => {
+        try {
+            return await (0, viewTarget_1.viewTarget)(arg, (dbName, ids) => viewService.rows(dbName, ids));
+        }
+        catch (error) {
+            void (0, notifications_1.showError)((0, logger_1.errorMessage)(error));
+            return undefined;
+        }
+    };
     context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.refresh', () => providers.views.refresh()));
+    const showAlsoOff = async (show) => {
+        await context.workspaceState.update(viewDoctorView_1.SHOW_ALSO_OFF_KEY, show);
+        await vscode.commands.executeCommand('setContext', 'odoo-debugger.viewDoctor.showAlsoOff', show);
+        providers.views.refresh();
+    };
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.showAlsoOff', () => showAlsoOff(true)));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.hideAlsoOff', () => showAlsoOff(false)));
     context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.openArch', async (arg) => {
         const item = viewItem(arg);
         if (item) {
@@ -31127,15 +31988,31 @@ function registerViewDoctorCommands(deps) {
         }
     }));
     context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.openParent', async (arg) => {
-        const item = viewItem(arg);
-        if (!item?.view.inheritId) {
+        const item = await target(arg);
+        if (!item) {
+            return;
+        }
+        if (!item.view.inheritId) {
+            void (0, notifications_1.showInfo)(`${item.view.name} inherits no view.`);
             return;
         }
         const [parent] = await viewService.rows(item.dbName, [item.view.inheritId]);
         await openArch(item.dbName, item.view.inheritId, parent?.xmlid ?? null);
     }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.openRoot', async (arg) => {
+        const item = await target(arg);
+        if (!item) {
+            return;
+        }
+        if (item.view.rootId === item.view.id) {
+            void (0, notifications_1.showInfo)(`${item.view.name} is a root view.`);
+            return;
+        }
+        const [root] = await viewService.rows(item.dbName, [item.view.rootId]);
+        await openArch(item.dbName, item.view.rootId, root?.xmlid ?? null);
+    }));
     context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.compare', async (arg) => {
-        const item = viewItem(arg);
+        const item = await target(arg);
         if (!item) {
             return;
         }
@@ -31160,14 +32037,16 @@ function registerViewDoctorCommands(deps) {
         }
     }));
     context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.render', async (arg) => {
-        const item = viewItem(arg);
+        const item = await target(arg);
         if (!item) {
             return;
         }
-        if (item.view.type === 'qweb') {
-            void (0, notifications_1.showInfo)((0, renderPlan_1.qwebMessage)(item.view.isReport));
+        // A template no report uses needs the page around it: nothing to render here.
+        if (item.view.type === 'qweb' && !item.view.isReport) {
+            void (0, notifications_1.showInfo)(renderPlan_1.QWEB_FRAGMENT_MESSAGE);
             return;
         }
+        const kind = item.view.type === 'qweb' ? 'report' : 'view';
         try {
             const project = (await settingsStore_1.SettingsStore.peekSelectedProject().catch(() => null))?.project;
             const pair = (0, viewPairing_1.upgradePair)(project);
@@ -31178,9 +32057,9 @@ function registerViewDoctorCommands(deps) {
                 }
                 const targets = [];
                 if (counterpart !== 'none') {
-                    targets.push({ dbName: pair.original.dbName, versionId: pair.original.versionId, viewId: counterpart.id, title: `Original · ${pair.original.dbName}` });
+                    targets.push({ dbName: pair.original.dbName, versionId: pair.original.versionId, viewId: counterpart.id, title: `Original · ${pair.original.dbName}`, kind });
                 }
-                targets.push({ dbName: item.dbName, versionId: pair.upgraded.versionId, viewId: item.view.id, title: `Upgraded · ${item.dbName}` });
+                targets.push({ dbName: item.dbName, versionId: pair.upgraded.versionId, viewId: item.view.id, title: `Upgraded · ${item.dbName}`, kind });
                 await viewRender.show({
                     title: item.view.name,
                     targets,
@@ -31193,13 +32072,37 @@ function registerViewDoctorCommands(deps) {
             const db = project?.dbs?.find(entry => entry.id === item.dbName);
             await viewRender.show({
                 title: item.view.name,
-                targets: [{ dbName: item.dbName, versionId: db?.versionId, viewId: item.view.id, title: item.dbName }],
+                targets: [{ dbName: item.dbName, versionId: db?.versionId, viewId: item.view.id, title: item.dbName, kind }],
                 startCommand: 'odoo.startServer',
                 startLabel: 'Start Server'
             });
         }
         catch (error) {
             void (0, notifications_1.showError)(`Could not render ${item.view.name}: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.checkXpaths', async (arg) => {
+        const item = await target(arg);
+        if (!item) {
+            return;
+        }
+        if (!item.view.inheritId) {
+            void (0, notifications_1.showInfo)(`${item.view.name} inherits no view: it has no locators to check.`);
+            return;
+        }
+        try {
+            const document = await archDocument(item.dbName, item.view);
+            const text = document.getText();
+            const report = await viewService.checkXpaths(item.dbName, item.view.id, text);
+            // Closed while the shell answered: closing cleared its diagnostics, keep it so.
+            if (!document.isClosed) {
+                xpathDiagnostics.show(document.uri, text, report);
+            }
+            const result = (0, xpathReport_1.checkResultText)(report);
+            void (result.level === 'info' ? (0, notifications_1.showInfo)(result.text) : (0, notifications_1.showWarning)(result.text));
+        }
+        catch (error) {
+            void (0, notifications_1.showError)(`Could not check ${item.view.name}: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
     context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.activate', async (arg) => {
@@ -31260,6 +32163,38 @@ function registerViewDoctorCommands(deps) {
             (0, notifications_1.showBriefStatus)(`${item.view.name} has no external ID.`);
         }
     }));
+    const openView = (dbName, view) => openArch(dbName, view.id, view.xmlid);
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.findView', async () => {
+        const project = (await settingsStore_1.SettingsStore.peekSelectedProject().catch(() => null))?.project;
+        const where = (0, viewDoctorView_1.resolveViewDoctorTarget)(project);
+        if (!where) {
+            void (0, notifications_1.showInfo)('Select a database first.');
+            return;
+        }
+        try {
+            await (0, findViewFlow_1.findView)(where.dbName, openView);
+        }
+        catch (error) {
+            void (0, notifications_1.showError)(`Could not search the views of ${where.dbName}: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.showInheriting', async (arg) => {
+        const item = await target(arg);
+        if (!item) {
+            return;
+        }
+        try {
+            const rows = await (0, viewQueries_1.descendants)(item.dbName, item.view.id);
+            if (rows.length <= 1) {
+                void (0, notifications_1.showInfo)(`No view inherits ${item.view.name}.`);
+                return;
+            }
+            await (0, findViewFlow_1.pickView)(item.dbName, rows, `Views inheriting ${item.view.name}`, openView);
+        }
+        catch (error) {
+            void (0, notifications_1.showError)(`Could not list the views inheriting ${item.view.name}: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    }));
     context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.createScript', async () => {
         const project = (await settingsStore_1.SettingsStore.peekSelectedProject().catch(() => null))?.project;
         const target = (0, viewDoctorView_1.resolveViewDoctorTarget)(project);
@@ -31275,7 +32210,7 @@ function registerViewDoctorCommands(deps) {
         }
     }));
     context.subscriptions.push((0, registerCommand_1.registerCommand)('viewDoctor.addToScript', async (arg) => {
-        const item = viewItem(arg);
+        const item = await target(arg);
         if (!item) {
             return;
         }
@@ -31290,7 +32225,7 @@ function registerViewDoctorCommands(deps) {
 
 
 /***/ }),
-/* 156 */
+/* 160 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -31343,11 +32278,11 @@ const settingsStore_1 = __webpack_require__(6);
 const psaeInternal_1 = __webpack_require__(96);
 const versionRepos_1 = __webpack_require__(80);
 const notifications_1 = __webpack_require__(16);
-const viewNoteService_1 = __webpack_require__(128);
-const scriptBuilder_1 = __webpack_require__(157);
-const upgradeScript_1 = __webpack_require__(158);
-const migrationsFolder_1 = __webpack_require__(159);
-const scriptDestination_1 = __webpack_require__(160);
+const viewNoteService_1 = __webpack_require__(132);
+const scriptBuilder_1 = __webpack_require__(161);
+const upgradeScript_1 = __webpack_require__(162);
+const migrationsFolder_1 = __webpack_require__(163);
+const scriptDestination_1 = __webpack_require__(164);
 async function scriptModules(project, dbName) {
     const db = project.dbs?.find(entry => entry.id === dbName);
     const { modules } = (0, psaeInternal_1.collectModuleDiscovery)(project, await (0, versionRepos_1.resolveReposForDatabase)(project, db));
@@ -31432,7 +32367,7 @@ async function createUpgradeScript(deps, dbName, viewId) {
 
 
 /***/ }),
-/* 157 */
+/* 161 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -31443,7 +32378,7 @@ exports.buildScriptViews = buildScriptViews;
 exports.leftOutText = leftOutText;
 exports.scriptSummary = scriptSummary;
 exports.nothingToScript = nothingToScript;
-const viewNotes_1 = __webpack_require__(129);
+const viewNotes_1 = __webpack_require__(133);
 /** Every view the note knows: noted first, then the journal's. */
 function scriptIds(note) {
     return [...new Set([...note.views.map(view => view.id), ...note.journal.map(entry => entry.id)])];
@@ -31522,7 +32457,7 @@ function nothingToScript(build, dbName) {
 
 
 /***/ }),
-/* 158 */
+/* 162 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -31837,7 +32772,7 @@ function parseScript(source) {
 
 
 /***/ }),
-/* 159 */
+/* 163 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -31900,7 +32835,7 @@ exports.writeScriptToFolder = writeScriptToFolder;
  */
 const fs = __importStar(__webpack_require__(20));
 const path = __importStar(__webpack_require__(3));
-const upgradeScript_1 = __webpack_require__(158);
+const upgradeScript_1 = __webpack_require__(162);
 exports.SCRIPT_NAME = 'end-update_views';
 const MAX_SIBLINGS = 100;
 /** A folder name Odoo will run and accept as a manifest version: <series>.x.y or <series>.x.y.z; without a known series, 2 to 5 numeric parts. */
@@ -32025,7 +32960,7 @@ async function writeScriptToFolder(dir, views) {
 
 
 /***/ }),
-/* 160 */
+/* 164 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -32079,8 +33014,8 @@ exports.pickDestination = pickDestination;
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
-const viewNotes_1 = __webpack_require__(129);
-const migrationsFolder_1 = __webpack_require__(159);
+const viewNotes_1 = __webpack_require__(133);
+const migrationsFolder_1 = __webpack_require__(163);
 const UNTITLED_LABEL = '$(new-file) Untitled Python Editor';
 function destinationKey(projectKey) {
     return `viewDoctor.scriptDestination:${projectKey}`;
@@ -32204,7 +33139,249 @@ async function pickDestination(options) {
 
 
 /***/ }),
-/* 161 */
+/* 165 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.pickView = pickView;
+exports.findView = findView;
+/**
+ * Find View: any view of the tree's database, by id, external id or model;
+ * and the pick both it and Views Inheriting This end in. Picking a view
+ * opens its arch - the tree itself stays about what is off.
+ */
+const vscode = __importStar(__webpack_require__(1));
+const viewQueries_1 = __webpack_require__(107);
+const notifications_1 = __webpack_require__(16);
+const viewPicker_1 = __webpack_require__(166);
+async function pickView(dbName, rows, title, open) {
+    const picked = await vscode.window.showQuickPick((0, viewPicker_1.viewPickItems)((0, viewPicker_1.viewTree)(rows)), { title, matchOnDescription: true });
+    if (picked) {
+        await open(dbName, picked.view);
+    }
+}
+function askWhat(dbName, models) {
+    const quickPick = vscode.window.createQuickPick();
+    quickPick.title = `Find a view in ${dbName}`;
+    quickPick.placeholder = 'A view id, an external ID, or a model';
+    quickPick.items = (0, viewPicker_1.findViewItems)('', models);
+    return new Promise(resolve => {
+        quickPick.onDidChangeValue(value => {
+            quickPick.items = (0, viewPicker_1.findViewItems)(value, models);
+        });
+        quickPick.onDidAccept(() => {
+            resolve(quickPick.selectedItems[0]?.choice);
+            quickPick.hide();
+        });
+        quickPick.onDidHide(() => {
+            resolve(undefined);
+            quickPick.dispose();
+        });
+        quickPick.show();
+    });
+}
+async function findView(dbName, open) {
+    const choice = await askWhat(dbName, await (0, viewQueries_1.viewModels)(dbName));
+    if (!choice) {
+        return;
+    }
+    if (choice.kind === 'id') {
+        const [view] = await (0, viewQueries_1.getViewRows)(dbName, [choice.id]);
+        if (view) {
+            await open(dbName, view);
+        }
+        else {
+            void (0, notifications_1.showInfo)(`${dbName} has no view ${choice.id}.`);
+        }
+        return;
+    }
+    if (choice.kind === 'xmlid') {
+        const view = await (0, viewQueries_1.findViewByXmlid)(dbName, choice.xmlid);
+        if (view) {
+            await open(dbName, view);
+        }
+        else {
+            void (0, notifications_1.showInfo)(`${dbName} has no view with the external ID ${choice.xmlid}.`);
+        }
+        return;
+    }
+    await pickView(dbName, await (0, viewQueries_1.viewsOfModel)(dbName, choice.model), `Views of ${choice.model} in ${dbName}`, open);
+}
+
+
+/***/ }),
+/* 166 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.viewTree = viewTree;
+exports.viewPickItems = viewPickItems;
+exports.findViewItems = findViewItems;
+function byTypeThenName(a, b) {
+    return Number(a.inheritId !== null) - Number(b.inheritId !== null)
+        || a.type.localeCompare(b.type) || a.name.localeCompare(b.name) || a.id - b.id;
+}
+/** Depth-first, children by id. A view whose parent is not listed starts a branch after the base views. */
+function viewTree(rows) {
+    const listed = new Set(rows.map(row => row.id));
+    const children = new Map();
+    const roots = [];
+    for (const row of rows) {
+        if (row.inheritId !== null && row.inheritId !== row.id && listed.has(row.inheritId)) {
+            children.set(row.inheritId, [...(children.get(row.inheritId) ?? []), row]);
+        }
+        else {
+            roots.push(row);
+        }
+    }
+    const entries = [];
+    const seen = new Set();
+    const visit = (view, depth) => {
+        if (seen.has(view.id)) {
+            return;
+        }
+        seen.add(view.id);
+        entries.push({ view, depth });
+        for (const child of [...(children.get(view.id) ?? [])].sort((a, b) => a.id - b.id)) {
+            visit(child, depth + 1);
+        }
+    };
+    roots.sort(byTypeThenName).forEach(root => visit(root, 0));
+    // Views in a cycle never reach a root: listed flat rather than lost.
+    rows.filter(row => !seen.has(row.id)).sort((a, b) => a.id - b.id).forEach(row => visit(row, 0));
+    return entries;
+}
+function viewPickItems(entries) {
+    return entries.map(({ view, depth }) => ({
+        // Em spaces: HTML does not collapse them, so deeper views stay indented.
+        label: `${depth > 0 ? `${'\u2003'.repeat(depth - 1)}↳ ` : ''}$(${view.active ? 'pass' : 'circle-slash'}) ${view.name}`,
+        description: [view.model, view.type, view.xmlid ?? `#${view.id}`].filter(Boolean).join(' · '),
+        view
+    }));
+}
+/** What Find View lists for the typed value: the value as an id or an external id first, then the models. */
+function findViewItems(value, models) {
+    const typed = value.trim();
+    const items = [];
+    const id = Number(typed);
+    if (/^\d+$/.test(typed) && Number.isSafeInteger(id) && id > 0) {
+        items.push({ label: `$(symbol-number) View ${id}`, alwaysShow: true, choice: { kind: 'id', id } });
+    }
+    else if (/^[\w-]+\.[\w.-]+$/.test(typed) && !models.some(entry => entry.model === typed)) {
+        items.push({ label: `$(symbol-key) ${typed}`, description: 'external ID', alwaysShow: true, choice: { kind: 'xmlid', xmlid: typed } });
+    }
+    return [...items, ...models.map(entry => ({
+            label: entry.model,
+            description: `${entry.count} view${entry.count === 1 ? '' : 's'}`,
+            choice: { kind: 'model', model: entry.model }
+        }))];
+}
+
+
+/***/ }),
+/* 167 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.viewTarget = viewTarget;
+/**
+ * What a View Doctor command acts on. From the Views tree it gets the row;
+ * from an arch editor's title it gets the editor's odoo-view: URI; from the
+ * Command Palette it gets nothing, and the active editor's view is used. All
+ * three come out the same, so every command works from either place.
+ */
+const vscode = __importStar(__webpack_require__(1));
+const viewDoctorView_1 = __webpack_require__(105);
+const viewFileSystem_1 = __webpack_require__(109);
+/** Undefined when the argument and the active editor are no view; throws when the URI's view is gone. */
+async function viewTarget(arg, readRows, activeUri = () => vscode.window.activeTextEditor?.document.uri) {
+    if (arg instanceof viewDoctorView_1.ViewItem) {
+        return { dbName: arg.dbName, view: arg.view };
+    }
+    const uri = arg instanceof vscode.Uri ? arg : activeUri();
+    const ref = uri?.scheme === viewFileSystem_1.VIEW_SCHEME ? (0, viewFileSystem_1.parseViewUri)(uri) : undefined;
+    if (!ref) {
+        return undefined;
+    }
+    const [view] = await readRows(ref.dbName, [ref.viewId]);
+    if (!view) {
+        throw new Error(`View ${ref.viewId} no longer exists in ${ref.dbName}.`);
+    }
+    return { dbName: ref.dbName, view };
+}
+
+
+/***/ }),
+/* 168 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -32255,7 +33432,7 @@ function selectionFacts(project, version) {
 
 
 /***/ }),
-/* 162 */
+/* 169 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
