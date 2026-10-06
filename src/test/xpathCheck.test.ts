@@ -40,7 +40,7 @@ suite('XPath checker (Python)', function () {
         if (probe.status !== 0) {
             this.skip();
         }
-        const run = spawnSync(PYTHON, [TESTS, SCRIPTS], { encoding: 'utf-8' });
+        const run = spawnSync(PYTHON, ['-B', TESTS, SCRIPTS], { encoding: 'utf-8' });
         assert.strictEqual(run.status, 0, run.stderr);
         results = JSON.parse(run.stdout.trim().split('\n').pop() ?? '{}');
     });
