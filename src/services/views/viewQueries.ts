@@ -305,3 +305,12 @@ export function descendantsSql(viewId: number): string {
 export async function descendants(dbName: string, viewId: number): Promise<ViewRow[]> {
     return parseViewRows(await runSql(dbName, descendantsSql(viewId)));
 }
+
+/** The ids of the views that are off: what "also off in the original" compares with. */
+export async function inactiveViewIds(dbName: string): Promise<number[]> {
+    const raw = parseJson(await runSql(dbName, "SELECT coalesce(json_agg(id), '[]'::json) FROM ir_ui_view WHERE active = false;"), '[]');
+    if (!Array.isArray(raw)) {
+        throw new Error('Unexpected output from the inactive view query.');
+    }
+    return raw.filter((id): id is number => Number.isSafeInteger(id));
+}

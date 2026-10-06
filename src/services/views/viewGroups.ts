@@ -17,13 +17,25 @@ export interface ViewGroups {
      * by design and would bury the rest.
      */
     otherInactive: ViewRow[];
+    /**
+     * Other inactive views the upgrade's original database has off too,
+     * compared by id - the upgraded database is a copy, so ids carry over.
+     * Empty outside Upgrade mode.
+     */
+    alsoOffInOriginal?: ViewRow[];
     /** Listed by a report, but no longer in the database. */
     missingIds: number[];
     /** Views this extension saved or turned on (the note's journal), whatever their state now. */
     edited: ViewRow[];
 }
 
-export function groupViews(inactive: ViewRow[], reported: Map<number, string[]>, reportedRows: ViewRow[], edited: ViewRow[] = []): ViewGroups {
+export function groupViews(
+    inactive: ViewRow[],
+    reported: Map<number, string[]>,
+    reportedRows: ViewRow[],
+    edited: ViewRow[] = [],
+    alsoOffInOriginal?: ReadonlySet<number>
+): ViewGroups {
     const byId = new Map<number, ViewRow>();
     for (const view of [...inactive, ...reportedRows]) {
         byId.set(view.id, view);
@@ -49,13 +61,15 @@ export function groupViews(inactive: ViewRow[], reported: Map<number, string[]>,
         Number(a.active) - Number(b.active) || a.model.localeCompare(b.model) || a.id - b.id);
     upgradeVersions.sort();
 
-    const otherInactive = inactive.filter(view =>
+    const other = inactive.filter(view =>
         !reported.has(view.id) && (view.type !== 'qweb' || view.isReport));
+    const alsoOff = alsoOffInOriginal ? other.filter(view => alsoOffInOriginal.has(view.id)) : [];
 
     return {
         upgradeDisabled,
         upgradeVersions,
-        otherInactive,
+        otherInactive: alsoOffInOriginal ? other.filter(view => !alsoOffInOriginal.has(view.id)) : other,
+        alsoOffInOriginal: alsoOff,
         missingIds,
         edited: [...edited].sort((a, b) => a.model.localeCompare(b.model) || a.id - b.id)
     };

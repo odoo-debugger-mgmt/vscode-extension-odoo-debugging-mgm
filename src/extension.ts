@@ -29,7 +29,7 @@ import { updateTestingContext, updateActiveContext, updateServerRunningContext, 
 import { registerServerLifecycle } from './services/server';
 import type { DatabaseModel } from './models/db';
 import { SortPreferences } from './sortPreferences';
-import { ViewDoctorTreeProvider } from './views/viewDoctorView';
+import { SHOW_ALSO_OFF_KEY, ViewDoctorTreeProvider } from './views/viewDoctorView';
 import { ViewService } from './services/views/viewService';
 import { ViewWorker } from './services/views/viewWorker';
 import { ViewWorkerPool } from './services/views/viewWorkerPool';
@@ -153,8 +153,12 @@ export async function activate(context: vscode.ExtensionContext) {
             if (viewDoctorTreeView) {
                 viewDoctorTreeView.description = dbName;
             }
+        }, {
+            showAlsoOff: () => context.workspaceState.get<boolean>(SHOW_ALSO_OFF_KEY, false),
+            onComparing: comparing => void vscode.commands.executeCommand('setContext', 'odoo-debugger.viewDoctor.comparing', comparing)
         })
     };
+    void vscode.commands.executeCommand('setContext', 'odoo-debugger.viewDoctor.showAlsoOff', context.workspaceState.get<boolean>(SHOW_ALSO_OFF_KEY, false));
 
     // React to version changes fired by VersionsService.refresh(). Must be
     // registered before the migrations below, which may fire it, and outside

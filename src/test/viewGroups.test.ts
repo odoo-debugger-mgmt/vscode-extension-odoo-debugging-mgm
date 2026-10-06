@@ -46,4 +46,12 @@ suite('View Doctor groups', () => {
         assert.deepStrictEqual(groups.edited.map(view => view.id), [5, 3, 9]);
         assert.deepStrictEqual(groupViews([], new Map(), []).edited, []);
     });
+
+    test('splits off the other inactive views the original has off too', () => {
+        const groups = groupViews([row(10), row(20), row(21)], new Map([[10, ['18.0']]]), [], [], new Set([10, 21, 99]));
+        assert.deepStrictEqual(groups.otherInactive.map(view => view.id), [20]);
+        assert.deepStrictEqual(groups.alsoOffInOriginal?.map(view => view.id), [21]);
+        assert.deepStrictEqual(groups.upgradeDisabled.map(view => view.id), [10], 'the upgrade\'s own list is never filtered');
+        assert.deepStrictEqual(groupViews([row(20)], new Map(), []).alsoOffInOriginal ?? [], []);
+    });
 });

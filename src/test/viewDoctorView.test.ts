@@ -133,4 +133,33 @@ suite('Views tree', () => {
         assert.strictEqual(group.description, '1');
         assert.strictEqual(group.children[0].id, 'shop:edited:4:on');
     });
+
+    test('hides the inactive views the original also has off, and says how many', () => {
+        const view = (id: number) => ({ id, name: `v${id}`, model: 'res.partner', type: 'form', active: false, inheritId: 1, xmlid: null, rootId: 1, isReport: false, writeDate: 0 });
+        const groups = { upgradeDisabled: [], upgradeVersions: [], otherInactive: [view(20)], alsoOffInOriginal: [view(21), view(22)], missingIds: [], edited: [] };
+
+        const hidden = buildDoctorRows('shop-18', groups, { originalDb: 'shop-17' })[0] as ViewGroupItem;
+        assert.strictEqual(hidden.description, '1 · 2 also off in shop-17');
+        assert.deepStrictEqual(hidden.children.map(item => (item as ViewItem).view.id), [20]);
+
+        const shown = buildDoctorRows('shop-18', groups, { originalDb: 'shop-17', showAlsoOff: true })[0] as ViewGroupItem;
+        assert.strictEqual(shown.description, '3 · 2 also off in shop-17');
+        assert.deepStrictEqual(shown.children.map(item => [(item as ViewItem).view.id, item.description]), [
+            [20, 'res.partner · #20'],
+            [21, 'res.partner · #21 · off in shop-17 too'],
+            [22, 'res.partner · #22 · off in shop-17 too']
+        ]);
+
+        const allHidden = buildDoctorRows('shop-18', { ...groups, otherInactive: [] }, { originalDb: 'shop-17' })[0] as ViewGroupItem;
+        assert.strictEqual(allHidden.description, '0 · 2 also off in shop-17');
+        assert.deepStrictEqual(allHidden.children.map(item => item.label), ['All 2 are off in shop-17 too.']);
+    });
+
+    test('the filter\'s toggles show only while comparing with an original', () => {
+        const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8'));
+        const title = manifest.contributes.menus['view/title'] as Array<{ command: string; when?: string }>;
+        const when = (command: string) => title.find(entry => entry.command === command)?.when ?? '';
+        assert.match(when('viewDoctor.showAlsoOff'), /odoo-debugger\.viewDoctor\.comparing && !odoo-debugger\.viewDoctor\.showAlsoOff/);
+        assert.match(when('viewDoctor.hideAlsoOff'), /odoo-debugger\.viewDoctor\.comparing && odoo-debugger\.viewDoctor\.showAlsoOff/);
+    });
 });

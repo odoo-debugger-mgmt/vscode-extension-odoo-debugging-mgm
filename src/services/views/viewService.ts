@@ -3,7 +3,7 @@
  * arches and writes through the database's Odoo shell.
  */
 import type { ViewWorkerPool } from './viewWorkerPool';
-import { getReportMessages, getViewRows, getWriteDates, listInactiveViews, type ViewRow } from './viewQueries';
+import { getReportMessages, getViewRows, getWriteDates, inactiveViewIds, listInactiveViews, type ViewRow } from './viewQueries';
 import { mergeReports, parseDisabledViews } from './disabledReport';
 import type { ViewNoteService } from './viewNoteService';
 import { logger } from '../logger';
@@ -37,6 +37,26 @@ export interface ViewBackend {
     writeDate(dbName: string, viewId: number): Promise<number | undefined>;
     getArch(dbName: string, viewId: number): Promise<string>;
     save(dbName: string, viewId: number, arch: string): Promise<SaveResult>;
+}
+
+/**
+ * Which views the original database has off; undefined when there is no
+ * original to ask, or it cannot be read - the tree then shows everything.
+ */
+export async function originalInactiveIds(
+    read: (dbName: string) => Promise<number[]>,
+    dbName: string,
+    originalDb?: string
+): Promise<Set<number> | undefined> {
+    if (!originalDb || originalDb === dbName) {
+        return undefined;
+    }
+    try {
+        return new Set(await read(originalDb));
+    } catch (error) {
+        logger.warn(`Could not read which views are off in ${originalDb}; showing every inactive view:`, error);
+        return undefined;
+    }
 }
 
 export class ViewService implements ViewBackend {
@@ -87,9 +107,15 @@ export class ViewService implements ViewBackend {
         return getViewRows(dbName, ids);
     }
 
-    /** The tree's content: psql only, so it shows without waiting for a shell. Keeps the note up to date on the way. */
-    async doctorGroups(dbName: string): Promise<ViewGroups> {
-        const [inactive, messages] = await Promise.all([listInactiveViews(dbName), getReportMessages(dbName)]);
+    /**
+     * The tree's content: psql only, so it shows without waiting for a shell.
+     * Keeps the note up to date on the way. With the upgrade's original
+     * database, the other inactive views it has off too are set apart.
+     */
+    async doctorGroups(dbName: string, originalDb?: string): Promise<ViewGroups> {
+        const [inactive, messages, alsoOff] = await Promise.all([
+            listInactiveViews(dbName), getReportMessages(dbName), originalInactiveIds(inactiveViewIds, dbName, originalDb)
+        ]);
         const reported = mergeReports(messages.map(message => parseDisabledViews(message.body)));
         const inactiveIds = new Set(inactive.map(view => view.id));
         const reEnabled = await getViewRows(dbName, [...reported.keys()].filter(id => !inactiveIds.has(id)));
@@ -103,6 +129,6 @@ export class ViewService implements ViewBackend {
                 logger.warn(`Could not update the view note of ${dbName}:`, error);
             }
         }
-        return groupViews(inactive, reported, reEnabled, edited);
+        return groupViews(inactive, reported, reEnabled, edited, alsoOff);
     }
 }

@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { ViewService } from '../services/views/viewService';
+import { ViewService, originalInactiveIds } from '../services/views/viewService';
 import type { ViewWorkerPool } from '../services/views/viewWorkerPool';
 
 function fakePool(replies: Record<string, unknown>, calls: Array<[string, string, unknown]>): ViewWorkerPool {
@@ -40,5 +40,17 @@ suite('View service XPath check', () => {
         const report = await service.checkXpaths('shop-18', 12, '<xpath expr="//a"/>');
         assert.strictEqual(report.summary.dead, 1);
         assert.deepStrictEqual(calls, [['shop-18', 'check_xpaths', { view_id: 12, arch: '<xpath expr="//a"/>' }]]);
+    });
+});
+
+suite('Views also off in the original', () => {
+    test('read from the original only, and never failing the tree', async () => {
+        const reads: string[] = [];
+        const read = async (dbName: string) => { reads.push(dbName); return [3, 4]; };
+        assert.deepStrictEqual(await originalInactiveIds(read, 'shop-18', 'shop-17'), new Set([3, 4]));
+        assert.strictEqual(await originalInactiveIds(read, 'shop-18'), undefined);
+        assert.strictEqual(await originalInactiveIds(read, 'shop-18', 'shop-18'), undefined);
+        assert.deepStrictEqual(reads, ['shop-17']);
+        assert.strictEqual(await originalInactiveIds(async () => { throw new Error('database "shop-17" does not exist'); }, 'shop-18', 'shop-17'), undefined);
     });
 });

@@ -11,6 +11,22 @@ import type { ViewService } from '../services/views/viewService';
 import type { ViewGroups } from '../services/views/viewGroups';
 import type { ViewRow } from '../services/views/viewQueries';
 import { BaseTreeProvider } from './baseTreeProvider';
+import { upgradePair, type PairProject } from './viewPairing';
+
+/** workspaceState: whether "Other inactive views" also lists those the original has off too. */
+export const SHOW_ALSO_OFF_KEY = 'viewDoctor.showAlsoOff';
+
+export interface DoctorRowOptions {
+    /** The upgrade's original database, when the tree shows the upgraded one. */
+    originalDb?: string;
+    showAlsoOff?: boolean;
+}
+
+export interface ViewDoctorOptions {
+    showAlsoOff?(): boolean;
+    /** Told on every load whether the tree compares with an original database. */
+    onComparing?(comparing: boolean): void;
+}
 
 export interface ViewDoctorTarget {
     dbName: string;
@@ -32,11 +48,11 @@ export function resolveViewDoctorTarget(
 }
 
 export class ViewItem extends vscode.TreeItem {
-    constructor(readonly dbName: string, readonly view: ViewRow, section: 'upgrade' | 'edited' | 'other', versions: string[] = []) {
+    constructor(readonly dbName: string, readonly view: ViewRow, section: 'upgrade' | 'edited' | 'other', versions: string[] = [], alsoOffIn?: string) {
         super(view.name, vscode.TreeItemCollapsibleState.None);
         // Keyed by state too: a row that changes state is a different row.
         this.id = `${dbName}:${section}:${view.id}:${view.active ? 'on' : 'off'}`;
-        this.description = `${view.model || view.type} · ${view.xmlid ?? `#${view.id}`}`;
+        this.description = `${view.model || view.type} · ${view.xmlid ?? `#${view.id}`}${alsoOffIn ? ` · off in ${alsoOffIn} too` : ''}`;
         this.iconPath = new vscode.ThemeIcon(view.active ? 'pass' : 'circle-slash');
         this.contextValue = [
             'odooView',
@@ -76,7 +92,7 @@ function messageItem(text: string, icon: string): vscode.TreeItem {
     return item;
 }
 
-export function buildDoctorRows(dbName: string, groups: ViewGroups): vscode.TreeItem[] {
+export function buildDoctorRows(dbName: string, groups: ViewGroups, options: DoctorRowOptions = {}): vscode.TreeItem[] {
     const rows: vscode.TreeItem[] = [];
 
     if (groups.upgradeDisabled.length > 0 || groups.missingIds.length > 0) {
@@ -101,13 +117,24 @@ export function buildDoctorRows(dbName: string, groups: ViewGroups): vscode.Tree
         ));
     }
 
-    if (groups.otherInactive.length > 0) {
+    const alsoOff = groups.alsoOffInOriginal ?? [];
+    if (groups.otherInactive.length > 0 || alsoOff.length > 0) {
+        const original = options.originalDb ?? 'the original';
+        const shown = options.showAlsoOff
+            ? [...groups.otherInactive, ...alsoOff].sort((a, b) => a.model.localeCompare(b.model) || a.id - b.id)
+            : groups.otherInactive;
+        const alsoOffIds = new Set(alsoOff.map(view => view.id));
+        const children: vscode.TreeItem[] = shown.map(view =>
+            new ViewItem(dbName, view, 'other', [], alsoOffIds.has(view.id) ? original : undefined));
+        if (shown.length === 0) {
+            children.push(messageItem(`All ${alsoOff.length} are off in ${original} too.`, 'eye-closed'));
+        }
         rows.push(new ViewGroupItem(
             'Other inactive views',
             `${dbName}:group:other`,
-            groups.otherInactive.map(view => new ViewItem(dbName, view, 'other')),
+            children,
             false,
-            String(groups.otherInactive.length)
+            alsoOff.length > 0 ? `${shown.length} · ${alsoOff.length} also off in ${original}` : String(shown.length)
         ));
     }
 
@@ -122,7 +149,8 @@ export class ViewDoctorTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
     constructor(
         private readonly service: Pick<ViewService, 'doctorGroups'>,
-        private readonly describe?: (text: string | undefined) => void
+        private readonly describe?: (text: string | undefined) => void,
+        private readonly options: ViewDoctorOptions = {}
     ) {
         super();
     }
@@ -153,13 +181,21 @@ export class ViewDoctorTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
     private async load(): Promise<vscode.TreeItem[]> {
         const result = await SettingsStore.peekSelectedProject().catch(() => null);
-        const target = resolveViewDoctorTarget(result?.project as Parameters<typeof resolveViewDoctorTarget>[0]);
+        const project = result?.project as PairProject | undefined;
+        const target = resolveViewDoctorTarget(project as Parameters<typeof resolveViewDoctorTarget>[0]);
         this.describe?.(target?.dbName);
+        const originalDb = target?.side === 'to' ? upgradePair(project)?.original.dbName : undefined;
+        const comparing = !!target && !!originalDb && originalDb !== target.dbName;
+        this.options.onComparing?.(comparing);
         if (!target) {
             return [];
         }
         try {
-            return buildDoctorRows(target.dbName, await this.service.doctorGroups(target.dbName));
+            const groups = await this.service.doctorGroups(target.dbName, comparing ? originalDb : undefined);
+            return buildDoctorRows(target.dbName, groups, {
+                originalDb: comparing ? originalDb : undefined,
+                showAlsoOff: this.options.showAlsoOff?.() ?? false
+            });
         } catch (error) {
             logger.warn(`Could not read the views of ${target.dbName}:`, error);
             return [messageItem(`Could not read the views of ${target.dbName}: ${errorMessage(error)}`, 'error')];

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { CommandDeps } from './index';
 import { registerCommand } from './registerCommand';
-import { ViewItem, resolveViewDoctorTarget } from '../views/viewDoctorView';
+import { SHOW_ALSO_OFF_KEY, ViewItem, resolveViewDoctorTarget } from '../views/viewDoctorView';
 import { VIEW_SCHEME, clearViewDiagnostics, parseViewUri, viewUri } from '../views/viewFileSystem';
 import { showBriefStatus, showError, showInfo, showModalWarning, showWarning } from '../services/notifications';
 import { SettingsStore } from '../settingsStore';
@@ -50,6 +50,14 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
     };
 
     context.subscriptions.push(registerCommand('viewDoctor.refresh', () => providers.views.refresh()));
+
+    const showAlsoOff = async (show: boolean): Promise<void> => {
+        await context.workspaceState.update(SHOW_ALSO_OFF_KEY, show);
+        await vscode.commands.executeCommand('setContext', 'odoo-debugger.viewDoctor.showAlsoOff', show);
+        providers.views.refresh();
+    };
+    context.subscriptions.push(registerCommand('viewDoctor.showAlsoOff', () => showAlsoOff(true)));
+    context.subscriptions.push(registerCommand('viewDoctor.hideAlsoOff', () => showAlsoOff(false)));
 
     context.subscriptions.push(registerCommand('viewDoctor.openArch', async (arg: unknown) => {
         const item = viewItem(arg);
