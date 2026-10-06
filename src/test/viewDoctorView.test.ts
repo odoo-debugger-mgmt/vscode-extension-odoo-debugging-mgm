@@ -68,9 +68,29 @@ suite('Views tree', () => {
             .filter(entry => new RegExp(/viewItem =~ \/(.*)\/$/.exec(entry.when ?? '')![1]).test(contextValue))
             .map(entry => entry.command.replace('viewDoctor.', ''));
         assert.deepStrictEqual(offered('odooView.inactive.hasParent'), ['openArch', 'openParent', 'compare', 'render', 'activate', 'copyXmlid']);
-        assert.deepStrictEqual(offered('odooView.active.hasParent.noXmlid'), ['openArch', 'openParent', 'compare', 'render', 'addToScript', 'deactivate']);
+        assert.deepStrictEqual(offered('odooView.inactive.hasParent.deep'), ['openArch', 'openParent', 'openRoot', 'compare', 'render', 'activate', 'copyXmlid']);
+        assert.deepStrictEqual(offered('odooView.active.hasParent.deep.noXmlid'), ['openArch', 'openParent', 'openRoot', 'compare', 'render', 'addToScript', 'deactivate']);
         assert.deepStrictEqual(offered('odooView.inactive.root.noXmlid'), ['openArch', 'compare', 'render', 'activate']);
         assert.deepStrictEqual(offered('odooView.active.root'), ['openArch', 'compare', 'render', 'copyXmlid', 'addToScript', 'deactivate']);
+    });
+
+    test('a row whose root is not its parent says so, for Open Root', () => {
+        const base = { id: 9, name: 'Deep', model: 'res.partner', type: 'form', active: false, xmlid: 'acme.deep', isReport: false, writeDate: 0 };
+        assert.strictEqual(new ViewItem('shop', { ...base, inheritId: 5, rootId: 3 }, 'other').contextValue, 'odooView.inactive.hasParent.deep');
+        assert.strictEqual(new ViewItem('shop', { ...base, inheritId: 3, rootId: 3 }, 'other').contextValue, 'odooView.inactive.hasParent');
+        assert.strictEqual(new ViewItem('shop', { ...base, inheritId: 5, rootId: 3, xmlid: null }, 'other').contextValue, 'odooView.inactive.hasParent.deep.noXmlid');
+    });
+
+    test('an arch editor\'s title offers the row actions, only for odoo-view files', () => {
+        const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8'));
+        const title = (manifest.contributes.menus['editor/title'] as Array<{ command: string; when?: string; group?: string }>)
+            .filter(entry => entry.command.startsWith('viewDoctor.'));
+        assert.ok(title.every(entry => entry.when === 'resourceScheme == odoo-view'), JSON.stringify(title));
+        assert.deepStrictEqual(title.filter(entry => entry.group?.startsWith('navigation')).map(entry => entry.command),
+            ['viewDoctor.compare', 'viewDoctor.render']);
+        assert.deepStrictEqual(title.filter(entry => !entry.group?.startsWith('navigation')).map(entry => entry.command),
+            ['viewDoctor.openParent', 'viewDoctor.openRoot', 'viewDoctor.addToScript']);
+        assert.ok(!title.some(entry => /activate|deactivate|copyXmlid|openArch/.test(entry.command)), 'tree-only actions leaked into the editor title');
     });
 
     test('every view row has its open and compare actions inline, and no destructive one', () => {

@@ -11,6 +11,7 @@ import { qwebMessage } from '../services/views/renderPlan';
 import type { RenderTarget } from '../services/views/renderSession';
 import { createUpgradeScript } from '../views/upgradeScriptFlow';
 import { readableArchError } from '../services/views/archErrors';
+import { viewTarget, type ViewTarget } from '../views/viewTarget';
 
 function viewItem(arg: unknown): ViewItem | undefined {
     return arg instanceof ViewItem ? arg : undefined;
@@ -23,6 +24,16 @@ async function openArch(dbName: string, viewId: number, xmlid: string | null): P
 export function registerViewDoctorCommands(deps: CommandDeps): void {
     const { context, providers, viewService, viewNotes, viewDiagnostics, viewRender } = deps;
 
+    /** The view a command acts on (a row, an arch editor, or the active editor); the error is shown when it is gone. */
+    const target = async (arg: unknown): Promise<ViewTarget | undefined> => {
+        try {
+            return await viewTarget(arg, (dbName, ids) => viewService.rows(dbName, ids));
+        } catch (error) {
+            void showError(errorMessage(error));
+            return undefined;
+        }
+    };
+
     context.subscriptions.push(registerCommand('viewDoctor.refresh', () => providers.views.refresh()));
 
     context.subscriptions.push(registerCommand('viewDoctor.openArch', async (arg: unknown) => {
@@ -33,16 +44,33 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
     }));
 
     context.subscriptions.push(registerCommand('viewDoctor.openParent', async (arg: unknown) => {
-        const item = viewItem(arg);
-        if (!item?.view.inheritId) {
+        const item = await target(arg);
+        if (!item) {
+            return;
+        }
+        if (!item.view.inheritId) {
+            void showInfo(`${item.view.name} inherits no view.`);
             return;
         }
         const [parent] = await viewService.rows(item.dbName, [item.view.inheritId]);
         await openArch(item.dbName, item.view.inheritId, parent?.xmlid ?? null);
     }));
 
+    context.subscriptions.push(registerCommand('viewDoctor.openRoot', async (arg: unknown) => {
+        const item = await target(arg);
+        if (!item) {
+            return;
+        }
+        if (item.view.rootId === item.view.id) {
+            void showInfo(`${item.view.name} is a root view.`);
+            return;
+        }
+        const [root] = await viewService.rows(item.dbName, [item.view.rootId]);
+        await openArch(item.dbName, item.view.rootId, root?.xmlid ?? null);
+    }));
+
     context.subscriptions.push(registerCommand('viewDoctor.compare', async (arg: unknown) => {
-        const item = viewItem(arg);
+        const item = await target(arg);
         if (!item) {
             return;
         }
@@ -68,7 +96,7 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
     }));
 
     context.subscriptions.push(registerCommand('viewDoctor.render', async (arg: unknown) => {
-        const item = viewItem(arg);
+        const item = await target(arg);
         if (!item) {
             return;
         }
@@ -181,7 +209,7 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
     }));
 
     context.subscriptions.push(registerCommand('viewDoctor.addToScript', async (arg: unknown) => {
-        const item = viewItem(arg);
+        const item = await target(arg);
         if (!item) {
             return;
         }

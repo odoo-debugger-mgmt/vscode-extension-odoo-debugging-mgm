@@ -108,6 +108,7 @@
     "commands": [
       { "command": "viewDoctor.openArch", "title": "Open Arch", "category": "Odoo DevTools", "icon": "$(go-to-file)" },
       { "command": "viewDoctor.openParent", "title": "Open Parent View", "category": "Odoo DevTools" },
+      { "command": "viewDoctor.openRoot", "title": "Open Root View", "category": "Odoo DevTools" },
       { "command": "viewDoctor.compare", "title": "Compare with Original", "category": "Odoo DevTools", "icon": "$(diff)" },
       { "command": "viewDoctor.render", "title": "Render", "category": "Odoo DevTools", "icon": "$(preview)" },
       { "command": "viewDoctor.activate", "title": "Turn On", "category": "Odoo DevTools" },
@@ -826,6 +827,13 @@
       }
     ],
     "menus": {
+      "editor/title": [
+        { "command": "viewDoctor.compare", "when": "resourceScheme == odoo-view", "group": "navigation@1" },
+        { "command": "viewDoctor.render", "when": "resourceScheme == odoo-view", "group": "navigation@2" },
+        { "command": "viewDoctor.openParent", "when": "resourceScheme == odoo-view", "group": "1_view@1" },
+        { "command": "viewDoctor.openRoot", "when": "resourceScheme == odoo-view", "group": "1_view@2" },
+        { "command": "viewDoctor.addToScript", "when": "resourceScheme == odoo-view", "group": "2_script@1" }
+      ],
       "editor/context": [
         {
           "command": "odoo.runTestsForCurrentFile",
@@ -1116,10 +1124,11 @@
         { "command": "viewDoctor.render", "when": "view == viewDoctor && viewItem =~ /^odooView\\./", "group": "inline@3" },
         { "command": "viewDoctor.openArch", "when": "view == viewDoctor && viewItem =~ /^odooView\\./", "group": "1_open@1" },
         { "command": "viewDoctor.openParent", "when": "view == viewDoctor && viewItem =~ /\\.hasParent(\\.|$)/", "group": "1_open@2" },
-        { "command": "viewDoctor.compare", "when": "view == viewDoctor && viewItem =~ /^odooView\\./", "group": "1_open@3" },
-        { "command": "viewDoctor.render", "when": "view == viewDoctor && viewItem =~ /^odooView\\./", "group": "1_open@4" },
+        { "command": "viewDoctor.openRoot", "when": "view == viewDoctor && viewItem =~ /\\.deep(\\.|$)/", "group": "1_open@3" },
+        { "command": "viewDoctor.compare", "when": "view == viewDoctor && viewItem =~ /^odooView\\./", "group": "1_open@5" },
+        { "command": "viewDoctor.render", "when": "view == viewDoctor && viewItem =~ /^odooView\\./", "group": "1_open@6" },
         { "command": "viewDoctor.activate", "when": "view == viewDoctor && viewItem =~ /^odooView\\.inactive/", "group": "2_state@1" },
-        { "command": "viewDoctor.copyXmlid", "when": "view == viewDoctor && viewItem =~ /^odooView\\.\\w+\\.\\w+$/", "group": "3_copy@1" },
+        { "command": "viewDoctor.copyXmlid", "when": "view == viewDoctor && viewItem =~ /^odooView\\.\\w+\\.\\w+(\\.deep)?$/", "group": "3_copy@1" },
         { "command": "viewDoctor.addToScript", "when": "view == viewDoctor && viewItem =~ /^odooView\\.active/", "group": "4_script@1" },
         { "command": "viewDoctor.deactivate", "when": "view == viewDoctor && viewItem =~ /^odooView\\.active/", "group": "9_danger@1" },
         {
@@ -1380,13 +1389,14 @@
       ],
       "commandPalette": [
         { "command": "viewDoctor.openArch", "when": "false" },
-        { "command": "viewDoctor.openParent", "when": "false" },
-        { "command": "viewDoctor.compare", "when": "false" },
-        { "command": "viewDoctor.render", "when": "false" },
+        { "command": "viewDoctor.openParent", "when": "resourceScheme == odoo-view" },
+        { "command": "viewDoctor.openRoot", "when": "resourceScheme == odoo-view" },
+        { "command": "viewDoctor.compare", "when": "resourceScheme == odoo-view" },
+        { "command": "viewDoctor.render", "when": "resourceScheme == odoo-view" },
         { "command": "viewDoctor.activate", "when": "false" },
         { "command": "viewDoctor.deactivate", "when": "false" },
         { "command": "viewDoctor.copyXmlid", "when": "false" },
-        { "command": "viewDoctor.addToScript", "when": "false" },
+        { "command": "viewDoctor.addToScript", "when": "resourceScheme == odoo-view" },
         {
           "command": "upgradeSelector.toggleSourceModules",
           "when": "odoo-debugger.upgrade_enabled"

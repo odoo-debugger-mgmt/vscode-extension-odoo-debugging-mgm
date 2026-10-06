@@ -39,7 +39,12 @@ export class ViewItem extends vscode.TreeItem {
         this.description = `${view.model || view.type} · ${view.xmlid ?? `#${view.id}`}`;
         this.iconPath = new vscode.ThemeIcon(view.active ? 'pass' : 'circle-slash');
         this.contextValue = [
-            'odooView', view.active ? 'active' : 'inactive', view.inheritId ? 'hasParent' : 'root', ...(view.xmlid ? [] : ['noXmlid'])
+            'odooView',
+            view.active ? 'active' : 'inactive',
+            view.inheritId ? 'hasParent' : 'root',
+            // Its root is further up than its parent: Open Root has somewhere else to go.
+            ...(view.inheritId && view.rootId !== view.inheritId ? ['deep'] : []),
+            ...(view.xmlid ? [] : ['noXmlid'])
         ].join('.');
         const tooltip = new vscode.MarkdownString(undefined, true);
         tooltip.appendMarkdown(`**${view.name}** (${view.type}, id ${view.id})\n\n`);
