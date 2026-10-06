@@ -31,6 +31,18 @@ export interface RenderAction {
     series: string;
 }
 
+/** The report a QWeb template renders, as its database's shell found it. */
+export interface ReportTarget {
+    /** What /report/html/<report_name>/<id> takes. */
+    reportName: string;
+    /** The report's name, for the frame header. */
+    name: string;
+    model: string;
+    /** Narrows the records to render it with (account.move: no plain journal entries). */
+    domain: unknown[];
+    series: string;
+}
+
 /** What the arch file system needs; ViewService is the real one. */
 export interface ViewBackend {
     /** write_date in epoch ms, or undefined when the view is gone. */
@@ -99,8 +111,15 @@ export class ViewService implements ViewBackend {
     }
 
     /** The newest ids of a model the render user can open, newest first. */
-    async recentIds(dbName: string, model: string, limit = 200): Promise<number[]> {
-        return (await this.pool.run<{ ids: number[] }>(dbName, 'recent_ids', { model, limit })).ids;
+    async recentIds(dbName: string, model: string, limit = 200, domain: unknown[] = []): Promise<number[]> {
+        return (await this.pool.run<{ ids: number[] }>(dbName, 'recent_ids', { model, limit, domain })).ids;
+    }
+
+    /** The report a QWeb view's template renders; null when no report uses it. */
+    async reportTarget(dbName: string, viewId: number): Promise<ReportTarget | null> {
+        const raw = await this.pool.run<{ report_name: string; name: string; model: string; domain?: unknown[]; series: string } | null>(
+            dbName, 'report_target', { view_id: viewId });
+        return raw ? { reportName: raw.report_name, name: raw.name, model: raw.model, domain: raw.domain ?? [], series: raw.series } : null;
     }
 
     rows(dbName: string, ids: number[]): Promise<ViewRow[]> {

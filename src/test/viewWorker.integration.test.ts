@@ -524,6 +524,57 @@ function jsonRpc(port: number, route: string, sid: string, extraCookie = ''): Pr
         assert.ok(tree.every(view => view.id === formId || view.inheritId !== null));
     });
 
+    test('report_target finds a report through its template and its patches; a form has none', async () => {
+        const [reportName, model, templateId] = (await runSql(copy, `
+            SELECT a.report_name || '|' || a.model || '|' || d.res_id FROM ir_act_report_xml a
+            JOIN ir_model_data d ON d.model = 'ir.ui.view' AND d.module || '.' || d.name = a.report_name
+            ORDER BY a.id LIMIT 1;`)).split('|');
+        assert.ok(reportName, 'base installs no report with a template');
+        const report = await service.reportTarget(copy, Number(templateId));
+        assert.deepStrictEqual([report?.reportName, report?.model, report?.domain], [reportName, model, []]);
+        assert.match(report?.series ?? '', /\d+\.\d+/);
+
+        const arch = (await archIsJsonb(copy)) ? `jsonb_build_object('en_US', '<data/>')` : `'<data/>'`;
+        // A QWeb view needs a key (qweb_required_key); the CTE keeps psql's "INSERT 0 1" out of the output.
+        const patchId = Number(await runSql(copy, `WITH patch AS (INSERT INTO ir_ui_view (name, key, type, mode, priority, active, inherit_id, arch_db)
+            VALUES ('odt.report.patch', 'odt.report_patch', 'qweb', 'extension', 16, false, ${Number(templateId)}, ${arch}) RETURNING id)
+            SELECT id FROM patch;`));
+        assert.strictEqual((await service.reportTarget(copy, patchId))?.reportName, reportName);
+
+        const formId = Number(await runSql(copy, "SELECT res_id FROM ir_model_data WHERE module = 'base' AND name = 'view_partner_form';"));
+        assert.strictEqual(await service.reportTarget(copy, formId), null);
+        assert.deepStrictEqual(await service.recentIds(copy, 'res.partner', 5, [['id', '<', 0]]), [], 'the domain narrows the records');
+    });
+
+    test('a report renders as HTML through the frame proxy, as admin', async () => {
+        const [reportName, model, templateId] = (await runSql(copy, `
+            SELECT a.report_name || '|' || a.model || '|' || d.res_id FROM ir_act_report_xml a
+            JOIN ir_model_data d ON d.model = 'ir.ui.view' AND d.module || '.' || d.name = a.report_name
+            ORDER BY a.id LIMIT 1;`)).split('|');
+        const report = await service.reportTarget(copy, Number(templateId));
+        const [record] = await service.recentIds(copy, model, 1, report!.domain);
+        assert.ok(record, `no ${model} record to render ${reportName} with`);
+        const server = await startOdooServer(copy);
+        const proxy = new OdooFrameProxy({
+            targetPort: server.port,
+            mintSession: async () => {
+                const sid = await service.newSession(copy);
+                mintedSids.push(sid);
+                return sid;
+            }
+        });
+        try {
+            await proxy.listen();
+            const page = await frameGet(proxy.port, proxy.gatePath(`/report/html/${encodeURIComponent(reportName)}/${record}?debug=1`), []);
+            assert.strictEqual(page.status, 200, `ended on ${page.path}`);
+            assert.ok(!page.path.startsWith('/web/login'), 'Odoo did not accept the minted session');
+            assert.strictEqual(page.headers['x-frame-options'], undefined);
+        } finally {
+            await proxy.close();
+            await server.stop();
+        }
+    });
+
     test('dropping the database ends another window\'s shell on it too', async () => {
         // Another window's pool: no release hook of this one knows about it.
         const otherWindow = new ViewWorkerPool(async dbName => newWorker(dbName));

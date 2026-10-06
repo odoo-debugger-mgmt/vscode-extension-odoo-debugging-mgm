@@ -7,7 +7,7 @@ import { showBriefStatus, showError, showInfo, showModalWarning, showWarning } f
 import { SettingsStore } from '../settingsStore';
 import { compareTargets, diffArguments, findCounterpart, upgradePair, type PairProject } from '../views/viewPairing';
 import { errorMessage } from '../services/logger';
-import { qwebMessage } from '../services/views/renderPlan';
+import { QWEB_FRAGMENT_MESSAGE } from '../services/views/renderPlan';
 import type { RenderTarget } from '../services/views/renderSession';
 import { createUpgradeScript } from '../views/upgradeScriptFlow';
 import { readableArchError } from '../services/views/archErrors';
@@ -123,10 +123,12 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
         if (!item) {
             return;
         }
-        if (item.view.type === 'qweb') {
-            void showInfo(qwebMessage(item.view.isReport));
+        // A template no report uses needs the page around it: nothing to render here.
+        if (item.view.type === 'qweb' && !item.view.isReport) {
+            void showInfo(QWEB_FRAGMENT_MESSAGE);
             return;
         }
+        const kind: RenderTarget['kind'] = item.view.type === 'qweb' ? 'report' : 'view';
         try {
             const project = (await SettingsStore.peekSelectedProject().catch(() => null))?.project as PairProject | undefined;
             const pair = upgradePair(project);
@@ -137,9 +139,9 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
                 }
                 const targets: RenderTarget[] = [];
                 if (counterpart !== 'none') {
-                    targets.push({ dbName: pair.original.dbName, versionId: pair.original.versionId, viewId: counterpart.id, title: `Original · ${pair.original.dbName}` });
+                    targets.push({ dbName: pair.original.dbName, versionId: pair.original.versionId, viewId: counterpart.id, title: `Original · ${pair.original.dbName}`, kind });
                 }
-                targets.push({ dbName: item.dbName, versionId: pair.upgraded.versionId, viewId: item.view.id, title: `Upgraded · ${item.dbName}` });
+                targets.push({ dbName: item.dbName, versionId: pair.upgraded.versionId, viewId: item.view.id, title: `Upgraded · ${item.dbName}`, kind });
                 await viewRender.show({
                     title: item.view.name,
                     targets,
@@ -152,7 +154,7 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
             const db = project?.dbs?.find(entry => entry.id === item.dbName);
             await viewRender.show({
                 title: item.view.name,
-                targets: [{ dbName: item.dbName, versionId: db?.versionId, viewId: item.view.id, title: item.dbName }],
+                targets: [{ dbName: item.dbName, versionId: db?.versionId, viewId: item.view.id, title: item.dbName, kind }],
                 startCommand: 'odoo.startServer',
                 startLabel: 'Start Server'
             });

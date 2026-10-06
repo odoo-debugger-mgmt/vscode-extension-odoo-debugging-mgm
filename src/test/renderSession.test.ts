@@ -1,15 +1,21 @@
 import * as assert from 'assert';
 import { NO_COMMON_RECORD } from '../services/views/renderPlan';
 import { RenderSession, type FrameHost, type RenderBackend, type RenderTarget } from '../services/views/renderSession';
-import type { RenderAction } from '../services/views/viewService';
+import type { RenderAction, ReportTarget } from '../services/views/viewService';
 
 const original: RenderTarget = { dbName: 'shop-17', versionId: 'v17', viewId: 40, title: 'Original · shop-17' };
 const upgraded: RenderTarget = { dbName: 'shop-18', versionId: 'v18', viewId: 40, title: 'Upgraded · shop-18' };
 
-function backend(ids: Record<string, number[]>, actions: Record<string, Partial<RenderAction> | Error> = {}): RenderBackend & { recentCalls: string[] } {
+function backend(
+    ids: Record<string, number[]>,
+    actions: Record<string, Partial<RenderAction> | Error> = {},
+    reports: Record<string, ReportTarget | null> = {}
+): RenderBackend & { recentCalls: string[]; domains: unknown[][] } {
     const recentCalls: string[] = [];
+    const domains: unknown[][] = [];
     return {
         recentCalls,
+        domains,
         newSession: async dbName => `sid-${dbName}`,
         makeAction: async dbName => {
             const action = actions[dbName];
@@ -18,8 +24,10 @@ function backend(ids: Record<string, number[]>, actions: Record<string, Partial<
             }
             return { actionId: dbName === 'shop-17' ? 11 : 21, model: 'res.partner', viewType: 'form', rootId: 7, series: dbName === 'shop-17' ? '17.0' : '18.0', ...action };
         },
-        recentIds: async dbName => {
+        reportTarget: async dbName => dbName in reports ? reports[dbName] : null,
+        recentIds: async (dbName, _model, _limit, domain = []) => {
             recentCalls.push(dbName);
+            domains.push(domain);
             return ids[dbName] ?? [];
         }
     };
@@ -116,5 +124,35 @@ suite('Render session', () => {
         assert.strictEqual(state.sides[0].url, undefined);
         assert.strictEqual(nextOf(state.sides[1].url), '/odoo/action-21/8?debug=1');
         assert.strictEqual(state.notice, undefined);
+    });
+
+    const invoice = (series: string): ReportTarget => ({ reportName: 'account.report_invoice', name: 'Invoices', model: 'account.move', domain: [['move_type', '!=', 'entry']], series });
+    const reportOf = (target: RenderTarget): RenderTarget => ({ ...target, kind: 'report' });
+
+    test('a report shows the same invoice on both sides, as HTML, and steps without a new record', async () => {
+        const fake = backend({ 'shop-17': [9, 7, 5], 'shop-18': [8, 7, 5] }, {}, { 'shop-17': invoice('17.0'), 'shop-18': invoice('18.0') });
+        const session = await RenderSession.prepare([reportOf(original), reportOf(upgraded)], fake, host());
+        const state = await session.state();
+        assert.deepStrictEqual(state.sides.map(side => nextOf(side.url)), ['/report/html/account.report_invoice/7?debug=1', '/report/html/account.report_invoice/7?debug=1']);
+        assert.deepStrictEqual(state.record, { label: 'Record 7', canPrevious: false, canNext: true, canNew: false });
+        assert.strictEqual(state.sides[0].detail, 'Odoo 17.0 · Invoices · record 7');
+        assert.deepStrictEqual(fake.domains, [[['move_type', '!=', 'entry']], [['move_type', '!=', 'entry']]]);
+        assert.strictEqual(session.newRecord(), false);
+    });
+
+    test('a report with no shared record says so in place of the frames', async () => {
+        const fake = backend({ 'shop-17': [9], 'shop-18': [8] }, {}, { 'shop-17': invoice('17.0'), 'shop-18': invoice('18.0') });
+        const state = await (await RenderSession.prepare([reportOf(original), reportOf(upgraded)], fake, host())).state();
+        assert.ok(state.sides.every(side => !side.url && side.message === 'No account.move record exists in both databases to render this report with.'), JSON.stringify(state.sides));
+        assert.strictEqual(state.record, undefined);
+        const single = await (await RenderSession.prepare([reportOf(upgraded)], backend({}, {}, { 'shop-18': invoice('18.0') }), host())).state();
+        assert.strictEqual(single.sides[0].message, 'No account.move record to render this report with.');
+    });
+
+    test('a side whose database has no such report says so; the other still renders', async () => {
+        const fake = backend({ 'shop-18': [8] }, {}, { 'shop-17': null, 'shop-18': invoice('18.0') });
+        const state = await (await RenderSession.prepare([reportOf(original), reportOf(upgraded)], fake, host())).state();
+        assert.strictEqual(state.sides[0].message, 'shop-17 has no report for this template.');
+        assert.strictEqual(nextOf(state.sides[1].url), '/report/html/account.report_invoice/8?debug=1');
     });
 });

@@ -43,9 +43,10 @@ export function commonIds(a: number[], b: number[]): number[] {
     return [...new Set(a)].filter(id => other.has(id)).sort((x, y) => y - x);
 }
 
-/** What to say instead of rendering a QWeb view. */
-export function qwebMessage(isReport: boolean): string {
-    return isReport
-        ? 'Reports need a record to render; open the report from Odoo.'
-        : 'QWeb templates render inside the page that uses them; open it from Odoo.';
+/** What a QWeb template that no report renders says instead: it needs the page around it. */
+export const QWEB_FRAGMENT_MESSAGE = 'QWeb templates render inside the page that uses them; open it from Odoo.';
+
+/** A report rendered as HTML on one record, as Odoo's Print menu does. */
+export function reportPath(reportName: string, resId: number, debug = true): string {
+    return `/report/html/${encodeURIComponent(reportName)}/${resId}?debug=${debug ? 1 : 0}`;
 }

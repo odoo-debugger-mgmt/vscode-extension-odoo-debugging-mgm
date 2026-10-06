@@ -6,8 +6,8 @@
  * compare; never a different record on each side.
  */
 import { errorMessage } from '../logger';
-import type { RenderAction } from './viewService';
-import { NO_COMMON_RECORD, commonIds, framePath } from './renderPlan';
+import type { RenderAction, ReportTarget } from './viewService';
+import { NO_COMMON_RECORD, commonIds, framePath, reportPath } from './renderPlan';
 
 export const RECENT_LIMIT = 200;
 
@@ -17,12 +17,15 @@ export interface RenderTarget {
     viewId: number;
     /** The frame header's first part, e.g. "Original · shop-17". */
     title: string;
+    /** A report renders its template on a record; a view opens in the web client. Default 'view'. */
+    kind?: 'view' | 'report';
 }
 
 export interface RenderBackend {
     newSession(dbName: string): Promise<string>;
     makeAction(dbName: string, viewId: number): Promise<RenderAction>;
-    recentIds(dbName: string, model: string, limit?: number): Promise<number[]>;
+    reportTarget(dbName: string, viewId: number): Promise<ReportTarget | null>;
+    recentIds(dbName: string, model: string, limit?: number, domain?: unknown[]): Promise<number[]>;
 }
 
 export interface FrameProxyHandle {
@@ -59,7 +62,7 @@ export interface RenderRecordState {
 export interface RenderState {
     sides: RenderSideState[];
     notice?: string;
-    /** Present for form views only. */
+    /** Present for form views and reports only. */
     record?: RenderRecordState;
 }
 
@@ -67,6 +70,7 @@ interface PreparedSide {
     target: RenderTarget;
     port?: number;
     action?: RenderAction;
+    report?: ReportTarget;
     proxy?: FrameProxyHandle;
     origin?: string;
     ids: number[];
@@ -75,9 +79,26 @@ interface PreparedSide {
 
 async function prepareSide(target: RenderTarget, backend: RenderBackend, host: FrameHost): Promise<PreparedSide> {
     try {
+        const connect = async () => {
+            const port = await host.portFor(target.dbName, target.versionId);
+            const proxy = await host.proxyFor(target.dbName, port, () => backend.newSession(target.dbName));
+            return { port, proxy };
+        };
+        if (target.kind === 'report') {
+            const report = await backend.reportTarget(target.dbName, target.viewId);
+            if (!report) {
+                return { target, ids: [], error: `${target.dbName} has no report for this template.` };
+            }
+            const { port, proxy } = await connect();
+            const [, origin, ids] = await Promise.all([
+                proxy.session(),
+                host.externalOrigin(`http://127.0.0.1:${proxy.port}`),
+                backend.recentIds(target.dbName, report.model, RECENT_LIMIT, report.domain)
+            ]);
+            return { target, port, report, proxy, origin, ids };
+        }
         const action = await backend.makeAction(target.dbName, target.viewId);
-        const port = await host.portFor(target.dbName, target.versionId);
-        const proxy = await host.proxyFor(target.dbName, port, () => backend.newSession(target.dbName));
+        const { port, proxy } = await connect();
         const [, origin, ids] = await Promise.all([
             proxy.session(),
             host.externalOrigin(`http://127.0.0.1:${proxy.port}`),
@@ -89,6 +110,8 @@ async function prepareSide(target: RenderTarget, backend: RenderBackend, host: F
     }
 }
 
+type RenderMode = 'form' | 'report' | 'other';
+
 export class RenderSession {
     /** Position in `records`; -1 is a new record. */
     private index: number;
@@ -97,36 +120,52 @@ export class RenderSession {
         private readonly sides: PreparedSide[],
         private readonly host: FrameHost,
         private readonly records: number[],
-        private readonly isForm: boolean,
-        private readonly notice: string | undefined
+        private readonly mode: RenderMode,
+        private readonly notice: string | undefined,
+        /** Shown in place of a report's frames when there is no record to render it with. */
+        private readonly noRecord: string | undefined
     ) {
         this.index = records.length > 0 ? 0 : -1;
     }
 
     static async prepare(targets: RenderTarget[], backend: RenderBackend, host: FrameHost): Promise<RenderSession> {
         const sides = await Promise.all(targets.map(target => prepareSide(target, backend, host)));
-        const ready = sides.filter(side => side.action);
-        const isForm = ready.length > 0 && ready.every(side => side.action?.viewType === 'form');
+        const ready = sides.filter(side => side.action || side.report);
+        const mode: RenderMode = ready.length === 0 ? 'other'
+            : ready.every(side => side.report) ? 'report'
+            : ready.every(side => side.action?.viewType === 'form') ? 'form' : 'other';
         let records: number[] = [];
         let notice: string | undefined;
-        if (isForm) {
+        let noRecord: string | undefined;
+        if (mode !== 'other') {
             records = ready.map(side => side.ids).reduce((a, b) => commonIds(a, b));
-            if (records.length === 0) {
-                notice = ready.length > 1 ? NO_COMMON_RECORD : `${ready[0].action?.model} has no record yet; showing a new one.`;
-            }
         }
-        return new RenderSession(sides, host, records, isForm, notice);
+        if (mode === 'form' && records.length === 0) {
+            notice = ready.length > 1 ? NO_COMMON_RECORD : `${ready[0].action?.model} has no record yet; showing a new one.`;
+        }
+        if (mode === 'report' && records.length === 0) {
+            const model = ready[0].report?.model;
+            noRecord = ready.length > 1
+                ? `No ${model} record exists in both databases to render this report with.`
+                : `No ${model} record to render this report with.`;
+        }
+        return new RenderSession(sides, host, records, mode, notice, noRecord);
     }
 
     async state(): Promise<RenderState> {
         const resId = this.index >= 0 ? this.records[this.index] : undefined;
         const sides = await Promise.all(this.sides.map(side => this.sideState(side, resId)));
-        const record = this.isForm ? {
-            label: resId ? `Record ${resId}` : 'New record',
-            canPrevious: this.index > 0 || (this.index === -1 && this.records.length > 0),
-            canNext: this.index >= 0 && this.index < this.records.length - 1,
-            canNew: this.index !== -1
-        } : undefined;
+        let record: RenderRecordState | undefined;
+        if (this.mode === 'form') {
+            record = {
+                label: resId ? `Record ${resId}` : 'New record',
+                canPrevious: this.index > 0 || (this.index === -1 && this.records.length > 0),
+                canNext: this.index >= 0 && this.index < this.records.length - 1,
+                canNew: this.index !== -1
+            };
+        } else if (this.mode === 'report' && resId !== undefined) {
+            record = { label: `Record ${resId}`, canPrevious: this.index > 0, canNext: this.index < this.records.length - 1, canNew: false };
+        }
         return { sides, notice: this.notice, record };
     }
 
@@ -149,7 +188,7 @@ export class RenderSession {
     }
 
     newRecord(): boolean {
-        if (!this.isForm || this.index === -1) {
+        if (this.mode !== 'form' || this.index === -1) {
             return false;
         }
         this.index = -1;
@@ -167,6 +206,20 @@ export class RenderSession {
 
     private async sideState(side: PreparedSide, resId: number | undefined): Promise<RenderSideState> {
         const base = { key: side.target.dbName, title: side.target.title };
+        if (side.report) {
+            const { report, proxy, port, origin } = side;
+            if (!proxy || port === undefined || !origin) {
+                return { ...base, message: side.error ?? 'This side cannot render.' };
+            }
+            const detail = `Odoo ${report.series} · ${report.name}${resId ? ` · record ${resId}` : ''}`;
+            if (resId === undefined) {
+                return { ...base, detail, message: this.noRecord ?? `No ${report.model} record to render this report with.` };
+            }
+            if (!await this.host.isPortOpen(port)) {
+                return { ...base, detail, message: `No Odoo server is answering on port ${port}.`, offerStart: true };
+            }
+            return { ...base, detail, url: `${origin}${proxy.gatePath(reportPath(report.reportName, resId))}` };
+        }
         const { action, proxy, port, origin } = side;
         if (side.error || !action || !proxy || port === undefined || !origin) {
             return { ...base, message: side.error ?? 'This side cannot render.' };

@@ -125,6 +125,17 @@ def _root(view):
     return root
 
 
+def _top(view):
+    """The top of the view's inherit_id chain, whatever the modes: what the
+    Views tree's isReport looks at, and odoo-manager's find_report_for_view."""
+    top = view
+    seen = set()
+    while top.inherit_id and top.id not in seen:
+        seen.add(top.id)
+        top = top.inherit_id
+    return top
+
+
 def _compose(env, view):
     """Composes the view's root the way opening it does, raising when the
     combined arch is broken. A saved arch is not checked against its parent's
@@ -331,22 +342,43 @@ def cmd_make_action(env, view_id):
             'series': odoo.release.serie}
 
 
-def cmd_recent_ids(env, model, limit=200):
+def cmd_recent_ids(env, model, limit=200, domain=None):
     """The newest records of a model that the render user can open, newest
-    first; none for a model this database does not have."""
+    first; none for a model this database does not have. `domain` narrows
+    them (a report's records)."""
     if model not in env or env[model]._abstract:
         return {'ids': []}
     user = _render_user(env)
     try:
         # The default company, as the frame opens it, decides what is visible.
         records = env[model].with_user(user).with_context(allowed_company_ids=[user.company_id.id]).search(
-            [], order='id desc', limit=int(limit))
+            list(domain or []), order='id desc', limit=int(limit))
     except Exception as error:
         if _connection_lost(env, error):
             raise
         env.cr.rollback()
         return {'ids': []}
     return {'ids': records.ids}
+
+
+def cmd_report_target(env, view_id):
+    """The report a QWeb view's template renders, or None: the first report
+    whose report_name is an external id of the view's root - the template
+    Odoo renders under that key (_root stops at a primary view), else the top
+    of its chain. account.move also holds plain journal entries, which render
+    an empty invoice, so its records are the other move types only."""
+    view = _view(env, view_id)
+    data = env['ir.model.data']
+    reports = env['ir.actions.report']
+    for root in dict.fromkeys([_root(view), _top(view)]):
+        names = ['%s.%s' % (row.module, row.name)
+                 for row in data.search([('model', '=', 'ir.ui.view'), ('res_id', '=', root.id)], order='module, name')]
+        report = reports.search([('report_name', 'in', names)], order='id', limit=1) if names else reports
+        if report:
+            domain = [['move_type', '!=', 'entry']] if report.model == 'account.move' else []
+            return {'report_name': report.report_name, 'name': report.name, 'model': report.model,
+                    'domain': domain, 'series': odoo.release.serie}
+    return None
 
 
 COMMANDS = {
@@ -358,6 +390,7 @@ COMMANDS = {
     'new_session': cmd_new_session,
     'make_action': cmd_make_action,
     'recent_ids': cmd_recent_ids,
+    'report_target': cmd_report_target,
 }
 
 

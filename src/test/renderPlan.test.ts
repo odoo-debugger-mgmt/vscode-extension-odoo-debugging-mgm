@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { commonIds, framePath, qwebMessage, usesOdooRouter } from '../services/views/renderPlan';
+import { QWEB_FRAGMENT_MESSAGE, commonIds, framePath, reportPath, usesOdooRouter } from '../services/views/renderPlan';
 
 suite('Render plan', () => {
     test('saas~17.2 brought the /odoo URLs', () => {
@@ -26,8 +26,12 @@ suite('Render plan', () => {
         assert.deepStrictEqual(commonIds([9], [8]), []);
     });
 
-    test('QWeb says where to look instead', () => {
-        assert.match(qwebMessage(true), /^Reports need a record to render/);
-        assert.match(qwebMessage(false), /^QWeb templates render inside the page/);
+    test('a QWeb fragment says where to look instead', () => {
+        assert.match(QWEB_FRAGMENT_MESSAGE, /^QWeb templates render inside the page that uses them/);
+    });
+
+    test('a report renders as HTML on its record', () => {
+        assert.strictEqual(reportPath('account.report_invoice', 7), '/report/html/account.report_invoice/7?debug=1');
+        assert.strictEqual(reportPath('odd name/x', 7, false), '/report/html/odd%20name%2Fx/7?debug=0');
     });
 });

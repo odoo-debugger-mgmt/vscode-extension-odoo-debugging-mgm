@@ -26,8 +26,23 @@ suite('View service render commands', () => {
         assert.deepStrictEqual(calls, [
             ['shop-18', 'new_session', {}],
             ['shop-18', 'make_action', { view_id: 12 }],
-            ['shop-18', 'recent_ids', { model: 'res.partner', limit: 200 }]
+            ['shop-18', 'recent_ids', { model: 'res.partner', limit: 200, domain: [] }]
         ]);
+    });
+});
+
+suite('View service reports', () => {
+    test('resolves a report through the shell, and passes its domain to recent_ids', async () => {
+        const calls: Array<[string, string, unknown]> = [];
+        const service = new ViewService(fakePool({
+            report_target: { report_name: 'account.report_invoice', name: 'Invoices', model: 'account.move', domain: [['move_type', '!=', 'entry']], series: '18.0' },
+            recent_ids: { ids: [3] }
+        }, calls));
+        const report = await service.reportTarget('shop-18', 40);
+        assert.deepStrictEqual(report, { reportName: 'account.report_invoice', name: 'Invoices', model: 'account.move', domain: [['move_type', '!=', 'entry']], series: '18.0' });
+        assert.deepStrictEqual(await service.recentIds('shop-18', report!.model, 5, report!.domain), [3]);
+        assert.deepStrictEqual(calls[1], ['shop-18', 'recent_ids', { model: 'account.move', limit: 5, domain: [['move_type', '!=', 'entry']] }]);
+        assert.strictEqual(await new ViewService(fakePool({ report_target: null }, [])).reportTarget('shop-18', 41), null);
     });
 });
 

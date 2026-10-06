@@ -56,6 +56,7 @@ suite('Render tab', () => {
         const backend: RenderBackend = {
             newSession: async () => 'sid',
             makeAction: async () => ({ actionId: 3, model: 'res.partner', viewType: 'list', rootId: 1, series: '18.0' }),
+            reportTarget: async () => null,
             recentIds: async () => []
         };
         const host: FrameHost = {
@@ -82,7 +83,8 @@ suite('Render tab', () => {
                     await delays.get(viewId);
                     return { actionId: 3, model: 'res.partner', viewType: 'list', rootId: 1, series: '18.0' };
                 },
-                recentIds: async () => []
+                reportTarget: async () => null,
+            recentIds: async () => []
             },
             host: {
                 portFor: async () => 8018,
