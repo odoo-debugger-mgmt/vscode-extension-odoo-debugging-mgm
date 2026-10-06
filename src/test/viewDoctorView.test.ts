@@ -67,11 +67,11 @@ suite('Views tree', () => {
         const offered = (contextValue: string) => entries
             .filter(entry => new RegExp(/viewItem =~ \/(.*)\/$/.exec(entry.when ?? '')![1]).test(contextValue))
             .map(entry => entry.command.replace('viewDoctor.', ''));
-        assert.deepStrictEqual(offered('odooView.inactive.hasParent'), ['openArch', 'openParent', 'compare', 'render', 'checkXpaths', 'activate', 'copyXmlid']);
-        assert.deepStrictEqual(offered('odooView.inactive.hasParent.deep'), ['openArch', 'openParent', 'openRoot', 'compare', 'render', 'checkXpaths', 'activate', 'copyXmlid']);
-        assert.deepStrictEqual(offered('odooView.active.hasParent.deep.noXmlid'), ['openArch', 'openParent', 'openRoot', 'compare', 'render', 'checkXpaths', 'addToScript', 'deactivate']);
-        assert.deepStrictEqual(offered('odooView.inactive.root.noXmlid'), ['openArch', 'compare', 'render', 'activate']);
-        assert.deepStrictEqual(offered('odooView.active.root'), ['openArch', 'compare', 'render', 'copyXmlid', 'addToScript', 'deactivate']);
+        assert.deepStrictEqual(offered('odooView.inactive.hasParent'), ['openArch', 'openParent', 'showInheriting', 'compare', 'render', 'checkXpaths', 'activate', 'copyXmlid']);
+        assert.deepStrictEqual(offered('odooView.inactive.hasParent.deep'), ['openArch', 'openParent', 'openRoot', 'showInheriting', 'compare', 'render', 'checkXpaths', 'activate', 'copyXmlid']);
+        assert.deepStrictEqual(offered('odooView.active.hasParent.deep.noXmlid'), ['openArch', 'openParent', 'openRoot', 'showInheriting', 'compare', 'render', 'checkXpaths', 'addToScript', 'deactivate']);
+        assert.deepStrictEqual(offered('odooView.inactive.root.noXmlid'), ['openArch', 'showInheriting', 'compare', 'render', 'activate']);
+        assert.deepStrictEqual(offered('odooView.active.root'), ['openArch', 'showInheriting', 'compare', 'render', 'copyXmlid', 'addToScript', 'deactivate']);
     });
 
     test('a row whose root is not its parent says so, for Open Root', () => {
@@ -89,7 +89,7 @@ suite('Views tree', () => {
         assert.deepStrictEqual(title.filter(entry => entry.group?.startsWith('navigation')).map(entry => entry.command),
             ['viewDoctor.compare', 'viewDoctor.render', 'viewDoctor.checkXpaths']);
         assert.deepStrictEqual(title.filter(entry => !entry.group?.startsWith('navigation')).map(entry => entry.command),
-            ['viewDoctor.openParent', 'viewDoctor.openRoot', 'viewDoctor.addToScript']);
+            ['viewDoctor.openParent', 'viewDoctor.openRoot', 'viewDoctor.showInheriting', 'viewDoctor.addToScript']);
         assert.ok(!title.some(entry => /activate|deactivate|copyXmlid|openArch/.test(entry.command)), 'tree-only actions leaked into the editor title');
     });
 

@@ -257,3 +257,51 @@ export async function getDatabaseUuid(dbName: string): Promise<string | undefine
         "SELECT coalesce(json_agg(value), '[]'::json) FROM ir_config_parameter WHERE key = 'database.uuid';"), '[]');
     return Array.isArray(raw) && typeof raw[0] === 'string' && raw[0] ? raw[0] : undefined;
 }
+
+export interface ViewModelCount {
+    model: string;
+    count: number;
+}
+
+/** The models that have views, with how many; Find View offers them. */
+export const VIEW_MODELS_SQL = `
+SELECT coalesce(json_agg(json_build_object('model', model, 'count', n) ORDER BY model), '[]'::json)
+FROM (SELECT model, count(*) AS n FROM ir_ui_view WHERE model IS NOT NULL AND model <> '' GROUP BY model) m;`.trim();
+
+export function parseViewModels(output: string): ViewModelCount[] {
+    const raw = parseJson(output, '[]');
+    if (!Array.isArray(raw)) {
+        throw new Error('Unexpected output from the model query.');
+    }
+    return raw.map(entry => {
+        const model = entry as Record<string, unknown>;
+        return { model: String(model.model ?? ''), count: Number(model.count ?? 0) };
+    });
+}
+
+export async function viewModels(dbName: string): Promise<ViewModelCount[]> {
+    return parseViewModels(await runSql(dbName, VIEW_MODELS_SQL));
+}
+
+/** Every view of a model, on or off. */
+export function viewsOfModelSql(model: string): string {
+    return viewRowsSql(`v.model = ${sqlText(model)}`);
+}
+
+export async function viewsOfModel(dbName: string, model: string): Promise<ViewRow[]> {
+    return parseViewRows(await runSql(dbName, viewsOfModelSql(model)));
+}
+
+/** The view and every view inheriting from it, at any depth, on or off; bounded like the root walk. */
+export function descendantsSql(viewId: number): string {
+    return viewRowsSql(`v.id IN (
+    WITH RECURSIVE tree AS (
+        SELECT id, 0 AS depth FROM ir_ui_view WHERE id = ${sqlIdList([viewId])}
+        UNION ALL
+        SELECT c.id, t.depth + 1 FROM ir_ui_view c JOIN tree t ON c.inherit_id = t.id WHERE t.depth < 50
+    ) SELECT id FROM tree)`);
+}
+
+export async function descendants(dbName: string, viewId: number): Promise<ViewRow[]> {
+    return parseViewRows(await runSql(dbName, descendantsSql(viewId)));
+}

@@ -109,6 +109,8 @@
       { "command": "viewDoctor.openArch", "title": "Open Arch", "category": "Odoo DevTools", "icon": "$(go-to-file)" },
       { "command": "viewDoctor.openParent", "title": "Open Parent View", "category": "Odoo DevTools" },
       { "command": "viewDoctor.openRoot", "title": "Open Root View", "category": "Odoo DevTools" },
+      { "command": "viewDoctor.showInheriting", "title": "Views Inheriting This…", "category": "Odoo DevTools", "icon": "$(type-hierarchy-sub)" },
+      { "command": "viewDoctor.findView", "title": "Find View…", "category": "Odoo DevTools", "icon": "$(search)" },
       { "command": "viewDoctor.compare", "title": "Compare with Original", "category": "Odoo DevTools", "icon": "$(diff)" },
       { "command": "viewDoctor.render", "title": "Render", "category": "Odoo DevTools", "icon": "$(preview)" },
       { "command": "viewDoctor.checkXpaths", "title": "Check XPaths", "category": "Odoo DevTools", "icon": "$(check-all)" },
@@ -834,6 +836,7 @@
         { "command": "viewDoctor.checkXpaths", "when": "resourceScheme == odoo-view", "group": "navigation@3" },
         { "command": "viewDoctor.openParent", "when": "resourceScheme == odoo-view", "group": "1_view@1" },
         { "command": "viewDoctor.openRoot", "when": "resourceScheme == odoo-view", "group": "1_view@2" },
+        { "command": "viewDoctor.showInheriting", "when": "resourceScheme == odoo-view", "group": "1_view@3" },
         { "command": "viewDoctor.addToScript", "when": "resourceScheme == odoo-view", "group": "2_script@1" }
       ],
       "editor/context": [
@@ -855,14 +858,19 @@
       ],
       "view/title": [
         {
-          "command": "viewDoctor.createScript",
+          "command": "viewDoctor.findView",
           "when": "view == viewDoctor",
           "group": "navigation@0"
         },
         {
+          "command": "viewDoctor.createScript",
+          "when": "view == viewDoctor",
+          "group": "navigation@2"
+        },
+        {
           "command": "viewDoctor.refresh",
           "when": "view == viewDoctor",
-          "group": "navigation@1"
+          "group": "navigation@3"
         },
         {
           "command": "projectSelector.create",
@@ -1127,6 +1135,7 @@
         { "command": "viewDoctor.openArch", "when": "view == viewDoctor && viewItem =~ /^odooView\\./", "group": "1_open@1" },
         { "command": "viewDoctor.openParent", "when": "view == viewDoctor && viewItem =~ /\\.hasParent(\\.|$)/", "group": "1_open@2" },
         { "command": "viewDoctor.openRoot", "when": "view == viewDoctor && viewItem =~ /\\.deep(\\.|$)/", "group": "1_open@3" },
+        { "command": "viewDoctor.showInheriting", "when": "view == viewDoctor && viewItem =~ /^odooView\\./", "group": "1_open@4" },
         { "command": "viewDoctor.compare", "when": "view == viewDoctor && viewItem =~ /^odooView\\./", "group": "1_open@5" },
         { "command": "viewDoctor.render", "when": "view == viewDoctor && viewItem =~ /^odooView\\./", "group": "1_open@6" },
         { "command": "viewDoctor.checkXpaths", "when": "view == viewDoctor && viewItem =~ /\\.hasParent(\\.|$)/", "group": "1_open@7" },
@@ -1394,6 +1403,7 @@
         { "command": "viewDoctor.openArch", "when": "false" },
         { "command": "viewDoctor.openParent", "when": "resourceScheme == odoo-view" },
         { "command": "viewDoctor.openRoot", "when": "resourceScheme == odoo-view" },
+        { "command": "viewDoctor.showInheriting", "when": "resourceScheme == odoo-view" },
         { "command": "viewDoctor.compare", "when": "resourceScheme == odoo-view" },
         { "command": "viewDoctor.render", "when": "resourceScheme == odoo-view" },
         { "command": "viewDoctor.checkXpaths", "when": "resourceScheme == odoo-view" },

@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { parseReportMessages, parseViewRows, parseWriteDates, sqlIdList, viewRowsSql, sqlText, viewByXmlidSql, viewsLikeSql, firstXmlidSql, fingerprintsSql, parseFingerprints } from '../services/views/viewQueries';
+import { parseReportMessages, parseViewRows, parseWriteDates, sqlIdList, viewRowsSql, sqlText, viewByXmlidSql, viewsLikeSql, firstXmlidSql, fingerprintsSql, parseFingerprints, viewsOfModelSql, descendantsSql, parseViewModels } from '../services/views/viewQueries';
 import { runSql } from '../services/postgres';
 
 suite('View queries', () => {
@@ -118,5 +118,21 @@ suite('View fingerprints', () => {
         assert.deepStrictEqual(parsed.get(9), { archMd5: null, written: null, archUpdated: null, module: null, noupdate: null });
         assert.strictEqual(parseFingerprints('').size, 0);
         assert.throws(() => parseFingerprints('[]'));
+    });
+});
+
+suite('View queries for finding views', () => {
+    test('model text goes in hex, ids as validated integers', () => {
+        const sql = viewsOfModelSql("x'); DROP TABLE ir_ui_view; --");
+        assert.ok(!sql.includes('DROP TABLE'), sql);
+        assert.ok(sql.includes("convert_from(decode('"), sql);
+        assert.ok(descendantsSql(7).includes('WHERE id = 7'), descendantsSql(7));
+        assert.throws(() => descendantsSql(-1));
+    });
+
+    test('model counts parse, odd output throws', () => {
+        assert.deepStrictEqual(parseViewModels('[{"model":"res.partner","count":3}]'), [{ model: 'res.partner', count: 3 }]);
+        assert.deepStrictEqual(parseViewModels(''), []);
+        assert.throws(() => parseViewModels('{}'));
     });
 });

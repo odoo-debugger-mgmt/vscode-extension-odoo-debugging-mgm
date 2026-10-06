@@ -21,6 +21,7 @@ import { invalidateActiveDatabasesCache } from '../services/runtimeCache';
 import { buildViewWorkerArgs, viewWorkerEnv, VIEW_WORKER_APP_NAME } from '../services/views/viewWorkerArgs';
 import { ViewWorker, workerBootstrap, type WorkerTransport } from '../services/views/viewWorker';
 import { ViewWorkerPool } from '../services/views/viewWorkerPool';
+import { descendants, viewModels, viewsOfModel } from '../services/views/viewQueries';
 import { ViewService } from '../services/views/viewService';
 import { OdooFrameProxy } from '../services/views/odooFrameProxy';
 
@@ -511,6 +512,16 @@ function jsonRpc(port: number, route: string, sid: string, extraCookie = ''): Pr
         ]);
         assert.strictEqual(await runSql(copy, `SELECT string_agg(active::text, ',' ORDER BY id) FROM ir_ui_view WHERE id IN (${upperId}, ${lowerId}, ${leafId});`),
             'false,false,false', 'the check left the chain on');
+    });
+
+    test('the finding queries run on a real database', async () => {
+        const formId = Number(await runSql(copy, "SELECT res_id FROM ir_model_data WHERE module = 'base' AND name = 'view_partner_form';"));
+        assert.ok((await viewModels(copy)).some(entry => entry.model === 'res.partner' && entry.count > 0));
+        assert.ok((await viewsOfModel(copy, 'res.partner')).some(view => view.id === formId && view.xmlid === 'base.view_partner_form'));
+        const tree = await descendants(copy, formId);
+        assert.ok(tree.some(view => view.id === formId), 'the view itself');
+        assert.ok(tree.some(view => view.id === viewId), 'the setup view inherits it');
+        assert.ok(tree.every(view => view.id === formId || view.inheritId !== null));
     });
 
     test('dropping the database ends another window\'s shell on it too', async () => {

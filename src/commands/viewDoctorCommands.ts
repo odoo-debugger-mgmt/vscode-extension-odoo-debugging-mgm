@@ -12,7 +12,8 @@ import type { RenderTarget } from '../services/views/renderSession';
 import { createUpgradeScript } from '../views/upgradeScriptFlow';
 import { readableArchError } from '../services/views/archErrors';
 import { checkResultText } from '../services/views/xpathReport';
-import type { ViewRow } from '../services/views/viewQueries';
+import { descendants, type ViewRow } from '../services/views/viewQueries';
+import { findView, pickView } from '../views/findViewFlow';
 import { viewTarget, type ViewTarget } from '../views/viewTarget';
 
 function viewItem(arg: unknown): ViewItem | undefined {
@@ -229,6 +230,39 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
             showBriefStatus('Copied.');
         } else {
             showBriefStatus(`${item.view.name} has no external ID.`);
+        }
+    }));
+
+    const openView = (dbName: string, view: ViewRow) => openArch(dbName, view.id, view.xmlid);
+
+    context.subscriptions.push(registerCommand('viewDoctor.findView', async () => {
+        const project = (await SettingsStore.peekSelectedProject().catch(() => null))?.project;
+        const where = resolveViewDoctorTarget(project as Parameters<typeof resolveViewDoctorTarget>[0]);
+        if (!where) {
+            void showInfo('Select a database first.');
+            return;
+        }
+        try {
+            await findView(where.dbName, openView);
+        } catch (error) {
+            void showError(`Could not search the views of ${where.dbName}: ${errorMessage(error)}`);
+        }
+    }));
+
+    context.subscriptions.push(registerCommand('viewDoctor.showInheriting', async (arg: unknown) => {
+        const item = await target(arg);
+        if (!item) {
+            return;
+        }
+        try {
+            const rows = await descendants(item.dbName, item.view.id);
+            if (rows.length <= 1) {
+                void showInfo(`No view inherits ${item.view.name}.`);
+                return;
+            }
+            await pickView(item.dbName, rows, `Views inheriting ${item.view.name}`, openView);
+        } catch (error) {
+            void showError(`Could not list the views inheriting ${item.view.name}: ${errorMessage(error)}`);
         }
     }));
 
