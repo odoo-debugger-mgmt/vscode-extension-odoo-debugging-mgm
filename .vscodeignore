@@ -4,6 +4,9 @@
 .vscode-test.mjs
 .github/**
 .gitignore
+# No shipped file starts with a dot: keep local dotfiles and dot-folders out.
+.*
+.*/**
 src/**
 out/**
 node_modules/**

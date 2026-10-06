@@ -22694,7 +22694,10 @@ class ViewService {
     /** The report a QWeb view's template renders; null when no report uses it. */
     async reportTarget(dbName, viewId) {
         const raw = await this.pool.run(dbName, 'report_target', { view_id: viewId });
-        return raw ? { reportName: raw.report_name, name: raw.name, model: raw.model, domain: raw.domain ?? [], series: raw.series } : null;
+        return raw ? {
+            reportName: raw.report_name, name: raw.name, model: raw.model, domain: raw.domain ?? [], series: raw.series,
+            reportType: raw.report_type ?? 'qweb-pdf'
+        } : null;
     }
     rows(dbName, ids) {
         return (0, viewQueries_1.getViewRows)(dbName, ids);
@@ -24558,7 +24561,8 @@ class ViewRenderPanel {
     pdf;
     /** A private folder (0700) for this tab's PDFs, made on first use and removed with the tab. */
     pdfFolder;
-    fetchingPdf = false;
+    /** The generation whose PDF is being fetched; a click in a later tab or render is not held up by it. */
+    fetchingPdf;
     /** Bumped by every show() and every close, so a slower earlier one can tell it is stale. */
     generation = 0;
     updates = 0;
@@ -24712,39 +24716,67 @@ class ViewRenderPanel {
     }
     async openPdf(session, key) {
         const source = session.pdfSource(key);
+        const generation = this.generation;
         // One PDF at a time, so two quick clicks cannot write the same file at once.
-        if (!source || this.fetchingPdf) {
+        if (!source || this.fetchingPdf === generation) {
             return;
         }
         if (vscode.env.remoteName) {
             void this.pdf.showInfo('PDF opens only in a local VS Code window for now. Print it from Odoo instead.');
             return;
         }
-        this.fetchingPdf = true;
+        // The tab closed or a new render started: what this click fetched is not for it.
+        const stale = () => generation !== this.generation;
+        this.fetchingPdf = generation;
+        let folder;
         let file;
         try {
             file = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Getting the PDF from ${source.dbName}…` }, async () => {
                 const pdf = await this.pdf.fetch(source.port, source.path, await source.session());
-                if (!this.panel) {
-                    // The tab closed meanwhile, and its folder with it.
+                if (stale()) {
                     return undefined;
                 }
-                const target = path.join(await this.pdfFolderPath(), source.fileName);
+                folder = this.pdfFolderPath();
+                const target = path.join(await folder, source.fileName);
+                if (stale()) {
+                    return undefined;
+                }
                 await fs.promises.writeFile(target, pdf, { mode: 0o600 });
                 return target;
             });
         }
         catch (error) {
-            void this.pdf.showError(error instanceof reportPdf_1.PdfRefusedError && error.sessionDropped
-                ? 'Odoo no longer accepts the render\'s session; press Reload and try again.'
-                : `Could not get the PDF: ${(0, logger_1.errorMessage)(error)}`);
-            return;
+            if (!stale()) {
+                void this.pdf.showError(error instanceof reportPdf_1.PdfRefusedError && error.sessionDropped
+                    ? 'Odoo no longer accepts the render\'s session; press Reload and try again.'
+                    : `Could not get the PDF: ${(0, logger_1.errorMessage)(error)}`);
+                return;
+            }
         }
         finally {
-            this.fetchingPdf = false;
+            if (this.fetchingPdf === generation) {
+                this.fetchingPdf = undefined;
+            }
+        }
+        if (stale()) {
+            await this.discardPdf(folder, file);
+            return;
         }
         if (file && !await this.pdf.open(file)) {
             void this.pdf.showInfo(`No app opened the PDF; it is at ${file}.`);
+        }
+    }
+    /**
+     * A stale click's leftovers: its file, and its folder when that belonged
+     * to a tab that has closed since (removePdfFolder may have run already).
+     */
+    async discardPdf(folder, file) {
+        const dir = await folder?.catch(() => undefined);
+        if (dir && folder !== this.pdfFolder) {
+            await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+        }
+        else if (file) {
+            await fs.promises.rm(file, { force: true }).catch(() => undefined);
         }
     }
     /**
@@ -25424,12 +25456,16 @@ exports.RenderSession = exports.RECENT_LIMIT = void 0;
  * proxy its frame goes through and the records it has; then, for the record
  * being shown, what each frame loads. Both sides always show the same record
  * - the newest both databases have - or both a new one, so the two renders
- * compare; never a different record on each side.
+ * compare. The one exception: a report whose model differs between the two
+ * databases, where an id names unrelated records; each side then shows its
+ * own newest record.
  */
 const logger_1 = __webpack_require__(12);
 const renderPlan_1 = __webpack_require__(126);
 const reportPdf_1 = __webpack_require__(124);
 exports.RECENT_LIMIT = 200;
+/** The report types that /report/pdf renders; qweb-text makes plain text. */
+const PDF_REPORT_TYPES = new Set(['qweb-pdf', 'qweb-html']);
 async function prepareSide(target, backend, host) {
     try {
         const connect = async () => {
@@ -25470,17 +25506,21 @@ class RenderSession {
     mode;
     notice;
     noRecord;
+    ownRecords;
     /** Position in `records`; -1 is a new record. */
     index;
     constructor(sides, host, records, mode, notice, 
     /** Shown in place of a report's frames when there is no record to render it with. */
-    noRecord) {
+    noRecord, 
+    /** Report sides on different models: each shows its own newest record, with no stepping. */
+    ownRecords = false) {
         this.sides = sides;
         this.host = host;
         this.records = records;
         this.mode = mode;
         this.notice = notice;
         this.noRecord = noRecord;
+        this.ownRecords = ownRecords;
         this.index = records.length > 0 ? 0 : -1;
     }
     static async prepare(targets, backend, host) {
@@ -25492,24 +25532,30 @@ class RenderSession {
         let records = [];
         let notice;
         let noRecord;
-        if (mode !== 'other') {
+        // The same id on two models names unrelated records: do not pair them.
+        const ownRecords = mode === 'report' && new Set(ready.map(side => side.report?.model)).size > 1;
+        if (ownRecords) {
+            const models = ready.map(side => `${side.report?.model} in ${side.target.dbName}`).join(', ');
+            notice = `The report renders a different model in each database (${models}); each side shows its own newest record.`;
+        }
+        else if (mode !== 'other') {
             records = ready.map(side => side.ids).reduce((a, b) => (0, renderPlan_1.commonIds)(a, b));
         }
         if (mode === 'form' && records.length === 0) {
             notice = ready.length > 1 ? renderPlan_1.NO_COMMON_RECORD : `${ready[0].action?.model} has no record yet; showing a new one.`;
         }
-        if (mode === 'report' && records.length === 0) {
+        if (mode === 'report' && !ownRecords && records.length === 0) {
             const model = ready[0].report?.model;
             noRecord = ready.length > 1
                 ? `No ${model} record exists in both databases to render this report with.`
                 : `No ${model} record to render this report with.`;
         }
-        return new RenderSession(sides, host, records, mode, notice, noRecord);
+        return new RenderSession(sides, host, records, mode, notice, noRecord, ownRecords);
     }
     async state(options = {}) {
         const resId = this.index >= 0 ? this.records[this.index] : undefined;
         const debug = options.debug ?? true;
-        const sides = await Promise.all(this.sides.map(side => this.sideState(side, resId, debug)));
+        const sides = await Promise.all(this.sides.map(side => this.sideState(side, this.recordOf(side), debug)));
         let record;
         if (this.mode === 'form') {
             record = {
@@ -25554,8 +25600,8 @@ class RenderSession {
     /** What the PDF of the record a report side shows needs; undefined for any other side. */
     pdfSource(key) {
         const side = this.sides.find(entry => entry.target.dbName === key);
-        const resId = this.index >= 0 ? this.records[this.index] : undefined;
-        if (!side?.report || !side.proxy || side.port === undefined || resId === undefined) {
+        const resId = side ? this.recordOf(side) : undefined;
+        if (!side?.report || !PDF_REPORT_TYPES.has(side.report.reportType) || !side.proxy || side.port === undefined || resId === undefined) {
             return undefined;
         }
         const { report, proxy } = side;
@@ -25566,6 +25612,13 @@ class RenderSession {
             fileName: (0, reportPdf_1.pdfFileName)(side.target.dbName, report.reportName, resId),
             session: () => proxy.session()
         };
+    }
+    /** The record a side shows: the shared one, or its own newest when the report's models differ. */
+    recordOf(side) {
+        if (this.ownRecords) {
+            return side.ids[0];
+        }
+        return this.index >= 0 ? this.records[this.index] : undefined;
     }
     /** The server ports the sides point at, for waiting on a start. */
     ports() {
@@ -25585,7 +25638,8 @@ class RenderSession {
             if (!await this.host.isPortOpen(port)) {
                 return { ...base, detail, message: `No Odoo server is answering on port ${port}.`, offerStart: true };
             }
-            return { ...base, detail, url: `${origin}${proxy.gatePath((0, renderPlan_1.reportPath)(report.reportName, resId, debug))}`, pdf: true };
+            const url = `${origin}${proxy.gatePath((0, renderPlan_1.reportPath)(report.reportName, resId, debug))}`;
+            return { ...base, detail, url, ...(PDF_REPORT_TYPES.has(report.reportType) ? { pdf: true } : {}) };
         }
         const { action, proxy, port, origin } = side;
         if (side.error || !action || !proxy || port === undefined || !origin) {
@@ -33204,7 +33258,9 @@ function askWhat(dbName, models) {
             quickPick.items = (0, viewPicker_1.findViewItems)(value, models);
         });
         quickPick.onDidAccept(() => {
-            resolve(quickPick.selectedItems[0]?.choice);
+            const choice = quickPick.selectedItems[0]?.choice;
+            const unmatched = choice ? undefined : (0, viewPicker_1.nothingMatches)(dbName, quickPick.value);
+            resolve(choice ? { choice } : unmatched ? { unmatched } : undefined);
             quickPick.hide();
         });
         quickPick.onDidHide(() => {
@@ -33215,10 +33271,15 @@ function askWhat(dbName, models) {
     });
 }
 async function findView(dbName, open) {
-    const choice = await askWhat(dbName, await (0, viewQueries_1.viewModels)(dbName));
-    if (!choice) {
+    const answer = await askWhat(dbName, await (0, viewQueries_1.viewModels)(dbName));
+    if (!answer) {
         return;
     }
+    if ('unmatched' in answer) {
+        void (0, notifications_1.showInfo)(answer.unmatched);
+        return;
+    }
+    const { choice } = answer;
     if (choice.kind === 'id') {
         const [view] = await (0, viewQueries_1.getViewRows)(dbName, [choice.id]);
         if (view) {
@@ -33252,6 +33313,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.viewTree = viewTree;
 exports.viewPickItems = viewPickItems;
 exports.findViewItems = findViewItems;
+exports.nothingMatches = nothingMatches;
 function byTypeThenName(a, b) {
     return Number(a.inheritId !== null) - Number(b.inheritId !== null)
         || a.type.localeCompare(b.type) || a.name.localeCompare(b.name) || a.id - b.id;
@@ -33310,6 +33372,14 @@ function findViewItems(value, models) {
             description: `${entry.count} view${entry.count === 1 ? '' : 's'}`,
             choice: { kind: 'model', model: entry.model }
         }))];
+}
+/**
+ * What Enter with nothing selected says: the typed value matches no item.
+ * Undefined when nothing was typed, so the pick just closes.
+ */
+function nothingMatches(dbName, value) {
+    const typed = value.trim();
+    return typed ? `Nothing matches '${typed}' in ${dbName}.` : undefined;
 }
 
 
