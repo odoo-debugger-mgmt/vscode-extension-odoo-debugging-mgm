@@ -58,7 +58,7 @@ suite('Render session', () => {
             '/odoo/action-21/7?debug=1'
         ]);
         assert.ok(state.sides[1].url?.startsWith('http://forwarded.example:9018/__odt/open'), state.sides[1].url);
-        assert.deepStrictEqual(state.record, { label: 'Record 7', canPrevious: false, canNext: true, canNew: true });
+        assert.deepStrictEqual(state.record, { label: 'Record 7', canPrevious: false, canNext: true, canNew: true, showNew: true });
         assert.strictEqual(state.notice, undefined);
         assert.strictEqual(state.sides[0].detail, 'Odoo 17.0 · res.partner · record 7');
 
@@ -85,7 +85,7 @@ suite('Render session', () => {
             '/web?debug=1#action=11&model=res.partner&view_type=form',
             '/odoo/action-21?debug=1'
         ]);
-        assert.deepStrictEqual(state.record, { label: 'New record', canPrevious: false, canNext: false, canNew: false });
+        assert.deepStrictEqual(state.record, { label: 'New record', canPrevious: false, canNext: false, canNew: false, showNew: true });
     });
 
     test('one side alone uses its newest record, or a new one', async () => {

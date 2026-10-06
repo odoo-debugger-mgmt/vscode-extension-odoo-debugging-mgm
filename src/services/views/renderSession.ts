@@ -70,6 +70,8 @@ export interface RenderRecordState {
     canPrevious: boolean;
     canNext: boolean;
     canNew: boolean;
+    /** Only a form can show a new record, so only a form's bar has the button. */
+    showNew?: boolean;
 }
 
 export interface RenderState {
@@ -175,7 +177,8 @@ export class RenderSession {
                 label: resId ? `Record ${resId}` : 'New record',
                 canPrevious: this.index > 0 || (this.index === -1 && this.records.length > 0),
                 canNext: this.index >= 0 && this.index < this.records.length - 1,
-                canNew: this.index !== -1
+                canNew: this.index !== -1,
+                showNew: true
             };
         } else if (this.mode === 'report' && resId !== undefined) {
             record = { label: `Record ${resId}`, canPrevious: this.index > 0, canNext: this.index < this.records.length - 1, canNew: false };

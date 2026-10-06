@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { fetchReportPdf, pdfFileName, reportPdfPath } from '../services/views/reportPdf';
+import { PdfRefusedError, fetchReportPdf, pdfFileName, reportPdfPath } from '../services/views/reportPdf';
 
 async function fakeOdoo(answer: (request: http.IncomingMessage, response: http.ServerResponse) => void): Promise<{ port: number; close(): Promise<void> }> {
     const server = http.createServer(answer);
@@ -31,7 +31,10 @@ suite('Report PDF', () => {
             assert.strictEqual((await fetchReportPdf(odoo.port, '/report/pdf/r/1', 'abc')).toString('latin1'), '%PDF-1.4 fake');
             assert.deepStrictEqual(cookies, ['session_id=abc']);
             await assert.rejects(fetchReportPdf(odoo.port, '/report/pdf/r/2', 'abc'), /did not send a PDF/);
-            await assert.rejects(fetchReportPdf(odoo.port, '/report/pdf/r/3', 'abc'), /answered 303/);
+            await assert.rejects(fetchReportPdf(odoo.port, '/report/pdf/r/3', 'abc'), (error: unknown) =>
+                error instanceof PdfRefusedError && /answered 303 \(to \/web\/login\)/.test(error.message) && error.sessionDropped);
+            assert.strictEqual(new PdfRefusedError(500, undefined).sessionDropped, false);
+            assert.strictEqual(new PdfRefusedError(303, 'http://127.0.0.1:8069/web/login?redirect=%2Freport').sessionDropped, true);
         } finally {
             await odoo.close();
         }

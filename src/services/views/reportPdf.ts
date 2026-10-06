@@ -8,6 +8,21 @@ import * as http from 'node:http';
 
 const MAX_PDF_BYTES = 200 * 1024 * 1024;
 
+/** Odoo answered something other than 200: a redirect to /web/login means it dropped the session. */
+export class PdfRefusedError extends Error {
+    constructor(readonly status: number | undefined, readonly location: string | undefined) {
+        super(`Odoo answered ${status}${location ? ` (to ${location})` : ''}.`);
+    }
+
+    get sessionDropped(): boolean {
+        try {
+            return !!this.location && new URL(this.location, 'http://odoo').pathname === '/web/login';
+        } catch {
+            return false;
+        }
+    }
+}
+
 export function reportPdfPath(reportName: string, resId: number): string {
     return `/report/pdf/${encodeURIComponent(reportName)}/${resId}`;
 }
@@ -32,8 +47,7 @@ export function fetchReportPdf(port: number, path: string, sid: string, timeoutM
             });
             response.on('end', () => {
                 if (response.statusCode !== 200) {
-                    const location = response.headers.location;
-                    reject(new Error(`Odoo answered ${response.statusCode}${location ? ` (to ${location})` : ''}.`));
+                    reject(new PdfRefusedError(response.statusCode, response.headers.location));
                     return;
                 }
                 const body = Buffer.concat(chunks);

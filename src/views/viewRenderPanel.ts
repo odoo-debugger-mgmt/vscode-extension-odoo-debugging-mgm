@@ -10,7 +10,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { OdooFrameProxy } from '../services/views/odooFrameProxy';
-import { fetchReportPdf } from '../services/views/reportPdf';
+import { PdfRefusedError, fetchReportPdf } from '../services/views/reportPdf';
 import { RenderSession, type FrameHost, type RenderBackend, type RenderState, type RenderTarget } from '../services/views/renderSession';
 import { isPortOpen, resolvePortForDatabase, waitForPort } from '../services/server';
 import { errorMessage, logger } from '../services/logger';
@@ -32,6 +32,22 @@ export interface RenderSettings {
     debug(): boolean;
     setDebug(debug: boolean): Thenable<void> | void;
 }
+
+/** How a PDF is fetched, opened and reported; tests replace them so nothing opens an app. */
+export interface PdfHooks {
+    fetch(port: number, path: string, sid: string): Promise<Buffer>;
+    /** False when no app opened the file. */
+    open(file: string): Thenable<boolean>;
+    showError(message: string): unknown;
+    showInfo(message: string): unknown;
+}
+
+const PDF_HOOKS: PdfHooks = {
+    fetch: (port, pdfPath, sid) => fetchReportPdf(port, pdfPath, sid),
+    open: file => vscode.env.openExternal(vscode.Uri.file(file)),
+    showError,
+    showInfo
+};
 
 function memorySettings(): RenderSettings {
     let debug = true;
@@ -100,8 +116,7 @@ export function renderPanelHtml(state: RenderState, options: { nonce: string; cs
             button('previous', 'Previous record', record.canPrevious),
             `<span>${escapeHtml(record.label)}</span>`,
             button('next', 'Next record', record.canNext),
-            // Only a form can show a new record; a report's bar has no such button.
-            ...(record.canNew || record.label === 'New record' ? [button('new', 'New record', record.canNew)] : [])
+            ...(record.showNew ? [button('new', 'New record', record.canNew)] : [])
         ] : []),
         ...(state.notice ? [`<span class="notice">${escapeHtml(state.notice)}</span>`] : [])
     ].join('\n');
@@ -141,13 +156,18 @@ export class ViewRenderPanel implements vscode.Disposable {
     private readonly proxies = new Map<string, Promise<OdooFrameProxy>>();
     private readonly host: FrameHost;
     private readonly settings: RenderSettings;
+    private readonly pdf: PdfHooks;
+    /** A private folder (0700) for this tab's PDFs, made on first use and removed with the tab. */
+    private pdfFolder: Promise<string> | undefined;
+    private fetchingPdf = false;
     /** Bumped by every show() and every close, so a slower earlier one can tell it is stale. */
     private generation = 0;
     private updates = 0;
     private starting = false;
 
-    constructor(private readonly backend: RenderBackend, host?: FrameHost, settings?: RenderSettings) {
+    constructor(private readonly backend: RenderBackend, host?: FrameHost, settings?: RenderSettings, pdf?: PdfHooks) {
         this.settings = settings ?? memorySettings();
+        this.pdf = pdf ?? PDF_HOOKS;
         this.host = host ?? {
             portFor: async (dbName, versionId) => (await resolvePortForDatabase(dbName, versionId)).port,
             isPortOpen,
@@ -210,6 +230,7 @@ export class ViewRenderPanel implements vscode.Disposable {
         this.session = undefined;
         this.request = undefined;
         panel?.dispose();
+        this.removePdfFolder();
         void this.closeProxies();
     }
 
@@ -227,6 +248,7 @@ export class ViewRenderPanel implements vscode.Disposable {
             this.panel = undefined;
             this.session = undefined;
             this.request = undefined;
+            this.removePdfFolder();
             void this.closeProxies();
         });
         panel.webview.onDidReceiveMessage(message => void this.onMessage(message));
@@ -303,27 +325,64 @@ export class ViewRenderPanel implements vscode.Disposable {
 
     private async openPdf(session: RenderSession, key: string): Promise<void> {
         const source = session.pdfSource(key);
-        if (!source) {
+        // One PDF at a time, so two quick clicks cannot write the same file at once.
+        if (!source || this.fetchingPdf) {
             return;
         }
         if (vscode.env.remoteName) {
-            void showInfo('PDF opens only in a local VS Code window for now. Print it from Odoo instead.');
+            void this.pdf.showInfo('PDF opens only in a local VS Code window for now. Print it from Odoo instead.');
             return;
         }
-        const file = path.join(os.tmpdir(), source.fileName);
+        this.fetchingPdf = true;
+        let file: string | undefined;
         try {
-            await vscode.window.withProgress(
+            file = await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Notification, title: `Getting the PDF from ${source.dbName}…` },
                 async () => {
-                    const pdf = await fetchReportPdf(source.port, source.path, await source.session());
-                    await fs.promises.writeFile(file, pdf, { mode: 0o600 });
+                    const pdf = await this.pdf.fetch(source.port, source.path, await source.session());
+                    if (!this.panel) {
+                        // The tab closed meanwhile, and its folder with it.
+                        return undefined;
+                    }
+                    const target = path.join(await this.pdfFolderPath(), source.fileName);
+                    await fs.promises.writeFile(target, pdf, { mode: 0o600 });
+                    return target;
                 }
             );
         } catch (error) {
-            void showError(`Could not get the PDF: ${errorMessage(error)}`);
+            void this.pdf.showError(error instanceof PdfRefusedError && error.sessionDropped
+                ? 'Odoo no longer accepts the render\'s session; press Reload and try again.'
+                : `Could not get the PDF: ${errorMessage(error)}`);
             return;
+        } finally {
+            this.fetchingPdf = false;
         }
-        await vscode.env.openExternal(vscode.Uri.file(file));
+        if (file && !await this.pdf.open(file)) {
+            void this.pdf.showInfo(`No app opened the PDF; it is at ${file}.`);
+        }
+    }
+
+    /**
+     * Not a fixed name in the shared temp folder: another local user could
+     * make that file first and read the admin's report or swap what opens.
+     */
+    private pdfFolderPath(): Promise<string> {
+        if (!this.pdfFolder) {
+            const made = fs.promises.mkdtemp(path.join(os.tmpdir(), 'odt-report-'));
+            made.catch(() => {
+                if (this.pdfFolder === made) {
+                    this.pdfFolder = undefined;
+                }
+            });
+            this.pdfFolder = made;
+        }
+        return this.pdfFolder;
+    }
+
+    private removePdfFolder(): void {
+        const folder = this.pdfFolder;
+        this.pdfFolder = undefined;
+        void folder?.then(dir => fs.promises.rm(dir, { recursive: true, force: true })).catch(() => undefined);
     }
 
     private async startServers(session: RenderSession): Promise<void> {

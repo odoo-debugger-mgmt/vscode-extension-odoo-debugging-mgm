@@ -1,6 +1,10 @@
 import * as assert from 'assert';
-import { ViewRenderPanel, escapeHtml, renderPanelHtml } from '../views/viewRenderPanel';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { ViewRenderPanel, escapeHtml, renderPanelHtml, type PdfHooks } from '../views/viewRenderPanel';
 import type { FrameHost, RenderBackend, RenderState } from '../services/views/renderSession';
+import { PdfRefusedError } from '../services/views/reportPdf';
 
 const state: RenderState = {
     sides: [
@@ -8,7 +12,7 @@ const state: RenderState = {
         { key: 'shop-18', title: 'Upgraded · <img src=x onerror=alert(1)>', message: 'No Odoo server is answering on port 8018.', offerStart: true }
     ],
     notice: 'No record exists in both databases; showing a new one.',
-    record: { label: 'Record 7', canPrevious: false, canNext: true, canNew: true }
+    record: { label: 'Record 7', canPrevious: false, canNext: true, canNew: true, showNew: true }
 };
 
 suite('Render tab', () => {
@@ -58,7 +62,7 @@ suite('Render tab', () => {
         assert.ok(report.includes('<span>Record 7</span>'));
         assert.ok(/<button data-action="next">/.test(report));
         assert.ok(!report.includes('data-action="new"'), 'a report can never show a new record');
-        const fresh = renderPanelHtml({ ...state, record: { label: 'New record', canPrevious: true, canNext: false, canNew: false } }, { nonce: 'n', cspSource: 'x' });
+        const fresh = renderPanelHtml({ ...state, record: { label: 'New record', canPrevious: true, canNext: false, canNew: false, showNew: true } }, { nonce: 'n', cspSource: 'x' });
         assert.ok(/<button data-action="new" disabled>/.test(fresh));
     });
 
@@ -185,5 +189,106 @@ suite('Render tab', () => {
         release();
         await pending;
         assert.strictEqual(panel.isOpen, false);
+    });
+
+    // A report tab on shop-18 whose PDF goes through the hooks: nothing here opens an app.
+    const reportBackend: RenderBackend = {
+        newSession: async () => 'sid',
+        makeAction: async () => assert.fail('a report makes no action'),
+        reportTarget: async () => ({ reportName: 'account.report_invoice', name: 'Invoices', model: 'account.move', domain: [], series: '18.0' }),
+        recentIds: async () => [8]
+    };
+    const reportHost: FrameHost = {
+        portFor: async () => 8018,
+        isPortOpen: async () => true,
+        proxyFor: async (_db, port, mint) => ({ port: port + 1000, session: mint, gatePath: next => `/__odt/open?t=x&next=${encodeURIComponent(next)}` }),
+        externalOrigin: async origin => origin
+    };
+    const reportRequest = {
+        title: 'Invoices', targets: [{ dbName: 'shop-18', viewId: 5, title: 'shop-18', kind: 'report' as const }], startCommand: 'x', startLabel: 'Start'
+    };
+    const clickPdf = (panel: ViewRenderPanel) =>
+        (panel as unknown as { onMessage(message: unknown): Promise<void> }).onMessage({ type: 'action', action: 'pdf', key: 'shop-18' });
+    const pdfFolders = () => fs.readdirSync(os.tmpdir()).filter(name => name.startsWith('odt-report-')).sort();
+
+    test('a PDF that cannot be fetched says why and writes nothing; a click while one is fetched is ignored', async () => {
+        const errors: string[] = [];
+        const failures: Error[] = [new Error('boom'), new PdfRefusedError(303, 'http://127.0.0.1:8018/web/login?redirect=%2Freport')];
+        let calls = 0;
+        let started!: () => void;
+        const fetching = new Promise<void>(resolve => { started = resolve; });
+        let fail!: () => void;
+        const hooks: PdfHooks = {
+            fetch: async (port, pdfPath, sid) => {
+                calls++;
+                assert.deepStrictEqual([port, pdfPath, sid], [8018, '/report/pdf/account.report_invoice/8', 'sid']);
+                started();
+                const failure = failures.shift()!;
+                await new Promise<void>(resolve => { fail = resolve; });
+                throw failure;
+            },
+            open: async () => assert.fail('nothing to open'),
+            showError: message => { errors.push(message); },
+            showInfo: message => assert.fail(`unexpected: ${message}`)
+        };
+        const before = pdfFolders();
+        const panel = new ViewRenderPanel(reportBackend, reportHost, undefined, hooks);
+        try {
+            await panel.show(reportRequest);
+            const first = clickPdf(panel);
+            await fetching;
+            await clickPdf(panel);
+            assert.strictEqual(calls, 1, 'the second click fetched too');
+            fail();
+            await first;
+            assert.deepStrictEqual(errors, ['Could not get the PDF: boom']);
+
+            const second = clickPdf(panel);
+            while (calls < 2) {
+                await new Promise(resolve => setTimeout(resolve, 5));
+            }
+            fail();
+            await second;
+            assert.deepStrictEqual(errors.slice(1), ['Odoo no longer accepts the render\'s session; press Reload and try again.']);
+            assert.deepStrictEqual(pdfFolders(), before, 'a failed fetch made a folder');
+        } finally {
+            panel.dispose();
+        }
+    });
+
+    test('a PDF goes to the tab\'s private folder, says where it is when no app opens it, and leaves with the tab', async () => {
+        const infos: string[] = [];
+        const opened: string[] = [];
+        const hooks: PdfHooks = {
+            fetch: async () => Buffer.from('%PDF-1.4 fake', 'latin1'),
+            open: async file => { opened.push(file); return false; },
+            showError: message => assert.fail(`unexpected: ${message}`),
+            showInfo: message => { infos.push(message); }
+        };
+        const panel = new ViewRenderPanel(reportBackend, reportHost, undefined, hooks);
+        let folder = '';
+        try {
+            await panel.show(reportRequest);
+            await clickPdf(panel);
+            assert.strictEqual(opened.length, 1);
+            const file = opened[0];
+            folder = path.dirname(file);
+            assert.strictEqual(path.dirname(folder), os.tmpdir());
+            assert.match(path.basename(folder), /^odt-report-/);
+            assert.strictEqual(path.basename(file), 'odt-report-shop-18-account.report_invoice-8.pdf');
+            if (process.platform !== 'win32') {
+                assert.strictEqual(fs.statSync(folder).mode & 0o777, 0o700);
+            }
+            assert.strictEqual(fs.readFileSync(file, 'latin1'), '%PDF-1.4 fake');
+            assert.deepStrictEqual(infos, [`No app opened the PDF; it is at ${file}.`]);
+            await clickPdf(panel);
+            assert.strictEqual(path.dirname(opened[1]), folder, 'the tab keeps one folder');
+        } finally {
+            panel.dispose();
+        }
+        for (let tries = 0; tries < 100 && fs.existsSync(folder); tries++) {
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        assert.ok(!fs.existsSync(folder), 'closing the tab left its PDF folder');
     });
 });
