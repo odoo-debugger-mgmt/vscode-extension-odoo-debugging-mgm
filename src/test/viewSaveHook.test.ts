@@ -20,7 +20,11 @@ function harness(overrides: Partial<SaveHookDeps> & { report?: XpathReport | Err
             return overrides.report ?? fine;
         },
         checkOnSave: () => true,
-        xpaths: { show: (_uri, _text, report) => log.push(`show:${report.summary.dead}`) },
+        xpaths: {
+            show: (_uri, _text, report) => log.push(`show:${report.summary.dead}`),
+            clear: () => log.push('clear')
+        },
+        isOpen: () => true,
         activationDiagnostics: activation,
         reloadDatabase: db => log.push(`reload:${db}`),
         recordSave: async () => { log.push('record'); },
@@ -62,9 +66,27 @@ suite('After an arch save', () => {
             const { log, hook, activation } = harness(overrides);
             await hook(ref, result, uri, '<data/>');
             assert.ok(!log.some(entry => entry.startsWith('show:')), log.join());
+            assert.ok(log.includes('clear'), `an earlier check's squiggles would sit at old offsets: ${log.join()}`);
             assert.ok(log.includes('brief:Saved, and the view is on.'), log.join());
             activation.dispose();
         }
+    });
+
+    test('a check that ends after its arch closed leaves no squiggles behind', async () => {
+        const { log, hook, activation } = harness({ report: dead, isOpen: () => false });
+        await hook(ref, on, uri, '<data/>');
+        assert.ok(log.includes('check:<data/>'), log.join());
+        assert.ok(!log.some(entry => entry.startsWith('show:')), log.join());
+        assert.ok(log.includes('warn:Saved, and the view is on — but 2 locators match nothing.'), log.join());
+        activation.dispose();
+    });
+
+    test('a check that reports an error still replaces the earlier squiggles', async () => {
+        const { log, hook, activation } = harness({ report: parseXpathReport({ error: 'child arch is not valid XML: x' }) });
+        await hook(ref, on, uri, '<data');
+        assert.ok(log.includes('show:0'), log.join());
+        assert.ok(log.includes('brief:Saved, and the view is on.'), log.join());
+        activation.dispose();
     });
 
     test('Odoo\'s reason a view stays off still lands on its line', async () => {

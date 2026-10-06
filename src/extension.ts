@@ -227,6 +227,7 @@ export async function activate(context: vscode.ExtensionContext) {
         checkXpaths: (dbName, viewId, arch) => viewService.checkXpaths(dbName, viewId, arch),
         checkOnSave: () => vscode.workspace.getConfiguration('odooDebugger').get<boolean>('views.checkXpathsOnSave', true),
         xpaths: xpathDiagnostics,
+        isOpen: uri => vscode.workspace.textDocuments.some(document => document.uri.toString() === uri.toString()),
         activationDiagnostics: viewDiagnostics,
         reloadDatabase: dbName => viewRender.reloadDatabase(dbName),
         recordSave: (dbName, viewId, activated) => viewNotes.recordSave(dbName, viewId, activated),
@@ -236,6 +237,7 @@ export async function activate(context: vscode.ExtensionContext) {
     });
     const viewFiles = new ViewFileSystemProvider(viewService, {
         onSaved: (ref, result, uri, text) => void onSaved(ref, result, uri, text)
+            .catch(error => logger.warn('Could not finish after saving the view:', error))
     }, async dbName => {
         const allowEdit = vscode.workspace.getConfiguration('odooDebugger').get<boolean>('views.allowEditOriginal', false);
         const result = await SettingsStore.peekSelectedProject().catch(() => null);

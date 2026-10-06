@@ -53,6 +53,8 @@ export interface XpathFinding {
 
 const NON_ELEMENTS = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<!DOCTYPE(?:[^>[]|\[[\s\S]*?\])*>/gi;
 // Any name lxml accepts, not only ASCII: a skipped element would shift every later index.
+// Permissive on purpose: it runs on blanked text, and an arch lxml rejects gets
+// report.error and so no findings to place.
 const START_TAG = /<([^\s/>!?][^\s/>]*)((?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*\/?>/g;
 const ATTRIBUTE = /([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
 

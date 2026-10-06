@@ -165,7 +165,10 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
             const document = await archDocument(item.dbName, item.view);
             const text = document.getText();
             const report = await viewService.checkXpaths(item.dbName, item.view.id, text);
-            xpathDiagnostics.show(document.uri, text, report);
+            // Closed while the shell answered: closing cleared its diagnostics, keep it so.
+            if (!document.isClosed) {
+                xpathDiagnostics.show(document.uri, text, report);
+            }
             const result = checkResultText(report);
             void (result.level === 'info' ? showInfo(result.text) : showWarning(result.text));
         } catch (error) {

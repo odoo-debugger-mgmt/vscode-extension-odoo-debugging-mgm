@@ -4,7 +4,9 @@
  * and - for an inheriting view, unless odooDebugger.views.checkXpathsOnSave is
  * off - the saved text's locators are checked, because a view Odoo turned on
  * can still carry a patch that matches nothing. The message waits for that
- * check, so it can say so; a failed check is only logged.
+ * check, so it can say so; a failed check is only logged. A save that is not
+ * checked clears the earlier check, and a check that ends after the arch
+ * closed shows nothing.
  */
 import * as vscode from 'vscode';
 import type { SaveResult } from '../services/views/viewService';
@@ -17,7 +19,9 @@ import type { XpathDiagnostics } from './xpathDiagnostics';
 export interface SaveHookDeps {
     checkXpaths(dbName: string, viewId: number, arch: string): Promise<XpathReport>;
     checkOnSave(): boolean;
-    xpaths: Pick<XpathDiagnostics, 'show'>;
+    xpaths: Pick<XpathDiagnostics, 'show' | 'clear'>;
+    /** The arch is still open: a check that ends after it closed shows nothing. */
+    isOpen(uri: vscode.Uri): boolean;
     /** Odoo's reasons saved views stay off. */
     activationDiagnostics: vscode.DiagnosticCollection;
     reloadDatabase(dbName: string): void;
@@ -58,10 +62,19 @@ export function createSaveHook(deps: SaveHookDeps): (ref: ViewRef, result: SaveR
         if (result.inheriting && deps.checkOnSave()) {
             try {
                 report = await deps.checkXpaths(ref.dbName, ref.viewId, text);
-                deps.xpaths.show(uri, text, report);
+                if (report.error) {
+                    logger.warn(`Could not check the locators of view ${ref.viewId} in ${ref.dbName}: ${report.error}`);
+                }
+                if (deps.isOpen(uri)) {
+                    deps.xpaths.show(uri, text, report);
+                }
             } catch (error) {
                 logger.warn(`Could not check the locators of view ${ref.viewId} in ${ref.dbName}:`, error);
             }
+        }
+        if (!report) {
+            // An earlier check's squiggles would sit at offsets the save moved.
+            deps.xpaths.clear(uri);
         }
         const message = saveMessage(result, report);
         (message.warning ? deps.warn : deps.brief)(message.text);
