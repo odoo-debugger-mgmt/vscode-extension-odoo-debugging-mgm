@@ -59,6 +59,40 @@ const FIXED = '<data><xpath expr="//field[@name=\'name\']" position="after"><fie
 /** Still points at a field the parent does not have. */
 const STILL_BROKEN = '<data><xpath expr="//field[@name=\'odt_does_not_exist_2\']" position="after"><field name="ref" string="Reference"/></xpath></data>';
 
+/** A parent of our own, so every locator below has one known answer. */
+const XPATH_SETUP = `
+parent = env['ir.ui.view'].create({
+    'name': 'odt.xpath.parent', 'type': 'form', 'model': 'res.partner', 'mode': 'primary', 'priority': 99,
+    'arch': '<form><sheet><field name="name"/><field name="ref"/><field name="child_ids"><form><field name="name"/></form></field></sheet></form>',
+})
+child = env['ir.ui.view'].create({
+    'name': 'odt.xpath.child', 'type': 'form', 'model': 'res.partner', 'inherit_id': parent.id, 'mode': 'extension', 'active': False,
+    'arch': '<data><xpath expr="//field[@name=\\'ref\\']" position="after"><field name="email"/></xpath></data>',
+})
+env.cr.commit()
+print('ODT_XPATH_IDS:%d:%d' % (parent.id, child.id))
+`;
+
+/**
+ * What is checked: ok, dead, ambiguous (Studio's //form[1] also matches the
+ * inline one2many form), and a direct locator on the field only the stored
+ * child itself adds - dead against the baseline, ok if the child leaked in.
+ */
+const CHECKED_ARCH = `<data>
+    <xpath expr="//field[@name='ref']" position="after">
+        <field name="email"/>
+    </xpath>
+    <xpath expr="//field[@name='odt_nope']" position="after">
+        <field name="phone"/>
+    </xpath>
+    <xpath expr="//form[1]//field[@name='name']" position="attributes">
+        <attribute name="string">Label</attribute>
+    </xpath>
+    <field name="email" position="after">
+        <field name="website"/>
+    </field>
+</data>`;
+
 /** Bump the registry signal the way this version's Registry.signal_changes does. */
 const SIGNAL_REGISTRY_RELOAD = `
 DO $$
@@ -279,7 +313,7 @@ function jsonRpc(port: number, route: string, sid: string, extraCookie = ''): Pr
         const before = await service.writeDate(copy, viewId);
         const signalBefore = await templatesCacheSignal(copy);
         const result = await service.save(copy, viewId, FIXED);
-        assert.deepStrictEqual(result, { active: true, activated: true, activationError: null });
+        assert.deepStrictEqual(result, { active: true, activated: true, activationError: null, inheriting: true });
         // What makes a running server show the change without a restart.
         assert.ok(await templatesCacheSignal(copy) > signalBefore, 'the view caches of a running server were not signalled');
         assert.strictEqual(await runSql(copy, `SELECT active FROM ir_ui_view WHERE id = ${viewId};`), 't');
@@ -403,6 +437,30 @@ function jsonRpc(port: number, route: string, sid: string, extraCookie = ''): Pr
             await proxy.close();
             await server.stop();
         }
+    });
+
+    test('check_xpaths resolves the editor\'s locators against the parent without the view, on or off, and commits nothing', async () => {
+        const { stdout } = await runCommand(python!, [`${odoo}/odoo-bin`, 'shell', '--no-http', '--addons-path', addonsPaths.join(','), '-d', copy], { input: XPATH_SETUP });
+        const [, parentId, childId] = (/ODT_XPATH_IDS:(\d+):(\d+)/.exec(stdout) ?? []).map(Number);
+        assert.ok(childId > 0, `setup printed no ids:\n${stdout}`);
+        const statuses = (report: Awaited<ReturnType<ViewService['checkXpaths']>>) =>
+            report.locators.map(locator => [locator.kind, locator.status, locator.matches, locator.line, locator.element]);
+        const expected = [
+            ['xpath', 'ok', 1, 2, 1],
+            ['xpath', 'dead', 0, 5, 3],
+            ['xpath', 'ambiguous', 2, 8, 5],
+            ['direct', 'dead', 0, 11, 7]
+        ];
+
+        assert.deepStrictEqual(statuses(await service.checkXpaths(copy, childId, CHECKED_ARCH)), expected);
+        assert.strictEqual(await runSql(copy, `SELECT active FROM ir_ui_view WHERE id = ${childId};`), 'f');
+
+        // On, with its stored patch adding email: still left out of the baseline.
+        await runSql(copy, `UPDATE ir_ui_view SET active = true WHERE id = ${childId};`);
+        assert.deepStrictEqual(statuses(await service.checkXpaths(copy, childId, CHECKED_ARCH)), expected);
+        assert.strictEqual(await runSql(copy, `SELECT active FROM ir_ui_view WHERE id = ${childId};`), 't', 'the check left the view off');
+
+        await assert.rejects(service.checkXpaths(copy, parentId, '<form/>'), /Not an inheriting view/);
     });
 
     test('dropping the database ends another window\'s shell on it too', async () => {

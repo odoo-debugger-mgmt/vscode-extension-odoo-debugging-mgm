@@ -8,6 +8,7 @@
 # {"id": n, "cmd": "...", "args": {...}} -> {"id": n, "ok": true,
 # "result": ...} or {"id": n, "ok": false, "error": "...", "trace": "..."}.
 # Runs on Odoo 15 to 19: every API that moved is looked up, not assumed.
+import importlib.util
 import json
 import os
 import socket
@@ -15,6 +16,7 @@ import traceback
 
 import odoo
 import psycopg2
+from lxml import etree
 
 # `odoo-bin shell` gives OdooBot's language. The arch is read and written as
 # its en_US source instead: in another language Odoo shows the translation
@@ -171,7 +173,8 @@ def cmd_save(env, view_id, arch, activate=True):
             _invalidate(env)
     env.cr.commit()
     _signal(env)
-    return {'active': bool(view.active), 'activated': activated, 'activationError': activation_error}
+    return {'active': bool(view.active), 'activated': activated, 'activationError': activation_error,
+            'inheriting': bool(view.inherit_id)}
 
 
 def cmd_activate(env, view_id):
@@ -191,6 +194,48 @@ def cmd_deactivate(env, view_id):
     env.cr.commit()
     _signal(env)
     return {'active': False}
+
+
+_XPATH_CHECK = []
+
+
+def _xpath_check():
+    """xpath_check.py, from the folder this file is in: compile() gave this
+    code the script's path, which is how the worker finds what lies next to
+    it. Loaded on first use, so a problem in it cannot stop the worker."""
+    if not _XPATH_CHECK:
+        folder = os.path.dirname(os.path.abspath(_xpath_check.__code__.co_filename))
+        spec = importlib.util.spec_from_file_location('odt_xpath_check', os.path.join(folder, 'xpath_check.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _XPATH_CHECK.append(module)
+    return _XPATH_CHECK[0]
+
+
+def cmd_check_xpaths(env, view_id, arch):
+    """Resolves every locator of `arch` - the editor's text for this view -
+    against its parent's combined arch: the raw tree Odoo applies inheritance
+    specs to, before get_view drops nodes by groups. The view and every view
+    inheriting from it are switched off first, inside this request's
+    transaction, which the worker always rolls back: the baseline is the parent
+    as it would be without them, whether the view is on or off. Later siblings
+    stay in - the same approximation odoo-manager makes. Nothing is committed
+    or signalled."""
+    view = _view(env, view_id)
+    parent = view.inherit_id
+    if not parent:
+        raise Refused('Not an inheriting view: it has no locators to check.')
+    env.cr.execute("""
+        WITH RECURSIVE tree AS (
+            SELECT id, 0 AS depth FROM ir_ui_view WHERE id = %s
+            UNION ALL
+            SELECT v.id, t.depth + 1 FROM ir_ui_view v JOIN tree t ON v.inherit_id = t.id WHERE t.depth < 50
+        )
+        UPDATE ir_ui_view SET active = false WHERE id IN (SELECT id FROM tree)
+    """, [view.id])
+    _invalidate(env)
+    parent_arch = etree.tostring(parent._get_combined_arch(), encoding='unicode')
+    return _xpath_check().check(arch, parent_arch)
 
 
 def _render_user(env):
@@ -291,6 +336,7 @@ COMMANDS = {
     'save': cmd_save,
     'activate': cmd_activate,
     'deactivate': cmd_deactivate,
+    'check_xpaths': cmd_check_xpaths,
     'new_session': cmd_new_session,
     'make_action': cmd_make_action,
     'recent_ids': cmd_recent_ids,

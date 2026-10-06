@@ -8,6 +8,7 @@ import { mergeReports, parseDisabledViews } from './disabledReport';
 import type { ViewNoteService } from './viewNoteService';
 import { logger } from '../logger';
 import { groupViews, type ViewGroups } from './viewGroups';
+import { parseXpathReport, type XpathReport } from './xpathReport';
 
 export interface SaveResult {
     active: boolean;
@@ -15,6 +16,8 @@ export interface SaveResult {
     activated: boolean;
     /** The view was off and stays off: Odoo's reason. The arch is saved regardless. */
     activationError: string | null;
+    /** The view has a parent, so it has locators to check. */
+    inheriting?: boolean;
 }
 
 /** A window action that opens a view's root, made by the database's shell. */
@@ -57,6 +60,11 @@ export class ViewService implements ViewBackend {
 
     async deactivate(dbName: string, viewId: number): Promise<void> {
         await this.pool.run(dbName, 'deactivate', { view_id: viewId });
+    }
+
+    /** Checks `arch` - the editor's text, not the stored arch - against the parent's combined arch. */
+    async checkXpaths(dbName: string, viewId: number, arch: string): Promise<XpathReport> {
+        return parseXpathReport(await this.pool.run<unknown>(dbName, 'check_xpaths', { view_id: viewId, arch }));
     }
 
     /** An admin session id the database's running server accepts. */

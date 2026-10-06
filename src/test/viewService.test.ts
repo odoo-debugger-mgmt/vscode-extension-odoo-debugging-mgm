@@ -30,3 +30,15 @@ suite('View service render commands', () => {
         ]);
     });
 });
+
+suite('View service XPath check', () => {
+    test('sends the editor\'s text to the shell and parses the result', async () => {
+        const calls: Array<[string, string, unknown]> = [];
+        const service = new ViewService(fakePool({
+            check_xpaths: { locators: [{ kind: 'xpath', expr: '//a', position: 'after', status: 'dead', matches: 0, line: 1, element: 0, shorter: [] }] }
+        }, calls));
+        const report = await service.checkXpaths('shop-18', 12, '<xpath expr="//a"/>');
+        assert.strictEqual(report.summary.dead, 1);
+        assert.deepStrictEqual(calls, [['shop-18', 'check_xpaths', { view_id: 12, arch: '<xpath expr="//a"/>' }]]);
+    });
+});
