@@ -9,6 +9,7 @@
  * comments, CDATA, processing instructions and the DOCTYPE blanked out, which
  * is also what lxml leaves out of the count.
  */
+import * as vscode from 'vscode';
 import type { LocatorStatus, XpathLocator, XpathReport } from '../services/views/xpathReport';
 
 /** Offsets into the text; end exclusive. */
@@ -51,7 +52,8 @@ export interface XpathFinding {
 }
 
 const NON_ELEMENTS = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<!DOCTYPE(?:[^>[]|\[[\s\S]*?\])*>/gi;
-const START_TAG = /<([A-Za-z_][\w.:-]*)((?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*\/?>/g;
+// Any name lxml accepts, not only ASCII: a skipped element would shift every later index.
+const START_TAG = /<([^\s/>!?][^\s/>]*)((?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*\/?>/g;
 const ATTRIBUTE = /([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
 
 /** The text with everything that is not markup of elements replaced by spaces, offset for offset (line breaks kept). */
@@ -158,4 +160,82 @@ export function xpathFindings(report: XpathReport, text: string): XpathFinding[]
         }
     }
     return findings;
+}
+
+export const XPATH_SOURCE = 'Odoo XPath';
+
+const SEVERITIES: Record<FindingSeverity, vscode.DiagnosticSeverity> = {
+    error: vscode.DiagnosticSeverity.Error,
+    warning: vscode.DiagnosticSeverity.Warning,
+    hint: vscode.DiagnosticSeverity.Hint
+};
+
+function toRange(span: TextSpan, text: string): vscode.Range {
+    const start = positionAt(text, span.start);
+    const end = positionAt(text, span.end);
+    return new vscode.Range(start.line, start.character, end.line, end.character);
+}
+
+function toDiagnostic(finding: XpathFinding, text: string): vscode.Diagnostic {
+    const diagnostic = new vscode.Diagnostic(toRange(finding.span, text), finding.message, SEVERITIES[finding.severity]);
+    diagnostic.source = XPATH_SOURCE;
+    diagnostic.code = finding.status;
+    return diagnostic;
+}
+
+/**
+ * The XPath check's results on open arches, in their own collection so they
+ * never mix with Odoo's reason a view stays off, and the quick fixes for them.
+ * A fix is offered only while the document still holds the text that was
+ * checked: the offsets mean nothing once it changed.
+ */
+export class XpathDiagnostics implements vscode.CodeActionProvider, vscode.Disposable {
+    static readonly providedCodeActionKinds = [vscode.CodeActionKind.QuickFix];
+    readonly collection: vscode.DiagnosticCollection;
+    private readonly checked = new Map<string, { text: string; findings: XpathFinding[] }>();
+
+    constructor(collection: vscode.DiagnosticCollection = vscode.languages.createDiagnosticCollection('odoo-view-xpaths')) {
+        this.collection = collection;
+    }
+
+    /** Shows a check of `text`, the arch at `uri` as it was checked. */
+    show(uri: vscode.Uri, text: string, report: XpathReport): void {
+        const findings = xpathFindings(report, text);
+        this.checked.set(uri.toString(), { text, findings });
+        this.collection.set(uri, findings.map(finding => toDiagnostic(finding, text)));
+    }
+
+    clear(uri: vscode.Uri): void {
+        this.checked.delete(uri.toString());
+        this.collection.delete(uri);
+    }
+
+    provideCodeActions(document: Pick<vscode.TextDocument, 'uri' | 'getText'>, range: vscode.Range): vscode.CodeAction[] {
+        const checked = this.checked.get(document.uri.toString());
+        if (!checked || document.getText() !== checked.text) {
+            return [];
+        }
+        const actions: vscode.CodeAction[] = [];
+        for (const finding of checked.findings) {
+            const where = toRange(finding.span, checked.text);
+            if (finding.fixes.length === 0 || !where.intersection(range)) {
+                continue;
+            }
+            const diagnostic = toDiagnostic(finding, checked.text);
+            finding.fixes.forEach((fix, index) => {
+                const action = new vscode.CodeAction(fix.title, vscode.CodeActionKind.QuickFix);
+                action.edit = new vscode.WorkspaceEdit();
+                action.edit.replace(document.uri, toRange(fix.span, checked.text), fix.text);
+                action.diagnostics = [diagnostic];
+                action.isPreferred = index === 0;
+                actions.push(action);
+            });
+        }
+        return actions;
+    }
+
+    dispose(): void {
+        this.checked.clear();
+        this.collection.dispose();
+    }
 }

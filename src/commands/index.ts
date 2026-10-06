@@ -13,6 +13,7 @@ import type { ViewRenderPanel } from '../views/viewRenderPanel';
 import type { ViewDoctorTreeProvider } from '../views/viewDoctorView';
 import type { ViewNoteService } from '../services/views/viewNoteService';
 import type { ViewService } from '../services/views/viewService';
+import type { XpathDiagnostics } from '../views/xpathDiagnostics';
 import { registerViewCommands } from './viewCommands';
 import { registerProjectCommands } from './projectCommands';
 import { registerRepoCommands } from './repoCommands';
@@ -62,6 +63,8 @@ export interface CommandDeps {
     viewNotes: ViewNoteService;
     /** Odoo's reasons saved views stay off, on their arch files. */
     viewDiagnostics: vscode.DiagnosticCollection;
+    /** The XPath check's results on arch files, and their quick fixes. */
+    xpathDiagnostics: XpathDiagnostics;
     /** The render tab, reused by every Render. */
     viewRender: ViewRenderPanel;
     /** TreeView handle for the Modules view (needed for reveal + multi-select). */

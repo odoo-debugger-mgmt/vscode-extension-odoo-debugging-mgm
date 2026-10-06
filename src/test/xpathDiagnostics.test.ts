@@ -1,6 +1,7 @@
 import * as assert from 'assert';
+import * as vscode from 'vscode';
 import { parseXpathReport, type XpathReport } from '../services/views/xpathReport';
-import { positionAt, quoteForAttribute, scanElements, xpathFindings } from '../views/xpathDiagnostics';
+import { XpathDiagnostics, positionAt, quoteForAttribute, scanElements, xpathFindings } from '../views/xpathDiagnostics';
 
 function report(locators: Array<Record<string, unknown>>): XpathReport {
     return parseXpathReport({ locators: locators.map(entry => ({ kind: 'xpath', position: 'after', matches: 1, shorter: [], line: 1, ...entry })) });
@@ -30,6 +31,16 @@ suite('XPath diagnostics: placing a check on the text', () => {
         const text = '<data>\n  <xpath\n     expr="//a[@x > 1]"\n     position="after">\n  </xpath>\n</data>';
         const [finding] = xpathFindings(report([{ expr: '//a[@x > 1]', status: 'dead', matches: 0, element: 1, line: 4 }]), text);
         assert.strictEqual(slice(text, finding.span), '//a[@x > 1]');
+    });
+
+    test('an element named outside ASCII still counts, so later locators keep their places', () => {
+        const text = '<data><étiquette/><xpath expr="//a"/><xpath expr="//b"/></data>';
+        assert.deepStrictEqual(scanElements(text).map(element => element.tag), ['data', 'étiquette', 'xpath', 'xpath']);
+        const findings = xpathFindings(report([
+            { expr: '//a', status: 'dead', matches: 0, element: 2 },
+            { expr: '//b', status: 'dead', matches: 0, element: 3 }
+        ]), text);
+        assert.deepStrictEqual(findings.map(finding => slice(text, finding.span)), ['//a', '//b']);
     });
 
     test('a direct locator points at its tag name', () => {
@@ -81,5 +92,52 @@ suite('XPath diagnostics: placing a check on the text', () => {
         assert.deepStrictEqual(positionAt(text, text.indexOf('d')), { line: 3, character: 0 });
         assert.deepStrictEqual(positionAt(text, text.indexOf('c')), { line: 2, character: 0 });
         assert.deepStrictEqual(positionAt(text, 1), { line: 0, character: 1 });
+    });
+});
+
+suite('XPath diagnostics in the editor', () => {
+    const uri = vscode.Uri.parse('odoo-view:/shop/12/acme.patch.xml');
+    const text = '<data><xpath expr="//a"/><xpath expr="/form/sheet/field"/></data>';
+    const checked = report([
+        { expr: '//a', status: 'dead', matches: 0, element: 1 },
+        { expr: '/form/sheet/field', status: 'ok', matches: 1, element: 2, shorter: ["//field[@name='x']"] }
+    ]);
+
+    test('shows each finding with its severity, on its characters, from its own source', () => {
+        const diagnostics = new XpathDiagnostics(vscode.languages.createDiagnosticCollection('odoo-view-xpaths-test'));
+        try {
+            diagnostics.show(uri, text, checked);
+            const shown = diagnostics.collection.get(uri) ?? [];
+            assert.deepStrictEqual(shown.map(diagnostic => [diagnostic.severity, diagnostic.source, diagnostic.code, diagnostic.range.start.character, diagnostic.range.end.character]), [
+                [vscode.DiagnosticSeverity.Warning, 'Odoo XPath', 'dead', text.indexOf('//a'), text.indexOf('//a') + 3],
+                [vscode.DiagnosticSeverity.Hint, 'Odoo XPath', 'ok', text.indexOf('/form'), text.indexOf('/form') + '/form/sheet/field'.length]
+            ]);
+            diagnostics.clear(uri);
+            assert.deepStrictEqual(diagnostics.collection.get(uri) ?? [], []);
+        } finally {
+            diagnostics.dispose();
+        }
+    });
+
+    test('a quick fix swaps in the shorter locator, and only on the text that was checked', () => {
+        const diagnostics = new XpathDiagnostics(vscode.languages.createDiagnosticCollection('odoo-view-xpaths-test'));
+        try {
+            diagnostics.show(uri, text, checked);
+            const at = text.indexOf('/form') + 2;
+            const range = new vscode.Range(0, at, 0, at);
+            const [action, ...rest] = diagnostics.provideCodeActions({ uri, getText: () => text }, range);
+            assert.deepStrictEqual(rest, []);
+            assert.strictEqual(action.title, "Use //field[@name='x']");
+            assert.strictEqual(action.isPreferred, true);
+            const [[editedUri, [edit]]] = action.edit!.entries();
+            assert.strictEqual(editedUri.toString(), uri.toString());
+            assert.strictEqual(edit.newText, "//field[@name='x']");
+            assert.strictEqual(edit.range.start.character, text.indexOf('/form'));
+            // Edited since: the offsets no longer hold, so nothing is offered.
+            assert.deepStrictEqual(diagnostics.provideCodeActions({ uri, getText: () => ` ${text}` }, range), []);
+            assert.deepStrictEqual(diagnostics.provideCodeActions({ uri, getText: () => text }, new vscode.Range(0, 0, 0, 1)), [], 'nothing away from a finding');
+        } finally {
+            diagnostics.dispose();
+        }
     });
 });

@@ -111,6 +111,7 @@
       { "command": "viewDoctor.openRoot", "title": "Open Root View", "category": "Odoo DevTools" },
       { "command": "viewDoctor.compare", "title": "Compare with Original", "category": "Odoo DevTools", "icon": "$(diff)" },
       { "command": "viewDoctor.render", "title": "Render", "category": "Odoo DevTools", "icon": "$(preview)" },
+      { "command": "viewDoctor.checkXpaths", "title": "Check XPaths", "category": "Odoo DevTools", "icon": "$(check-all)" },
       { "command": "viewDoctor.activate", "title": "Turn On", "category": "Odoo DevTools" },
       { "command": "viewDoctor.deactivate", "title": "Turn Off…", "category": "Odoo DevTools" },
       { "command": "viewDoctor.copyXmlid", "title": "Copy External ID", "category": "Odoo DevTools" },
@@ -830,6 +831,7 @@
       "editor/title": [
         { "command": "viewDoctor.compare", "when": "resourceScheme == odoo-view", "group": "navigation@1" },
         { "command": "viewDoctor.render", "when": "resourceScheme == odoo-view", "group": "navigation@2" },
+        { "command": "viewDoctor.checkXpaths", "when": "resourceScheme == odoo-view", "group": "navigation@3" },
         { "command": "viewDoctor.openParent", "when": "resourceScheme == odoo-view", "group": "1_view@1" },
         { "command": "viewDoctor.openRoot", "when": "resourceScheme == odoo-view", "group": "1_view@2" },
         { "command": "viewDoctor.addToScript", "when": "resourceScheme == odoo-view", "group": "2_script@1" }
@@ -1127,6 +1129,7 @@
         { "command": "viewDoctor.openRoot", "when": "view == viewDoctor && viewItem =~ /\\.deep(\\.|$)/", "group": "1_open@3" },
         { "command": "viewDoctor.compare", "when": "view == viewDoctor && viewItem =~ /^odooView\\./", "group": "1_open@5" },
         { "command": "viewDoctor.render", "when": "view == viewDoctor && viewItem =~ /^odooView\\./", "group": "1_open@6" },
+        { "command": "viewDoctor.checkXpaths", "when": "view == viewDoctor && viewItem =~ /\\.hasParent(\\.|$)/", "group": "1_open@7" },
         { "command": "viewDoctor.activate", "when": "view == viewDoctor && viewItem =~ /^odooView\\.inactive/", "group": "2_state@1" },
         { "command": "viewDoctor.copyXmlid", "when": "view == viewDoctor && viewItem =~ /^odooView\\.\\w+\\.\\w+(\\.deep)?$/", "group": "3_copy@1" },
         { "command": "viewDoctor.addToScript", "when": "view == viewDoctor && viewItem =~ /^odooView\\.active/", "group": "4_script@1" },
@@ -1393,6 +1396,7 @@
         { "command": "viewDoctor.openRoot", "when": "resourceScheme == odoo-view" },
         { "command": "viewDoctor.compare", "when": "resourceScheme == odoo-view" },
         { "command": "viewDoctor.render", "when": "resourceScheme == odoo-view" },
+        { "command": "viewDoctor.checkXpaths", "when": "resourceScheme == odoo-view" },
         { "command": "viewDoctor.activate", "when": "false" },
         { "command": "viewDoctor.deactivate", "when": "false" },
         { "command": "viewDoctor.copyXmlid", "when": "false" },
@@ -2054,6 +2058,11 @@
           "type": "boolean",
           "default": false,
           "description": "Allow saving views of the upgrade's original database. Off by default, so its views stay as they were before the upgrade."
+        },
+        "odooDebugger.views.checkXpathsOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "After saving an inheriting view's arch, check that each of its locators still matches exactly one node of its parent. Odoo turns a view on even when a locator matches nothing, and drops that patch silently."
         },
         "odooDebugger.editorActions.enabled": {
           "type": "boolean",

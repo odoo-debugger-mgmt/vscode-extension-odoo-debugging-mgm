@@ -67,9 +67,9 @@ suite('Views tree', () => {
         const offered = (contextValue: string) => entries
             .filter(entry => new RegExp(/viewItem =~ \/(.*)\/$/.exec(entry.when ?? '')![1]).test(contextValue))
             .map(entry => entry.command.replace('viewDoctor.', ''));
-        assert.deepStrictEqual(offered('odooView.inactive.hasParent'), ['openArch', 'openParent', 'compare', 'render', 'activate', 'copyXmlid']);
-        assert.deepStrictEqual(offered('odooView.inactive.hasParent.deep'), ['openArch', 'openParent', 'openRoot', 'compare', 'render', 'activate', 'copyXmlid']);
-        assert.deepStrictEqual(offered('odooView.active.hasParent.deep.noXmlid'), ['openArch', 'openParent', 'openRoot', 'compare', 'render', 'addToScript', 'deactivate']);
+        assert.deepStrictEqual(offered('odooView.inactive.hasParent'), ['openArch', 'openParent', 'compare', 'render', 'checkXpaths', 'activate', 'copyXmlid']);
+        assert.deepStrictEqual(offered('odooView.inactive.hasParent.deep'), ['openArch', 'openParent', 'openRoot', 'compare', 'render', 'checkXpaths', 'activate', 'copyXmlid']);
+        assert.deepStrictEqual(offered('odooView.active.hasParent.deep.noXmlid'), ['openArch', 'openParent', 'openRoot', 'compare', 'render', 'checkXpaths', 'addToScript', 'deactivate']);
         assert.deepStrictEqual(offered('odooView.inactive.root.noXmlid'), ['openArch', 'compare', 'render', 'activate']);
         assert.deepStrictEqual(offered('odooView.active.root'), ['openArch', 'compare', 'render', 'copyXmlid', 'addToScript', 'deactivate']);
     });
@@ -87,10 +87,17 @@ suite('Views tree', () => {
             .filter(entry => entry.command.startsWith('viewDoctor.'));
         assert.ok(title.every(entry => entry.when === 'resourceScheme == odoo-view'), JSON.stringify(title));
         assert.deepStrictEqual(title.filter(entry => entry.group?.startsWith('navigation')).map(entry => entry.command),
-            ['viewDoctor.compare', 'viewDoctor.render']);
+            ['viewDoctor.compare', 'viewDoctor.render', 'viewDoctor.checkXpaths']);
         assert.deepStrictEqual(title.filter(entry => !entry.group?.startsWith('navigation')).map(entry => entry.command),
             ['viewDoctor.openParent', 'viewDoctor.openRoot', 'viewDoctor.addToScript']);
         assert.ok(!title.some(entry => /activate|deactivate|copyXmlid|openArch/.test(entry.command)), 'tree-only actions leaked into the editor title');
+    });
+
+    test('checking on save is a setting, on by default', () => {
+        const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8'));
+        const setting = manifest.contributes.configuration.properties['odooDebugger.views.checkXpathsOnSave'];
+        assert.strictEqual(setting?.type, 'boolean');
+        assert.strictEqual(setting?.default, true);
     });
 
     test('every view row has its open and compare actions inline, and no destructive one', () => {

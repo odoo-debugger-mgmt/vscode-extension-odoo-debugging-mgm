@@ -2,8 +2,8 @@ import * as vscode from 'vscode';
 import type { CommandDeps } from './index';
 import { registerCommand } from './registerCommand';
 import { ViewItem, resolveViewDoctorTarget } from '../views/viewDoctorView';
-import { clearViewDiagnostics, viewUri } from '../views/viewFileSystem';
-import { showBriefStatus, showError, showInfo, showModalWarning } from '../services/notifications';
+import { VIEW_SCHEME, clearViewDiagnostics, parseViewUri, viewUri } from '../views/viewFileSystem';
+import { showBriefStatus, showError, showInfo, showModalWarning, showWarning } from '../services/notifications';
 import { SettingsStore } from '../settingsStore';
 import { compareTargets, diffArguments, findCounterpart, upgradePair, type PairProject } from '../views/viewPairing';
 import { errorMessage } from '../services/logger';
@@ -11,6 +11,8 @@ import { qwebMessage } from '../services/views/renderPlan';
 import type { RenderTarget } from '../services/views/renderSession';
 import { createUpgradeScript } from '../views/upgradeScriptFlow';
 import { readableArchError } from '../services/views/archErrors';
+import { checkResultText } from '../services/views/xpathReport';
+import type { ViewRow } from '../services/views/viewQueries';
 import { viewTarget, type ViewTarget } from '../views/viewTarget';
 
 function viewItem(arg: unknown): ViewItem | undefined {
@@ -21,8 +23,20 @@ async function openArch(dbName: string, viewId: number, xmlid: string | null): P
     await vscode.window.showTextDocument(viewUri(dbName, viewId, xmlid ?? `view-${viewId}`), { preview: true });
 }
 
+/** The view's open arch - revealed when no editor shows it - or the arch opened now. */
+async function archDocument(dbName: string, view: ViewRow): Promise<vscode.TextDocument> {
+    const open = vscode.workspace.textDocuments.find(document => {
+        const ref = document.uri.scheme === VIEW_SCHEME ? parseViewUri(document.uri) : undefined;
+        return ref?.dbName === dbName && ref.viewId === view.id;
+    });
+    if (open && vscode.window.visibleTextEditors.some(editor => editor.document === open)) {
+        return open;
+    }
+    return (await vscode.window.showTextDocument(open?.uri ?? viewUri(dbName, view.id, view.xmlid ?? `view-${view.id}`), { preview: true })).document;
+}
+
 export function registerViewDoctorCommands(deps: CommandDeps): void {
-    const { context, providers, viewService, viewNotes, viewDiagnostics, viewRender } = deps;
+    const { context, providers, viewService, viewNotes, viewDiagnostics, xpathDiagnostics, viewRender } = deps;
 
     /** The view a command acts on (a row, an arch editor, or the active editor); the error is shown when it is gone. */
     const target = async (arg: unknown): Promise<ViewTarget | undefined> => {
@@ -135,6 +149,27 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
             });
         } catch (error) {
             void showError(`Could not render ${item.view.name}: ${errorMessage(error)}`);
+        }
+    }));
+
+    context.subscriptions.push(registerCommand('viewDoctor.checkXpaths', async (arg: unknown) => {
+        const item = await target(arg);
+        if (!item) {
+            return;
+        }
+        if (!item.view.inheritId) {
+            void showInfo(`${item.view.name} inherits no view: it has no locators to check.`);
+            return;
+        }
+        try {
+            const document = await archDocument(item.dbName, item.view);
+            const text = document.getText();
+            const report = await viewService.checkXpaths(item.dbName, item.view.id, text);
+            xpathDiagnostics.show(document.uri, text, report);
+            const result = checkResultText(report);
+            void (result.level === 'info' ? showInfo(result.text) : showWarning(result.text));
+        } catch (error) {
+            void showError(`Could not check ${item.view.name}: ${errorMessage(error)}`);
         }
     }));
 

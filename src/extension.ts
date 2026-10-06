@@ -51,7 +51,8 @@ import { ViewRenderPanel } from './views/viewRenderPanel';
 import { VIEW_SCHEME, ViewFileSystemProvider, parseViewUri, type ViewRef } from './views/viewFileSystem';
 import { ViewArchPoller } from './views/viewPoll';
 import { isReadOnlyOriginal, type PairProject } from './views/viewPairing';
-import { archErrorSummary, locateArchError, readableArchError } from './services/views/archErrors';
+import { XpathDiagnostics } from './views/xpathDiagnostics';
+import { createSaveHook } from './views/viewSaveHook';
 import { getWriteDates } from './services/views/viewQueries';
 import { getDefaultVersionSettings, normalizePath, resolveOptionalPath } from './utils';
 import { StatusBarIndicators } from './views/statusBar';
@@ -211,32 +212,30 @@ export async function activate(context: vscode.ExtensionContext) {
     // Odoo's reason a saved view stays off, on the line it is about.
     const viewDiagnostics = vscode.languages.createDiagnosticCollection('odoo-views');
     context.subscriptions.push(viewDiagnostics);
+    // The XPath check's results, with quick fixes, apart from Odoo's own reasons.
+    const xpathDiagnostics = new XpathDiagnostics();
+    context.subscriptions.push(xpathDiagnostics, vscode.languages.registerCodeActionsProvider(
+        { scheme: VIEW_SCHEME }, xpathDiagnostics, { providedCodeActionKinds: XpathDiagnostics.providedCodeActionKinds }));
     // A closed arch has no line left to point at.
     context.subscriptions.push(vscode.workspace.onDidCloseTextDocument(document => {
         if (document.uri.scheme === VIEW_SCHEME) {
             viewDiagnostics.delete(document.uri);
+            xpathDiagnostics.clear(document.uri);
         }
     }));
+    const onSaved = createSaveHook({
+        checkXpaths: (dbName, viewId, arch) => viewService.checkXpaths(dbName, viewId, arch),
+        checkOnSave: () => vscode.workspace.getConfiguration('odooDebugger').get<boolean>('views.checkXpathsOnSave', true),
+        xpaths: xpathDiagnostics,
+        activationDiagnostics: viewDiagnostics,
+        reloadDatabase: dbName => viewRender.reloadDatabase(dbName),
+        recordSave: (dbName, viewId, activated) => viewNotes.recordSave(dbName, viewId, activated),
+        refreshTree: () => providers.views.refresh(),
+        warn: text => void showWarning(text),
+        brief: text => showBriefStatus(text)
+    });
     const viewFiles = new ViewFileSystemProvider(viewService, {
-        onSaved: (ref, result, uri, text) => {
-            if (result.activationError) {
-                const where = locateArchError(text, result.activationError);
-                const diagnostic = new vscode.Diagnostic(
-                    new vscode.Range(where.line, where.start, where.line, where.end),
-                    readableArchError(result.activationError),
-                    vscode.DiagnosticSeverity.Error
-                );
-                diagnostic.source = 'Odoo';
-                viewDiagnostics.set(uri, [diagnostic]);
-                void showWarning(`Saved. The view stays off: ${archErrorSummary(result.activationError)}`);
-            } else {
-                viewDiagnostics.delete(uri);
-                showBriefStatus(result.activated ? 'Saved, and the view is on.' : 'Saved.');
-            }
-            viewRender.reloadDatabase(ref.dbName);
-            // The tree shows the journal, so refresh once the save is in it.
-            void viewNotes.recordSave(ref.dbName, ref.viewId, result.activated).then(() => providers.views.refresh());
-        }
+        onSaved: (ref, result, uri, text) => void onSaved(ref, result, uri, text)
     }, async dbName => {
         const allowEdit = vscode.workspace.getConfiguration('odooDebugger').get<boolean>('views.allowEditOriginal', false);
         const result = await SettingsStore.peekSelectedProject().catch(() => null);
@@ -358,7 +357,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     };
 
-    registerAllCommands({ context, providers, versionsService, sortPreferences, viewService, viewNotes, viewDiagnostics, viewRender, moduleTreeView, dbTreeView, refreshAll });
+    registerAllCommands({ context, providers, versionsService, sortPreferences, viewService, viewNotes, viewDiagnostics, xpathDiagnostics, viewRender, moduleTreeView, dbTreeView, refreshAll });
 
     // Another window wrote to a shared store, or this window switched stores:
     // re-read everything. Debounced, because one save elsewhere can touch
