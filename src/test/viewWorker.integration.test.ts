@@ -74,6 +74,31 @@ print('ODT_XPATH_IDS:%d:%d' % (parent.id, child.id))
 `;
 
 /**
+ * A chain switched off the way an upgrade leaves it, fixed child first: the
+ * leaf's locators find what its off ancestors add, two levels up.
+ */
+const XPATH_OFF_CHAIN_SETUP = `
+root = env['ir.ui.view'].create({
+    'name': 'odt.xpath.root', 'type': 'form', 'model': 'res.partner', 'mode': 'primary', 'priority': 99,
+    'arch': '<form><sheet><field name="name"/><field name="ref"/></sheet></form>',
+})
+upper = env['ir.ui.view'].create({
+    'name': 'odt.xpath.upper', 'type': 'form', 'model': 'res.partner', 'inherit_id': root.id, 'mode': 'extension', 'active': False,
+    'arch': '<data><field name="ref" position="after"><field name="vat"/></field></data>',
+})
+lower = env['ir.ui.view'].create({
+    'name': 'odt.xpath.lower', 'type': 'form', 'model': 'res.partner', 'inherit_id': upper.id, 'mode': 'extension', 'active': False,
+    'arch': '<data><field name="vat" position="after"><field name="website"/></field></data>',
+})
+leaf = env['ir.ui.view'].create({
+    'name': 'odt.xpath.leaf', 'type': 'form', 'model': 'res.partner', 'inherit_id': lower.id, 'mode': 'extension', 'active': False,
+    'arch': '<data><field name="name" position="after"><field name="email"/></field></data>',
+})
+env.cr.commit()
+print('ODT_XPATH_CHAIN:%d:%d:%d' % (upper.id, lower.id, leaf.id))
+`;
+
+/**
  * What is checked: ok, dead, ambiguous (Studio's //form[1] also matches the
  * inline one2many form), and a direct locator on the field only the stored
  * child itself adds - dead against the baseline, ok if the child leaked in.
@@ -452,6 +477,8 @@ function jsonRpc(port: number, route: string, sid: string, extraCookie = ''): Pr
             ['direct', 'dead', 0, 11, 7]
         ];
 
+        const signalBefore = await templatesCacheSignal(copy);
+
         assert.deepStrictEqual(statuses(await service.checkXpaths(copy, childId, CHECKED_ARCH)), expected);
         assert.strictEqual(await runSql(copy, `SELECT active FROM ir_ui_view WHERE id = ${childId};`), 'f');
 
@@ -461,6 +488,29 @@ function jsonRpc(port: number, route: string, sid: string, extraCookie = ''): Pr
         assert.strictEqual(await runSql(copy, `SELECT active FROM ir_ui_view WHERE id = ${childId};`), 't', 'the check left the view off');
 
         await assert.rejects(service.checkXpaths(copy, parentId, '<form/>'), /Not an inheriting view/);
+        assert.strictEqual(await templatesCacheSignal(copy), signalBefore, 'the check signalled the running servers');
+    });
+
+    test('check_xpaths composes the parent with its chain on, when an upgrade left it off, and leaves it off', async () => {
+        const { stdout } = await runCommand(python!, [`${odoo}/odoo-bin`, 'shell', '--no-http', '--addons-path', addonsPaths.join(','), '-d', copy], { input: XPATH_OFF_CHAIN_SETUP });
+        const [, upperId, lowerId, leafId] = (/ODT_XPATH_CHAIN:(\d+):(\d+):(\d+)/.exec(stdout) ?? []).map(Number);
+        assert.ok(leafId > 0, `setup printed no ids:\n${stdout}`);
+        const arch = `<data>
+    <xpath expr="//field[@name='website']" position="after">
+        <field name="email"/>
+    </xpath>
+    <xpath expr="//field[@name='vat']" position="before">
+        <field name="phone"/>
+    </xpath>
+</data>`;
+
+        const report = await service.checkXpaths(copy, leafId, arch);
+        assert.deepStrictEqual(report.locators.map(locator => [locator.expr, locator.status, locator.matches]), [
+            ["//field[@name='website']", 'ok', 1],
+            ["//field[@name='vat']", 'ok', 1]
+        ]);
+        assert.strictEqual(await runSql(copy, `SELECT string_agg(active::text, ',' ORDER BY id) FROM ir_ui_view WHERE id IN (${upperId}, ${lowerId}, ${leafId});`),
+            'false,false,false', 'the check left the chain on');
     });
 
     test('dropping the database ends another window\'s shell on it too', async () => {

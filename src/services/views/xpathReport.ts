@@ -103,6 +103,12 @@ export function checkResultText(report: XpathReport): { level: 'info' | 'warning
     if (dead === 0 && ambiguous === 0 && invalid === 0) {
         return { level: 'info', text: total === 1 ? 'The locator matches.' : `All ${total} locators match.` };
     }
+    if (total === 1) {
+        const text = dead > 0 ? 'The locator matches nothing.'
+            : ambiguous > 0 ? 'The locator matches several nodes.'
+                : 'The locator is not valid XPath.';
+        return { level: 'warning', text };
+    }
     const parts: string[] = [];
     if (dead > 0) {
         parts.push(`${dead} ${dead === 1 ? 'matches' : 'match'} nothing`);

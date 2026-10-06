@@ -42,6 +42,11 @@ suite('XPath report', () => {
         assert.deepStrictEqual(checkResultText(parseXpathReport({ locators: [] })), { level: 'info', text: 'This view has no locators to check.' });
         assert.deepStrictEqual(checkResultText(parseXpathReport({ locators: [locator('ok'), locator('dead'), locator('ambiguous'), locator('ambiguous')] })),
             { level: 'warning', text: 'Of 4 locators, 1 matches nothing, 2 match several nodes.' });
+        assert.deepStrictEqual(checkResultText(parseXpathReport({ locators: [locator('dead')] })), { level: 'warning', text: 'The locator matches nothing.' });
+        assert.deepStrictEqual(checkResultText(parseXpathReport({ locators: [locator('ambiguous', { matches: 2 })] })),
+            { level: 'warning', text: 'The locator matches several nodes.' });
+        assert.deepStrictEqual(checkResultText(parseXpathReport({ locators: [locator('invalid', { matches: null })] })),
+            { level: 'warning', text: 'The locator is not valid XPath.' });
         assert.deepStrictEqual(checkResultText(parseXpathReport({ error: 'child arch is not valid XML: y' })),
             { level: 'warning', text: 'Could not check the locators: child arch is not valid XML: y' });
     });

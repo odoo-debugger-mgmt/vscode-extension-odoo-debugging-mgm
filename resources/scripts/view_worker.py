@@ -8,11 +8,11 @@
 # {"id": n, "cmd": "...", "args": {...}} -> {"id": n, "ok": true,
 # "result": ...} or {"id": n, "ok": false, "error": "...", "trace": "..."}.
 # Runs on Odoo 15 to 19: every API that moved is looked up, not assumed.
-import importlib.util
 import json
 import os
 import socket
 import traceback
+import types
 
 import odoo
 import psycopg2
@@ -202,12 +202,17 @@ _XPATH_CHECK = []
 def _xpath_check():
     """xpath_check.py, from the folder this file is in: compile() gave this
     code the script's path, which is how the worker finds what lies next to
-    it. Loaded on first use, so a problem in it cannot stop the worker."""
+    it. Loaded on first use, so a problem in it cannot stop the worker.
+    Compiled in memory rather than imported: an import would write a
+    __pycache__ into the extension's own folder."""
     if not _XPATH_CHECK:
         folder = os.path.dirname(os.path.abspath(_xpath_check.__code__.co_filename))
-        spec = importlib.util.spec_from_file_location('odt_xpath_check', os.path.join(folder, 'xpath_check.py'))
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        path = os.path.join(folder, 'xpath_check.py')
+        with open(path, encoding='utf-8') as source:
+            code = compile(source.read(), path, 'exec')
+        module = types.ModuleType('odt_xpath_check')
+        module.__file__ = path
+        exec(code, module.__dict__)  # noqa: S102 - our own script, shipped next to this one
         _XPATH_CHECK.append(module)
     return _XPATH_CHECK[0]
 
@@ -215,16 +220,29 @@ def _xpath_check():
 def cmd_check_xpaths(env, view_id, arch):
     """Resolves every locator of `arch` - the editor's text for this view -
     against its parent's combined arch: the raw tree Odoo applies inheritance
-    specs to, before get_view drops nodes by groups. The view and every view
-    inheriting from it are switched off first, inside this request's
-    transaction, which the worker always rolls back: the baseline is the parent
-    as it would be without them, whether the view is on or off. Later siblings
-    stay in - the same approximation odoo-manager makes. Nothing is committed
-    or signalled."""
+    specs to, before get_view drops nodes by groups. Inside this request's
+    transaction, which the worker always rolls back, the parent and every view
+    it inherits from are switched on - Odoo leaves an inactive view out of its
+    own composition, and a chain disabled by an upgrade is fixed child first -
+    and then the view and every view inheriting from it are switched off: the
+    baseline is the parent as it will be once its chain is on, without this
+    view, whether this view is on or off. Later siblings stay in - the same
+    approximation odoo-manager makes. Nothing is committed or signalled.
+    A server holding a write on these rows makes this fail after five seconds
+    instead of hanging the shell."""
     view = _view(env, view_id)
     parent = view.inherit_id
     if not parent:
         raise Refused('Not an inheriting view: it has no locators to check.')
+    env.cr.execute("SET LOCAL lock_timeout = '5s'")
+    env.cr.execute("""
+        WITH RECURSIVE chain AS (
+            SELECT id, inherit_id, 0 AS depth FROM ir_ui_view WHERE id = %s
+            UNION ALL
+            SELECT v.id, v.inherit_id, c.depth + 1 FROM ir_ui_view v JOIN chain c ON v.id = c.inherit_id WHERE c.depth < 50
+        )
+        UPDATE ir_ui_view SET active = true WHERE id IN (SELECT id FROM chain) AND NOT active
+    """, [parent.id])
     env.cr.execute("""
         WITH RECURSIVE tree AS (
             SELECT id, 0 AS depth FROM ir_ui_view WHERE id = %s
