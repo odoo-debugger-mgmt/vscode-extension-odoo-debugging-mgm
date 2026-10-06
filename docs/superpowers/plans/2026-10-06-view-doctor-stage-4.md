@@ -3718,3 +3718,46 @@ git commit -m "[DOC] Record how View Doctor stage 4 was executed
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
+
+---
+
+## Execution record (2026-10-06)
+
+Done: commits 5125e32..dbd5ccb on v-1.5, run with subagent-driven development (a fresh implementer per task, a task review per task, Opus reviews for Tasks 1-3, 5, 8, 9, an Opus whole-branch review, one final fix wave with a scoped re-review).
+
+- Unit suite: 844 passing, 26 pending, 0 failing (baseline before the plan: 768 / 19). tsc 0 errors; lint 0 errors, 117 warnings (baseline).
+- Gated real-Odoo suite ("View worker against a real Odoo"): 25/25 on 17.0, 18.0 and 19.0, and on 19.0 over TCP; the stage 3 upgrade-script suite passes on all three (run at 16c1113; the fix wave re-ran the worker suite on 17 and 19, 25/25).
+- Live window check under Xvfb (17 → 19 pair): 9/9 pass. Dead-xpath warning and message; quick fix to `//field[@name='vat']` saved; Find View by id, xmlid and model with the indented list; Views Inheriting This and Open Root; Compare and Render from the editor title; the filter's "2 · 1 also off in odt_view_live_17" and the eye toggles; report HTML on both sides and Next record; PDF via xdg-open from a 0700 `odt-report-*` folder, removed on close; Debug off sends `debug=0` and the bug icon goes.
+
+### Rulings made while executing
+
+- Ruling: work on v-1.5 in place, no worktree — the user named the branch and stages 1-3 ran the same way — cost if wrong: none.
+- Ruling: show the plan and proceed without waiting — the user asked to be shown it, then to execute — cost if wrong: rework of a task the user would have changed.
+- Ruling: load xpath_check.py without writing bytecode (compile + exec into a module) — `importlib` wrote resources/scripts/__pycache__, which a vsix would ship — cost if wrong: none.
+- Ruling: the check's baseline also switches ON the parent and its inherit_id ancestors inside the rolled-back transaction — on 15-19 `_get_inheriting_views` skips an inactive starting view, so a child of an off parent (the usual Upgrade-mode chain) read "dead" falsely — cost if wrong: a locator that only works because an off ancestor is on reads ok while that ancestor stays off.
+- Ruling: fold Task 2 minors (single-locator wording "The locator matches nothing.", `SET LOCAL lock_timeout = '5s'` before the exclusion UPDATEs, assert nothing signalled) into its fix round — cost if wrong: none.
+- Ruling: the element scan accepts non-ASCII tag names (`[^\s/>!?][^\s/>]*` on the blanked text) — lxml accepts them, and skipping one shifts later locators onto the wrong sibling — cost if wrong: none.
+- Ruling: a check that finishes after its arch closed shows nothing (the spec's "closing clears its diagnostics" over the plan's code); a save that runs no check, or whose check fails, clears that arch's XPath squiggles; a report error is logged; the save hook's own errors are caught and logged — cost if wrong: a manual check's squiggles vanish on the next save with the setting off.
+- Ruling: one commit's trailer (8f153bd) names Sonnet — left as is, as stage 2 ruled — cost if wrong: one commit's attribution differs.
+- Ruling: the Python test wrapper runs `python -B` — it wrote the stray __pycache__ — cost if wrong: none.
+- Ruling: report tabs show no "New record" button (an explicit `showNew` flag), a report steps by shared id, and `report_target` matches only qweb-html/pdf/text reports — cost if wrong: none.
+- Ruling: report PDFs go into a private `mkdtemp` folder per render tab (0700), removed when the tab closes — amends spec rule 8's literal `os.tmpdir()/odt-report-…pdf`, which another local user could pre-create — cost if wrong: an open PDF viewer may lose its file when the tab closes.
+- Ruling: PDF clicks are ignored while one is in flight (per tab generation); a dropped session reads "Odoo no longer accepts the render's session; press Reload and try again."; `openExternal` returning false names the file — cost if wrong: none.
+- Ruling (final review): report sides on different models are not paired by id — each shows its own newest record with a notice; the PDF button is only for qweb-pdf/qweb-html; Find View says "Nothing matches '<value>' in <db>."; a PDF written after its tab closed is removed and not opened; CHANGELOG says "a warning on its locator" — cost if wrong: none.
+- Ruling: Add to Upgrade Script stays on every `odoo-view:` editor title — P10/P11 — cost if wrong: one surprising menu entry.
+- Ruling: `.vscodeignore` excludes root dotfiles and dot-folders — `vsce ls` showed `.claude/settings*.json`, `.mcp.json`, `.bashrc`, `.gitconfig`, `.superpowers/` would be packaged from this checkout (pre-existing) — cost if wrong: none.
+- Ruling: Render showing a silent login page when the server reads sessions from another data folder is documented (README) rather than fixed — a fix touches the security-reviewed proxy; the extension's own launches share the folder — cost if wrong: a confusing login page for servers started with their own `--data-dir`.
+- Ruling: the four session files the live check may have minted in `~/.local/share/Odoo/sessions` are left for the user — the sweep was refused as too broad, and they cannot be proven to be only ours — cost if wrong: they linger until Odoo's 7-day cleanup.
+
+### Minors left as they are
+
+- Task 1: the checker's mocha suite is pending, not failing, on a Python without lxml; locators come xpath-first, then direct (nothing relies on order).
+- Task 2: a cyclic inherit chain hangs Odoo's own `_get_combined_arch` (only raw SQL can make one); website-specific parents are left out of the baseline without a `website_id` context.
+- Task 3: a span is not cross-checked with the locator's expr (fixes are guarded by checked-text equality); a fallback locator loses its Hint; a blank fallback line is zero-width; `positionAt` is O(n) per call; no tests for an out-of-range element, an ambiguous direct locator with shorter equivalents, a DOCTYPE internal subset.
+- Task 4: openParent/openRoot read rows outside a try (registerCommand handles it); `target()` has no direct test.
+- Task 5: Check XPaths' closed-document guard and the report-error log line have no test.
+- Task 6: the Find View QuickPick is not disposed if building it throws; model-less (QWeb) views are reachable by id or external id only; no unit test of the flow.
+- Task 7: no test drives `ViewDoctorTreeProvider.load()` (the live check did); menu `when` clauses are tested by regex.
+- Task 8: the account.move domain and the top-of-chain fallback have no real-database test (base-only databases).
+- Task 9: the PDF fetch's timeout is idle, not total; a click during `openExternal` can rewrite the file; folders can outlive a hard shutdown (0700, private).
+- Final fix wave: two clicks from different render generations in one open tab can write the same PDF name at once, and the stale click's cleanup may remove the new one (click again); a PDF clicked just before a new render that then fails is discarded; README/CHANGELOG describe the common report case only (not the cross-model fallback or that text reports have no PDF button).
