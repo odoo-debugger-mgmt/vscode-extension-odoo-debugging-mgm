@@ -6,11 +6,15 @@
  */
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { OdooFrameProxy } from '../services/views/odooFrameProxy';
+import { fetchReportPdf } from '../services/views/reportPdf';
 import { RenderSession, type FrameHost, type RenderBackend, type RenderState, type RenderTarget } from '../services/views/renderSession';
 import { isPortOpen, resolvePortForDatabase, waitForPort } from '../services/server';
 import { errorMessage, logger } from '../services/logger';
-import { showError, showWarning } from '../services/notifications';
+import { showError, showInfo, showWarning } from '../services/notifications';
 
 export interface RenderRequest {
     title: string;
@@ -23,6 +27,17 @@ export interface RenderRequest {
     notice?: string;
 }
 
+/** Where the Debug box's state lives; the default keeps it for this session only. */
+export interface RenderSettings {
+    debug(): boolean;
+    setDebug(debug: boolean): Thenable<void> | void;
+}
+
+function memorySettings(): RenderSettings {
+    let debug = true;
+    return { debug: () => debug, setDebug: value => { debug = value; } };
+}
+
 export function escapeHtml(text: string): string {
     return text.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char));
 }
@@ -31,6 +46,7 @@ const STYLE = `
 body { margin: 0; padding: 0; height: 100vh; display: flex; flex-direction: column; background: var(--vscode-editor-background); color: var(--vscode-foreground); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
 .toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--vscode-panel-border); }
 .toolbar .notice { color: var(--vscode-descriptionForeground); }
+.toolbar label { display: flex; gap: 4px; align-items: center; }
 button { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; padding: 3px 10px; cursor: pointer; }
 button:disabled { opacity: 0.5; cursor: default; }
 .sides { flex: 1; display: flex; min-height: 0; }
@@ -46,7 +62,10 @@ iframe { flex: 1; width: 100%; border: none; background: #fff; }
 const SCRIPT = `
 const vscode = acquireVsCodeApi();
 for (const button of document.querySelectorAll('button[data-action]')) {
-    button.addEventListener('click', () => vscode.postMessage({ type: 'action', action: button.dataset.action }));
+    button.addEventListener('click', () => vscode.postMessage({ type: 'action', action: button.dataset.action, key: button.dataset.key }));
+}
+for (const toggle of document.querySelectorAll('input[data-toggle="debug"]')) {
+    toggle.addEventListener('change', () => vscode.postMessage({ type: 'action', action: 'debug', value: toggle.checked }));
 }
 window.addEventListener('message', event => {
     const message = event.data;
@@ -65,7 +84,7 @@ function button(action: string, label: string, enabled = true): string {
     return `<button data-action="${action}"${enabled ? '' : ' disabled'}>${escapeHtml(label)}</button>`;
 }
 
-export function renderPanelHtml(state: RenderState, options: { nonce: string; cspSource: string; startLabel?: string }): string {
+export function renderPanelHtml(state: RenderState, options: { nonce: string; cspSource: string; startLabel?: string; debug?: boolean }): string {
     const origins = [...new Set(state.sides.flatMap(side => side.url ? [new URL(side.url).origin] : []))];
     const csp = [
         "default-src 'none'",
@@ -76,11 +95,13 @@ export function renderPanelHtml(state: RenderState, options: { nonce: string; cs
     const record = state.record;
     const toolbar = [
         button('reload', 'Reload'),
+        `<label><input type="checkbox" data-toggle="debug"${options.debug === false ? '' : ' checked'}> Debug</label>`,
         ...(record ? [
             button('previous', 'Previous record', record.canPrevious),
             `<span>${escapeHtml(record.label)}</span>`,
             button('next', 'Next record', record.canNext),
-            button('new', 'New record', record.canNew)
+            // Only a form can show a new record; a report's bar has no such button.
+            ...(record.canNew || record.label === 'New record' ? [button('new', 'New record', record.canNew)] : [])
         ] : []),
         ...(state.notice ? [`<span class="notice">${escapeHtml(state.notice)}</span>`] : [])
     ].join('\n');
@@ -89,6 +110,7 @@ export function renderPanelHtml(state: RenderState, options: { nonce: string; cs
             `<strong>${escapeHtml(side.title)}</strong>`,
             ...(side.detail ? [`<span class="detail">${escapeHtml(side.detail)}</span>`] : []),
             ...(side.url && side.message ? [`<span class="message">${escapeHtml(side.message)}</span>`] : []),
+            ...(side.url && side.pdf ? [`<button data-action="pdf" data-key="${escapeHtml(side.key)}">PDF</button>`] : []),
             ...(side.offerStart ? [button('start', options.startLabel ?? 'Start Server')] : [])
         ].join(' ');
         const body = side.url
@@ -118,12 +140,14 @@ export class ViewRenderPanel implements vscode.Disposable {
     private request: RenderRequest | undefined;
     private readonly proxies = new Map<string, Promise<OdooFrameProxy>>();
     private readonly host: FrameHost;
+    private readonly settings: RenderSettings;
     /** Bumped by every show() and every close, so a slower earlier one can tell it is stale. */
     private generation = 0;
     private updates = 0;
     private starting = false;
 
-    constructor(private readonly backend: RenderBackend, host?: FrameHost) {
+    constructor(private readonly backend: RenderBackend, host?: FrameHost, settings?: RenderSettings) {
+        this.settings = settings ?? memorySettings();
         this.host = host ?? {
             portFor: async (dbName, versionId) => (await resolvePortForDatabase(dbName, versionId)).port,
             isPortOpen,
@@ -217,7 +241,7 @@ export class ViewRenderPanel implements vscode.Disposable {
             return;
         }
         const update = ++this.updates;
-        const state = await session.state();
+        const state = await session.state({ debug: this.settings.debug() });
         if (update !== this.updates || this.panel !== panel || this.session !== session) {
             return;
         }
@@ -225,14 +249,14 @@ export class ViewRenderPanel implements vscode.Disposable {
         panel.webview.html = renderPanelHtml({ ...state, notice: notice || undefined }, {
             nonce: randomBytes(16).toString('base64'),
             cspSource: panel.webview.cspSource,
-            startLabel: this.request?.startLabel
+            startLabel: this.request?.startLabel,
+            debug: this.settings.debug()
         });
     }
 
     private async onMessage(message: unknown): Promise<void> {
-        const action = (message as { type?: string; action?: string } | undefined)?.type === 'action'
-            ? (message as { action?: string }).action
-            : undefined;
+        const data = (message ?? {}) as { type?: unknown; action?: unknown; key?: unknown; value?: unknown };
+        const action = data.type === 'action' && typeof data.action === 'string' ? data.action : undefined;
         const session = this.session;
         if (!session || !action) {
             return;
@@ -260,11 +284,46 @@ export class ViewRenderPanel implements vscode.Disposable {
                 case 'start':
                     await this.startServers(session);
                     return;
+                case 'debug':
+                    await this.settings.setDebug(data.value === true);
+                    // Rebuilding the page reloads both frames with the new flag.
+                    await this.update();
+                    return;
+                case 'pdf':
+                    if (typeof data.key === 'string') {
+                        await this.openPdf(session, data.key);
+                    }
+                    return;
             }
         } catch (error) {
             logger.warn('The render tab could not handle an action:', error);
             void showError(`The render could not ${action}: ${errorMessage(error)}`);
         }
+    }
+
+    private async openPdf(session: RenderSession, key: string): Promise<void> {
+        const source = session.pdfSource(key);
+        if (!source) {
+            return;
+        }
+        if (vscode.env.remoteName) {
+            void showInfo('PDF opens only in a local VS Code window for now. Print it from Odoo instead.');
+            return;
+        }
+        const file = path.join(os.tmpdir(), source.fileName);
+        try {
+            await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Notification, title: `Getting the PDF from ${source.dbName}…` },
+                async () => {
+                    const pdf = await fetchReportPdf(source.port, source.path, await source.session());
+                    await fs.promises.writeFile(file, pdf, { mode: 0o600 });
+                }
+            );
+        } catch (error) {
+            void showError(`Could not get the PDF: ${errorMessage(error)}`);
+            return;
+        }
+        await vscode.env.openExternal(vscode.Uri.file(file));
     }
 
     private async startServers(session: RenderSession): Promise<void> {

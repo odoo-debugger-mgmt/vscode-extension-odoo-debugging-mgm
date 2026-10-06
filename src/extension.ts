@@ -135,7 +135,10 @@ export async function activate(context: vscode.ExtensionContext) {
     // What the upgrade disabled and what was changed here, per database, for upgrade scripts.
     const viewNotes = new ViewNoteService(new ViewNoteStore(path.join(context.globalStorageUri.fsPath, 'view-notes')));
     const viewService = new ViewService(viewWorkers, viewNotes);
-    const viewRender = new ViewRenderPanel(viewService);
+    const viewRender = new ViewRenderPanel(viewService, undefined, {
+        debug: () => context.workspaceState.get<boolean>('viewDoctor.renderDebug', true),
+        setDebug: debug => context.workspaceState.update('viewDoctor.renderDebug', debug)
+    });
     context.subscriptions.push(viewRender);
     context.subscriptions.push(viewWorkers, onBeforeDatabaseRelease(dbName => viewWorkers.release(dbName)));
     let viewDoctorTreeView: vscode.TreeView<vscode.TreeItem> | undefined;

@@ -155,4 +155,39 @@ suite('Render session', () => {
         assert.strictEqual(state.sides[0].message, 'shop-17 has no report for this template.');
         assert.strictEqual(nextOf(state.sides[1].url), '/report/html/account.report_invoice/8?debug=1');
     });
+
+    test('a report steps to the next shared record and back', async () => {
+        const fake = backend({ 'shop-17': [9, 7, 5], 'shop-18': [8, 7, 5] }, {}, { 'shop-17': invoice('17.0'), 'shop-18': invoice('18.0') });
+        const session = await RenderSession.prepare([reportOf(original), reportOf(upgraded)], fake, host());
+        const urls = async () => (await session.state()).sides.map(side => nextOf(side.url));
+        const at = (id: number) => [`/report/html/account.report_invoice/${id}?debug=1`, `/report/html/account.report_invoice/${id}?debug=1`];
+        assert.deepStrictEqual(await urls(), at(7));
+        assert.strictEqual(session.next(), true);
+        assert.deepStrictEqual(await urls(), at(5));
+        assert.deepStrictEqual((await session.state()).record, { label: 'Record 5', canPrevious: true, canNext: false, canNew: false });
+        assert.strictEqual(session.next(), false, 'no older shared record');
+        assert.strictEqual(session.previous(), true);
+        assert.deepStrictEqual(await urls(), at(7));
+        assert.deepStrictEqual((await session.state()).record, { label: 'Record 7', canPrevious: false, canNext: true, canNew: false });
+        assert.strictEqual(session.previous(), false, 'no new record before the newest');
+    });
+
+    test('the debug flag reaches every frame, and a report side offers its PDF', async () => {
+        const views = await RenderSession.prepare([original, upgraded], backend({ 'shop-17': [7], 'shop-18': [7] }), host());
+        assert.ok((await views.state({ debug: false })).sides.every(side => nextOf(side.url).includes('debug=0')));
+        assert.ok((await views.state()).sides.every(side => !side.pdf));
+        assert.strictEqual(views.pdfSource('shop-18'), undefined);
+
+        const reports = await RenderSession.prepare([reportOf(upgraded)], backend({ 'shop-18': [8, 5] }, {}, { 'shop-18': invoice('18.0') }), host());
+        const state = await reports.state({ debug: false });
+        assert.strictEqual(nextOf(state.sides[0].url), '/report/html/account.report_invoice/8?debug=0');
+        assert.strictEqual(state.sides[0].pdf, true);
+        const source = reports.pdfSource('shop-18');
+        assert.deepStrictEqual([source?.dbName, source?.port, source?.path, source?.fileName],
+            ['shop-18', 8018, '/report/pdf/account.report_invoice/8', 'odt-report-shop-18-account.report_invoice-8.pdf']);
+        assert.strictEqual(await source?.session(), 'sid-shop-18');
+        reports.next();
+        assert.strictEqual(reports.pdfSource('shop-18')?.path, '/report/pdf/account.report_invoice/5', 'follows the record shown');
+        assert.strictEqual(reports.pdfSource('nope'), undefined);
+    });
 });

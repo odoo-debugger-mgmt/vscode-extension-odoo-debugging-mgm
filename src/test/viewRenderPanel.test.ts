@@ -52,6 +52,54 @@ suite('Render tab', () => {
         assert.ok(list.includes('data-action="reload"'));
     });
 
+    test('a report\'s record bar has no New record button; a form\'s keeps it, even on a new record', () => {
+        const report = renderPanelHtml({ ...state, record: { label: 'Record 7', canPrevious: false, canNext: true, canNew: false } }, { nonce: 'n', cspSource: 'x' });
+        assert.ok(/<button data-action="previous" disabled>/.test(report));
+        assert.ok(report.includes('<span>Record 7</span>'));
+        assert.ok(/<button data-action="next">/.test(report));
+        assert.ok(!report.includes('data-action="new"'), 'a report can never show a new record');
+        const fresh = renderPanelHtml({ ...state, record: { label: 'New record', canPrevious: true, canNext: false, canNew: false } }, { nonce: 'n', cspSource: 'x' });
+        assert.ok(/<button data-action="new" disabled>/.test(fresh));
+    });
+
+    test('the Debug box shows the setting, and PDF shows only on a report side', () => {
+        const report = { ...state, sides: [{ ...state.sides[0], pdf: true }, state.sides[1]] };
+        const on = renderPanelHtml(report, { nonce: 'n', cspSource: 'x', debug: true });
+        assert.ok(/<input type="checkbox" data-toggle="debug" checked>/.test(on), on);
+        assert.strictEqual((on.match(/data-action="pdf"/g) ?? []).length, 1);
+        assert.ok(on.includes('data-action="pdf" data-key="shop-17"'));
+        const off = renderPanelHtml(state, { nonce: 'n', cspSource: 'x', debug: false });
+        assert.ok(/<input type="checkbox" data-toggle="debug">/.test(off), off);
+        assert.ok(!off.includes('data-action="pdf"'));
+    });
+
+    test('turning Debug off is remembered and reloads the frames without debug', async () => {
+        let debug = true;
+        const backend: RenderBackend = {
+            newSession: async () => 'sid',
+            makeAction: async () => ({ actionId: 3, model: 'res.partner', viewType: 'list', rootId: 1, series: '18.0' }),
+            reportTarget: async () => null,
+            recentIds: async () => []
+        };
+        const host: FrameHost = {
+            portFor: async () => 8018,
+            isPortOpen: async () => true,
+            proxyFor: async (_db, port, mint) => ({ port: port + 1000, session: mint, gatePath: next => `/__odt/open?t=x&next=${encodeURIComponent(next)}` }),
+            externalOrigin: async origin => origin
+        };
+        const panel = new ViewRenderPanel(backend, host, { debug: () => debug, setDebug: value => { debug = value; } });
+        try {
+            await panel.show({ title: 'Partners', targets: [{ dbName: 'shop-18', viewId: 1, title: 'shop-18' }], startCommand: 'x', startLabel: 'Start' });
+            await (panel as unknown as { onMessage(message: unknown): Promise<void> }).onMessage({ type: 'action', action: 'debug', value: false });
+            assert.strictEqual(debug, false);
+            const html = (panel as unknown as { panel: { webview: { html: string } } }).panel.webview.html;
+            assert.ok(html.includes('debug%3D0'), 'the frame URL did not turn debug off');
+            assert.ok(/<input type="checkbox" data-toggle="debug">/.test(html));
+        } finally {
+            panel.dispose();
+        }
+    });
+
     test('opens one tab, reuses it, and closes it', async () => {
         const backend: RenderBackend = {
             newSession: async () => 'sid',
@@ -84,7 +132,7 @@ suite('Render tab', () => {
                     return { actionId: 3, model: 'res.partner', viewType: 'list', rootId: 1, series: '18.0' };
                 },
                 reportTarget: async () => null,
-            recentIds: async () => []
+                recentIds: async () => []
             },
             host: {
                 portFor: async () => 8018,

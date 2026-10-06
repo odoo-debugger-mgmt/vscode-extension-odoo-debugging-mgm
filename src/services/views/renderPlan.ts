@@ -23,18 +23,21 @@ export interface FramePathInput {
     viewType: string;
     /** The record a form shows; none for a new record or a multi-record view. */
     resId?: number;
+    /** Odoo keeps the last ?debug= in the session, so off is sent as debug=0. Default on. */
+    debug?: boolean;
 }
 
 export function framePath(input: FramePathInput): string {
     const record = input.viewType === 'form' ? input.resId : undefined;
+    const debug = input.debug === false ? 0 : 1;
     if (usesOdooRouter(input.series)) {
-        return `/odoo/action-${input.actionId}${record ? `/${record}` : ''}?debug=1`;
+        return `/odoo/action-${input.actionId}${record ? `/${record}` : ''}?debug=${debug}`;
     }
     const hash = [`action=${input.actionId}`, `model=${encodeURIComponent(input.model)}`, `view_type=${encodeURIComponent(input.viewType)}`];
     if (record) {
         hash.push(`id=${record}`);
     }
-    return `/web?debug=1#${hash.join('&')}`;
+    return `/web?debug=${debug}#${hash.join('&')}`;
 }
 
 /** Ids in both lists, newest first. */

@@ -21,6 +21,13 @@ suite('Render plan', () => {
         assert.strictEqual(framePath({ ...base, viewType: 'tree', series: '16.0', resId: 7 }), '/web?debug=1#action=41&model=res.partner&view_type=tree');
     });
 
+    test('debug off is said, not left out: Odoo keeps the last debug mode in the session', () => {
+        const base = { actionId: 41, model: 'res.partner', viewType: 'form', resId: 7 };
+        assert.strictEqual(framePath({ ...base, series: '19.0', debug: false }), '/odoo/action-41/7?debug=0');
+        assert.strictEqual(framePath({ ...base, series: '17.0', debug: false }), '/web?debug=0#action=41&model=res.partner&view_type=form&id=7');
+        assert.strictEqual(framePath({ ...base, series: '19.0', debug: true }), '/odoo/action-41/7?debug=1');
+    });
+
     test('common ids, newest first', () => {
         assert.deepStrictEqual(commonIds([9, 7, 5, 5], [8, 5, 7]), [7, 5]);
         assert.deepStrictEqual(commonIds([9], [8]), []);

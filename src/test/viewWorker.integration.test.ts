@@ -21,9 +21,10 @@ import { invalidateActiveDatabasesCache } from '../services/runtimeCache';
 import { buildViewWorkerArgs, viewWorkerEnv, VIEW_WORKER_APP_NAME } from '../services/views/viewWorkerArgs';
 import { ViewWorker, workerBootstrap, type WorkerTransport } from '../services/views/viewWorker';
 import { ViewWorkerPool } from '../services/views/viewWorkerPool';
-import { descendants, viewModels, viewsOfModel } from '../services/views/viewQueries';
+import { descendants, sqlText, viewModels, viewsOfModel } from '../services/views/viewQueries';
 import { ViewService } from '../services/views/viewService';
 import { OdooFrameProxy } from '../services/views/odooFrameProxy';
+import { fetchReportPdf, reportPdfPath } from '../services/views/reportPdf';
 
 const python = process.env.ODT_VIEW_TEST_PYTHON;
 const odoo = process.env.ODT_VIEW_TEST_ODOO;
@@ -546,6 +547,21 @@ function jsonRpc(port: number, route: string, sid: string, extraCookie = ''): Pr
         assert.deepStrictEqual(await service.recentIds(copy, 'res.partner', 5, [['id', '<', 0]]), [], 'the domain narrows the records');
     });
 
+    test('report_target matches QWeb reports only: another kind has no /report/html', async () => {
+        const [reportId, reportType, templateId] = (await runSql(copy, `
+            SELECT a.id || '|' || a.report_type || '|' || d.res_id FROM ir_act_report_xml a
+            JOIN ir_model_data d ON d.model = 'ir.ui.view' AND d.module || '.' || d.name = a.report_name
+            ORDER BY a.id LIMIT 1;`)).split('|');
+        assert.match(reportType, /^qweb-/);
+        await runSql(copy, `UPDATE ir_act_report_xml SET report_type = 'py3o' WHERE id = ${Number(reportId)};`);
+        try {
+            assert.strictEqual(await service.reportTarget(copy, Number(templateId)), null);
+        } finally {
+            await runSql(copy, `UPDATE ir_act_report_xml SET report_type = ${sqlText(reportType)} WHERE id = ${Number(reportId)};`);
+        }
+        assert.ok(await service.reportTarget(copy, Number(templateId)), 'the report is found again once QWeb');
+    });
+
     test('a report renders as HTML through the frame proxy, as admin', async () => {
         const [reportName, model, templateId] = (await runSql(copy, `
             SELECT a.report_name || '|' || a.model || '|' || d.res_id FROM ir_act_report_xml a
@@ -571,6 +587,24 @@ function jsonRpc(port: number, route: string, sid: string, extraCookie = ''): Pr
             assert.strictEqual(page.headers['x-frame-options'], undefined);
         } finally {
             await proxy.close();
+            await server.stop();
+        }
+    });
+
+    test('a report\'s PDF comes from the server with the minted session', async function () {
+        const [reportName, model, templateId] = (await runSql(copy, `
+            SELECT a.report_name || '|' || a.model || '|' || d.res_id FROM ir_act_report_xml a
+            JOIN ir_model_data d ON d.model = 'ir.ui.view' AND d.module || '.' || d.name = a.report_name
+            ORDER BY a.id LIMIT 1;`)).split('|');
+        const report = await service.reportTarget(copy, Number(templateId));
+        const [record] = await service.recentIds(copy, model, 1, report!.domain);
+        const sid = await service.newSession(copy);
+        mintedSids.push(sid);
+        const server = await startOdooServer(copy);
+        try {
+            const pdf = await fetchReportPdf(server.port, reportPdfPath(reportName, record), sid);
+            assert.strictEqual(pdf.subarray(0, 5).toString('latin1'), '%PDF-');
+        } finally {
             await server.stop();
         }
     });

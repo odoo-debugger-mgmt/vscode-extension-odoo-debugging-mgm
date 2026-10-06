@@ -373,7 +373,9 @@ def cmd_report_target(env, view_id):
     for root in dict.fromkeys([_root(view), _top(view)]):
         names = ['%s.%s' % (row.module, row.name)
                  for row in data.search([('model', '=', 'ir.ui.view'), ('res_id', '=', root.id)], order='module, name')]
-        report = reports.search([('report_name', 'in', names)], order='id', limit=1) if names else reports
+        # Only QWeb reports have a /report/html route; a py3o or other kind does not.
+        report = reports.search([('report_name', 'in', names), ('report_type', 'in', ('qweb-html', 'qweb-pdf', 'qweb-text'))],
+                                order='id', limit=1) if names else reports
         if report:
             domain = [['move_type', '!=', 'entry']] if report.model == 'account.move' else []
             return {'report_name': report.report_name, 'name': report.name, 'model': report.model,

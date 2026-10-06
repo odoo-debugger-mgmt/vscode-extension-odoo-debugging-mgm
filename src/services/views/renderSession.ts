@@ -8,6 +8,7 @@
 import { errorMessage } from '../logger';
 import type { RenderAction, ReportTarget } from './viewService';
 import { NO_COMMON_RECORD, commonIds, framePath, reportPath } from './renderPlan';
+import { pdfFileName, reportPdfPath } from './reportPdf';
 
 export const RECENT_LIMIT = 200;
 
@@ -50,6 +51,18 @@ export interface RenderSideState {
     url?: string;
     message?: string;
     offerStart?: boolean;
+    /** A report side showing a record: it can give its PDF. */
+    pdf?: boolean;
+}
+
+export interface PdfSource {
+    dbName: string;
+    /** The Odoo server's own port; the PDF does not go through the proxy. */
+    port: number;
+    path: string;
+    fileName: string;
+    /** The admin session the side's frame uses. */
+    session(): Promise<string>;
 }
 
 export interface RenderRecordState {
@@ -152,9 +165,10 @@ export class RenderSession {
         return new RenderSession(sides, host, records, mode, notice, noRecord);
     }
 
-    async state(): Promise<RenderState> {
+    async state(options: { debug?: boolean } = {}): Promise<RenderState> {
         const resId = this.index >= 0 ? this.records[this.index] : undefined;
-        const sides = await Promise.all(this.sides.map(side => this.sideState(side, resId)));
+        const debug = options.debug ?? true;
+        const sides = await Promise.all(this.sides.map(side => this.sideState(side, resId, debug)));
         let record: RenderRecordState | undefined;
         if (this.mode === 'form') {
             record = {
@@ -199,12 +213,29 @@ export class RenderSession {
         return this.sides.some(side => side.target.dbName === dbName);
     }
 
+    /** What the PDF of the record a report side shows needs; undefined for any other side. */
+    pdfSource(key: string): PdfSource | undefined {
+        const side = this.sides.find(entry => entry.target.dbName === key);
+        const resId = this.index >= 0 ? this.records[this.index] : undefined;
+        if (!side?.report || !side.proxy || side.port === undefined || resId === undefined) {
+            return undefined;
+        }
+        const { report, proxy } = side;
+        return {
+            dbName: side.target.dbName,
+            port: side.port,
+            path: reportPdfPath(report.reportName, resId),
+            fileName: pdfFileName(side.target.dbName, report.reportName, resId),
+            session: () => proxy.session()
+        };
+    }
+
     /** The server ports the sides point at, for waiting on a start. */
     ports(): number[] {
         return this.sides.flatMap(side => side.port === undefined ? [] : [side.port]);
     }
 
-    private async sideState(side: PreparedSide, resId: number | undefined): Promise<RenderSideState> {
+    private async sideState(side: PreparedSide, resId: number | undefined, debug: boolean): Promise<RenderSideState> {
         const base = { key: side.target.dbName, title: side.target.title };
         if (side.report) {
             const { report, proxy, port, origin } = side;
@@ -218,7 +249,7 @@ export class RenderSession {
             if (!await this.host.isPortOpen(port)) {
                 return { ...base, detail, message: `No Odoo server is answering on port ${port}.`, offerStart: true };
             }
-            return { ...base, detail, url: `${origin}${proxy.gatePath(reportPath(report.reportName, resId))}` };
+            return { ...base, detail, url: `${origin}${proxy.gatePath(reportPath(report.reportName, resId, debug))}`, pdf: true };
         }
         const { action, proxy, port, origin } = side;
         if (side.error || !action || !proxy || port === undefined || !origin) {
@@ -229,7 +260,7 @@ export class RenderSession {
         if (!await this.host.isPortOpen(port)) {
             return { ...base, detail, message: `No Odoo server is answering on port ${port}.`, offerStart: true };
         }
-        const path = framePath({ series: action.series, actionId: action.actionId, model: action.model, viewType: action.viewType, resId });
+        const path = framePath({ series: action.series, actionId: action.actionId, model: action.model, viewType: action.viewType, resId, debug });
         return { ...base, detail, url: `${origin}${proxy.gatePath(path)}` };
     }
 }
