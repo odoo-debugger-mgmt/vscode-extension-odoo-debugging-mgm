@@ -37,6 +37,11 @@ export interface VersionSettings {
      * hand. Otherwise the checkout is found under `customAddonsPath`.
      */
     repoPaths?: Record<string, string>;
+    /**
+     * Identity keys (debuggerName, portNumber, shellPortNumber) the user set
+     * by hand. Those are kept as typed; the others follow the branch.
+     */
+    customIdentity?: Array<'debuggerName' | 'portNumber' | 'shellPortNumber'>;
 }
 
 export class VersionModel {

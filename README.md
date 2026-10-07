@@ -27,7 +27,7 @@ The source repository is never run directly: every version gets its own worktree
 
 3. Where do the paths come from? **Provisioning sets them.** Creating a version builds its own worktree and virtualenv, so `odooPath`, `enterprisePath`, `designThemesPath` and `pythonPath` are filled in for you and tracked as extension-managed. You do not set them by hand — they stay editable in the Versions tree for the unusual case, but editing one points the version away from the environment that was built for it.
 
-   The debugger name and both ports are derived from the version's branch and are read-only, so parallel versions cannot collide.
+   The debugger name and both ports are filled in from the version's branch, so parallel versions do not collide. Click one in the Versions view to set it yourself.
 
    What is still worth configuring under `odooDebugger.defaultVersion.*` are the runtime knobs applied to new versions:
 
@@ -55,7 +55,7 @@ The source repository is never run directly: every version gets its own worktree
 ## Core Concepts
 
 - **Project**: a grouping of repositories + databases (+ tickets and a testing configuration).
-- **Version**: a built environment for one Odoo branch: its own worktree of the Odoo source, virtualenv and runtime settings. Its debugger name and ports are derived from the branch. One version is *active* at a time, but several can run at once.
+- **Version**: a built environment for one Odoo branch: its own worktree of the Odoo source, virtualenv and runtime settings. Its debugger name and ports are filled in from the branch, and you can change them. One version is *active* at a time, but several can run at once.
 - **Database**: a PostgreSQL DB that carries its full environment — a linked version and per-repo branch assignments. Selecting a database aligns your workspace to it.
 - **Upgrade**: a pair of databases on two versions, run side by side. See [Upgrade mode](#upgrade-mode).
 
@@ -124,7 +124,8 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 - Your configured `odooPath` is used **only as a source** to cut worktrees from; a version never runs out of it, even when it happens to be on the matching branch. That directory stays yours to switch freely. Each worktree gets its own `odt/<branch>` branch tracking `origin/<branch>`, so `git pull` works inside it.
 - The required Python version is read from the branch itself (`setup.py`'s `python_requires` or `odoo/release.py`'s `MIN_PY_VERSION`, plus the distributions named in `requirements.txt`'s header), so 17.0 gets 3.10 and 19.0 gets 3.12 without any hand-maintained table. An interpreter already installed via pyenv or your system is reused when it fits; otherwise [uv](https://docs.astral.sh/uv/) installs the right one.
 - After provisioning, a **dependency check** reports what's missing (`wkhtmltopdf`, PostgreSQL client tools, `rtlcss`, and the build headers `lxml`/`psycopg2`/`ldap` need) with a copy-paste install command for your platform. Nothing is installed for you and nothing runs `sudo`.
-- Each version's **debugger name, HTTP port and shell port are derived from its branch** — `odoo:17.0` on ports 8017/5017, `odoo:18.0` on 8018/5018 — and shown in the tree as read-only rows. That is what lets two versions run at the same time, which is the point when you are comparing a database before and after an upgrade. `odooDebugger.debuggerNamePrefix` changes the `odoo` part; the ports follow the series and step upward if another version, or any other process, has already claimed one.
+- Each version's **debugger name, HTTP port and shell port are filled in from its branch** — `odoo:17.0` on ports 8017/5017, `odoo:18.0` on 8018/5018 — and marked *automatic* in the tree. That is what lets two versions run at the same time, which is the point when you are comparing a database before and after an upgrade. `odooDebugger.debuggerNamePrefix` changes the `odoo` part; the ports follow the series and step upward if another version, or any other process, has already claimed one.
+- **Set them yourself** by clicking the row: the value is then marked *set by you* and kept when the branch changes. Several versions may share one: a shared port means only one of them runs at a time, and a shared debugger name means they share one launch entry, which always runs the active version — so F5 runs whatever version and database are selected. You are warned when you pick a value another version uses. **Make Automatic Again**, on the row's right-click menu, hands it back to the branch.
 - **Check Version Environments** (Versions view title bar) reports any version whose directories are missing, unprovisioned or sitting outside the current environments folder, and re-provisions the ones that need it. Versions built before provisioning — including any still running out of the source repository, which is unsafe rather than untidy — are offered a migration once on activation, and the offer remembers *Later*.
 - Each version row shows whether it is provisioned. Deleting a version offers to remove the folders the extension created — and never the ones you made yourself.
 - Clone, delete, activate; edit any setting inline from the tree.
@@ -309,7 +310,7 @@ left as it is. The Projects view shows which shared store it is reading.
 
 ## Debugging & launch.json
 
-The extension maintains **one launch configuration per provisioned version** in `.vscode/launch.json` — or, in a saved multi-root workspace (a `.code-workspace` file, such as the one Open Project Workspace generates), in that file's `launch` section, so nothing is written into your repositories — each named after that version's derived `debuggerName` and carrying its own port and database. Only those entries are rewritten — your own configurations and comments are preserved. It assembles `--addons-path`, `-d`, `-i`/`-u` from your module selections, ports, time limits, dev mode and testing flags automatically.
+The extension maintains **one launch configuration per provisioned version** in `.vscode/launch.json` — or, in a saved multi-root workspace (a `.code-workspace` file, such as the one Open Project Workspace generates), in that file's `launch` section, so nothing is written into your repositories — each named after that version's `debuggerName` and carrying its own port and database. Versions sharing a debugger name share one entry, written for the active one. Only those entries are rewritten — your own configurations and comments are preserved. It assembles `--addons-path`, `-d`, `-i`/`-u` from your module selections, ports, time limits, dev mode and testing flags automatically.
 
 A version's entry only ever uses a database of that version: with none chosen, it is left out of the file until you pick one, and Start Server asks for one.
 
@@ -382,7 +383,7 @@ Every view also has search (`$(search)`) and sort (`$(sort-precedence)`) actions
 
 ## Settings Reference
 
-- `odooDebugger.defaultVersion.*` — defaults applied to newly created versions (paths, params, post-switch hooks). Existing versions are edited from the Versions view. Note that `debuggerName`, `portNumber` and `shellPortNumber` are **no longer** among these: they are derived from each version's branch.
+- `odooDebugger.defaultVersion.*` — defaults applied to newly created versions (paths, params, post-switch hooks). Existing versions are edited from the Versions view. Note that `debuggerName`, `portNumber` and `shellPortNumber` are **not** among these: they are filled in from each version's branch, and edited per version.
 - `odooDebugger.debuggerNamePrefix` — prefix for generated launch configuration names (`<prefix>:<branch>`, default `odoo`).
 - `odooDebugger.sourceRepo.odoo` / `.enterprise` / `.designThemes` — the repositories per-version worktrees are cut from. Set once by **Set Up**, at user level.
 - `odooDebugger.provisioning.root` — directory holding per-version worktrees and virtualenvs. Empty means `~/odoo-dev`.

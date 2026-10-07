@@ -12,6 +12,7 @@ import { getWorkspacePath, normalizePath, resolveOptionalPath, showError, showIn
 import { collectModuleDiscovery, resolvePsaeDirectories } from './services/psaeInternal';
 import { SettingsStore, isStoreReadError } from './settingsStore';
 import { VersionsService } from './versionsService';
+import type { VersionModel } from './models/version';
 import { ensureTestingConfigModel } from './models/testing';
 import { getInstalledModuleNames, databaseHasModuleTable } from './services/database';
 import { logger, errorMessage } from './services/logger';
@@ -24,7 +25,8 @@ import {
     type LaunchTarget
 } from './services/launchConfig';
 import { currentDataLocation } from './services/dataLocation';
-import { getSessionByName, runningDebuggerNames, resolveStopTarget } from './services/debugSessions';
+import { getSessionByName, runningDebuggerNames, resolveStopTarget, versionIdOfSession } from './services/debugSessions';
+import { sessionOwner } from './services/versionIdentity';
 import { dbForVersion } from './services/dbResolution';
 import { resolveReposForDatabase } from './services/versionRepos';
 import { isVersionProvisioned } from './services/provisioning';
@@ -111,6 +113,32 @@ async function cleanUpFirstFolderLaunch(target: LaunchTarget, names: string[]): 
     }
 }
 
+/**
+ * Removes the launch entry named `name` once no version uses that name any
+ * more - after the user renames a version's debugger, so the Run and Debug
+ * dropdown does not keep offering the old entry.
+ */
+export async function dropUnusedLaunchEntry(name: string): Promise<void> {
+    const target = currentLaunchTarget();
+    if (!name || !target || VersionsService.getInstance().getVersions().some(version => version.settings.debuggerName === name)) {
+        return;
+    }
+    await removeManagedLaunchConfigIn(target, new Set([name])).catch(error => {
+        logger.warn(`[debugger] could not remove the launch entry "${name}":`, error);
+    });
+}
+
+/** The versions that get a launch entry: every provisioned one, and the active one. */
+function launchCandidates(versionsService: VersionsService): VersionModel[] {
+    const activeVersion = versionsService.getActiveVersion();
+    const candidates = versionsService.getVersions()
+        .filter(version => isVersionProvisioned(resolveOptionalPath(version.settings.pythonPath)));
+    if (activeVersion && !candidates.some(version => version.id === activeVersion.id)) {
+        candidates.push(activeVersion);
+    }
+    return candidates;
+}
+
 export async function setupDebugger(): Promise<any> {
     const workspacePath = getWorkspacePath();
     const target = currentLaunchTarget();
@@ -135,11 +163,12 @@ export async function setupDebugger(): Promise<any> {
     // database: launch.json accumulates durable entries instead of one being
     // renamed out from under the Run and Debug dropdown, and two versions can
     // run at once. Unprovisioned versions have no interpreter to launch.
-    const targets = versionsService.getVersions()
-        .filter(version => isVersionProvisioned(resolveOptionalPath(version.settings.pythonPath)));
-    if (activeVersion && !targets.some(version => version.id === activeVersion.id)) {
-        targets.push(activeVersion);
-    }
+    const provisioned = launchCandidates(versionsService);
+    // Versions the user gave the same debugger name share one entry, written
+    // for the active one among them (else the oldest): F5 then runs whatever
+    // is active. Writing each in turn would leave whichever came last.
+    const targets = provisioned.filter(version =>
+        sessionOwner(provisioned, version.settings.debuggerName, activeVersion?.id)?.id === version.id);
 
     // Worktrees are created once per sync rather than per launch entry: the
     // same branch is often shared by several versions.
@@ -674,6 +703,18 @@ export async function startServerForVersion(
         return { ok: false, message };
     };
 
+    // A debugger name shared with the active version is that version's
+    // entry: starting it would run the active version instead of this one.
+    const owner = sessionOwner(launchCandidates(versionsService), settings.debuggerName, versionsService.getActiveVersion()?.id);
+    if (owner && owner.id !== version.id) {
+        const message = `"${version.name}" shares the debugger name "${settings.debuggerName}" with "${owner.name}", `
+            + 'whose launch entry it is. Activate it, or give it its own debugger name.';
+        if (!options.quiet) {
+            void showError(message);
+        }
+        return { ok: false, message };
+    }
+
     // Found before anything is stopped: a start that cannot happen must not
     // take the running server of this version down with it.
     const target = currentLaunchTarget();
@@ -691,7 +732,13 @@ export async function startServerForVersion(
     // fail to bind; say what is going on instead.
     const port = Number(settings.portNumber) || 0;
     if (!existingSession && port && await isPortOpen(port)) {
-        const message = `"${version.name}" is already running on port ${port}, probably in another window.`;
+        // A port set by hand may be another version's, running in this window.
+        const holder = runningDebuggerNames()
+            .map(name => versionsService.getVersion(versionIdOfSession(name) ?? ''))
+            .find(other => other && other.id !== version.id && Number(other.settings.portNumber) === port);
+        const message = holder
+            ? `Port ${port} is taken by "${holder.name}", which is running. Stop it first, or give "${version.name}" its own port.`
+            : `"${version.name}" is already running on port ${port}, probably in another window.`;
         if (!options.quiet) {
             void showWarning(message, 'Open in Browser').then(choice => {
                 if (choice === 'Open in Browser') {

@@ -6,7 +6,8 @@ import * as fs from 'node:fs';
 import type { CommandDeps } from './index';
 import { extractVersionId, extractVersionSettingRef } from './args';
 import { getSettingDisplayName, resolveOptionalPath } from '../utils';
-import { isDerivedSetting } from '../services/versionIdentity';
+import { isDerivedSetting, type IdentityKey } from '../services/versionIdentity';
+import { dropUnusedLaunchEntry } from '../debugger';
 import { showError, showInfo, showWarning, showModalWarning } from '../services/notifications';
 import { errorMessage, logger } from '../services/logger';
 import { pickOdooBranch } from './branchPick';
@@ -394,6 +395,65 @@ export function registerVersionCommands(deps: CommandDeps): void {
         }
     };
 
+    /**
+     * The debugger name and ports start automatic and become the user's once
+     * edited. Sharing one with another version is allowed - some people want
+     * one launch entry F5 always runs - and is only warned about.
+     */
+    const editIdentitySetting = async (versionId: string, key: IdentityKey, value: unknown) => {
+        const version = versionsService.getVersion(versionId);
+        if (!version) {
+            return;
+        }
+        let newValue: string | number | undefined;
+        if (key === 'debuggerName') {
+            const typed = await vscode.window.showInputBox({
+                title: `Debugger Name of "${version.name}"`,
+                prompt: 'The launch configuration F5 runs. Versions sharing a name share one entry, which runs the active one.',
+                value: typeof value === 'string' ? value : '',
+                validateInput: input => input.trim() ? undefined : 'Enter a name.'
+            });
+            newValue = typed?.trim();
+        } else {
+            const typed = await vscode.window.showInputBox({
+                title: `${getSettingDisplayName(key)} of "${version.name}"`,
+                value: value === undefined || value === null ? '' : String(value),
+                validateInput: input => /^\d+$/.test(input.trim()) && Number(input) >= 1024 && Number(input) <= 65535
+                    ? undefined
+                    : 'Enter a port between 1024 and 65535.'
+            });
+            newValue = typed === undefined ? undefined : Number(typed.trim());
+        }
+        if (newValue === undefined || newValue === value) {
+            return;
+        }
+
+        const previousNames = versionsService.getVersions().map(entry => entry.settings.debuggerName);
+        const { conflicts, moved } = await versionsService.setIdentityValue(versionId, key, newValue);
+        // This version's old name, or an automatic one that moved off it.
+        for (const name of new Set(previousNames)) {
+            await dropUnusedLaunchEntry(name);
+        }
+        await refreshAll();
+
+        if (moved.length > 0) {
+            void showInfo(`${getSettingDisplayName(key)} of "${version.name}" set to ${newValue}. `
+                + `${moved.map(other => `"${other.name}"`).join(', ')} had it automatically, and moved off it.`);
+        }
+
+        for (const conflict of conflicts.filter(entry => entry.key === key)) {
+            const others = conflict.others.map(other => `"${other.name}"`).join(', ');
+            void showWarning(key === 'debuggerName'
+                ? `${others} ${conflict.others.length === 1 ? 'uses' : 'use'} the debugger name "${conflict.value}" too. `
+                    + 'They share one launch entry, which runs the active version: only one of them can run at a time.'
+                : `${others} ${conflict.others.length === 1 ? 'uses' : 'use'} port ${conflict.value} too: `
+                    + 'only one of them can run at a time.');
+        }
+        if (!conflicts.some(entry => entry.key === key) && moved.length === 0) {
+            void showInfo(`${getSettingDisplayName(key)} of "${version.name}" set to ${newValue}.`);
+        }
+    };
+
     context.subscriptions.push(registerCommand('odoo.editVersionSetting', async (versionIdOrTreeItem?: unknown, settingKey?: string, currentValue?: unknown) => {
         try {
             const ref = extractVersionSettingRef(versionIdOrTreeItem, settingKey, currentValue);
@@ -414,10 +474,7 @@ export function registerVersionCommands(deps: CommandDeps): void {
             }
 
             if (isDerivedSetting(key)) {
-                void showInfo(
-                    `"${getSettingDisplayName(key)}" is derived from this version's branch so two versions can run at once. ` +
-                    `Change the version's branch to change it.`
-                );
+                await editIdentitySetting(versionId, key as IdentityKey, value);
                 return;
             }
 
@@ -601,6 +658,10 @@ export function registerVersionCommands(deps: CommandDeps): void {
         }
     }));
 
+    // An identity value's "default" is the automatic one: same flow.
+    context.subscriptions.push(registerCommand('odoo.makeIdentityAutomatic', (settingTreeItem?: unknown) =>
+        vscode.commands.executeCommand('odoo.setSettingToDefault', settingTreeItem)));
+
     context.subscriptions.push(registerCommand('odoo.setSettingToDefault', async (settingTreeItem?: unknown) => {
         try {
             const ref = extractVersionSettingRef(settingTreeItem);
@@ -609,9 +670,13 @@ export function registerVersionCommands(deps: CommandDeps): void {
                 return;
             }
 
+            const previousName = versionsService.getVersion(ref.versionId)?.settings.debuggerName;
             const success = await versionsService.setSettingToDefault(ref.versionId, ref.key);
             if (!success) {
                 void showError('Unable to reset this setting to its default value.');
+            } else if (ref.key === 'debuggerName' && previousName) {
+                await dropUnusedLaunchEntry(previousName);
+                await refreshAll();
             }
         } catch (error) {
             void showError(`Failed to reset setting to default: ${errorMessage(error)}`);

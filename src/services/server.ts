@@ -10,6 +10,7 @@ import { logger } from './logger';
 import { showWarning } from './notifications';
 import { getRunningInstances, RunningInstance } from './runningState';
 import { trackSession, untrackSession, anySessionRunning } from './debugSessions';
+import { sessionOwner } from './versionIdentity';
 
 const DEFAULT_ODOO_PORT = 8069;
 
@@ -167,8 +168,12 @@ export async function openServerInBrowser(dbName?: string, dbVersionId?: string)
     }
 }
 
-/** The version whose launch configuration this session was started from. */
-async function versionForSession(session: vscode.DebugSession): Promise<{ portNumber: number } | undefined> {
+/**
+ * The version whose launch configuration this session was started from: for a
+ * name several versions share, the one its entry was written for (the active
+ * one, else the oldest - see sessionOwner).
+ */
+async function versionForSession(session: vscode.DebugSession): Promise<{ id: string; portNumber: number } | undefined> {
     const name = session.configuration?.name;
     if (typeof name !== 'string' || name.length === 0) {
         return undefined;
@@ -176,12 +181,12 @@ async function versionForSession(session: vscode.DebugSession): Promise<{ portNu
     try {
         const service = VersionsService.getInstance();
         await service.initialize();
-        const version = service.getVersions().find(entry => entry.settings?.debuggerName === name);
+        const version = sessionOwner(service.getVersions(), name, service.getActiveVersion()?.id);
         if (!version) {
             return undefined;
         }
         const port = Number(version.settings.portNumber);
-        return { portNumber: Number.isInteger(port) && port > 0 && port <= 65535 ? port : DEFAULT_ODOO_PORT };
+        return { id: version.id, portNumber: Number.isInteger(port) && port > 0 && port <= 65535 ? port : DEFAULT_ODOO_PORT };
     } catch {
         return undefined;
     }
@@ -205,7 +210,7 @@ export function registerServerLifecycle(
         if (!version) {
             return;
         }
-        trackSession(session);
+        trackSession(session, version.id);
         hooks.onRunningChanged(anySessionRunning());
 
         const openBrowser = vscode.workspace

@@ -549,6 +549,12 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "odoo.makeIdentityAutomatic",
+        "title": "Make Automatic Again",
+        "category": "Odoo DevTools",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "odoo.setSettingAsDefault",
         "title": "Set as Default",
         "category": "Odoo DevTools",
@@ -1351,6 +1357,11 @@
           "group": "versionSetting@2"
         },
         {
+          "command": "odoo.makeIdentityAutomatic",
+          "when": "view == versionsManager && viewItem == versionSettingIdentityCustom && !odoo-debugger.upgrade_enabled",
+          "group": "versionSetting@1"
+        },
+        {
           "command": "odoo.setAllSettingsToDefault",
           "when": "view == versionsManager && viewItem =~ /^(version|activeVersion)$/ && !odoo-debugger.upgrade_enabled",
           "group": "2_defaults@1"
@@ -1543,6 +1554,10 @@
         },
         {
           "command": "odoo.setSettingToDefault",
+          "when": "false"
+        },
+        {
+          "command": "odoo.makeIdentityAutomatic",
           "when": "false"
         },
         {

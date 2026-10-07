@@ -20,6 +20,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Changed
 
+- **A version's debugger name and ports can be set by hand.** They are still filled in from the branch, so parallel versions do not collide, but clicking one in the Versions view now edits it instead of refusing. A value you set is marked *set by you* and kept when the branch changes; **Make Automatic Again** hands it back. Versions may share a port or a debugger name — you are warned, and only one of them runs at a time. Versions sharing a debugger name share one launch entry that always runs the active version, so F5 runs whatever version and database are selected. Renaming removes the old entry from the Run and Debug list. Start Both Servers refuses a pair that shares a name or port.
 - **Module dependencies expand all the way down.** A dependency in the Modules view now expands into its own dependencies, read only when you open it. Each one says where it was found: a project module, core (the Odoo, enterprise or themes source of the database's version), or not found. A module already required higher up the same branch is marked as a cycle and does not expand again.
 
 ## [1.4.0] - 2026-10-02

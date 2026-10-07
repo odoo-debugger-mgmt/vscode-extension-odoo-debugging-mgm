@@ -8,7 +8,7 @@ import { registerCommand } from './registerCommand';
 import { SettingsStore } from '../settingsStore';
 import { VersionsService } from '../versionsService';
 import { startServerForVersion } from '../debugger';
-import { getSessionByName } from '../services/debugSessions';
+import { getSessionByName, versionIdOfSession } from '../services/debugSessions';
 import { ensureUpgradeConfigModel, type UpgradeConfigModel } from '../models/upgrade';
 import { boundVersionId } from '../services/workspaceBinding';
 import { currentMainStore } from '../services/mainStore';
@@ -127,7 +127,10 @@ async function stopBothServers(): Promise<void> {
     const stopped: string[] = [];
     for (const side of [config.from, config.to]) {
         const version = side?.versionId ? versions.getVersion(side.versionId) : undefined;
-        const session = version ? getSessionByName(version.settings.debuggerName) : undefined;
+        const name = version?.settings.debuggerName ?? '';
+        // A name shared with another version may be running as that one.
+        const recorded = versionIdOfSession(name);
+        const session = version && (!recorded || recorded === version.id) ? getSessionByName(name) : undefined;
         if (version && session) {
             await vscode.debug.stopDebugging(session);
             stopped.push(version.name);

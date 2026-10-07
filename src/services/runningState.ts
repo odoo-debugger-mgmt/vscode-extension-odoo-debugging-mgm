@@ -8,7 +8,8 @@
 import { SettingsStore } from '../settingsStore';
 import { VersionsService } from '../versionsService';
 import { getActiveDatabaseNames } from './database';
-import { runningDebuggerNames } from './debugSessions';
+import { runningDebuggerNames, versionIdOfSession } from './debugSessions';
+import { sessionOwner } from './versionIdentity';
 import { dbForVersion } from './dbResolution';
 import { invalidateActiveDatabasesCache } from './runtimeCache';
 import { logger } from './logger';
@@ -50,10 +51,17 @@ async function collectManaged(): Promise<RunningInstance[]> {
     const data = await SettingsStore.get('odoo-debugger-data.json').catch(() => undefined);
     const project = data?.projects?.find(entry => entry.isSelected);
 
+    // One instance per running session, attributed to the version it
+    // started as: versions may share a debugger name (one launch entry that
+    // follows the active version), and only one of them is running.
+    const service = VersionsService.getInstance();
+    const versions = service.getVersions();
     const instances: RunningInstance[] = [];
-    for (const version of VersionsService.getInstance().getVersions()) {
-        const debuggerName = version.settings?.debuggerName;
-        if (!debuggerName || !names.has(debuggerName)) {
+    for (const debuggerName of names) {
+        const recorded = versionIdOfSession(debuggerName);
+        const version = (recorded ? service.getVersion(recorded) : undefined)
+            ?? sessionOwner(versions, debuggerName, service.getActiveVersion()?.id);
+        if (!version) {
             continue;
         }
         const db = dbForVersion(project, version.id);
