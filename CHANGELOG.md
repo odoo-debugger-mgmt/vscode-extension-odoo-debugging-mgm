@@ -18,6 +18,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - **Act on a view from its editor.** Compare with Original, Render and Check XPaths are on an arch editor's title, and Open Parent, Open Root View, Views Inheriting This and Add to Upgrade Script in its "…" menu, so a view opened with Find View is not a dead end.
 - **In Upgrade mode, "Other inactive views" leaves out the views the original database has off too**, so what the upgrade broke stands out. The group says how many are hidden; the eye on the Views title shows them again.
 
+### Changed
+
+- **Module dependencies expand all the way down.** A dependency in the Modules view now expands into its own dependencies, read only when you open it. Each one says where it was found: a project module, core (the Odoo, enterprise or themes source of the database's version), or not found. A module already required higher up the same branch is marked as a cycle and does not expand again.
+
 ## [1.4.0] - 2026-10-02
 
 > **Beta.** Several workspaces sharing one data store is new in this release, and has so far been tested against stand-in Odoo servers and stand-in builds only. Please report anything that surprises you.

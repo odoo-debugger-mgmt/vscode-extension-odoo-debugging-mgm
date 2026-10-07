@@ -104,7 +104,7 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 - **Multi-select** (Ctrl/Shift-click) to set install/upgrade/clear on several modules at once.
 - **Configure Modules** (`Ctrl+Alt+O M`): a quick pick over all modules — Enter cycles install → upgrade → unmanaged, and per-item buttons set a state directly; stays open for several changes.
 - Right-click a module to **Reveal in Explorer** (VS Code file tree) or **Reveal in OS**.
-- Expand a module to see its manifest dependencies (project modules vs core).
+- Expand a module to see its manifest dependencies, and each dependency to see its own, as deep as you go (project module, core, or not found).
 - Bulk actions: install all, update all, update installed, clear; browse the modules actually installed in the database.
 - **Create Module** scaffolds a new module via `odoo-bin scaffold` into a chosen repo.
 - `ps*-internal` directories appear as collapsible groups with an include/exclude toggle for the addons path.

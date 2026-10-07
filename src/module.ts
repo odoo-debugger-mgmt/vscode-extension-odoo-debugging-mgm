@@ -24,7 +24,9 @@ import { BaseTreeProvider } from './views/baseTreeProvider';
 import { runCommand, tryRunCommand } from './services/process';
 import { errorMessage } from './services/logger';
 import { readModuleManifest } from './services/manifest';
-import { resolveReposForDatabase } from './services/versionRepos';
+import { resolveReposForDatabase, versionOfDatabase } from './services/versionRepos';
+import { ModuleLocator, dependencyExpansion } from './services/moduleDependencies';
+import { coreAddonsPaths } from './services/upgradeSetup';
 
 /**
  * Whether module selections may be edited right now. Both refusals were
@@ -72,9 +74,9 @@ type ModuleTreeNode = vscode.TreeItem & {
     psaeState?: PsaeDirectoryState;
     psaeChildren?: ModuleTreeNode[];
     parentNode?: ModuleTreeNode;
+    /** A dependency row that can expand: its module folder and the names above it. */
+    dependency?: { path: string; branch: string[] };
 };
-
-const CORE_HINT = 'Core/other module (not in this project\'s repos)';
 
 export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
@@ -86,8 +88,8 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         return element;
     }
 
-    /** Module names discovered in the project's repos (for dependency hints). */
-    private knownModuleNames = new Set<string>();
+    /** Finds dependencies by name; rebuilt with every root build. */
+    private locator = new ModuleLocator(new Map(), []);
 
     async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[] | undefined> {
         if (element) {
@@ -96,7 +98,10 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
                 return node.psaeChildren;
             }
             if (node.moduleData) {
-                return this.buildDependencyItems(node.moduleData);
+                return this.buildDependencyItems(node.moduleData.path, [node.moduleData.name], node.id ?? node.moduleData.path);
+            }
+            if (node.dependency) {
+                return this.buildDependencyItems(node.dependency.path, node.dependency.branch, node.id ?? node.dependency.path);
             }
             return [];
         }
@@ -121,7 +126,10 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         const isTestingEnabled = !!(project.testingConfig && project.testingConfig.isEnabled);
 
         const { modules: allModules, psaeDirectories } = collectModuleDiscovery(project, await resolveReposForDatabase(project, db));
-        this.knownModuleNames = new Set(allModules.map(module => module.name));
+        this.locator = new ModuleLocator(
+            new Map(allModules.map(module => [module.name, module.path])),
+            coreAddonsPaths(versionOfDatabase(db)?.settings ?? {})
+        );
         const installedModuleNames = await getInstalledModuleNames(db.id);
         const dbModulesByName = new Map(modules.map(module => [module.name, module]));
         const selectedDbModuleNames = new Set(
@@ -273,28 +281,53 @@ export class ModuleTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         return undefined;
     }
 
-    /** Lazily lists a module's manifest dependencies (one level deep). */
-    private async buildDependencyItems(moduleData: ModuleData): Promise<vscode.TreeItem[]> {
-        const manifest = await readModuleManifest(moduleData.path);
+    /**
+     * Lazily lists a module's manifest dependencies. Each one that resolves
+     * to a module folder expands in turn, read only when it is opened.
+     * `branch` holds the module names from the root row down to this one.
+     */
+    private async buildDependencyItems(modulePath: string, branch: string[], parentId: string): Promise<vscode.TreeItem[]> {
+        const manifest = await readModuleManifest(modulePath);
         if (!manifest || manifest.depends.length === 0) {
             const empty = new vscode.TreeItem(manifest ? 'No dependencies' : 'No __manifest__.py found', vscode.TreeItemCollapsibleState.None);
+            empty.id = `${parentId}::empty`;
             empty.contextValue = 'info';
             empty.iconPath = new vscode.ThemeIcon('info');
             return [empty];
         }
 
-        return manifest.depends.map(dep => {
-            const isLocal = this.knownModuleNames.has(dep);
-            const item = new vscode.TreeItem(dep, vscode.TreeItemCollapsibleState.None);
-            item.id = `${moduleData.path}::dep::${dep}`;
+        const locator = this.locator;
+        return Promise.all(manifest.depends.map(async dep => {
+            const resolved = await locator.locate(dep);
+            const expansion = dependencyExpansion(resolved, branch);
+            const item: ModuleTreeNode = new vscode.TreeItem(
+                dep,
+                expansion === 'expandable' ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None
+            );
+            item.id = `${parentId}::dep::${dep}`;
             item.contextValue = 'moduleDependency';
-            item.iconPath = isLocal
+            if (expansion === 'expandable' && resolved.path) {
+                item.dependency = { path: resolved.path, branch: [...branch, dep] };
+            }
+
+            const where = resolved.source === 'project' ? 'project module'
+                : resolved.source === 'core' ? 'core'
+                : 'not found';
+            item.description = expansion === 'cycle' ? `${where} • cycle` : where;
+            item.iconPath = resolved.source === 'project'
                 ? new vscode.ThemeIcon('package', new vscode.ThemeColor('charts.blue'))
-                : new vscode.ThemeIcon('library');
-            item.description = isLocal ? 'project module' : 'core/other';
-            item.tooltip = isLocal ? `Dependency "${dep}" is available in this project's repos.` : `${dep}: ${CORE_HINT}`;
+                : resolved.source === 'core'
+                    ? new vscode.ThemeIcon('library')
+                    : new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
+            item.tooltip = resolved.path
+                ? [
+                    `${dep}: ${resolved.source === 'project' ? "in this project's repos" : 'in the Odoo source of this database\'s version'}`,
+                    resolved.path,
+                    ...(expansion === 'cycle' ? [`Already required above it (${[...branch, dep].join(' → ')}), so it does not expand again.`] : [])
+                ].join('\n')
+                : `${dep}: not found in this project's repos nor in the Odoo source of this database's version.`;
             return item;
-        });
+        }));
     }
 
     private getModuleIcon(state: string, isInstalled: boolean): vscode.ThemeIcon {
