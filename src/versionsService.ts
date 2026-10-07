@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { VersionModel, VersionSettings } from './models/version';
 import { SettingsStore } from './settingsStore';
-import { getDefaultVersionSettings, stripSettings, getDatabaseLabel } from './utils';
+import { getDefaultVersionSettings, stripSettings, getDatabaseLabel, getSettingDisplayName } from './utils';
 import { logger } from './services/logger';
 import { showError, showInfo, showWarning } from './services/notifications';
 import {
@@ -893,7 +893,7 @@ export class VersionsService {
 
         if (isDerivedSetting(settingKey)) {
             await this.resetIdentityValue(versionId, settingKey as IdentityKey);
-            void showInfo(`"${settingKey}" follows the version's branch again.`);
+            void showInfo(`${getSettingDisplayName(settingKey)} of "${version.name}" follows the version's branch again.`);
             return true;
         }
 

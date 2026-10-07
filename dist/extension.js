@@ -50,53 +50,53 @@ const dataMigration_1 = __webpack_require__(89);
 const project_1 = __webpack_require__(90);
 const repos_1 = __webpack_require__(97);
 const module_1 = __webpack_require__(98);
-const testing_1 = __webpack_require__(99);
+const testing_1 = __webpack_require__(100);
 const upgrade_1 = __webpack_require__(40);
-const debugger_1 = __webpack_require__(100);
-const provisionQueue_1 = __webpack_require__(102);
+const debugger_1 = __webpack_require__(101);
+const provisionQueue_1 = __webpack_require__(103);
 const odooInstaller_1 = __webpack_require__(66);
 const settingsStore_1 = __webpack_require__(6);
 const mainStore_1 = __webpack_require__(27);
-const versionsTreeProvider_1 = __webpack_require__(103);
+const versionsTreeProvider_1 = __webpack_require__(104);
 const versionsService_1 = __webpack_require__(33);
 const context_1 = __webpack_require__(42);
-const server_1 = __webpack_require__(101);
-const sortPreferences_1 = __webpack_require__(104);
-const viewDoctorView_1 = __webpack_require__(105);
-const viewService_1 = __webpack_require__(110);
-const viewWorker_1 = __webpack_require__(114);
-const viewWorkerPool_1 = __webpack_require__(115);
-const viewWorkerSpec_1 = __webpack_require__(116);
+const server_1 = __webpack_require__(102);
+const sortPreferences_1 = __webpack_require__(105);
+const viewDoctorView_1 = __webpack_require__(106);
+const viewService_1 = __webpack_require__(111);
+const viewWorker_1 = __webpack_require__(115);
+const viewWorkerPool_1 = __webpack_require__(116);
+const viewWorkerSpec_1 = __webpack_require__(117);
 const postgres_1 = __webpack_require__(47);
-const projectReposExplorer_1 = __webpack_require__(117);
+const projectReposExplorer_1 = __webpack_require__(118);
 const logger_1 = __webpack_require__(12);
 const reconcile_1 = __webpack_require__(79);
 const runningState_1 = __webpack_require__(87);
-const wrongCopyGuard_1 = __webpack_require__(119);
-const versionMigration_1 = __webpack_require__(120);
+const wrongCopyGuard_1 = __webpack_require__(120);
+const versionMigration_1 = __webpack_require__(121);
 const versionProposal_1 = __webpack_require__(60);
 const environment_2 = __webpack_require__(51);
 const branches_1 = __webpack_require__(52);
 const setupState_1 = __webpack_require__(71);
 const notifications_1 = __webpack_require__(16);
-const viewRenderPanel_1 = __webpack_require__(121);
-const viewFileSystem_1 = __webpack_require__(109);
-const viewPoll_1 = __webpack_require__(127);
-const viewPairing_1 = __webpack_require__(106);
-const xpathDiagnostics_1 = __webpack_require__(128);
-const viewSaveHook_1 = __webpack_require__(129);
-const viewQueries_1 = __webpack_require__(107);
+const viewRenderPanel_1 = __webpack_require__(122);
+const viewFileSystem_1 = __webpack_require__(110);
+const viewPoll_1 = __webpack_require__(128);
+const viewPairing_1 = __webpack_require__(107);
+const xpathDiagnostics_1 = __webpack_require__(129);
+const viewSaveHook_1 = __webpack_require__(130);
+const viewQueries_1 = __webpack_require__(108);
 const utils_1 = __webpack_require__(8);
-const statusBar_1 = __webpack_require__(131);
-const viewNoteService_1 = __webpack_require__(132);
-const viewNotes_1 = __webpack_require__(133);
-const commands_1 = __webpack_require__(134);
-const projectWorkspace_1 = __webpack_require__(138);
+const statusBar_1 = __webpack_require__(132);
+const viewNoteService_1 = __webpack_require__(133);
+const viewNotes_1 = __webpack_require__(134);
+const commands_1 = __webpack_require__(135);
+const projectWorkspace_1 = __webpack_require__(139);
 const workspaceBinding_1 = __webpack_require__(63);
 const workspaceRegistry_1 = __webpack_require__(82);
 const bindingCommand_1 = __webpack_require__(84);
-const goneElsewhere_1 = __webpack_require__(168);
-const storeSwitch_1 = __webpack_require__(169);
+const goneElsewhere_1 = __webpack_require__(169);
+const storeSwitch_1 = __webpack_require__(170);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -6769,13 +6769,82 @@ class VersionsService {
         if (!version) {
             return;
         }
+        // Values the user set by hand are theirs: a new branch keeps them.
         version.settings = {
             ...version.settings,
-            ...(await this.deriveFreshIdentity(version.odooVersion, version.id))
+            ...(0, versionIdentity_1.automaticPart)(await this.deriveFreshIdentity(version.odooVersion, version.id), [...(0, versionIdentity_1.customKeys)(version.settings)])
         };
         version.updatedAt = new Date();
         await this.saveVersions();
         vscode.commands.executeCommand('odoo.versionsChanged');
+    }
+    /**
+     * Sets one identity value by hand. It is kept from then on - by the
+     * healing, a branch change and Reset All - until reset to automatic.
+     * Returns the other versions that still use the same value (sharing is
+     * allowed, but those versions cannot run at the same time), and those
+     * whose automatic value moved out of its way.
+     */
+    async setIdentityValue(versionId, key, value) {
+        await this.initialize();
+        const version = this.versions.get(versionId);
+        if (!version) {
+            return { conflicts: [], moved: [] };
+        }
+        const custom = (0, versionIdentity_1.customKeys)(version.settings);
+        custom.add(key);
+        version.settings = { ...version.settings, [key]: value, customIdentity: [...custom] };
+        version.updatedAt = new Date();
+        // An automatic value this one now lands on moves out of the way at
+        // once, so what is left to warn about is only what the user chose.
+        const moved = this.healStoredIdentities();
+        await this.saveVersions();
+        vscode.commands.executeCommand('odoo.versionsChanged');
+        return { conflicts: this.identityConflictsOf(versionId), moved };
+    }
+    /** Puts an identity value back under the branch's control. */
+    async resetIdentityValue(versionId, key) {
+        await this.initialize();
+        const version = this.versions.get(versionId);
+        if (!version) {
+            return;
+        }
+        const custom = (0, versionIdentity_1.customKeys)(version.settings);
+        custom.delete(key);
+        const fresh = await this.deriveFreshIdentity(version.odooVersion, version.id);
+        version.settings = { ...version.settings, [key]: fresh[key], customIdentity: [...custom] };
+        version.updatedAt = new Date();
+        await this.saveVersions();
+        vscode.commands.executeCommand('odoo.versionsChanged');
+    }
+    /**
+     * Applies healIdentities to the versions in memory (the caller saves).
+     * Returns the versions whose automatic values moved.
+     */
+    healStoredIdentities() {
+        const moved = [];
+        for (const patch of (0, versionIdentity_1.healIdentities)(Array.from(this.versions.values()), this.getDebuggerNamePrefix())) {
+            const version = this.versions.get(patch.id);
+            if (!version) {
+                continue;
+            }
+            logger_1.logger.info(`[identity] ${version.name}: ` + Object.entries(patch.identity)
+                .map(([key, value]) => `${key} ${String(version.settings[key] || 'none')} -> ${String(value)}`)
+                .join(', '));
+            version.settings = { ...version.settings, ...patch.identity };
+            moved.push(version);
+        }
+        return moved;
+    }
+    /** The other versions sharing this version's debugger name or a port. */
+    identityConflictsOf(versionId) {
+        return (0, versionIdentity_1.identityConflicts)(Array.from(this.versions.values()), versionId).map(conflict => ({
+            key: conflict.key,
+            value: conflict.value,
+            others: conflict.otherIds
+                .map(id => this.versions.get(id))
+                .filter((other) => !!other)
+        }));
     }
     /**
      * Create a new version
@@ -6900,10 +6969,12 @@ class VersionsService {
             const clonedVersion = sourceVersion.clone(newName);
             this.versions.set(clonedVersion.id, clonedVersion);
             // A clone must not inherit the source's identity - that is exactly
-            // the collision this derivation exists to prevent.
+            // the collision this derivation exists to prevent - nor its values
+            // set by hand: a copy is made to run beside the original.
             clonedVersion.settings = {
                 ...clonedVersion.settings,
-                ...(await this.deriveFreshIdentity(clonedVersion.odooVersion, clonedVersion.id))
+                ...(await this.deriveFreshIdentity(clonedVersion.odooVersion, clonedVersion.id)),
+                customIdentity: []
             };
             await this.saveVersions();
             vscode.commands.executeCommand('odoo.versionsChanged');
@@ -6974,15 +7045,7 @@ class VersionsService {
         // rewritten: a stored name/port survives unless it is missing or
         // collides with an older version's - the case where every version
         // inherited one global default and they overwrote each other.
-        const patches = (0, versionIdentity_1.healIdentities)(Array.from(this.versions.values()), this.getDebuggerNamePrefix());
-        for (const patch of patches) {
-            const version = this.versions.get(patch.id);
-            if (!version) {
-                continue;
-            }
-            logger_1.logger.info(`[identity] ${version.name}: ${version.settings.debuggerName ?? 'none'} -> ` +
-                `${patch.identity.debuggerName} (ports ${patch.identity.portNumber}/${patch.identity.shellPortNumber})`);
-            version.settings = { ...version.settings, ...patch.identity };
+        if (this.healStoredIdentities().length > 0) {
             needsRepair = true;
         }
         // Save if repairs were needed - never over a store that was not read.
@@ -7121,8 +7184,9 @@ class VersionsService {
             return false;
         }
         if ((0, versionIdentity_1.isDerivedSetting)(settingKey)) {
-            void (0, notifications_1.showInfo)(`"${settingKey}" is derived from the version's branch and has no default to restore.`);
-            return false;
+            await this.resetIdentityValue(versionId, settingKey);
+            void (0, notifications_1.showInfo)(`${(0, utils_1.getSettingDisplayName)(settingKey)} of "${version.name}" follows the version's branch again.`);
+            return true;
         }
         try {
             // Get the default value for this setting
@@ -7185,8 +7249,8 @@ class VersionsService {
         try {
             // Get all default settings from VS Code configuration
             const defaultSettings = (0, utils_1.getDefaultVersionSettings)();
-            // Identity is derived from the branch; resetting to defaults must
-            // not clear it, or two versions collide again.
+            // Identity is derived from the branch, or set by hand; resetting
+            // to defaults must not clear it, or two versions collide again.
             version.updateSettings({
                 ...defaultSettings,
                 debuggerName: version.settings.debuggerName,
@@ -7373,7 +7437,11 @@ exports.isDerivedSetting = isDerivedSetting;
 exports.parseSeriesMajor = parseSeriesMajor;
 exports.deriveIdentity = deriveIdentity;
 exports.collectTaken = collectTaken;
+exports.customKeys = customKeys;
+exports.automaticPart = automaticPart;
 exports.healIdentities = healIdentities;
+exports.identityConflicts = identityConflicts;
+exports.sessionOwner = sessionOwner;
 exports.candidatePortsFor = candidatePortsFor;
 exports.probeBusyPorts = probeBusyPorts;
 /**
@@ -7381,12 +7449,16 @@ exports.probeBusyPorts = probeBusyPorts;
  * port and shell port - from its branch, so two versions can run at once
  * without overwriting each other's launch.json entry.
  *
+ * Each value is automatic until the user sets it by hand: it is then listed
+ * in `customIdentity` and kept as typed, even when another version uses it
+ * too. Automatic values still move out of the way of every other value.
+ *
  * The derivation rules are pure and unit-tested; only the live-socket probe
  * at the bottom does I/O, mirroring how pythonToolchain.ts keeps
  * `rankInterpreters` pure and `discoverInterpreters` impure.
  */
 const net = __importStar(__webpack_require__(37));
-/** Settings computed from the branch: visible in the tree, never editable. */
+/** Settings derived from the branch unless the user sets them by hand. */
 exports.DERIVED_SETTING_KEYS = ['debuggerName', 'portNumber', 'shellPortNumber'];
 exports.SERVER_PORT_BASE = 8000;
 exports.SHELL_PORT_BASE = 5000;
@@ -7454,36 +7526,115 @@ function timestamp(value) {
     const date = value instanceof Date ? value : new Date(value);
     return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 }
+/** The identity keys the user set by hand (stored data may hold anything). */
+function customKeys(settings) {
+    const listed = Array.isArray(settings?.customIdentity) ? settings.customIdentity : [];
+    return new Set(listed.filter((key) => isDerivedSetting(String(key))));
+}
+/** `identity` without the keys the user set by hand: what may be written over. */
+function automaticPart(identity, custom) {
+    const kept = new Set(custom ?? []);
+    const part = {};
+    for (const key of exports.DERIVED_SETTING_KEYS) {
+        if (!kept.has(key)) {
+            part[key] = identity[key];
+        }
+    }
+    return part;
+}
+function isSet(key, value) {
+    return key === 'debuggerName' ? typeof value === 'string' && value.length > 0 : typeof value === 'number' && value > 0;
+}
+function reserve(taken, key, value) {
+    if (key === 'debuggerName') {
+        taken.names.add(value);
+    }
+    else {
+        taken.ports.add(value);
+    }
+}
+function isTaken(taken, key, value) {
+    return key === 'debuggerName' ? taken.names.has(value) : taken.ports.has(value);
+}
 /**
  * Existing versions are healed, not rewritten: a stored identity is kept
- * unless it collides with an older version's, or is missing entirely. Returns
- * a patch per version that needs changing, in creation order.
+ * unless it collides with an older version's, or is missing entirely. Values
+ * set by hand are never touched, and are reserved first, so an automatic
+ * value that lands on one moves instead. Returns, per version that needs
+ * changing and in creation order, only the keys to write.
  */
 function healIdentities(candidates, prefix) {
     const ordered = [...candidates].sort((a, b) => timestamp(a.createdAt) - timestamp(b.createdAt));
     const taken = { names: new Set(), ports: new Set() };
+    for (const candidate of ordered) {
+        for (const key of customKeys(candidate.settings)) {
+            const value = candidate.settings?.[key];
+            if (isSet(key, value)) {
+                reserve(taken, key, value);
+            }
+        }
+    }
     const patches = [];
     for (const candidate of ordered) {
         const stored = candidate.settings ?? {};
-        const complete = !!stored.debuggerName
-            && typeof stored.portNumber === 'number'
-            && typeof stored.shellPortNumber === 'number';
-        const collides = complete && (taken.names.has(stored.debuggerName)
-            || taken.ports.has(stored.portNumber)
-            || taken.ports.has(stored.shellPortNumber));
-        if (complete && !collides) {
-            taken.names.add(stored.debuggerName);
-            taken.ports.add(stored.portNumber);
-            taken.ports.add(stored.shellPortNumber);
+        const custom = customKeys(stored);
+        const automatic = exports.DERIVED_SETTING_KEYS.filter(key => !custom.has(key) || !isSet(key, stored[key]));
+        const fine = automatic.every(key => isSet(key, stored[key]) && !isTaken(taken, key, stored[key]));
+        if (fine) {
+            automatic.forEach(key => reserve(taken, key, stored[key]));
             continue;
         }
-        const identity = deriveIdentity(candidate.odooVersion, prefix, taken);
-        taken.names.add(identity.debuggerName);
-        taken.ports.add(identity.portNumber);
-        taken.ports.add(identity.shellPortNumber);
+        const derived = deriveIdentity(candidate.odooVersion, prefix, taken);
+        const identity = {};
+        for (const key of automatic) {
+            identity[key] = derived[key];
+            reserve(taken, key, derived[key]);
+        }
         patches.push({ id: candidate.id, identity });
     }
     return patches;
+}
+/**
+ * The other versions `id` shares its debugger name or a port with. Sharing
+ * is allowed - those versions simply cannot run at the same time - so this
+ * feeds a warning, never a refusal.
+ */
+function identityConflicts(candidates, id) {
+    const own = candidates.find(candidate => candidate.id === id)?.settings;
+    if (!own) {
+        return [];
+    }
+    const conflicts = [];
+    for (const key of exports.DERIVED_SETTING_KEYS) {
+        const value = own[key];
+        if (!isSet(key, value)) {
+            continue;
+        }
+        const otherIds = candidates
+            .filter(candidate => candidate.id !== id)
+            .filter(candidate => {
+            const other = candidate.settings ?? {};
+            return key === 'debuggerName'
+                ? other.debuggerName === value
+                : other.portNumber === value || other.shellPortNumber === value;
+        })
+            .map(candidate => candidate.id);
+        if (otherIds.length > 0) {
+            conflicts.push({ key, value: value, otherIds });
+        }
+    }
+    return conflicts;
+}
+/**
+ * The version a launch entry named `name` belongs to. Versions that share a
+ * name share one entry: it is written for, and its session belongs to, the
+ * active version when that is one of them, else the oldest.
+ */
+function sessionOwner(candidates, name, activeId) {
+    const named = candidates
+        .filter(candidate => candidate.settings?.debuggerName === name)
+        .sort((a, b) => timestamp(a.createdAt) - timestamp(b.createdAt));
+    return named.find(candidate => candidate.id === activeId) ?? named[0];
 }
 /** The ports a new version for `branch` could land on, both ranges. */
 function candidatePortsFor(branch, window = 10) {
@@ -16386,6 +16537,7 @@ const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(33);
 const database_1 = __webpack_require__(48);
 const debugSessions_1 = __webpack_require__(88);
+const versionIdentity_1 = __webpack_require__(36);
 const dbResolution_1 = __webpack_require__(61);
 const runtimeCache_1 = __webpack_require__(15);
 const logger_1 = __webpack_require__(12);
@@ -16413,10 +16565,17 @@ async function collectManaged() {
     // that helper toasts when no project is selected.
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json').catch(() => undefined);
     const project = data?.projects?.find(entry => entry.isSelected);
+    // One instance per running session, attributed to the version it
+    // started as: versions may share a debugger name (one launch entry that
+    // follows the active version), and only one of them is running.
+    const service = versionsService_1.VersionsService.getInstance();
+    const versions = service.getVersions();
     const instances = [];
-    for (const version of versionsService_1.VersionsService.getInstance().getVersions()) {
-        const debuggerName = version.settings?.debuggerName;
-        if (!debuggerName || !names.has(debuggerName)) {
+    for (const debuggerName of names) {
+        const recorded = (0, debugSessions_1.versionIdOfSession)(debuggerName);
+        const version = (recorded ? service.getVersion(recorded) : undefined)
+            ?? (0, versionIdentity_1.sessionOwner)(versions, debuggerName, service.getActiveVersion()?.id);
+        if (!version) {
             continue;
         }
         const db = (0, dbResolution_1.dbForVersion)(project, version.id);
@@ -16472,27 +16631,40 @@ function invalidateRunningState() {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.trackSession = trackSession;
 exports.untrackSession = untrackSession;
+exports.versionIdOfSession = versionIdOfSession;
 exports.getSessionByName = getSessionByName;
 exports.runningDebuggerNames = runningDebuggerNames;
 exports.anySessionRunning = anySessionRunning;
 exports.clearSessions = clearSessions;
 exports.resolveStopTarget = resolveStopTarget;
 const sessions = new Map();
+const sessionVersions = new Map();
 function nameOf(session) {
     const name = session.configuration?.name;
     return typeof name === 'string' && name.length > 0 ? name : undefined;
 }
-function trackSession(session) {
+function trackSession(session, versionId) {
     const name = nameOf(session);
     if (name) {
         sessions.set(name, session);
+        if (versionId) {
+            sessionVersions.set(name, versionId);
+        }
+        else {
+            sessionVersions.delete(name);
+        }
     }
 }
 function untrackSession(session) {
     const name = nameOf(session);
     if (name) {
         sessions.delete(name);
+        sessionVersions.delete(name);
     }
+}
+/** The version a running session was started as, when it was recorded. */
+function versionIdOfSession(name) {
+    return sessions.has(name) ? sessionVersions.get(name) : undefined;
 }
 function getSessionByName(name) {
     return sessions.get(name);
@@ -16506,6 +16678,7 @@ function anySessionRunning() {
 /** Test seam: the registry is module state that outlives a single suite. */
 function clearSessions() {
     sessions.clear();
+    sessionVersions.clear();
 }
 /**
  * What "Stop Server" should act on. The active version's session wins
@@ -18728,6 +18901,8 @@ const process_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(12);
 const manifest_1 = __webpack_require__(95);
 const versionRepos_1 = __webpack_require__(80);
+const moduleDependencies_1 = __webpack_require__(99);
+const upgradeSetup_1 = __webpack_require__(59);
 /**
  * Whether module selections may be edited right now. Both refusals were
  * repeated at nine call sites with no way forward; hoisting them means the
@@ -18755,7 +18930,6 @@ async function ensureModuleEditable(project, db) {
     // cannot narrow through an awaited predicate.
     return db;
 }
-const CORE_HINT = 'Core/other module (not in this project\'s repos)';
 class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     sortPreferences;
     constructor(_context, sortPreferences) {
@@ -18765,8 +18939,8 @@ class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     getTreeItem(element) {
         return element;
     }
-    /** Module names discovered in the project's repos (for dependency hints). */
-    knownModuleNames = new Set();
+    /** Finds dependencies by name; rebuilt with every root build. */
+    locator = new moduleDependencies_1.ModuleLocator(new Map(), []);
     async getChildren(element) {
         if (element) {
             const node = element;
@@ -18774,7 +18948,10 @@ class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
                 return node.psaeChildren;
             }
             if (node.moduleData) {
-                return this.buildDependencyItems(node.moduleData);
+                return this.buildDependencyItems(node.moduleData.path, [node.moduleData.name], node.id ?? node.moduleData.path);
+            }
+            if (node.dependency) {
+                return this.buildDependencyItems(node.dependency.path, node.dependency.branch, node.id ?? node.dependency.path);
             }
             return [];
         }
@@ -18796,7 +18973,7 @@ class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         }
         const isTestingEnabled = !!(project.testingConfig && project.testingConfig.isEnabled);
         const { modules: allModules, psaeDirectories } = (0, psaeInternal_1.collectModuleDiscovery)(project, await (0, versionRepos_1.resolveReposForDatabase)(project, db));
-        this.knownModuleNames = new Set(allModules.map(module => module.name));
+        this.locator = new moduleDependencies_1.ModuleLocator(new Map(allModules.map(module => [module.name, module.path])), (0, upgradeSetup_1.coreAddonsPaths)((0, versionRepos_1.versionOfDatabase)(db)?.settings ?? {}));
         const installedModuleNames = await (0, database_1.getInstalledModuleNames)(db.id);
         const dbModulesByName = new Map(modules.map(module => [module.name, module]));
         const selectedDbModuleNames = new Set(modules
@@ -18932,27 +19109,48 @@ class ModuleTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         }
         return undefined;
     }
-    /** Lazily lists a module's manifest dependencies (one level deep). */
-    async buildDependencyItems(moduleData) {
-        const manifest = await (0, manifest_1.readModuleManifest)(moduleData.path);
+    /**
+     * Lazily lists a module's manifest dependencies. Each one that resolves
+     * to a module folder expands in turn, read only when it is opened.
+     * `branch` holds the module names from the root row down to this one.
+     */
+    async buildDependencyItems(modulePath, branch, parentId) {
+        const manifest = await (0, manifest_1.readModuleManifest)(modulePath);
         if (!manifest || manifest.depends.length === 0) {
             const empty = new vscode.TreeItem(manifest ? 'No dependencies' : 'No __manifest__.py found', vscode.TreeItemCollapsibleState.None);
+            empty.id = `${parentId}::empty`;
             empty.contextValue = 'info';
             empty.iconPath = new vscode.ThemeIcon('info');
             return [empty];
         }
-        return manifest.depends.map(dep => {
-            const isLocal = this.knownModuleNames.has(dep);
-            const item = new vscode.TreeItem(dep, vscode.TreeItemCollapsibleState.None);
-            item.id = `${moduleData.path}::dep::${dep}`;
+        const locator = this.locator;
+        return Promise.all(manifest.depends.map(async (dep) => {
+            const resolved = await locator.locate(dep);
+            const expansion = (0, moduleDependencies_1.dependencyExpansion)(resolved, branch);
+            const item = new vscode.TreeItem(dep, expansion === 'expandable' ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
+            item.id = `${parentId}::dep::${dep}`;
             item.contextValue = 'moduleDependency';
-            item.iconPath = isLocal
+            if (expansion === 'expandable' && resolved.path) {
+                item.dependency = { path: resolved.path, branch: [...branch, dep] };
+            }
+            const where = resolved.source === 'project' ? 'project module'
+                : resolved.source === 'core' ? 'core'
+                    : 'not found';
+            item.description = expansion === 'cycle' ? `${where} • cycle` : where;
+            item.iconPath = resolved.source === 'project'
                 ? new vscode.ThemeIcon('package', new vscode.ThemeColor('charts.blue'))
-                : new vscode.ThemeIcon('library');
-            item.description = isLocal ? 'project module' : 'core/other';
-            item.tooltip = isLocal ? `Dependency "${dep}" is available in this project's repos.` : `${dep}: ${CORE_HINT}`;
+                : resolved.source === 'core'
+                    ? new vscode.ThemeIcon('library')
+                    : new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
+            item.tooltip = resolved.path
+                ? [
+                    `${dep}: ${resolved.source === 'project' ? "in this project's repos" : 'in the Odoo source of this database\'s version'}`,
+                    resolved.path,
+                    ...(expansion === 'cycle' ? [`Already required above it (${[...branch, dep].join(' → ')}), so it does not expand again.`] : [])
+                ].join('\n')
+                : `${dep}: not found in this project's repos nor in the Odoo source of this database's version.`;
             return item;
-        });
+        }));
     }
     getModuleIcon(state, isInstalled) {
         // State is encoded by glyph SHAPE, not just color: when a tree row is
@@ -19625,6 +19823,117 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ModuleLocator = void 0;
+exports.dependencyExpansion = dependencyExpansion;
+/**
+ * Resolves a module's dependencies by name to the folder Odoo would load,
+ * so the Modules view can expand a dependency into its own dependencies.
+ * Lookups happen one name at a time, when a row is expanded, and are cached
+ * for the life of the locator (one tree build).
+ */
+const fs = __importStar(__webpack_require__(20));
+const path = __importStar(__webpack_require__(3));
+/** Odoo module names are plain folder names; anything else is never looked up. */
+const MODULE_NAME = /^[A-Za-z0-9_.-]+$/;
+class ModuleLocator {
+    projectModules;
+    coreAddonsDirs;
+    cache = new Map();
+    /**
+     * @param projectModules module name → folder, from the project's repos
+     * @param coreAddonsDirs core/enterprise/themes addons folders, in the
+     *        order the server's --addons-path lists them (they come first
+     *        there, so they win over a project module of the same name)
+     */
+    constructor(projectModules, coreAddonsDirs) {
+        this.projectModules = projectModules;
+        this.coreAddonsDirs = coreAddonsDirs;
+    }
+    locate(name) {
+        let pending = this.cache.get(name);
+        if (!pending) {
+            pending = this.lookup(name);
+            this.cache.set(name, pending);
+        }
+        return pending;
+    }
+    async lookup(name) {
+        if (MODULE_NAME.test(name) && name !== '.' && name !== '..') {
+            for (const addonsDir of this.coreAddonsDirs) {
+                const candidate = path.join(addonsDir, name);
+                if (await isFile(path.join(candidate, '__manifest__.py'))) {
+                    return { name, path: candidate, source: 'core' };
+                }
+            }
+        }
+        const own = this.projectModules.get(name);
+        if (own) {
+            return { name, path: own, source: 'project' };
+        }
+        return { name, source: 'missing' };
+    }
+}
+exports.ModuleLocator = ModuleLocator;
+async function isFile(filePath) {
+    try {
+        return (await fs.stat(filePath)).isFile();
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * Whether a dependency row can expand. `branch` is the chain of module names
+ * from the root module down to the row's parent: a dependency already on it
+ * would expand forever.
+ */
+function dependencyExpansion(dependency, branch) {
+    if (!dependency.path) {
+        return 'missing';
+    }
+    return branch.includes(dependency.name) ? 'cycle' : 'expandable';
+}
+
+
+/***/ }),
+/* 100 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.TestingTreeProvider = void 0;
 exports.stashModules = stashModules;
 exports.restoreStashedModules = restoreStashedModules;
@@ -19649,7 +19958,7 @@ const module_1 = __webpack_require__(45);
 const utils_1 = __webpack_require__(8);
 const context_1 = __webpack_require__(42);
 const upgrade_1 = __webpack_require__(40);
-const debugger_1 = __webpack_require__(100);
+const debugger_1 = __webpack_require__(101);
 const database_1 = __webpack_require__(48);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
@@ -20329,7 +20638,7 @@ async function setSpecificLogLevel() {
 
 
 /***/ }),
-/* 100 */
+/* 101 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -20369,6 +20678,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.currentLaunchTarget = currentLaunchTarget;
 exports.runDirectory = runDirectory;
+exports.dropUnusedLaunchEntry = dropUnusedLaunchEntry;
 exports.setupDebugger = setupDebugger;
 exports.collectAddonsPaths = collectAddonsPaths;
 exports.buildOdooCommandLine = buildOdooCommandLine;
@@ -20394,13 +20704,14 @@ const logger_1 = __webpack_require__(12);
 const launchConfig_1 = __webpack_require__(19);
 const dataLocation_1 = __webpack_require__(17);
 const debugSessions_1 = __webpack_require__(88);
+const versionIdentity_1 = __webpack_require__(36);
 const dbResolution_1 = __webpack_require__(61);
 const versionRepos_1 = __webpack_require__(80);
 const provisioning_1 = __webpack_require__(67);
 const customWorktree_1 = __webpack_require__(57);
 const setupState_1 = __webpack_require__(71);
 const odooInstaller_1 = __webpack_require__(66);
-const server_1 = __webpack_require__(101);
+const server_1 = __webpack_require__(102);
 const gitExclude_1 = __webpack_require__(32);
 /** Why prepareArgs refuses: no database of that version is selected. */
 const NO_DATABASE = 'Select a database before running this action.';
@@ -20468,6 +20779,30 @@ async function cleanUpFirstFolderLaunch(target, names) {
         logger_1.logger.warn(`[debugger] could not clean up ${target.firstFolderPath}/.vscode/launch.json:`, error);
     }
 }
+/**
+ * Removes the launch entry named `name` once no version uses that name any
+ * more - after the user renames a version's debugger, so the Run and Debug
+ * dropdown does not keep offering the old entry.
+ */
+async function dropUnusedLaunchEntry(name) {
+    const target = currentLaunchTarget();
+    if (!name || !target || versionsService_1.VersionsService.getInstance().getVersions().some(version => version.settings.debuggerName === name)) {
+        return;
+    }
+    await (0, launchConfig_1.removeManagedLaunchConfigIn)(target, new Set([name])).catch(error => {
+        logger_1.logger.warn(`[debugger] could not remove the launch entry "${name}":`, error);
+    });
+}
+/** The versions that get a launch entry: every provisioned one, and the active one. */
+function launchCandidates(versionsService) {
+    const activeVersion = versionsService.getActiveVersion();
+    const candidates = versionsService.getVersions()
+        .filter(version => (0, provisioning_1.isVersionProvisioned)((0, utils_1.resolveOptionalPath)(version.settings.pythonPath)));
+    if (activeVersion && !candidates.some(version => version.id === activeVersion.id)) {
+        candidates.push(activeVersion);
+    }
+    return candidates;
+}
 async function setupDebugger() {
     const workspacePath = (0, utils_1.getWorkspacePath)();
     const target = currentLaunchTarget();
@@ -20490,11 +20825,11 @@ async function setupDebugger() {
     // database: launch.json accumulates durable entries instead of one being
     // renamed out from under the Run and Debug dropdown, and two versions can
     // run at once. Unprovisioned versions have no interpreter to launch.
-    const targets = versionsService.getVersions()
-        .filter(version => (0, provisioning_1.isVersionProvisioned)((0, utils_1.resolveOptionalPath)(version.settings.pythonPath)));
-    if (activeVersion && !targets.some(version => version.id === activeVersion.id)) {
-        targets.push(activeVersion);
-    }
+    const provisioned = launchCandidates(versionsService);
+    // Versions the user gave the same debugger name share one entry, written
+    // for the active one among them (else the oldest): F5 then runs whatever
+    // is active. Writing each in turn would leave whichever came last.
+    const targets = provisioned.filter(version => (0, versionIdentity_1.sessionOwner)(provisioned, version.settings.debuggerName, activeVersion?.id)?.id === version.id);
     // Worktrees are created once per sync rather than per launch entry: the
     // same branch is often shared by several versions.
     const setupRoot = (0, setupState_1.readSetupState)().provisioningRoot;
@@ -20958,6 +21293,17 @@ async function startServerForVersion(versionId, options = {}) {
         }
         return { ok: false, message };
     };
+    // A debugger name shared with the active version is that version's
+    // entry: starting it would run the active version instead of this one.
+    const owner = (0, versionIdentity_1.sessionOwner)(launchCandidates(versionsService), settings.debuggerName, versionsService.getActiveVersion()?.id);
+    if (owner && owner.id !== version.id) {
+        const message = `"${version.name}" shares the debugger name "${settings.debuggerName}" with "${owner.name}", `
+            + 'whose launch entry it is. Activate it, or give it its own debugger name.';
+        if (!options.quiet) {
+            void (0, utils_1.showError)(message);
+        }
+        return { ok: false, message };
+    }
     // Found before anything is stopped: a start that cannot happen must not
     // take the running server of this version down with it.
     const target = currentLaunchTarget();
@@ -20973,7 +21319,13 @@ async function startServerForVersion(versionId, options = {}) {
     // fail to bind; say what is going on instead.
     const port = Number(settings.portNumber) || 0;
     if (!existingSession && port && await (0, server_1.isPortOpen)(port)) {
-        const message = `"${version.name}" is already running on port ${port}, probably in another window.`;
+        // A port set by hand may be another version's, running in this window.
+        const holder = (0, debugSessions_1.runningDebuggerNames)()
+            .map(name => versionsService.getVersion((0, debugSessions_1.versionIdOfSession)(name) ?? ''))
+            .find(other => other && other.id !== version.id && Number(other.settings.portNumber) === port);
+        const message = holder
+            ? `Port ${port} is taken by "${holder.name}", which is running. Stop it first, or give "${version.name}" its own port.`
+            : `"${version.name}" is already running on port ${port}, probably in another window.`;
         if (!options.quiet) {
             void (0, utils_1.showWarning)(message, 'Open in Browser').then(choice => {
                 if (choice === 'Open in Browser') {
@@ -21001,7 +21353,7 @@ async function startDebugServer(options = {}) {
 
 
 /***/ }),
-/* 101 */
+/* 102 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21059,6 +21411,7 @@ const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
 const runningState_1 = __webpack_require__(87);
 const debugSessions_1 = __webpack_require__(88);
+const versionIdentity_1 = __webpack_require__(36);
 const DEFAULT_ODOO_PORT = 8069;
 /** Port the Odoo server listens on, from the active version's settings. */
 async function getActiveServerPort() {
@@ -21174,7 +21527,11 @@ async function openServerInBrowser(dbName, dbVersionId) {
         await vscode.env.openExternal(url);
     }
 }
-/** The version whose launch configuration this session was started from. */
+/**
+ * The version whose launch configuration this session was started from: for a
+ * name several versions share, the one its entry was written for (the active
+ * one, else the oldest - see sessionOwner).
+ */
 async function versionForSession(session) {
     const name = session.configuration?.name;
     if (typeof name !== 'string' || name.length === 0) {
@@ -21183,12 +21540,12 @@ async function versionForSession(session) {
     try {
         const service = versionsService_1.VersionsService.getInstance();
         await service.initialize();
-        const version = service.getVersions().find(entry => entry.settings?.debuggerName === name);
+        const version = (0, versionIdentity_1.sessionOwner)(service.getVersions(), name, service.getActiveVersion()?.id);
         if (!version) {
             return undefined;
         }
         const port = Number(version.settings.portNumber);
-        return { portNumber: Number.isInteger(port) && port > 0 && port <= 65535 ? port : DEFAULT_ODOO_PORT };
+        return { id: version.id, portNumber: Number.isInteger(port) && port > 0 && port <= 65535 ? port : DEFAULT_ODOO_PORT };
     }
     catch {
         return undefined;
@@ -21206,7 +21563,7 @@ function registerServerLifecycle(context, hooks) {
         if (!version) {
             return;
         }
-        (0, debugSessions_1.trackSession)(session);
+        (0, debugSessions_1.trackSession)(session, version.id);
         hooks.onRunningChanged((0, debugSessions_1.anySessionRunning)());
         const openBrowser = vscode.workspace
             .getConfiguration('odooDebugger')
@@ -21232,7 +21589,7 @@ function registerServerLifecycle(context, hooks) {
 
 
 /***/ }),
-/* 102 */
+/* 103 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -21464,7 +21821,7 @@ async function offerStop(context, remaining) {
 
 
 /***/ }),
-/* 103 */
+/* 104 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21517,7 +21874,7 @@ const logger_1 = __webpack_require__(12);
 const settingsStore_1 = __webpack_require__(6);
 const baseTreeProvider_1 = __webpack_require__(5);
 const versionIdentity_1 = __webpack_require__(36);
-const provisionQueue_1 = __webpack_require__(102);
+const provisionQueue_1 = __webpack_require__(103);
 const upgrade_1 = __webpack_require__(40);
 const workspaceRegistry_1 = __webpack_require__(82);
 /** Provisioned state for the tree description, from the shared predicate. */
@@ -21625,7 +21982,7 @@ class VersionSettingTreeItem extends vscode.TreeItem {
     key;
     value;
     versionId;
-    constructor(key, value, versionId) {
+    constructor(key, value, versionId, settings) {
         const displayName = (0, utils_1.getSettingDisplayName)(key);
         const displayValue = (0, utils_1.getSettingDisplayValue)(key, value);
         super(`${displayName}: ${displayValue}`, vscode.TreeItemCollapsibleState.None);
@@ -21666,13 +22023,15 @@ class VersionSettingTreeItem extends vscode.TreeItem {
         else {
             this.iconPath = new vscode.ThemeIcon('gear');
         }
-        // Derived identity is shown but never editable: it is a function of
-        // the version's branch, and editing it would let two versions collide.
+        // Identity follows the branch until the user sets it by hand. Either
+        // way it is editable; a value set by hand can be reset to automatic.
         if ((0, versionIdentity_1.isDerivedSetting)(key)) {
-            this.contextValue = 'versionSettingDerived';
-            this.description = 'derived from branch';
-            this.tooltip = `${displayName}: ${displayValue}\n\nDerived from the version's branch (${key}). Not editable.`;
-            return;
+            const custom = (0, versionIdentity_1.customKeys)(settings).has(key);
+            this.contextValue = custom ? 'versionSettingIdentityCustom' : 'versionSettingIdentity';
+            this.description = custom ? 'set by you' : 'automatic';
+            this.tooltip = custom
+                ? `${displayName}: ${displayValue}\n\nSet by you, so it is kept when the branch changes. Right-click to make it automatic again.`
+                : `${displayName}: ${displayValue}\n\nAutomatic: follows the version's branch, and stays clear of the other versions so they can run at once. Click to set it yourself.`;
         }
         this.command = {
             command: 'odoo.editVersionSetting',
@@ -21727,7 +22086,11 @@ class VersionsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
                 if (key === 'repoPaths') {
                     return;
                 }
-                settingItems.push(new VersionSettingTreeItem(key, value, element.version.id));
+                // Shown on the identity rows themselves ("set by you").
+                if (key === 'customIdentity') {
+                    return;
+                }
+                settingItems.push(new VersionSettingTreeItem(key, value, element.version.id, settings));
             });
             return Promise.resolve(settingItems);
         }
@@ -21774,7 +22137,7 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 
 /***/ }),
-/* 104 */
+/* 105 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -21797,7 +22160,7 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 105 */
+/* 106 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21848,7 +22211,7 @@ const settingsStore_1 = __webpack_require__(6);
 const upgrade_1 = __webpack_require__(41);
 const logger_1 = __webpack_require__(12);
 const baseTreeProvider_1 = __webpack_require__(5);
-const viewPairing_1 = __webpack_require__(106);
+const viewPairing_1 = __webpack_require__(107);
 /** workspaceState: whether "Other inactive views" also lists those the original has off too. */
 exports.SHOW_ALSO_OFF_KEY = 'viewDoctor.showAlsoOff';
 function resolveViewDoctorTarget(project) {
@@ -22006,7 +22369,7 @@ exports.ViewDoctorTreeProvider = ViewDoctorTreeProvider;
 
 
 /***/ }),
-/* 106 */
+/* 107 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22060,9 +22423,9 @@ const vscode = __importStar(__webpack_require__(1));
 const upgrade_1 = __webpack_require__(41);
 const runningState_1 = __webpack_require__(87);
 const notifications_1 = __webpack_require__(16);
-const viewQueries_1 = __webpack_require__(107);
-const viewMatch_1 = __webpack_require__(108);
-const viewFileSystem_1 = __webpack_require__(109);
+const viewQueries_1 = __webpack_require__(108);
+const viewMatch_1 = __webpack_require__(109);
+const viewFileSystem_1 = __webpack_require__(110);
 function upgradePair(project) {
     if (!project) {
         return undefined;
@@ -22136,7 +22499,7 @@ function diffArguments(original, upgraded) {
 
 
 /***/ }),
-/* 107 */
+/* 108 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -22429,7 +22792,7 @@ async function inactiveViewIds(dbName) {
 
 
 /***/ }),
-/* 108 */
+/* 109 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -22462,7 +22825,7 @@ function matchView(source, found) {
 
 
 /***/ }),
-/* 109 */
+/* 110 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22625,18 +22988,18 @@ exports.ViewFileSystemProvider = ViewFileSystemProvider;
 
 
 /***/ }),
-/* 110 */
+/* 111 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ViewService = void 0;
 exports.originalInactiveIds = originalInactiveIds;
-const viewQueries_1 = __webpack_require__(107);
-const disabledReport_1 = __webpack_require__(111);
+const viewQueries_1 = __webpack_require__(108);
+const disabledReport_1 = __webpack_require__(112);
 const logger_1 = __webpack_require__(12);
-const viewGroups_1 = __webpack_require__(112);
-const xpathReport_1 = __webpack_require__(113);
+const viewGroups_1 = __webpack_require__(113);
+const xpathReport_1 = __webpack_require__(114);
 /**
  * Which views the original database has off; undefined when there is no
  * original to ask, or it cannot be read - the tree then shows everything.
@@ -22732,7 +23095,7 @@ exports.ViewService = ViewService;
 
 
 /***/ }),
-/* 111 */
+/* 112 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -22858,7 +23221,7 @@ function mergeReports(reports) {
 
 
 /***/ }),
-/* 112 */
+/* 113 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -22902,7 +23265,7 @@ function groupViews(inactive, reported, reportedRows, edited = [], alsoOffInOrig
 
 
 /***/ }),
-/* 113 */
+/* 114 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -22996,7 +23359,7 @@ function checkResultText(report) {
 
 
 /***/ }),
-/* 114 */
+/* 115 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23389,13 +23752,13 @@ exports.ViewWorker = ViewWorker;
 
 
 /***/ }),
-/* 115 */
+/* 116 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ViewWorkerPool = void 0;
-const viewWorker_1 = __webpack_require__(114);
+const viewWorker_1 = __webpack_require__(115);
 const DEFAULT_IDLE_MS = 10 * 60_000;
 class ViewWorkerPool {
     factory;
@@ -23499,7 +23862,7 @@ exports.ViewWorkerPool = ViewWorkerPool;
 
 
 /***/ }),
-/* 116 */
+/* 117 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23513,12 +23876,12 @@ exports.resolveViewWorkerSpec = resolveViewWorkerSpec;
  */
 const settingsStore_1 = __webpack_require__(6);
 const settings_1 = __webpack_require__(7);
-const debugger_1 = __webpack_require__(100);
+const debugger_1 = __webpack_require__(101);
 const utils_1 = __webpack_require__(8);
 const provisioning_1 = __webpack_require__(67);
 const versionRepos_1 = __webpack_require__(80);
 const viewWorkerArgs_1 = __webpack_require__(50);
-const viewWorker_1 = __webpack_require__(114);
+const viewWorker_1 = __webpack_require__(115);
 /** Why no shell can be started for this database, or undefined when one can. */
 function viewWorkerUnavailableReason(input) {
     if (!input.inProject) {
@@ -23564,7 +23927,7 @@ async function resolveViewWorkerSpec(dbName, scriptPath) {
 
 
 /***/ }),
-/* 117 */
+/* 118 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23618,7 +23981,7 @@ const settingsStore_1 = __webpack_require__(6);
 const repo_1 = __webpack_require__(46);
 const utils_1 = __webpack_require__(8);
 const runtimeCache_1 = __webpack_require__(15);
-const filesExclude_1 = __webpack_require__(118);
+const filesExclude_1 = __webpack_require__(119);
 const baseTreeProvider_1 = __webpack_require__(5);
 const sortOptions_1 = __webpack_require__(38);
 const branches_1 = __webpack_require__(52);
@@ -23990,7 +24353,7 @@ async function selectProjectForExplorer() {
 
 
 /***/ }),
-/* 118 */
+/* 119 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24136,7 +24499,7 @@ function createFilesExcludeMatcher(scopeUri) {
 
 
 /***/ }),
-/* 119 */
+/* 120 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24271,7 +24634,7 @@ function registerWrongCopyGuard(context) {
 
 
 /***/ }),
-/* 120 */
+/* 121 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24392,7 +24755,7 @@ function migratable(diagnoses) {
 
 
 /***/ }),
-/* 121 */
+/* 122 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24444,10 +24807,10 @@ const node_crypto_1 = __webpack_require__(65);
 const fs = __importStar(__webpack_require__(2));
 const os = __importStar(__webpack_require__(18));
 const path = __importStar(__webpack_require__(3));
-const odooFrameProxy_1 = __webpack_require__(122);
-const reportPdf_1 = __webpack_require__(124);
-const renderSession_1 = __webpack_require__(125);
-const server_1 = __webpack_require__(101);
+const odooFrameProxy_1 = __webpack_require__(123);
+const reportPdf_1 = __webpack_require__(125);
+const renderSession_1 = __webpack_require__(126);
+const server_1 = __webpack_require__(102);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
 const PDF_HOOKS = {
@@ -24850,7 +25213,7 @@ exports.ViewRenderPanel = ViewRenderPanel;
 
 
 /***/ }),
-/* 122 */
+/* 123 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24910,7 +25273,7 @@ exports.filterHandshakeHead = filterHandshakeHead;
  * named after the proxy's port, because cookies ignore ports and the two
  * sides' proxies share 127.0.0.1.
  */
-const http = __importStar(__webpack_require__(123));
+const http = __importStar(__webpack_require__(124));
 const net = __importStar(__webpack_require__(37));
 const node_crypto_1 = __webpack_require__(65);
 exports.GATE_PATH = '/__odt/open';
@@ -25329,13 +25692,13 @@ exports.OdooFrameProxy = OdooFrameProxy;
 
 
 /***/ }),
-/* 123 */
+/* 124 */
 /***/ ((module) => {
 
 module.exports = require("node:http");
 
 /***/ }),
-/* 124 */
+/* 125 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25383,7 +25746,7 @@ exports.fetchReportPdf = fetchReportPdf;
  * webview may use. VS Code webviews show no PDF, so the file is opened with
  * the system's viewer instead.
  */
-const http = __importStar(__webpack_require__(123));
+const http = __importStar(__webpack_require__(124));
 const MAX_PDF_BYTES = 200 * 1024 * 1024;
 /** Odoo answered something other than 200: a redirect to /web/login means it dropped the session. */
 class PdfRefusedError extends Error {
@@ -25445,7 +25808,7 @@ function fetchReportPdf(port, path, sid, timeoutMs = 120_000) {
 
 
 /***/ }),
-/* 125 */
+/* 126 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -25461,8 +25824,8 @@ exports.RenderSession = exports.RECENT_LIMIT = void 0;
  * own newest record.
  */
 const logger_1 = __webpack_require__(12);
-const renderPlan_1 = __webpack_require__(126);
-const reportPdf_1 = __webpack_require__(124);
+const renderPlan_1 = __webpack_require__(127);
+const reportPdf_1 = __webpack_require__(125);
 exports.RECENT_LIMIT = 200;
 /** The report types that /report/pdf renders; qweb-text makes plain text. */
 const PDF_REPORT_TYPES = new Set(['qweb-pdf', 'qweb-html']);
@@ -25658,7 +26021,7 @@ exports.RenderSession = RenderSession;
 
 
 /***/ }),
-/* 126 */
+/* 127 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -25709,7 +26072,7 @@ function reportPath(reportName, resId, debug = true) {
 
 
 /***/ }),
-/* 127 */
+/* 128 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -25787,7 +26150,7 @@ exports.ViewArchPoller = ViewArchPoller;
 
 
 /***/ }),
-/* 128 */
+/* 129 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26018,7 +26381,7 @@ exports.XpathDiagnostics = XpathDiagnostics;
 
 
 /***/ }),
-/* 129 */
+/* 130 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26069,8 +26432,8 @@ exports.createSaveHook = createSaveHook;
  * closed shows nothing.
  */
 const vscode = __importStar(__webpack_require__(1));
-const xpathReport_1 = __webpack_require__(113);
-const archErrors_1 = __webpack_require__(130);
+const xpathReport_1 = __webpack_require__(114);
+const archErrors_1 = __webpack_require__(131);
 const logger_1 = __webpack_require__(12);
 function saveMessage(result, report) {
     if (result.activationError) {
@@ -26120,7 +26483,7 @@ function createSaveHook(deps) {
 
 
 /***/ }),
-/* 130 */
+/* 131 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -26133,7 +26496,7 @@ exports.locateArchError = locateArchError;
  * failing locator or field in quotes, or (for XML syntax) a line; an error
  * that names neither lands on the first line.
  */
-const disabledReport_1 = __webpack_require__(111);
+const disabledReport_1 = __webpack_require__(112);
 /**
  * Odoo's message as plain text. It HTML-escapes the attributes of a locator
  * it cannot find - `@name=&#39;partner_id&#39;` - on every version from 15
@@ -26200,7 +26563,7 @@ function locateArchError(arch, rawMessage) {
 
 
 /***/ }),
-/* 131 */
+/* 132 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26355,7 +26718,7 @@ exports.StatusBarIndicators = StatusBarIndicators;
 
 
 /***/ }),
-/* 132 */
+/* 133 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -26371,8 +26734,8 @@ exports.ViewNoteService = exports.psqlNoteQueries = void 0;
  * Bookkeeping never fails what triggered it.
  */
 const logger_1 = __webpack_require__(12);
-const viewQueries_1 = __webpack_require__(107);
-const viewNotes_1 = __webpack_require__(133);
+const viewQueries_1 = __webpack_require__(108);
+const viewNotes_1 = __webpack_require__(134);
 exports.psqlNoteQueries = {
     fingerprints: async (dbName, ids) => {
         try {
@@ -26462,7 +26825,7 @@ exports.ViewNoteService = ViewNoteService;
 
 
 /***/ }),
-/* 133 */
+/* 134 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26770,30 +27133,30 @@ exports.ViewNoteStore = ViewNoteStore;
 
 
 /***/ }),
-/* 134 */
+/* 135 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(135);
-const projectCommands_1 = __webpack_require__(137);
-const repoCommands_1 = __webpack_require__(143);
-const dbCommands_1 = __webpack_require__(144);
-const moduleCommands_1 = __webpack_require__(145);
-const testingCommands_1 = __webpack_require__(146);
-const versionCommands_1 = __webpack_require__(147);
-const debugCommands_1 = __webpack_require__(149);
-const reposExplorerCommands_1 = __webpack_require__(150);
-const editorCommands_1 = __webpack_require__(151);
-const helpCommands_1 = __webpack_require__(152);
-const upgradeCommand_1 = __webpack_require__(153);
+const viewCommands_1 = __webpack_require__(136);
+const projectCommands_1 = __webpack_require__(138);
+const repoCommands_1 = __webpack_require__(144);
+const dbCommands_1 = __webpack_require__(145);
+const moduleCommands_1 = __webpack_require__(146);
+const testingCommands_1 = __webpack_require__(147);
+const versionCommands_1 = __webpack_require__(148);
+const debugCommands_1 = __webpack_require__(150);
+const reposExplorerCommands_1 = __webpack_require__(151);
+const editorCommands_1 = __webpack_require__(152);
+const helpCommands_1 = __webpack_require__(153);
+const upgradeCommand_1 = __webpack_require__(154);
 const customAddonsCommand_1 = __webpack_require__(94);
-const dataStoreCommands_1 = __webpack_require__(155);
-const repoLocationCommand_1 = __webpack_require__(157);
+const dataStoreCommands_1 = __webpack_require__(156);
+const repoLocationCommand_1 = __webpack_require__(158);
 const bindingCommand_1 = __webpack_require__(84);
-const upgradeSideCommands_1 = __webpack_require__(158);
-const viewDoctorCommands_1 = __webpack_require__(159);
+const upgradeSideCommands_1 = __webpack_require__(159);
+const viewDoctorCommands_1 = __webpack_require__(160);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -26818,7 +27181,7 @@ function registerAllCommands(deps) {
 
 
 /***/ }),
-/* 135 */
+/* 136 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26858,7 +27221,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(136);
+const quickSearch_1 = __webpack_require__(137);
 const versionsService_1 = __webpack_require__(33);
 const sortOptions_1 = __webpack_require__(38);
 const notifications_1 = __webpack_require__(16);
@@ -27006,7 +27369,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 136 */
+/* 137 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27130,7 +27493,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 137 */
+/* 138 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27182,14 +27545,14 @@ const settingsStore_1 = __webpack_require__(6);
 const project_1 = __webpack_require__(90);
 const dbs_1 = __webpack_require__(64);
 const odooInstaller_1 = __webpack_require__(66);
-const projectWorkspace_1 = __webpack_require__(138);
-const setupFlow_1 = __webpack_require__(140);
+const projectWorkspace_1 = __webpack_require__(139);
+const setupFlow_1 = __webpack_require__(141);
 const setupState_1 = __webpack_require__(71);
 const context_1 = __webpack_require__(42);
 const versionProposal_1 = __webpack_require__(60);
-const versionPick_1 = __webpack_require__(142);
+const versionPick_1 = __webpack_require__(143);
 const gitService_1 = __webpack_require__(11);
-const provisionQueue_1 = __webpack_require__(102);
+const provisionQueue_1 = __webpack_require__(103);
 const registerCommand_1 = __webpack_require__(85);
 function registerProjectCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
@@ -27354,7 +27717,7 @@ function registerProjectCommands(deps) {
 
 
 /***/ }),
-/* 138 */
+/* 139 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27407,7 +27770,7 @@ const logger_1 = __webpack_require__(12);
 const versionRepos_1 = __webpack_require__(80);
 const utils_1 = __webpack_require__(8);
 const versionsService_1 = __webpack_require__(33);
-const workspaceFolders_1 = __webpack_require__(139);
+const workspaceFolders_1 = __webpack_require__(140);
 async function getActiveProjectOrPrompt() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
@@ -27581,7 +27944,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 139 */
+/* 140 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -27641,7 +28004,7 @@ function repoFolderEntries(resolved, existingPaths) {
 
 
 /***/ }),
-/* 140 */
+/* 141 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27695,7 +28058,7 @@ const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const branches_1 = __webpack_require__(52);
 const customAddonsCommand_1 = __webpack_require__(94);
-const setupDetection_1 = __webpack_require__(141);
+const setupDetection_1 = __webpack_require__(142);
 const setupState_1 = __webpack_require__(71);
 /** The per-version key that every repository-discovery site already reads. */
 const CUSTOM_ADDONS_KEY = 'defaultVersion.customAddonsPath';
@@ -27877,7 +28240,7 @@ async function runSetup(options) {
 
 
 /***/ }),
-/* 141 */
+/* 142 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28094,7 +28457,7 @@ function detectCustomAddonsRoot(roots) {
 
 
 /***/ }),
-/* 142 */
+/* 143 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28243,14 +28606,14 @@ async function collectRepoBranches() {
 
 
 /***/ }),
-/* 143 */
+/* 144 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerRepoCommands = registerRepoCommands;
 const repos_1 = __webpack_require__(97);
-const projectWorkspace_1 = __webpack_require__(138);
+const projectWorkspace_1 = __webpack_require__(139);
 const registerCommand_1 = __webpack_require__(85);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
@@ -28263,7 +28626,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 144 */
+/* 145 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28311,7 +28674,7 @@ const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const dbs_1 = __webpack_require__(64);
 const notifications_2 = __webpack_require__(16);
-const server_1 = __webpack_require__(101);
+const server_1 = __webpack_require__(102);
 const utils_1 = __webpack_require__(8);
 const registerCommand_1 = __webpack_require__(85);
 function registerDbCommands(deps) {
@@ -28514,7 +28877,7 @@ function registerDbCommands(deps) {
 
 
 /***/ }),
-/* 145 */
+/* 146 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28650,14 +29013,14 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 146 */
+/* 147 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerTestingCommands = registerTestingCommands;
 const settingsStore_1 = __webpack_require__(6);
-const testing_1 = __webpack_require__(99);
+const testing_1 = __webpack_require__(100);
 const registerCommand_1 = __webpack_require__(85);
 function registerTestingCommands(deps) {
     const { context, providers, refreshAll } = deps;
@@ -28707,7 +29070,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 147 */
+/* 148 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28754,20 +29117,21 @@ const fs = __importStar(__webpack_require__(2));
 const args_1 = __webpack_require__(86);
 const utils_1 = __webpack_require__(8);
 const versionIdentity_1 = __webpack_require__(36);
+const debugger_1 = __webpack_require__(101);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(148);
+const branchPick_1 = __webpack_require__(149);
 const runtimeCache_1 = __webpack_require__(15);
 const environment_1 = __webpack_require__(51);
 const odooInstaller_1 = __webpack_require__(66);
 const provisioning_1 = __webpack_require__(67);
 const wizard_1 = __webpack_require__(73);
 const worktree_1 = __webpack_require__(55);
-const server_1 = __webpack_require__(101);
+const server_1 = __webpack_require__(102);
 const dbResolution_1 = __webpack_require__(61);
 const settingsStore_1 = __webpack_require__(6);
 const setupState_1 = __webpack_require__(71);
-const versionMigration_1 = __webpack_require__(120);
+const versionMigration_1 = __webpack_require__(121);
 const upgrade_1 = __webpack_require__(40);
 const registerCommand_1 = __webpack_require__(85);
 const workspaceBinding_1 = __webpack_require__(63);
@@ -29088,6 +29452,62 @@ function registerVersionCommands(deps) {
             return `--dev=${devModeOption.label}`;
         }
     };
+    /**
+     * The debugger name and ports start automatic and become the user's once
+     * edited. Sharing one with another version is allowed - some people want
+     * one launch entry F5 always runs - and is only warned about.
+     */
+    const editIdentitySetting = async (versionId, key, value) => {
+        const version = versionsService.getVersion(versionId);
+        if (!version) {
+            return;
+        }
+        let newValue;
+        if (key === 'debuggerName') {
+            const typed = await vscode.window.showInputBox({
+                title: `Debugger Name of "${version.name}"`,
+                prompt: 'The launch configuration F5 runs. Versions sharing a name share one entry, which runs the active one.',
+                value: typeof value === 'string' ? value : '',
+                validateInput: input => input.trim() ? undefined : 'Enter a name.'
+            });
+            newValue = typed?.trim();
+        }
+        else {
+            const typed = await vscode.window.showInputBox({
+                title: `${(0, utils_1.getSettingDisplayName)(key)} of "${version.name}"`,
+                value: value === undefined || value === null ? '' : String(value),
+                validateInput: input => /^\d+$/.test(input.trim()) && Number(input) >= 1024 && Number(input) <= 65535
+                    ? undefined
+                    : 'Enter a port between 1024 and 65535.'
+            });
+            newValue = typed === undefined ? undefined : Number(typed.trim());
+        }
+        if (newValue === undefined || newValue === value) {
+            return;
+        }
+        const previousNames = versionsService.getVersions().map(entry => entry.settings.debuggerName);
+        const { conflicts, moved } = await versionsService.setIdentityValue(versionId, key, newValue);
+        // This version's old name, or an automatic one that moved off it.
+        for (const name of new Set(previousNames)) {
+            await (0, debugger_1.dropUnusedLaunchEntry)(name);
+        }
+        await refreshAll();
+        if (moved.length > 0) {
+            void (0, notifications_1.showInfo)(`${(0, utils_1.getSettingDisplayName)(key)} of "${version.name}" set to ${newValue}. `
+                + `${moved.map(other => `"${other.name}"`).join(', ')} had it automatically, and moved off it.`);
+        }
+        for (const conflict of conflicts.filter(entry => entry.key === key)) {
+            const others = conflict.others.map(other => `"${other.name}"`).join(', ');
+            void (0, notifications_1.showWarning)(key === 'debuggerName'
+                ? `${others} ${conflict.others.length === 1 ? 'uses' : 'use'} the debugger name "${conflict.value}" too. `
+                    + 'They share one launch entry, which runs the active version: only one of them can run at a time.'
+                : `${others} ${conflict.others.length === 1 ? 'uses' : 'use'} port ${conflict.value} too: `
+                    + 'only one of them can run at a time.');
+        }
+        if (!conflicts.some(entry => entry.key === key) && moved.length === 0) {
+            void (0, notifications_1.showInfo)(`${(0, utils_1.getSettingDisplayName)(key)} of "${version.name}" set to ${newValue}.`);
+        }
+    };
     context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.editVersionSetting', async (versionIdOrTreeItem, settingKey, currentValue) => {
         try {
             const ref = (0, args_1.extractVersionSettingRef)(versionIdOrTreeItem, settingKey, currentValue);
@@ -29104,8 +29524,7 @@ function registerVersionCommands(deps) {
                 return;
             }
             if ((0, versionIdentity_1.isDerivedSetting)(key)) {
-                void (0, notifications_1.showInfo)(`"${(0, utils_1.getSettingDisplayName)(key)}" is derived from this version's branch so two versions can run at once. ` +
-                    `Change the version's branch to change it.`);
+                await editIdentitySetting(versionId, key, value);
                 return;
             }
             let newValue = undefined;
@@ -29271,6 +29690,8 @@ function registerVersionCommands(deps) {
             void (0, notifications_1.showError)(`Failed to delete the selected version: ${(0, logger_1.errorMessage)(error)}`);
         }
     }));
+    // An identity value's "default" is the automatic one: same flow.
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.makeIdentityAutomatic', (settingTreeItem) => vscode.commands.executeCommand('odoo.setSettingToDefault', settingTreeItem)));
     context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.setSettingToDefault', async (settingTreeItem) => {
         try {
             const ref = (0, args_1.extractVersionSettingRef)(settingTreeItem);
@@ -29278,9 +29699,14 @@ function registerVersionCommands(deps) {
                 void (0, notifications_1.showError)('Select a setting before continuing.');
                 return;
             }
+            const previousName = versionsService.getVersion(ref.versionId)?.settings.debuggerName;
             const success = await versionsService.setSettingToDefault(ref.versionId, ref.key);
             if (!success) {
                 void (0, notifications_1.showError)('Unable to reset this setting to its default value.');
+            }
+            else if (ref.key === 'debuggerName' && previousName) {
+                await (0, debugger_1.dropUnusedLaunchEntry)(previousName);
+                await refreshAll();
             }
         }
         catch (error) {
@@ -29385,7 +29811,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 148 */
+/* 149 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -29600,7 +30026,7 @@ async function pickRepoBranch(repoPath, title, placeHolder, suggested, exclude, 
 
 
 /***/ }),
-/* 149 */
+/* 150 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -29643,8 +30069,8 @@ exports.registerDebugCommands = registerDebugCommands;
  * Start/stop/restart server (with and without debugging) and shell commands.
  */
 const vscode = __importStar(__webpack_require__(1));
-const debugger_1 = __webpack_require__(100);
-const server_1 = __webpack_require__(101);
+const debugger_1 = __webpack_require__(101);
+const server_1 = __webpack_require__(102);
 const notifications_1 = __webpack_require__(16);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(33);
@@ -29690,6 +30116,22 @@ function registerDebugCommands(deps) {
             { label: `Odoo ${config.from?.series}`, versionId: config.from?.versionId },
             { label: `Odoo ${config.to?.series}`, versionId: config.to?.versionId }
         ];
+        // Names and ports can be set by hand and shared; two sides sharing
+        // one would stop, or fail to bind beside, each other.
+        const [fromVersion, toVersion] = [config.from?.versionId, config.to?.versionId]
+            .map(id => id ? versionsService_1.VersionsService.getInstance().getVersion(id) : undefined);
+        if (fromVersion && toVersion) {
+            const shared = fromVersion.settings.debuggerName === toVersion.settings.debuggerName
+                ? `the debugger name "${fromVersion.settings.debuggerName}"`
+                : Number(fromVersion.settings.portNumber) === Number(toVersion.settings.portNumber)
+                    ? `port ${fromVersion.settings.portNumber}`
+                    : undefined;
+            if (shared) {
+                void (0, notifications_1.showError)(`Both sides of the upgrade use ${shared}, so they cannot run at the same time. `
+                    + 'Give one of them its own in the Versions view.');
+                return;
+            }
+        }
         const failures = [];
         for (const side of sides) {
             // A side whose version is still being built has no id yet, and
@@ -29738,7 +30180,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 150 */
+/* 151 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -29793,7 +30235,7 @@ const notifications_2 = __webpack_require__(16);
 const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const runtimeCache_1 = __webpack_require__(15);
-const projectReposExplorer_1 = __webpack_require__(117);
+const projectReposExplorer_1 = __webpack_require__(118);
 const utils_2 = __webpack_require__(8);
 const notifications_3 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
@@ -30031,7 +30473,7 @@ function registerReposExplorerCommands(deps) {
 
 
 /***/ }),
-/* 151 */
+/* 152 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30078,8 +30520,8 @@ exports.registerEditorCommands = registerEditorCommands;
 const vscode = __importStar(__webpack_require__(1));
 const manifest_1 = __webpack_require__(95);
 const module_1 = __webpack_require__(98);
-const testing_1 = __webpack_require__(99);
-const debugger_1 = __webpack_require__(100);
+const testing_1 = __webpack_require__(100);
+const debugger_1 = __webpack_require__(101);
 const notifications_1 = __webpack_require__(16);
 const registerCommand_1 = __webpack_require__(85);
 async function moduleForActiveEditor() {
@@ -30139,7 +30581,7 @@ function registerEditorCommands(deps) {
 
 
 /***/ }),
-/* 152 */
+/* 153 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30227,7 +30669,7 @@ function registerHelpCommands(deps) {
 
 
 /***/ }),
-/* 153 */
+/* 154 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30285,12 +30727,12 @@ const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(148);
-const upgradePlan_1 = __webpack_require__(154);
+const branchPick_1 = __webpack_require__(149);
+const upgradePlan_1 = __webpack_require__(155);
 const upgradeApply_1 = __webpack_require__(43);
 const upgradeSetup_1 = __webpack_require__(59);
 const branches_1 = __webpack_require__(52);
-const provisionQueue_1 = __webpack_require__(102);
+const provisionQueue_1 = __webpack_require__(103);
 const setupState_1 = __webpack_require__(71);
 const gitService_1 = __webpack_require__(11);
 const dbNaming_1 = __webpack_require__(74);
@@ -30887,7 +31329,7 @@ function registerUpgradeCommand(deps) {
 
 
 /***/ }),
-/* 154 */
+/* 155 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -31013,7 +31455,7 @@ function describeUpgradePlan(plan, input) {
 
 
 /***/ }),
-/* 155 */
+/* 156 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -31074,7 +31516,7 @@ const setupState_1 = __webpack_require__(71);
 const dataLocation_1 = __webpack_require__(17);
 const mainStore_1 = __webpack_require__(27);
 const workspaceSelection_1 = __webpack_require__(30);
-const dataImport_1 = __webpack_require__(156);
+const dataImport_1 = __webpack_require__(157);
 const registerCommand_1 = __webpack_require__(85);
 const gitExclude_1 = __webpack_require__(32);
 const SHARED_STORE_FILE = 'odoo-devtools.db';
@@ -31362,7 +31804,7 @@ function registerDataStoreCommands(deps) {
 
 
 /***/ }),
-/* 156 */
+/* 157 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -31619,7 +32061,7 @@ function buildExport(data, exportedAt = new Date()) {
 
 
 /***/ }),
-/* 157 */
+/* 158 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -31777,7 +32219,7 @@ function registerRepoLocationCommand(deps) {
 
 
 /***/ }),
-/* 158 */
+/* 159 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -31824,7 +32266,7 @@ const vscode = __importStar(__webpack_require__(1));
 const registerCommand_1 = __webpack_require__(85);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(33);
-const debugger_1 = __webpack_require__(100);
+const debugger_1 = __webpack_require__(101);
 const debugSessions_1 = __webpack_require__(88);
 const upgrade_1 = __webpack_require__(41);
 const workspaceBinding_1 = __webpack_require__(63);
@@ -31928,7 +32370,10 @@ async function stopBothServers() {
     const stopped = [];
     for (const side of [config.from, config.to]) {
         const version = side?.versionId ? versions.getVersion(side.versionId) : undefined;
-        const session = version ? (0, debugSessions_1.getSessionByName)(version.settings.debuggerName) : undefined;
+        const name = version?.settings.debuggerName ?? '';
+        // A name shared with another version may be running as that one.
+        const recorded = (0, debugSessions_1.versionIdOfSession)(name);
+        const session = version && (!recorded || recorded === version.id) ? (0, debugSessions_1.getSessionByName)(name) : undefined;
         if (version && session) {
             await vscode.debug.stopDebugging(session);
             stopped.push(version.name);
@@ -31944,7 +32389,7 @@ function registerUpgradeSideCommands(deps) {
 
 
 /***/ }),
-/* 159 */
+/* 160 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -31985,19 +32430,19 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewDoctorCommands = registerViewDoctorCommands;
 const vscode = __importStar(__webpack_require__(1));
 const registerCommand_1 = __webpack_require__(85);
-const viewDoctorView_1 = __webpack_require__(105);
-const viewFileSystem_1 = __webpack_require__(109);
+const viewDoctorView_1 = __webpack_require__(106);
+const viewFileSystem_1 = __webpack_require__(110);
 const notifications_1 = __webpack_require__(16);
 const settingsStore_1 = __webpack_require__(6);
-const viewPairing_1 = __webpack_require__(106);
+const viewPairing_1 = __webpack_require__(107);
 const logger_1 = __webpack_require__(12);
-const renderPlan_1 = __webpack_require__(126);
-const upgradeScriptFlow_1 = __webpack_require__(160);
-const archErrors_1 = __webpack_require__(130);
-const xpathReport_1 = __webpack_require__(113);
-const viewQueries_1 = __webpack_require__(107);
-const findViewFlow_1 = __webpack_require__(165);
-const viewTarget_1 = __webpack_require__(167);
+const renderPlan_1 = __webpack_require__(127);
+const upgradeScriptFlow_1 = __webpack_require__(161);
+const archErrors_1 = __webpack_require__(131);
+const xpathReport_1 = __webpack_require__(114);
+const viewQueries_1 = __webpack_require__(108);
+const findViewFlow_1 = __webpack_require__(166);
+const viewTarget_1 = __webpack_require__(168);
 function viewItem(arg) {
     return arg instanceof viewDoctorView_1.ViewItem ? arg : undefined;
 }
@@ -32279,7 +32724,7 @@ function registerViewDoctorCommands(deps) {
 
 
 /***/ }),
-/* 160 */
+/* 161 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -32332,11 +32777,11 @@ const settingsStore_1 = __webpack_require__(6);
 const psaeInternal_1 = __webpack_require__(96);
 const versionRepos_1 = __webpack_require__(80);
 const notifications_1 = __webpack_require__(16);
-const viewNoteService_1 = __webpack_require__(132);
-const scriptBuilder_1 = __webpack_require__(161);
-const upgradeScript_1 = __webpack_require__(162);
-const migrationsFolder_1 = __webpack_require__(163);
-const scriptDestination_1 = __webpack_require__(164);
+const viewNoteService_1 = __webpack_require__(133);
+const scriptBuilder_1 = __webpack_require__(162);
+const upgradeScript_1 = __webpack_require__(163);
+const migrationsFolder_1 = __webpack_require__(164);
+const scriptDestination_1 = __webpack_require__(165);
 async function scriptModules(project, dbName) {
     const db = project.dbs?.find(entry => entry.id === dbName);
     const { modules } = (0, psaeInternal_1.collectModuleDiscovery)(project, await (0, versionRepos_1.resolveReposForDatabase)(project, db));
@@ -32421,7 +32866,7 @@ async function createUpgradeScript(deps, dbName, viewId) {
 
 
 /***/ }),
-/* 161 */
+/* 162 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -32432,7 +32877,7 @@ exports.buildScriptViews = buildScriptViews;
 exports.leftOutText = leftOutText;
 exports.scriptSummary = scriptSummary;
 exports.nothingToScript = nothingToScript;
-const viewNotes_1 = __webpack_require__(133);
+const viewNotes_1 = __webpack_require__(134);
 /** Every view the note knows: noted first, then the journal's. */
 function scriptIds(note) {
     return [...new Set([...note.views.map(view => view.id), ...note.journal.map(entry => entry.id)])];
@@ -32511,7 +32956,7 @@ function nothingToScript(build, dbName) {
 
 
 /***/ }),
-/* 162 */
+/* 163 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -32826,7 +33271,7 @@ function parseScript(source) {
 
 
 /***/ }),
-/* 163 */
+/* 164 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -32889,7 +33334,7 @@ exports.writeScriptToFolder = writeScriptToFolder;
  */
 const fs = __importStar(__webpack_require__(20));
 const path = __importStar(__webpack_require__(3));
-const upgradeScript_1 = __webpack_require__(162);
+const upgradeScript_1 = __webpack_require__(163);
 exports.SCRIPT_NAME = 'end-update_views';
 const MAX_SIBLINGS = 100;
 /** A folder name Odoo will run and accept as a manifest version: <series>.x.y or <series>.x.y.z; without a known series, 2 to 5 numeric parts. */
@@ -33014,7 +33459,7 @@ async function writeScriptToFolder(dir, views) {
 
 
 /***/ }),
-/* 164 */
+/* 165 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -33068,8 +33513,8 @@ exports.pickDestination = pickDestination;
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
-const viewNotes_1 = __webpack_require__(133);
-const migrationsFolder_1 = __webpack_require__(163);
+const viewNotes_1 = __webpack_require__(134);
+const migrationsFolder_1 = __webpack_require__(164);
 const UNTITLED_LABEL = '$(new-file) Untitled Python Editor';
 function destinationKey(projectKey) {
     return `viewDoctor.scriptDestination:${projectKey}`;
@@ -33193,7 +33638,7 @@ async function pickDestination(options) {
 
 
 /***/ }),
-/* 165 */
+/* 166 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -33239,9 +33684,9 @@ exports.findView = findView;
  * opens its arch - the tree itself stays about what is off.
  */
 const vscode = __importStar(__webpack_require__(1));
-const viewQueries_1 = __webpack_require__(107);
+const viewQueries_1 = __webpack_require__(108);
 const notifications_1 = __webpack_require__(16);
-const viewPicker_1 = __webpack_require__(166);
+const viewPicker_1 = __webpack_require__(167);
 async function pickView(dbName, rows, title, open) {
     const picked = await vscode.window.showQuickPick((0, viewPicker_1.viewPickItems)((0, viewPicker_1.viewTree)(rows)), { title, matchOnDescription: true });
     if (picked) {
@@ -33305,7 +33750,7 @@ async function findView(dbName, open) {
 
 
 /***/ }),
-/* 166 */
+/* 167 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -33384,7 +33829,7 @@ function nothingMatches(dbName, value) {
 
 
 /***/ }),
-/* 167 */
+/* 168 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -33430,8 +33875,8 @@ exports.viewTarget = viewTarget;
  * three come out the same, so every command works from either place.
  */
 const vscode = __importStar(__webpack_require__(1));
-const viewDoctorView_1 = __webpack_require__(105);
-const viewFileSystem_1 = __webpack_require__(109);
+const viewDoctorView_1 = __webpack_require__(106);
+const viewFileSystem_1 = __webpack_require__(110);
 /** Undefined when the argument and the active editor are no view; throws when the URI's view is gone. */
 async function viewTarget(arg, readRows, activeUri = () => vscode.window.activeTextEditor?.document.uri) {
     if (arg instanceof viewDoctorView_1.ViewItem) {
@@ -33451,7 +33896,7 @@ async function viewTarget(arg, readRows, activeUri = () => vscode.window.activeT
 
 
 /***/ }),
-/* 168 */
+/* 169 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -33502,7 +33947,7 @@ function selectionFacts(project, version) {
 
 
 /***/ }),
-/* 169 */
+/* 170 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
