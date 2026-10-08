@@ -181,7 +181,7 @@ Every database can have a **comparison partner**: another database of the projec
 - **Compare with Partner** on any file — from the editor's "…" menu, its right-click menu, or the Explorer — opens the same file in the partner's code: the partner's version and its project repositories, on the branches its database uses. When the file was moved, it looks in the module, then for the module elsewhere, then offers files with the same name.
 - **Compare Module with Partner** (Modules view, or a module folder in the Explorer) lists the files that were added, removed or changed; pick one to see its diff.
 - **Compare This with Partner** (right-click in a Python or XML file) compares the class or method around the cursor — found by name, or by its model when Odoo moved it to another file — or the XML record, template or menuitem with the same id.
-- **Compare Record…** (a database's right-click menu, or the palette) compares one record's stored values in both databases, by external id or by model and id. When the model is installed on one side only, that side shows "(model not installed in <db>)" and the diff still opens. A checkpoint partner works too; code compares need a database partner, since a checkpoint runs the same code.
+- **Compare Record…** (a database's right-click menu, or the palette) compares one record's stored values in both databases, by external id or by model and id; many2many and one2many fields are not compared. When the model is installed on one side only, that side shows "(model not installed in <db>)" and the diff still opens. A checkpoint partner works too; code compares need a database partner, since a checkpoint runs the same code.
 
 ### Disabled views (View Doctor)
 
