@@ -94,10 +94,10 @@ export function realReleaseHost(): ReleaseHost {
 }
 
 /** `purpose` finishes "Stop it to …?": "take the checkpoint", "restore it", "copy it". */
-export function dialogReleaseUi(purpose: string): ReleaseUi {
+export function dialogReleaseUi(purpose: string, restarts = true): ReleaseUi {
     return {
         confirmStop: async db => (await showModalWarning(
-            `"${db}" is running in this window. Stop it to ${purpose}? It restarts afterwards.`,
+            `"${db}" is running in this window. Stop it to ${purpose}?${restarts ? ' It restarts afterwards.' : ''}`,
             'Stop and Continue'
         )) === 'Stop and Continue',
         confirmEnd: async (db, connections: DbConnection[]) => (await showModalWarning(
@@ -138,20 +138,39 @@ export function filestoreRootFor(versionId?: string): string {
  * Runs `work` with `db` released, then restarts what was stopped - even when
  * `work` fails. `{ done: false }` means the user said no.
  */
-export async function withReleased<T>(db: string, purpose: string, work: () => Promise<T>): Promise<{ done: true; value: T } | { done: false }> {
-    const release = await releaseForCopy(db, realReleaseHost(), dialogReleaseUi(purpose));
+export async function withReleased<T>(
+    db: string,
+    purpose: string,
+    work: () => Promise<T>,
+    options: { restart?: boolean } = {}
+): Promise<{ done: true; value: T } | { done: false }> {
+    const restart = options.restart ?? true;
+    const release = await releaseForCopy(db, realReleaseHost(), dialogReleaseUi(purpose, restart));
     if (!release) {
         return { done: false };
     }
+    let value: T;
     try {
-        return { done: true, value: await work() };
+        value = await work();
+    } catch (error) {
+        // The work failed, so what it was to remove is still there: bring the server back.
+        await restartAfter(db, release.restart);
+        throw error;
+    }
+    if (restart) {
+        await restartAfter(db, release.restart);
+    } else {
+        invalidateRunningState();
+    }
+    return { done: true, value };
+}
+
+async function restartAfter(db: string, restart: () => Promise<void>): Promise<void> {
+    try {
+        await restart();
+    } catch (error) {
+        void showWarning(`The server for "${db}" did not restart: ${errorMessage(error)}`);
     } finally {
-        try {
-            await release.restart();
-        } catch (error) {
-            void showWarning(`The server for "${db}" did not restart: ${errorMessage(error)}`);
-        } finally {
-            invalidateRunningState();
-        }
+        invalidateRunningState();
     }
 }

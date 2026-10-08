@@ -1088,7 +1088,7 @@ export async function deleteDb(event: unknown) {
         location: vscode.ProgressLocation.Notification,
         title: `Deleting database ${dbLabel}`,
         cancellable: false
-    }, () => discardDatabase(backend, db.id, root)));
+    }, () => discardDatabase(backend, db.id, root)), { restart: false });
     if (!outcome.done) {
         return;
     }
