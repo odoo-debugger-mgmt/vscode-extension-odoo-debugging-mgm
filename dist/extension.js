@@ -97,8 +97,8 @@ const projectWorkspace_1 = __webpack_require__(150);
 const workspaceBinding_1 = __webpack_require__(63);
 const workspaceRegistry_1 = __webpack_require__(65);
 const bindingCommand_1 = __webpack_require__(102);
-const goneElsewhere_1 = __webpack_require__(183);
-const storeSwitch_1 = __webpack_require__(184);
+const goneElsewhere_1 = __webpack_require__(190);
+const storeSwitch_1 = __webpack_require__(191);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -29557,20 +29557,21 @@ const dbCommands_1 = __webpack_require__(156);
 const checkpointCommands_1 = __webpack_require__(157);
 const alongsideCommands_1 = __webpack_require__(158);
 const partnerCommands_1 = __webpack_require__(159);
-const moduleCommands_1 = __webpack_require__(160);
-const testingCommands_1 = __webpack_require__(161);
-const versionCommands_1 = __webpack_require__(162);
-const debugCommands_1 = __webpack_require__(164);
-const reposExplorerCommands_1 = __webpack_require__(165);
-const editorCommands_1 = __webpack_require__(166);
-const helpCommands_1 = __webpack_require__(167);
-const upgradeCommand_1 = __webpack_require__(168);
+const compareCommands_1 = __webpack_require__(160);
+const moduleCommands_1 = __webpack_require__(167);
+const testingCommands_1 = __webpack_require__(168);
+const versionCommands_1 = __webpack_require__(169);
+const debugCommands_1 = __webpack_require__(171);
+const reposExplorerCommands_1 = __webpack_require__(172);
+const editorCommands_1 = __webpack_require__(173);
+const helpCommands_1 = __webpack_require__(174);
+const upgradeCommand_1 = __webpack_require__(175);
 const customAddonsCommand_1 = __webpack_require__(109);
-const dataStoreCommands_1 = __webpack_require__(170);
-const repoLocationCommand_1 = __webpack_require__(172);
+const dataStoreCommands_1 = __webpack_require__(177);
+const repoLocationCommand_1 = __webpack_require__(179);
 const bindingCommand_1 = __webpack_require__(102);
-const upgradeSideCommands_1 = __webpack_require__(173);
-const viewDoctorCommands_1 = __webpack_require__(174);
+const upgradeSideCommands_1 = __webpack_require__(180);
+const viewDoctorCommands_1 = __webpack_require__(181);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -29580,6 +29581,7 @@ function registerAllCommands(deps) {
     (0, checkpointCommands_1.registerCheckpointCommands)(deps);
     (0, alongsideCommands_1.registerAlongsideCommands)(deps);
     (0, partnerCommands_1.registerPartnerCommands)(deps);
+    (0, compareCommands_1.registerCompareCommands)(deps);
     (0, moduleCommands_1.registerModuleCommands)(deps);
     (0, testingCommands_1.registerTestingCommands)(deps);
     (0, versionCommands_1.registerVersionCommands)(deps);
@@ -31795,6 +31797,1258 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerCompareCommands = registerCompareCommands;
+/**
+ * Compare a file, or a whole module, with the same code in the comparison
+ * partner's version. See services/compare.
+ */
+const fs = __importStar(__webpack_require__(2));
+const path = __importStar(__webpack_require__(3));
+const vscode = __importStar(__webpack_require__(1));
+const registerCommand_1 = __webpack_require__(103);
+const settingsStore_1 = __webpack_require__(6);
+const notifications_1 = __webpack_require__(16);
+const manifest_1 = __webpack_require__(110);
+const sides_1 = __webpack_require__(161);
+const counterpart_1 = __webpack_require__(162);
+const moduleDiff_1 = __webpack_require__(163);
+const pythonSymbols_1 = __webpack_require__(164);
+const xmlElements_1 = __webpack_require__(165);
+const compareDocuments_1 = __webpack_require__(129);
+const dbs_1 = __webpack_require__(79);
+const viewPairing_1 = __webpack_require__(76);
+const viewDoctorView_1 = __webpack_require__(118);
+const comparisonPartner_1 = __webpack_require__(73);
+const checkpointReads_1 = __webpack_require__(119);
+const postgres_1 = __webpack_require__(47);
+const recordCompare_1 = __webpack_require__(166);
+/** Both sides, or undefined after saying why not (or when the prompt was dismissed). */
+async function sidesOrExplain(refresh) {
+    const project = (await settingsStore_1.SettingsStore.getSelectedProject())?.project;
+    const sides = await (0, sides_1.codeSides)(project, { ask: true, onStored: refresh });
+    if (!sides) {
+        return undefined;
+    }
+    if ('error' in sides) {
+        void (0, notifications_1.showInfo)(sides.error);
+        return undefined;
+    }
+    return sides;
+}
+/** The file of a resolution, asking when several match; undefined after explaining. */
+async function pickCounterpart(found, to, what) {
+    if (found.kind === 'found') {
+        return found.path;
+    }
+    if (found.kind === 'none') {
+        void (0, notifications_1.showInfo)(`${what} has no counterpart in ${to.label}.`);
+        return undefined;
+    }
+    const base = (0, counterpart_1.rootOf)(found.candidates[0], to)?.root.path;
+    const picked = await vscode.window.showQuickPick(found.candidates.map(candidate => ({
+        label: base ? path.relative((0, counterpart_1.rootOf)(candidate, to)?.root.path ?? base, candidate) : candidate,
+        candidate
+    })), { title: `${what} in ${to.label}`, placeHolder: 'Which file is the counterpart?' });
+    return picked?.candidate;
+}
+/** The counterpart of `file` (on `from`) in `to`, asking when several match; undefined after explaining. */
+async function counterpartOf(file, from, to, what) {
+    return pickCounterpart(await (0, counterpart_1.resolveCounterpart)(file, from, to, counterpart_1.realFsProbe), to, what);
+}
+/** Which side a file is on; this side wins when both match (the same checkout). Exactly one is set. */
+function matchSide(file, sides) {
+    const left = (0, counterpart_1.rootOf)(file, sides.left);
+    const right = (0, counterpart_1.rootOf)(file, sides.right);
+    const pickLeft = left && (!right || sides.thisSide === 'left');
+    return { onLeft: pickLeft ? left : undefined, onRight: pickLeft ? undefined : right };
+}
+function fileOf(arg) {
+    const uri = arg instanceof vscode.Uri ? arg : vscode.window.activeTextEditor?.document.uri;
+    return uri?.scheme === 'file' ? uri.fsPath : undefined;
+}
+async function moduleDirOf(arg) {
+    const data = arg?.moduleData;
+    if (data?.path) {
+        return data.path;
+    }
+    if (arg instanceof vscode.Uri && arg.scheme === 'file') {
+        if (fs.existsSync(path.join(arg.fsPath, '__manifest__.py'))) {
+            return arg.fsPath;
+        }
+        return (await (0, manifest_1.findModuleForFile)(path.join(arg.fsPath, '__manifest__.py')))?.path;
+    }
+    return undefined;
+}
+/** The qualified name of the class or function around `position`, from the language server; undefined without one. */
+async function qualifiedFromServer(uri, position) {
+    const symbols = await Promise.resolve(vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', uri)).catch(() => undefined);
+    const kinds = [vscode.SymbolKind.Class, vscode.SymbolKind.Function, vscode.SymbolKind.Method];
+    let best;
+    const walk = (list, parents) => {
+        for (const s of list) {
+            if (!s.range?.contains(position)) {
+                continue;
+            }
+            const chain = kinds.includes(s.kind) ? [...parents, s.name] : parents;
+            if (kinds.includes(s.kind) && (!best || chain.length >= best.length)) {
+                best = chain;
+            }
+            walk(s.children ?? [], chain);
+        }
+    };
+    walk(Array.isArray(symbols) ? symbols : [], []);
+    return best?.join('.');
+}
+async function readText(file) {
+    return fs.promises.readFile(file, 'utf8');
+}
+async function filesOf(dir, ext) {
+    return [...(await (0, moduleDiff_1.listTree)(dir)).keys()].filter(rel => rel.endsWith(ext)).map(rel => path.join(dir, rel));
+}
+function registerCompareCommands(deps) {
+    const { context, refreshAll } = deps;
+    const refresh = () => { void refreshAll({ reason: 'ui' }); };
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.compareFileWithPartner', async (arg) => {
+        const file = fileOf(arg);
+        if (!file) {
+            void (0, notifications_1.showInfo)('Open a file to compare it with the partner.');
+            return;
+        }
+        const sides = await sidesOrExplain(refresh);
+        if (!sides) {
+            return;
+        }
+        const { onLeft, onRight } = matchSide(file, sides);
+        if (!onLeft && !onRight) {
+            void (0, notifications_1.showInfo)(`${path.basename(file)} is not part of ${sides.left.label}'s or ${sides.right.label}'s code.`);
+            return;
+        }
+        const [from, to] = onLeft ? [sides.left, sides.right] : [sides.right, sides.left];
+        const other = await counterpartOf(file, from, to, path.basename(file));
+        if (!other) {
+            return;
+        }
+        if (path.resolve(other) === path.resolve(file)) {
+            void (0, notifications_1.showInfo)(`${path.basename(file)} is the same file in ${sides.left.label} and ${sides.right.label}.`);
+            return;
+        }
+        const [leftFile, rightFile] = onLeft ? [file, other] : [other, file];
+        await vscode.commands.executeCommand('vscode.diff', vscode.Uri.file(leftFile), vscode.Uri.file(rightFile), `${path.basename(file)}: ${sides.left.label} ↔ ${sides.right.label}`);
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.compareModuleWithPartner', async (arg) => {
+        const moduleDir = await moduleDirOf(arg);
+        if (!moduleDir) {
+            void (0, notifications_1.showInfo)('Select a module folder to compare it with the partner.');
+            return;
+        }
+        const name = path.basename(moduleDir);
+        const sides = await sidesOrExplain(refresh);
+        if (!sides) {
+            return;
+        }
+        const manifest = path.join(moduleDir, '__manifest__.py');
+        const { onLeft, onRight } = matchSide(manifest, sides);
+        if (!onLeft && !onRight) {
+            void (0, notifications_1.showInfo)(`${name} is not part of ${sides.left.label}'s or ${sides.right.label}'s code.`);
+            return;
+        }
+        const [from, to] = onLeft ? [sides.left, sides.right] : [sides.right, sides.left];
+        const otherManifest = await counterpartOf(manifest, from, to, name);
+        if (!otherManifest) {
+            return;
+        }
+        const otherDir = path.dirname(otherManifest);
+        if (path.resolve(otherDir) === path.resolve(moduleDir)) {
+            void (0, notifications_1.showInfo)(`${name} is the same module in ${sides.left.label} and ${sides.right.label}.`);
+            return;
+        }
+        const [leftDir, rightDir] = onLeft ? [moduleDir, otherDir] : [otherDir, moduleDir];
+        const diff = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Comparing ${name}…` }, () => (0, moduleDiff_1.diffTrees)(leftDir, rightDir));
+        const { left, right } = sides;
+        if (diff.changed.length + diff.added.length + diff.removed.length === 0) {
+            void (0, notifications_1.showInfo)(`${name} is the same in ${left.label} and ${right.label}.`);
+            return;
+        }
+        const items = [
+            ...diff.changed.map(rel => ({ label: `$(diff) ${rel}`, rel, change: 'changed' })),
+            ...diff.added.map(rel => ({ label: `$(diff-added) ${rel}`, description: `only in ${right.label}`, rel, change: 'added' })),
+            ...diff.removed.map(rel => ({ label: `$(diff-removed) ${rel}`, description: `only in ${left.label}`, rel, change: 'removed' }))
+        ];
+        const summary = `${diff.changed.length} changed · ${diff.added.length} added · ${diff.removed.length} removed`;
+        const picked = await vscode.window.showQuickPick([{ label: summary, kind: vscode.QuickPickItemKind.Separator }, ...items], { title: `${name}: ${left.label} ↔ ${right.label}`, placeHolder: 'Pick a file to see its diff' });
+        if (!picked?.rel) {
+            return;
+        }
+        const title = `${picked.rel}: ${left.label} ↔ ${right.label}`;
+        const leftUri = picked.change === 'added'
+            ? compareDocuments_1.compareDocuments.snapshotUri('left', `(not in ${left.label})`, '')
+            : vscode.Uri.file(path.join(leftDir, picked.rel));
+        const rightUri = picked.change === 'removed'
+            ? compareDocuments_1.compareDocuments.snapshotUri('right', `(not in ${right.label})`, '')
+            : vscode.Uri.file(path.join(rightDir, picked.rel));
+        await vscode.commands.executeCommand('vscode.diff', leftUri, rightUri, title);
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.compareThisWithPartner', async (arg) => {
+        const file = fileOf(arg);
+        const ext = file ? path.extname(file) : '';
+        if (!file || (ext !== '.py' && ext !== '.xml')) {
+            void (0, notifications_1.showInfo)('Open a Python or XML file to compare a class, method or record with the partner.');
+            return;
+        }
+        const editor = vscode.window.activeTextEditor;
+        const here = editor && path.resolve(editor.document.uri.fsPath) === path.resolve(file) ? editor : undefined;
+        if (!here) {
+            void (0, notifications_1.showInfo)('Put the cursor in the file to compare a class, method or record.');
+            return;
+        }
+        const sides = await sidesOrExplain(refresh);
+        if (!sides) {
+            return;
+        }
+        const { onLeft, onRight } = matchSide(file, sides);
+        if (!onLeft && !onRight) {
+            void (0, notifications_1.showInfo)(`${path.basename(file)} is not part of ${sides.left.label}'s or ${sides.right.label}'s code.`);
+            return;
+        }
+        const [from, to] = onLeft ? [sides.left, sides.right] : [sides.right, sides.left];
+        const text = here.document.getText();
+        const position = here.selection.active;
+        const show = async (what, thisText, otherText) => {
+            const [leftText, rightText] = onLeft ? [thisText, otherText] : [otherText, thisText];
+            await vscode.commands.executeCommand('vscode.diff', compareDocuments_1.compareDocuments.snapshotUri('left', `${what} · ${sides.left.label}${ext}`, leftText), compareDocuments_1.compareDocuments.snapshotUri('right', `${what} · ${sides.right.label}${ext}`, rightText), `${what}: ${sides.left.label} ↔ ${sides.right.label}`);
+        };
+        const sameFile = (other) => path.resolve(other) === path.resolve(file);
+        /**
+         * Look for the symbol in the counterpart file and its module, then in the same-named module when no
+         * file matched, and only then ask which file is the counterpart. `search` returns the other side's
+         * text, or undefined; `what` names the symbol for the messages.
+         */
+        const locate = async (what, search) => {
+            const found = await (0, counterpart_1.resolveCounterpart)(file, from, to, counterpart_1.realFsProbe);
+            if (found.kind === 'found') {
+                if (sameFile(found.path)) {
+                    void (0, notifications_1.showInfo)(`${path.basename(file)} is the same file in ${sides.left.label} and ${sides.right.label}.`);
+                    return undefined;
+                }
+                const moduleDir = (await (0, manifest_1.findModuleForFile)(found.path))?.path;
+                const hit = await search([found.path], moduleDir);
+                if (hit === undefined) {
+                    void (0, notifications_1.showInfo)(`${what} has no counterpart in ${to.label}.`);
+                }
+                return hit;
+            }
+            const moduleDir = await (0, counterpart_1.counterpartModuleDir)(file, from, to, counterpart_1.realFsProbe);
+            if (moduleDir) {
+                const hit = await search([], moduleDir);
+                if (hit !== undefined) {
+                    return hit;
+                }
+            }
+            const picked = await pickCounterpart(found, to, what);
+            if (!picked) {
+                return undefined;
+            }
+            if (sameFile(picked)) {
+                void (0, notifications_1.showInfo)(`${path.basename(file)} is the same file in ${sides.left.label} and ${sides.right.label}.`);
+                return undefined;
+            }
+            const hit = await search([picked], (await (0, manifest_1.findModuleForFile)(picked))?.path);
+            if (hit === undefined) {
+                void (0, notifications_1.showInfo)(`${what} has no counterpart in ${to.label}.`);
+            }
+            return hit;
+        };
+        /** `first` files, then every file of `ext` in the module, never this file. */
+        const candidatesOf = async (first, moduleDir) => {
+            const rest = moduleDir ? await filesOf(moduleDir, ext) : [];
+            return [...new Set([...first, ...rest])].filter(f => !sameFile(f));
+        };
+        if (ext === '.xml') {
+            const el = (0, xmlElements_1.xmlElementAt)(text, here.document.offsetAt(position));
+            if (!el) {
+                void (0, notifications_1.showInfo)('Put the cursor inside a <record>, <template> or <menuitem>.');
+                return;
+            }
+            const other = await locate(el.id, async (first, moduleDir) => {
+                const moduleName = moduleDir ? path.basename(moduleDir) : '';
+                for (const candidate of await candidatesOf(first, moduleDir)) {
+                    const otherText = await readText(candidate).catch(() => undefined);
+                    const found = otherText === undefined ? undefined : (0, xmlElements_1.findXmlElementById)(otherText, el.id, moduleName);
+                    if (found && otherText !== undefined) {
+                        return otherText.slice(found.start, found.end);
+                    }
+                }
+                return undefined;
+            });
+            if (other !== undefined) {
+                await show(el.id, text.slice(el.start, el.end), other);
+            }
+            return;
+        }
+        const symbols = (0, pythonSymbols_1.scanPythonSymbols)(text);
+        const serverName = await qualifiedFromServer(here.document.uri, position);
+        const named = serverName ? symbols.filter(s => s.qualified === serverName) : [];
+        const mine = named.find(s => s.start <= position.line && position.line < s.end) ?? named[0]
+            ?? (0, pythonSymbols_1.enclosingSymbol)(symbols, position.line);
+        if (!mine) {
+            void (0, notifications_1.showInfo)('Put the cursor inside a class or a method.');
+            return;
+        }
+        const owner = symbols.find(s => s.kind === 'class' && mine.qualified === `${s.qualified}.${mine.name}`);
+        const other = await locate(mine.qualified, async (first, moduleDir) => {
+            const sources = [];
+            for (const candidate of await candidatesOf(first, moduleDir)) {
+                sources.push({ file: candidate, text: await readText(candidate).catch(() => '') });
+            }
+            for (const source of sources) {
+                const theirs = (0, pythonSymbols_1.scanPythonSymbols)(source.text).find(s => s.qualified === mine.qualified);
+                if (theirs) {
+                    return (0, pythonSymbols_1.symbolText)(source.text, theirs);
+                }
+            }
+            if (owner) {
+                const hit = (0, pythonSymbols_1.findMethodInSources)(sources, (0, pythonSymbols_1.modelKeyOf)((0, pythonSymbols_1.symbolText)(text, owner)), mine.name);
+                if (hit) {
+                    return (0, pythonSymbols_1.symbolText)(sources.find(s => s.file === hit.file).text, hit.symbol);
+                }
+            }
+            return undefined;
+        });
+        if (other !== undefined) {
+            await show(mine.qualified, (0, pythonSymbols_1.symbolText)(text, mine), other);
+        }
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.compareRecord', async (event) => {
+        const project = (await settingsStore_1.SettingsStore.getSelectedProject())?.project;
+        const thisDb = (0, dbs_1.extractDatabaseFromEvent)(event)?.id ?? (0, viewDoctorView_1.resolveViewDoctorTarget)(project)?.dbName;
+        if (!project || !thisDb) {
+            void (0, notifications_1.showInfo)(project ? 'Select a database first.' : 'Open a project first.');
+            return;
+        }
+        const partner = await (0, viewPairing_1.partnerFor)(project, thisDb, { ask: true, onStored: refresh });
+        if (!partner) {
+            return;
+        }
+        const input = await vscode.window.showInputBox({
+            title: `Compare Record: ${thisDb} ↔ ${partner.label}`,
+            prompt: 'A record: an external id (sale.order_1) or model and id (res.partner,3)',
+            validateInput: value => (0, recordCompare_1.parseRecordRef)(value) ? undefined : 'An external id (module.name) or a model and an id (res.partner,3)'
+        });
+        const ref = input === undefined ? undefined : (0, recordCompare_1.parseRecordRef)(input);
+        if (!ref) {
+            return;
+        }
+        const names = (0, comparisonPartner_1.comparisonSides)(thisDb, partner, (0, viewPairing_1.upgradePair)(project));
+        const labelOf = (name) => name === partner.dbName ? partner.label : name;
+        const readSide = (name) => name === partner.dbName && partner.kind === 'checkpoint'
+            ? (0, checkpointReads_1.withCheckpointOpen)(name, () => (0, recordCompare_1.readRecord)(name, ref, postgres_1.runSql))
+            : (0, recordCompare_1.readRecord)(name, ref, postgres_1.runSql);
+        let reads;
+        try {
+            reads = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Reading the record…' }, async () => [await readSide(names.left), await readSide(names.right)]);
+        }
+        catch (error) {
+            void (0, notifications_1.showInfo)(`Could not read the record: ${error instanceof Error ? error.message : String(error)}`);
+            return;
+        }
+        const [left, right] = reads;
+        const what = ref.kind === 'xmlid' ? `${ref.module}.${ref.name}` : `${ref.model},${ref.id}`;
+        const leftLabel = labelOf(names.left);
+        const rightLabel = labelOf(names.right);
+        const plan = (0, recordCompare_1.planSides)(left, right, leftLabel, rightLabel, what);
+        if ('message' in plan) {
+            void (0, notifications_1.showInfo)(plan.message);
+            return;
+        }
+        await vscode.commands.executeCommand('vscode.diff', compareDocuments_1.compareDocuments.snapshotUri('left', `${what} · ${leftLabel}.txt`, plan.left), compareDocuments_1.compareDocuments.snapshotUri('right', `${what} · ${rightLabel}.txt`, plan.right), `${what}: ${leftLabel} ↔ ${rightLabel}`);
+    }));
+}
+
+
+/***/ }),
+/* 161 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.sideRolesFor = sideRolesFor;
+exports.sideRootsFor = sideRootsFor;
+exports.codeSides = codeSides;
+/**
+ * The code roots of the two sides of a comparison.
+ */
+const path = __importStar(__webpack_require__(3));
+const versionsService_1 = __webpack_require__(33);
+const utils_1 = __webpack_require__(8);
+const viewPairing_1 = __webpack_require__(76);
+const viewDoctorView_1 = __webpack_require__(118);
+const comparisonPartner_1 = __webpack_require__(73);
+const versionRepos_1 = __webpack_require__(59);
+const upgradeSetup_1 = __webpack_require__(70);
+/** The roots a version and a set of resolved repos give; pure. */
+function sideRolesFor(settings, repos) {
+    const roots = [];
+    const odoo = settings.odooPath?.trim();
+    if (odoo) {
+        roots.push({ role: 'odoo', path: odoo });
+    }
+    const enterprise = settings.enterprisePath?.trim();
+    const themes = settings.designThemesPath?.trim();
+    const odooAddons = odoo ? path.join(odoo, 'odoo', 'addons') : undefined;
+    const addons = odoo ? path.join(odoo, 'addons') : undefined;
+    for (const p of (0, upgradeSetup_1.coreAddonsPaths)(settings)) {
+        const role = p === enterprise ? 'core:enterprise'
+            : p === themes ? 'core:themes'
+                : p === odooAddons ? 'core:odoo/odoo/addons'
+                    : p === addons ? 'core:odoo/addons'
+                        : undefined;
+        if (role) {
+            roots.push({ role, path: p });
+        }
+    }
+    for (const { repo, path: repoPath } of repos) {
+        roots.push({ role: `repo:${repo.name}`, path: repoPath });
+    }
+    return roots;
+}
+async function sideRootsFor(project, db, label) {
+    const version = db.versionId ? versionsService_1.VersionsService.getInstance().getVersion(db.versionId) : undefined;
+    if (!version) {
+        return undefined;
+    }
+    const model = (project.dbs ?? []).find(d => d.id === db.id) ?? db;
+    const repos = await (0, versionRepos_1.resolveReposForDatabase)(project, model);
+    return { label, roots: sideRolesFor({
+            odooPath: (0, utils_1.resolveOptionalPath)(version.settings.odooPath),
+            enterprisePath: (0, utils_1.resolveOptionalPath)(version.settings.enterprisePath),
+            designThemesPath: (0, utils_1.resolveOptionalPath)(version.settings.designThemesPath)
+        }, repos) };
+}
+async function codeSides(project, options) {
+    if (!project) {
+        return { error: 'Open a project first.' };
+    }
+    const thisDb = options.db ?? (0, viewDoctorView_1.resolveViewDoctorTarget)(project)?.dbName;
+    if (!thisDb) {
+        return { error: 'Select a database first.' };
+    }
+    const partner = await (0, viewPairing_1.partnerFor)(project, thisDb, { ask: options.ask, onStored: options.onStored });
+    if (!partner) {
+        return undefined;
+    }
+    if (partner.kind === 'checkpoint') {
+        return { error: `A checkpoint runs the same code as ${thisDb}. Compare code with a database partner.` };
+    }
+    const names = (0, comparisonPartner_1.comparisonSides)(thisDb, partner, (0, viewPairing_1.upgradePair)(project));
+    const dbs = project.dbs ?? [];
+    const rootsOf = (name) => sideRootsFor(project, dbs.find(d => d.id === name) ?? { id: name, versionId: name === partner.dbName ? partner.versionId : undefined }, name);
+    const [left, right] = await Promise.all([rootsOf(names.left), rootsOf(names.right)]);
+    if (!left || !right) {
+        return { error: `The version of ${!left ? names.left : names.right} is unknown, so its code cannot be found.` };
+    }
+    return { thisDb, partner, left, right, thisSide: names.left === thisDb ? 'left' : 'right' };
+}
+
+
+/***/ }),
+/* 162 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.realFsProbe = void 0;
+exports.rootOf = rootOf;
+exports.addonsRoots = addonsRoots;
+exports.resolveCounterpart = resolveCounterpart;
+exports.counterpartModuleDir = counterpartModuleDir;
+/**
+ * Finding the same file in the other side's code. Pure rules over a file
+ * system probe, no vscode import.
+ */
+const fs = __importStar(__webpack_require__(20));
+const path = __importStar(__webpack_require__(3));
+const MAX_CANDIDATES = 50;
+const MAX_DEPTH = 8;
+const SKIPPED = new Set(['__pycache__', 'node_modules']);
+exports.realFsProbe = {
+    exists: async (p) => fs.stat(p).then(() => true, () => false),
+    isDir: async (p) => fs.stat(p).then(s => s.isDirectory(), () => false),
+    list: async (dir) => fs.readdir(dir).catch(() => [])
+};
+function rootOf(file, side) {
+    const target = path.resolve(file);
+    let best;
+    for (const root of side.roots) {
+        const base = path.resolve(root.path);
+        if ((target === base || target.startsWith(base + path.sep)) && (!best || base.length > best.length)) {
+            best = { root, length: base.length };
+        }
+    }
+    if (!best) {
+        return undefined;
+    }
+    const rel = path.relative(path.resolve(best.root.path), target).split(path.sep).join('/');
+    return { root: best.root, rel };
+}
+function addonsRoots(side) {
+    return side.roots.filter(root => root.role !== 'odoo');
+}
+/** Files named `name` under `dir`, depth-bounded, stopping at `limit`. */
+async function collect(dir, name, fsProbe, limit, out = [], depth = 0) {
+    if (depth > MAX_DEPTH || out.length >= limit) {
+        return out;
+    }
+    for (const entry of await fsProbe.list(dir)) {
+        if (out.length >= limit) {
+            break;
+        }
+        if (entry.startsWith('.') || SKIPPED.has(entry)) {
+            continue;
+        }
+        const full = path.join(dir, entry);
+        if (entry === name && !(await fsProbe.isDir(full))) {
+            out.push(full);
+        }
+        else if (await fsProbe.isDir(full)) {
+            await collect(full, name, fsProbe, limit, out, depth + 1);
+        }
+    }
+    return out;
+}
+function verdict(files) {
+    if (files.length === 0) {
+        return { kind: 'none' };
+    }
+    return files.length === 1 ? { kind: 'found', path: files[0] } : { kind: 'pick', candidates: files.slice(0, MAX_CANDIDATES) };
+}
+async function resolveCounterpart(file, from, to, fsProbe) {
+    const hit = rootOf(file, from);
+    if (!hit) {
+        return { kind: 'none' };
+    }
+    const sameRole = to.roots.find(root => root.role === hit.root.role);
+    if (sameRole) {
+        const same = path.join(sameRole.path, hit.rel);
+        if (await fsProbe.exists(same)) {
+            return { kind: 'found', path: same };
+        }
+    }
+    if (hit.root.role === 'odoo') {
+        // Framework files (odoo/models.py) have no same-name search.
+        return { kind: 'none' };
+    }
+    const name = path.basename(file);
+    {
+        const slash = hit.rel.indexOf('/');
+        const module = slash < 0 ? hit.rel : hit.rel.slice(0, slash);
+        const inner = slash < 0 ? '' : hit.rel.slice(slash + 1);
+        if (sameRole) {
+            const folder = path.join(sameRole.path, module);
+            if (await fsProbe.isDir(folder)) {
+                const files = await collect(folder, name, fsProbe, MAX_CANDIDATES);
+                if (files.length > 0) {
+                    return verdict(files);
+                }
+            }
+        }
+        for (const root of addonsRoots(to)) {
+            if (root === sameRole) {
+                continue;
+            }
+            const folder = path.join(root.path, module);
+            if (!(await fsProbe.isDir(folder))) {
+                continue;
+            }
+            if (inner && await fsProbe.exists(path.join(folder, inner))) {
+                return { kind: 'found', path: path.join(folder, inner) };
+            }
+            const files = await collect(folder, name, fsProbe, MAX_CANDIDATES);
+            if (files.length > 0) {
+                return verdict(files);
+            }
+        }
+    }
+    const all = [];
+    for (const root of addonsRoots(to)) {
+        await collect(root.path, name, fsProbe, MAX_CANDIDATES, all);
+    }
+    return verdict([...new Set(all)]);
+}
+/**
+ * The same-named module's folder on the other side (C1 step 3): the same root first, then the other
+ * addons roots. Undefined for framework files and when no such module exists.
+ */
+async function counterpartModuleDir(file, from, to, fsProbe) {
+    const hit = rootOf(file, from);
+    if (!hit || hit.root.role === 'odoo') {
+        return undefined;
+    }
+    const module = hit.rel.split('/')[0];
+    if (!module || !hit.rel.includes('/')) {
+        return undefined;
+    }
+    const sameRole = to.roots.find(root => root.role === hit.root.role);
+    const ordered = [...(sameRole ? [sameRole] : []), ...addonsRoots(to).filter(root => root !== sameRole)];
+    for (const root of ordered) {
+        const folder = path.join(root.path, module);
+        if (await fsProbe.isDir(folder)) {
+            return folder;
+        }
+    }
+    return undefined;
+}
+
+
+/***/ }),
+/* 163 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.sha1OfFile = sha1OfFile;
+exports.listTree = listTree;
+exports.diffTrees = diffTrees;
+/**
+ * Comparing two module folders: by size first, then by SHA-1 of the content,
+ * so a large module costs hashes only for files of equal size.
+ */
+const node_crypto_1 = __webpack_require__(67);
+const fs = __importStar(__webpack_require__(20));
+const path = __importStar(__webpack_require__(3));
+const SKIPPED_DIRS = new Set(['__pycache__', 'node_modules']);
+async function sha1OfFile(file) {
+    return (0, node_crypto_1.createHash)('sha1').update(await fs.readFile(file)).digest('hex');
+}
+/** Relative path (forward slashes) to size, skipping caches, `.pyc` and dot-folders. */
+async function listTree(dir) {
+    const out = new Map();
+    const walk = async (current, prefix) => {
+        const entries = await fs.readdir(current, { withFileTypes: true }).catch(() => []);
+        for (const entry of entries) {
+            const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+            const full = path.join(current, entry.name);
+            if (entry.isDirectory()) {
+                if (!entry.name.startsWith('.') && !SKIPPED_DIRS.has(entry.name)) {
+                    await walk(full, rel);
+                }
+            }
+            else if (entry.isFile() && !entry.name.endsWith('.pyc')) {
+                const stat = await fs.stat(full).catch(() => undefined);
+                if (stat) {
+                    out.set(rel, stat.size);
+                }
+            }
+        }
+    };
+    await walk(dir, '');
+    return out;
+}
+/** `added` is only on the right, `removed` only on the left. */
+async function diffTrees(left, right, hash = sha1OfFile) {
+    const [l, r] = await Promise.all([listTree(left), listTree(right)]);
+    const result = { changed: [], added: [], removed: [], same: 0 };
+    for (const [rel, size] of l) {
+        const other = r.get(rel);
+        if (other === undefined) {
+            result.removed.push(rel);
+        }
+        else if (other !== size) {
+            result.changed.push(rel);
+        }
+        else if ((await hash(path.join(left, rel))) === (await hash(path.join(right, rel)))) {
+            result.same++;
+        }
+        else {
+            result.changed.push(rel);
+        }
+    }
+    for (const rel of r.keys()) {
+        if (!l.has(rel)) {
+            result.added.push(rel);
+        }
+    }
+    for (const list of [result.changed, result.added, result.removed]) {
+        list.sort();
+    }
+    return result;
+}
+
+
+/***/ }),
+/* 164 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+/**
+ * A small indentation scanner for Python classes and functions, so a symbol
+ * can be cut out of a file without a language server.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.scanPythonSymbols = scanPythonSymbols;
+exports.enclosingSymbol = enclosingSymbol;
+exports.symbolText = symbolText;
+exports.modelKeyOf = modelKeyOf;
+exports.findMethodInSources = findMethodInSources;
+const OPENER = /^(\s*)(class|def|async\s+def)\s+(\w+)/;
+function indentOf(line) {
+    return line.length - line.trimStart().length;
+}
+/** One pass over the text: strings, comments and brackets, so signatures and continuation lines are known. */
+function lex(text) {
+    const lines = text.split('\n');
+    const inString = [];
+    const depth = [];
+    let open;
+    let level = 0;
+    for (const raw of lines) {
+        const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+        inString.push(open !== undefined);
+        depth.push(level);
+        let i = 0;
+        let continued = false;
+        while (i < line.length) {
+            const c = line[i];
+            if (open) {
+                if (c === '\\' && open.length === 1) {
+                    continued = i === line.length - 1;
+                    i += 2;
+                }
+                else if (line.startsWith(open, i)) {
+                    i += open.length;
+                    open = undefined;
+                }
+                else {
+                    i++;
+                }
+            }
+            else if (c === '#') {
+                break;
+            }
+            else if (c === '"' || c === "'") {
+                open = line.startsWith(c.repeat(3), i) ? c.repeat(3) : c;
+                i += open.length;
+            }
+            else {
+                if (c === '(' || c === '[' || c === '{') {
+                    level++;
+                }
+                else if ((c === ')' || c === ']' || c === '}') && level > 0) {
+                    level--;
+                }
+                i++;
+            }
+        }
+        if (open && open.length === 1 && !continued) {
+            open = undefined;
+        }
+    }
+    depth.push(level);
+    return { lines, inString, depth };
+}
+/** The line where the brackets opened on or after line `i` are balanced again. */
+function signatureEnd(lx, i) {
+    let k = i;
+    while (k < lx.lines.length - 1 && lx.depth[k + 1] > 0) {
+        k++;
+    }
+    return k;
+}
+function scanPythonSymbols(text) {
+    const lx = lex(text);
+    const { lines, inString, depth } = lx;
+    const symbols = [];
+    const stack = [];
+    for (let i = 0; i < lines.length; i++) {
+        const m = inString[i] || depth[i] > 0 ? null : OPENER.exec(lines[i]);
+        if (!m) {
+            continue;
+        }
+        const indent = m[1].length;
+        const sigEnd = signatureEnd(lx, i);
+        let end = sigEnd + 1;
+        for (let j = sigEnd + 1; j < lines.length; j++) {
+            if (inString[j] || depth[j] > 0) {
+                end = j + 1;
+                continue;
+            }
+            const trimmed = lines[j].trim();
+            if (!trimmed || trimmed.startsWith('#')) {
+                continue; // like Python, comments never end a body, and never extend it
+            }
+            if (indentOf(lines[j]) <= indent) {
+                break;
+            }
+            end = signatureEnd(lx, j) + 1;
+        }
+        let start = i;
+        for (let p = i - 1; p >= 0; p--) {
+            if (inString[p] || depth[p] > 0) {
+                continue; // inside a multi-line decorator
+            }
+            const t = lines[p].trim();
+            if (t.startsWith('@') && indentOf(lines[p]) === indent) {
+                start = p;
+            }
+            else if (!t || t.startsWith('#')) {
+                continue; // blank and comment lines may sit between a decorator and its def
+            }
+            else {
+                break;
+            }
+        }
+        while (stack.length && stack[stack.length - 1].end <= i) {
+            stack.pop();
+        }
+        const qualified = [...stack.map(x => x.name), m[3]].join('.');
+        const symbol = { kind: m[2] === 'class' ? 'class' : 'function', name: m[3], qualified, start, end };
+        symbols.push(symbol);
+        stack.push(symbol);
+    }
+    return symbols;
+}
+/** The innermost symbol whose lines contain `line`. */
+function enclosingSymbol(symbols, line) {
+    let best;
+    for (const s of symbols) {
+        if (s.start <= line && line < s.end && (!best || s.start >= best.start)) {
+            best = s;
+        }
+    }
+    return best;
+}
+function symbolText(text, s) {
+    return text.split('\n').slice(s.start, s.end).join('\n');
+}
+/** The model a class declares: `_name`, and `_inherit` as a string or a list; class-level assignments only. */
+function modelKeyOf(classText) {
+    const lx = lex(classText);
+    const { lines, inString, depth } = lx;
+    const key = {};
+    const first = signatureEnd(lx, 0);
+    let bodyIndent = -1;
+    for (let j = first + 1; j < lines.length; j++) {
+        if (!inString[j] && depth[j] === 0 && lines[j].trim() && !lines[j].trim().startsWith('#')) {
+            bodyIndent = indentOf(lines[j]);
+            break;
+        }
+    }
+    if (bodyIndent < 0) {
+        return key;
+    }
+    for (let j = first + 1; j < lines.length; j++) {
+        if (inString[j] || depth[j] > 0 || indentOf(lines[j]) !== bodyIndent) {
+            continue;
+        }
+        const stmt = lines.slice(j, signatureEnd(lx, j) + 1).join('\n');
+        const name = /^\s*_name\s*=\s*['"]([^'"]+)['"]/.exec(stmt);
+        if (name) {
+            key.name = name[1];
+        }
+        const inherit = /^\s*_inherit\s*=\s*(\[[^\]]*\]|\([^)]*\)|['"][^'"]+['"])/.exec(stmt);
+        if (inherit) {
+            key.inherit = [...inherit[1].matchAll(/['"]([^'"]+)['"]/g)].map(x => x[1]);
+        }
+    }
+    return key;
+}
+/**
+ * The class of the same model (see `key`) that defines `method` directly. A class whose `_name` is the
+ * model wins over one that only inherits it.
+ */
+function findMethodInSources(sources, key, method) {
+    const target = key.name ?? key.inherit?.[0];
+    if (!target) {
+        return undefined;
+    }
+    const scanned = sources.map(({ file, text }) => {
+        const symbols = scanPythonSymbols(text);
+        return { file, text, symbols, classes: symbols.filter(s => s.kind === 'class') };
+    });
+    const inherits = (k) => key.name ? !k.name && !!k.inherit?.includes(key.name) : !!k.inherit?.includes(target) && (!k.name || k.name === target);
+    for (const exact of [true, false]) {
+        for (const { file, text, symbols, classes } of scanned) {
+            for (const cls of classes) {
+                const k = modelKeyOf(symbolText(text, cls));
+                if (!(exact ? k.name === target : inherits(k))) {
+                    continue;
+                }
+                const symbol = symbols.find(s => s.kind === 'function' && s.qualified === `${cls.qualified}.${method}`);
+                if (symbol) {
+                    return { file, symbol };
+                }
+            }
+        }
+    }
+    return undefined;
+}
+
+
+/***/ }),
+/* 165 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+/**
+ * Find `<record>`, `<template>` and `<menuitem>` elements (with an id) in
+ * Odoo data files, by character offset.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.xmlElementAt = xmlElementAt;
+exports.findXmlElementById = findXmlElementById;
+/** Comments and CDATA replaced by spaces (newlines kept), so offsets stay valid. */
+function blankOut(text) {
+    return text.replace(/<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>/g, m => m.replace(/[^\n]/g, ' '));
+}
+function allElements(text) {
+    const clean = blankOut(text);
+    const out = [];
+    const open = /<(record|template|menuitem)\b([^>]*?)(\/?)>/g;
+    let m;
+    while ((m = open.exec(clean))) {
+        const id = /\bid\s*=\s*(?:"([^"]*)"|'([^']*)')/.exec(m[2]);
+        const tag = m[1];
+        const idValue = id?.[1] ?? id?.[2];
+        if (!idValue) {
+            continue;
+        }
+        let end = m.index + m[0].length;
+        if (!m[3]) {
+            const tags = new RegExp(`<(/?)${tag}\\b[^>]*?(/?)>`, 'g');
+            tags.lastIndex = end;
+            let depth = 1;
+            let t;
+            end = clean.length;
+            while ((t = tags.exec(clean))) {
+                if (t[1]) {
+                    depth--;
+                }
+                else if (!t[2]) {
+                    depth++;
+                }
+                if (depth === 0) {
+                    end = t.index + t[0].length;
+                    break;
+                }
+            }
+        }
+        out.push({ tag, id: idValue, start: m.index, end });
+    }
+    return out;
+}
+/** The innermost element containing `offset`. */
+function xmlElementAt(text, offset) {
+    let best;
+    for (const el of allElements(text)) {
+        if (el.start <= offset && offset < el.end && (!best || el.start >= best.start)) {
+            best = el;
+        }
+    }
+    return best;
+}
+/** The element with this id, a bare id and `module.id` being the same when the module is `module`. */
+function findXmlElementById(text, id, module) {
+    const prefix = `${module}.`;
+    const norm = (x) => (x.startsWith(prefix) ? x.slice(prefix.length) : x);
+    const wanted = norm(id);
+    return allElements(text).find(el => norm(el.id) === wanted);
+}
+
+
+/***/ }),
+/* 166 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseRecordRef = parseRecordRef;
+exports.tableOf = tableOf;
+exports.xmlidSql = xmlidSql;
+exports.fieldsSql = fieldsSql;
+exports.rowSql = rowSql;
+exports.renderRecord = renderRecord;
+exports.planSides = planSides;
+exports.readRecord = readRecord;
+/**
+ * Compare one database record with the same record in the comparison partner.
+ * Pure over a `sql` function, so a fake can stand in for psql. A model or an
+ * external id from the user reaches SQL only through sqlText / quotePgIdentifier.
+ */
+const node_crypto_1 = __webpack_require__(67);
+const postgres_1 = __webpack_require__(47);
+const viewQueries_1 = __webpack_require__(75);
+const MODEL = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/;
+const XMLID = /^([A-Za-z0-9_]+)\.([A-Za-z0-9_.\-]+)$/;
+/** `module.name`, `model,id`, `model id` or `model(id)`; undefined for anything else. */
+function parseRecordRef(input) {
+    const text = input.trim();
+    const byId = /^([a-z][a-z0-9_.]*)\s*(?:,\s*|\s+|\()(\d+)\)?$/.exec(text);
+    if (byId && MODEL.test(byId[1]) && (!text.includes('(') || text.endsWith(')'))) {
+        const id = Number(byId[2]);
+        return Number.isSafeInteger(id) && id > 0 ? { kind: 'id', model: byId[1], id } : undefined;
+    }
+    const xml = XMLID.exec(text);
+    return xml ? { kind: 'xmlid', module: xml[1], name: xml[2] } : undefined;
+}
+function tableOf(model) {
+    return model.replace(/\./g, '_');
+}
+/** `model|res_id` of an external id; no row when it does not exist. */
+function xmlidSql(ref) {
+    return `SELECT model || '|' || res_id FROM ir_model_data WHERE module = ${(0, viewQueries_1.sqlText)(ref.module)} AND name = ${(0, viewQueries_1.sqlText)(ref.name)} LIMIT 1;`;
+}
+/** `name|ttype` of the stored fields that are also real columns of the model's table. */
+function fieldsSql(model) {
+    return `SELECT f.name || '|' || f.ttype FROM ir_model_fields f JOIN information_schema.columns c ON c.table_name = ${(0, viewQueries_1.sqlText)(tableOf(model))} AND c.column_name = f.name AND c.table_schema = current_schema() WHERE f.model = ${(0, viewQueries_1.sqlText)(model)} AND f.store ORDER BY f.name;`;
+}
+function rowSql(model, id, columns) {
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        throw new Error(`Not a record id: ${id}`);
+    }
+    return `SELECT row_to_json(t) FROM (SELECT ${columns.map(postgres_1.quotePgIdentifier).join(', ')} FROM ${(0, postgres_1.quotePgIdentifier)(tableOf(model))} WHERE id = ${id}) t;`;
+}
+function binaryBytes(value) {
+    if (/^\\x([0-9a-fA-F]{2})*$/.test(value)) {
+        return Buffer.from(value.slice(2), 'hex');
+    }
+    if (/^[A-Za-z0-9+/\r\n]*={0,2}$/.test(value) && value.length % 4 === 0) {
+        return Buffer.from(value, 'base64');
+    }
+    return Buffer.from(value, 'utf8');
+}
+function renderValue(ttype, value) {
+    if (value === null || value === undefined) {
+        return 'False';
+    }
+    if (typeof value === 'boolean') {
+        return value ? 'True' : 'False';
+    }
+    if (ttype === 'binary' && typeof value === 'string') {
+        const bytes = binaryBytes(value);
+        return `${bytes.length} bytes, sha1 ${(0, node_crypto_1.createHash)('sha1').update(bytes).digest('hex').slice(0, 12)}`;
+    }
+    let shown;
+    if (typeof value === 'string') {
+        shown = value;
+    }
+    else if (typeof value === 'object' && !Array.isArray(value) && ['char', 'text', 'html'].includes(ttype)) {
+        // A translated field of Odoo 16 and later: jsonb keyed by language.
+        const map = value;
+        const pick = 'en_US' in map ? map.en_US : map[Object.keys(map)[0]];
+        shown = typeof pick === 'string' ? pick : stableJson(pick ?? false);
+    }
+    else {
+        shown = typeof value === 'object' ? stableJson(value) : String(value);
+    }
+    return shown.replace(/\r?\n/g, '\\n');
+}
+/** One `field: value` line per field, sorted by name; the note alone when the row is missing. */
+function renderRecord(fields, row, missingNote) {
+    if (!row) {
+        return `${missingNote}\n`;
+    }
+    return [...fields].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+        .filter(field => field.name in row)
+        .map(field => `${field.name}: ${renderValue(field.ttype, row[field.name])}`)
+        .join('\n') + '\n';
+}
+/** JSON with sorted keys at every level, so equal values print equal. */
+function stableJson(value) {
+    const sort = (v) => Array.isArray(v) ? v.map(sort)
+        : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, sort(v[k])]))
+            : v;
+    return JSON.stringify(sort(value));
+}
+/**
+ * What to show for the two reads: a message and nothing to open, or the two texts.
+ * A side without the table of a model the other has renders "(model not installed in <db>)";
+ * a side without the record renders "(no such record in <db>)".
+ */
+function planSides(left, right, leftLabel, rightLabel, what) {
+    const err = (r) => 'error' in r ? r : undefined;
+    const [l, r] = [err(left), err(right)];
+    const hard = [l, r].find(e => e && e.code !== 'missing' && e.code !== 'no-table');
+    if (hard) {
+        return { message: hard.error };
+    }
+    if (l?.code === 'missing' && r?.code === 'missing') {
+        return { message: `${what} does not exist in ${leftLabel} or in ${rightLabel}.` };
+    }
+    if (l?.code === 'no-table' && r?.code === 'no-table') {
+        return { message: l.error };
+    }
+    const show = (read, label) => 'error' in read
+        ? renderRecord([], undefined, read.code === 'no-table' ? `(model not installed in ${label})` : `(no such record in ${label})`)
+        : read.text;
+    return { left: show(left, leftLabel), right: show(right, rightLabel) };
+}
+async function readRecord(dbName, ref, sql) {
+    let model;
+    let id;
+    if (ref.kind === 'xmlid') {
+        const found = (await sql(dbName, xmlidSql(ref))).trim();
+        const match = /^([a-z][a-z0-9_.]*)\|(\d+)$/.exec(found);
+        if (!match || !MODEL.test(match[1])) {
+            return { error: `${ref.module}.${ref.name} does not exist in ${dbName}.`, code: 'missing' };
+        }
+        model = match[1];
+        id = Number(match[2]);
+    }
+    else {
+        ({ model, id } = ref);
+    }
+    const fields = (await sql(dbName, fieldsSql(model))).split('\n').filter(Boolean).map(line => {
+        const cut = line.lastIndexOf('|');
+        return { name: line.slice(0, cut), ttype: line.slice(cut + 1) };
+    });
+    if (fields.length === 0) {
+        return { error: `${model} has no table in ${dbName} (an abstract or transient model?).`, code: 'no-table' };
+    }
+    const raw = (await sql(dbName, rowSql(model, id, fields.map(f => f.name)))).trim();
+    if (!raw) {
+        return { error: `${model},${id} does not exist in ${dbName}.`, code: 'missing' };
+    }
+    return { model, id, text: renderRecord(fields, JSON.parse(raw), '') };
+}
+
+
+/***/ }),
+/* 167 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerModuleCommands = registerModuleCommands;
 /**
  * Command handlers for the Modules view.
@@ -31893,7 +33147,7 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 161 */
+/* 168 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -31950,7 +33204,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 162 */
+/* 169 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -32000,7 +33254,7 @@ const versionIdentity_1 = __webpack_require__(36);
 const debugger_1 = __webpack_require__(97);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(163);
+const branchPick_1 = __webpack_require__(170);
 const runtimeCache_1 = __webpack_require__(15);
 const environment_1 = __webpack_require__(51);
 const odooInstaller_1 = __webpack_require__(80);
@@ -32691,7 +33945,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 163 */
+/* 170 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -32906,7 +34160,7 @@ async function pickRepoBranch(repoPath, title, placeHolder, suggested, exclude, 
 
 
 /***/ }),
-/* 164 */
+/* 171 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -33060,7 +34314,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 165 */
+/* 172 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -33353,7 +34607,7 @@ function registerReposExplorerCommands(deps) {
 
 
 /***/ }),
-/* 166 */
+/* 173 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -33461,7 +34715,7 @@ function registerEditorCommands(deps) {
 
 
 /***/ }),
-/* 167 */
+/* 174 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -33549,7 +34803,7 @@ function registerHelpCommands(deps) {
 
 
 /***/ }),
-/* 168 */
+/* 175 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -33607,8 +34861,8 @@ const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(163);
-const upgradePlan_1 = __webpack_require__(169);
+const branchPick_1 = __webpack_require__(170);
+const upgradePlan_1 = __webpack_require__(176);
 const upgradeApply_1 = __webpack_require__(43);
 const upgradeSetup_1 = __webpack_require__(70);
 const branches_1 = __webpack_require__(52);
@@ -34209,7 +35463,7 @@ function registerUpgradeCommand(deps) {
 
 
 /***/ }),
-/* 169 */
+/* 176 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -34335,7 +35589,7 @@ function describeUpgradePlan(plan, input) {
 
 
 /***/ }),
-/* 170 */
+/* 177 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -34396,7 +35650,7 @@ const setupState_1 = __webpack_require__(62);
 const dataLocation_1 = __webpack_require__(17);
 const mainStore_1 = __webpack_require__(27);
 const workspaceSelection_1 = __webpack_require__(30);
-const dataImport_1 = __webpack_require__(171);
+const dataImport_1 = __webpack_require__(178);
 const registerCommand_1 = __webpack_require__(103);
 const gitExclude_1 = __webpack_require__(32);
 const SHARED_STORE_FILE = 'odoo-devtools.db';
@@ -34684,7 +35938,7 @@ function registerDataStoreCommands(deps) {
 
 
 /***/ }),
-/* 171 */
+/* 178 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -34941,7 +36195,7 @@ function buildExport(data, exportedAt = new Date()) {
 
 
 /***/ }),
-/* 172 */
+/* 179 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -35099,7 +36353,7 @@ function registerRepoLocationCommand(deps) {
 
 
 /***/ }),
-/* 173 */
+/* 180 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -35276,7 +36530,7 @@ function registerUpgradeSideCommands(deps) {
 
 
 /***/ }),
-/* 174 */
+/* 181 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -35327,12 +36581,12 @@ const checkpointReads_1 = __webpack_require__(119);
 const compareDocuments_1 = __webpack_require__(129);
 const logger_1 = __webpack_require__(12);
 const renderPlan_1 = __webpack_require__(137);
-const upgradeScriptFlow_1 = __webpack_require__(175);
+const upgradeScriptFlow_1 = __webpack_require__(182);
 const archErrors_1 = __webpack_require__(142);
 const xpathReport_1 = __webpack_require__(123);
 const viewQueries_1 = __webpack_require__(75);
-const findViewFlow_1 = __webpack_require__(180);
-const viewTarget_1 = __webpack_require__(182);
+const findViewFlow_1 = __webpack_require__(187);
+const viewTarget_1 = __webpack_require__(189);
 function viewItem(arg) {
     return arg instanceof viewDoctorView_1.ViewItem ? arg : undefined;
 }
@@ -35664,7 +36918,7 @@ function registerViewDoctorCommands(deps) {
 
 
 /***/ }),
-/* 175 */
+/* 182 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -35718,10 +36972,10 @@ const psaeInternal_1 = __webpack_require__(98);
 const versionRepos_1 = __webpack_require__(59);
 const notifications_1 = __webpack_require__(16);
 const viewNoteService_1 = __webpack_require__(144);
-const scriptBuilder_1 = __webpack_require__(176);
-const upgradeScript_1 = __webpack_require__(177);
-const migrationsFolder_1 = __webpack_require__(178);
-const scriptDestination_1 = __webpack_require__(179);
+const scriptBuilder_1 = __webpack_require__(183);
+const upgradeScript_1 = __webpack_require__(184);
+const migrationsFolder_1 = __webpack_require__(185);
+const scriptDestination_1 = __webpack_require__(186);
 async function scriptModules(project, dbName) {
     const db = project.dbs?.find(entry => entry.id === dbName);
     const { modules } = (0, psaeInternal_1.collectModuleDiscovery)(project, await (0, versionRepos_1.resolveReposForDatabase)(project, db));
@@ -35806,7 +37060,7 @@ async function createUpgradeScript(deps, dbName, viewId) {
 
 
 /***/ }),
-/* 176 */
+/* 183 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -35896,7 +37150,7 @@ function nothingToScript(build, dbName) {
 
 
 /***/ }),
-/* 177 */
+/* 184 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -36211,7 +37465,7 @@ function parseScript(source) {
 
 
 /***/ }),
-/* 178 */
+/* 185 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -36274,7 +37528,7 @@ exports.writeScriptToFolder = writeScriptToFolder;
  */
 const fs = __importStar(__webpack_require__(20));
 const path = __importStar(__webpack_require__(3));
-const upgradeScript_1 = __webpack_require__(177);
+const upgradeScript_1 = __webpack_require__(184);
 exports.SCRIPT_NAME = 'end-update_views';
 const MAX_SIBLINGS = 100;
 /** A folder name Odoo will run and accept as a manifest version: <series>.x.y or <series>.x.y.z; without a known series, 2 to 5 numeric parts. */
@@ -36399,7 +37653,7 @@ async function writeScriptToFolder(dir, views) {
 
 
 /***/ }),
-/* 179 */
+/* 186 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -36454,7 +37708,7 @@ const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
 const viewNotes_1 = __webpack_require__(145);
-const migrationsFolder_1 = __webpack_require__(178);
+const migrationsFolder_1 = __webpack_require__(185);
 const UNTITLED_LABEL = '$(new-file) Untitled Python Editor';
 function destinationKey(projectKey) {
     return `viewDoctor.scriptDestination:${projectKey}`;
@@ -36578,7 +37832,7 @@ async function pickDestination(options) {
 
 
 /***/ }),
-/* 180 */
+/* 187 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -36626,7 +37880,7 @@ exports.findView = findView;
 const vscode = __importStar(__webpack_require__(1));
 const viewQueries_1 = __webpack_require__(75);
 const notifications_1 = __webpack_require__(16);
-const viewPicker_1 = __webpack_require__(181);
+const viewPicker_1 = __webpack_require__(188);
 async function pickView(dbName, rows, title, open) {
     const picked = await vscode.window.showQuickPick((0, viewPicker_1.viewPickItems)((0, viewPicker_1.viewTree)(rows)), { title, matchOnDescription: true });
     if (picked) {
@@ -36690,7 +37944,7 @@ async function findView(dbName, open) {
 
 
 /***/ }),
-/* 181 */
+/* 188 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -36769,7 +38023,7 @@ function nothingMatches(dbName, value) {
 
 
 /***/ }),
-/* 182 */
+/* 189 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -36836,7 +38090,7 @@ async function viewTarget(arg, readRows, activeUri = () => vscode.window.activeT
 
 
 /***/ }),
-/* 183 */
+/* 190 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -36887,7 +38141,7 @@ function selectionFacts(project, version) {
 
 
 /***/ }),
-/* 184 */
+/* 191 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
