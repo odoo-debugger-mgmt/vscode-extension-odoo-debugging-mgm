@@ -13,6 +13,7 @@ import { OdooFrameProxy } from '../services/views/odooFrameProxy';
 import { PdfRefusedError, fetchReportPdf } from '../services/views/reportPdf';
 import { RenderSession, type FrameHost, type RenderBackend, type RenderState, type RenderTarget } from '../services/views/renderSession';
 import { isPortOpen, resolvePortForDatabase, waitForPort } from '../services/server';
+import { invalidateRunningState } from '../services/runningState';
 import { errorMessage, logger } from '../services/logger';
 import { showError, showInfo, showWarning } from '../services/notifications';
 
@@ -178,7 +179,8 @@ export class ViewRenderPanel implements vscode.Disposable {
             externalOrigin: async origin => {
                 const uri = await vscode.env.asExternalUri(vscode.Uri.parse(origin));
                 return `${uri.scheme}://${uri.authority}`;
-            }
+            },
+            waitForPort
         };
     }
 
@@ -192,15 +194,9 @@ export class ViewRenderPanel implements vscode.Disposable {
 
     async show(request: RenderRequest): Promise<void> {
         const generation = ++this.generation;
-        const session = await vscode.window.withProgress(
-            { location: vscode.ProgressLocation.Notification, title: `Preparing the render of ${request.title}…` },
-            () => RenderSession.prepare(request.targets, this.backend, this.host)
-        );
-        if (generation !== this.generation) {
+        if (!await this.prepare(request, generation)) {
             return;
         }
-        this.session = session;
-        this.request = request;
         const panel = this.ensurePanel();
         panel.title = `Render: ${request.title}`;
         await this.update();
@@ -223,7 +219,33 @@ export class ViewRenderPanel implements vscode.Disposable {
      * says so and offers to start it, and one that came back shows again.
      */
     async reload(): Promise<void> {
+        const session = this.session;
+        const request = this.request;
+        // A side whose database is now served on another port (Run Both started
+        // it alongside, or its run stopped) is prepared again, for the new port.
+        if (session && request && await session.portsMoved()) {
+            await this.prepare(request, this.generation, session);
+        }
         await this.update();
+    }
+
+    /**
+     * Prepares the request's sides and makes them the tab's. Undefined, and
+     * nothing changed, when it went stale meanwhile: a later show() or a close
+     * (the generation moved), or - preparing again - another session took the
+     * place of the one this replaces.
+     */
+    private async prepare(request: RenderRequest, generation: number, replacing?: RenderSession): Promise<RenderSession | undefined> {
+        const session = await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: `Preparing the render of ${request.title}…` },
+            () => RenderSession.prepare(request.targets, this.backend, this.host)
+        );
+        if (generation !== this.generation || (replacing && this.session !== replacing)) {
+            return undefined;
+        }
+        this.session = session;
+        this.request = request;
+        return session;
     }
 
     dispose(): void {
@@ -417,25 +439,35 @@ export class ViewRenderPanel implements vscode.Disposable {
     }
 
     private async startServers(session: RenderSession): Promise<void> {
-        if (!this.request || this.starting) {
+        const request = this.request;
+        if (!request || this.starting) {
             return;
         }
         this.starting = true;
         try {
-            await vscode.commands.executeCommand(this.request.startCommand, ...(this.request.startArgs ?? []));
-            const ports = session.ports();
+            await vscode.commands.executeCommand(request.startCommand, ...(request.startArgs ?? []));
+            // The start may serve a side on another port than it was prepared
+            // with (Run Both starts them alongside, on 8100 and up): prepare the
+            // sides again, so the wait and the frames use the ports now serving them.
+            invalidateRunningState();
+            const fresh = await this.prepare(request, this.generation, session);
+            if (!fresh) {
+                return;
+            }
+            const ports = fresh.ports();
+            const wait = this.host.waitForPort ?? waitForPort;
             const answered = await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Notification, title: 'Waiting for the Odoo servers…', cancellable: true },
                 (_progress, token) => new Promise<boolean[]>(resolve => {
                     token.onCancellationRequested(() => resolve(ports.map(() => true)));
-                    void Promise.all(ports.map(port => waitForPort(port, 120_000))).then(resolve);
+                    void Promise.all(ports.map(port => wait(port, 120_000))).then(resolve);
                 })
             );
             const silent = ports.filter((_port, index) => !answered[index]);
             if (silent.length > 0) {
                 void showWarning(`No Odoo server is answering on port ${silent.join(', ')} yet.`);
             }
-            if (this.session === session) {
+            if (this.session === fresh) {
                 await this.update();
             }
         } finally {

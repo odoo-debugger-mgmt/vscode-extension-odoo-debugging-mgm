@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as vscode from 'vscode';
 import { ViewRenderPanel, escapeHtml, renderPanelHtml, type PdfHooks } from '../views/viewRenderPanel';
 import type { FrameHost, RenderBackend, RenderState } from '../services/views/renderSession';
 import { PdfRefusedError } from '../services/views/reportPdf';
@@ -175,6 +176,61 @@ suite('Render tab', () => {
         panel.dispose();
         await panel.reload();
         assert.strictEqual(asked, 2, 'a closed tab asks nothing');
+    });
+
+    // shop-17 is served on 8017 until its start command runs it alongside, on 8100.
+    function movingPort() {
+        const moved = { now: false };
+        const waited: number[] = [];
+        const backend: RenderBackend = {
+            newSession: async () => 'sid',
+            makeAction: async () => ({ actionId: 3, model: 'res.partner', viewType: 'list', rootId: 1, series: '17.0' }),
+            reportTarget: async () => null,
+            recentIds: async () => []
+        };
+        const host: FrameHost = {
+            portFor: async () => moved.now ? 8100 : 8017,
+            isPortOpen: async port => moved.now && port === 8100,
+            proxyFor: async (_db, port, mint) => ({ port: port + 1000, session: mint, gatePath: next => `/__odt/open?t=x&next=${encodeURIComponent(next)}` }),
+            externalOrigin: async origin => origin,
+            waitForPort: async port => { waited.push(port); return true; }
+        };
+        return { moved, waited, backend, host };
+    }
+    const htmlOf = (panel: ViewRenderPanel) => (panel as unknown as { panel: { webview: { html: string } } }).panel.webview.html;
+
+    test('Run Both waits on, and frames, the ports the sides are started on, not the ones they were prepared with', async () => {
+        const { moved, waited, backend, host } = movingPort();
+        const command = 'odt.test.renderRunBoth';
+        const registration = vscode.commands.registerCommand(command, () => { moved.now = true; });
+        const panel = new ViewRenderPanel(backend, host);
+        try {
+            await panel.show({ title: 'Partners', targets: [{ dbName: 'shop-17', viewId: 1, title: 'shop-17' }], startCommand: command, startLabel: 'Run Both' });
+            assert.ok(htmlOf(panel).includes('No Odoo server is answering on port 8017.'));
+            await (panel as unknown as { onMessage(message: unknown): Promise<void> }).onMessage({ type: 'action', action: 'start' });
+            assert.deepStrictEqual(waited, [8100], 'the tab waited on the port the side was prepared with');
+            const html = htmlOf(panel);
+            assert.ok(html.includes('src="http://127.0.0.1:9100/'), html);
+            assert.ok(!html.includes('8017'), 'the side still names its old port');
+        } finally {
+            panel.dispose();
+            registration.dispose();
+        }
+    });
+
+    test('Reload prepares a side again when its database is now served on another port', async () => {
+        const { moved, backend, host } = movingPort();
+        const panel = new ViewRenderPanel(backend, host);
+        try {
+            await panel.show({ title: 'Partners', targets: [{ dbName: 'shop-17', viewId: 1, title: 'shop-17' }], startCommand: 'x', startLabel: 'Run Both' });
+            assert.ok(htmlOf(panel).includes('port 8017'));
+            moved.now = true;
+            await panel.reload();
+            const html = htmlOf(panel);
+            assert.ok(html.includes('src="http://127.0.0.1:9100/'), html);
+        } finally {
+            panel.dispose();
+        }
     });
 
     test('a tab closed while a render prepares stays closed', async () => {

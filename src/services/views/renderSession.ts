@@ -47,6 +47,8 @@ export interface FrameHost {
     proxyFor(dbName: string, port: number, mint: () => Promise<string>): Promise<FrameProxyHandle>;
     /** The origin the webview reaches a local origin at (port forwarding in remote windows). */
     externalOrigin(localOrigin: string): Promise<string>;
+    /** True once the port answers, false after the timeout; the render tab waits on it after a start. */
+    waitForPort?(port: number, timeoutMs: number): Promise<boolean>;
 }
 
 export interface RenderSideState {
@@ -256,6 +258,22 @@ export class RenderSession {
     /** The server ports the sides point at, for waiting on a start. */
     ports(): number[] {
         return this.sides.flatMap(side => side.port === undefined ? [] : [side.port]);
+    }
+
+    /**
+     * Whether a side's database is now served on another port than the one it
+     * was prepared with: a run started (alongside, on 8100 and up) or stopped
+     * since. Such a side needs preparing again; its frame points at the old port.
+     */
+    async portsMoved(): Promise<boolean> {
+        const moved = await Promise.all(this.sides.map(async side => {
+            if (side.port === undefined) {
+                return false;
+            }
+            const now = await this.host.portFor(side.target.dbName, side.target.versionId).catch(() => side.port);
+            return now !== side.port;
+        }));
+        return moved.some(Boolean);
     }
 
     private async sideState(side: PreparedSide, resId: number | undefined, debug: boolean): Promise<RenderSideState> {
