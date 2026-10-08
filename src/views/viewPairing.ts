@@ -10,10 +10,13 @@ import { showInfo } from '../services/notifications';
 import { findViewByXmlid, findViewsLike, type ViewRow } from '../services/views/viewQueries';
 import { matchView } from '../services/views/viewMatch';
 import { viewUri } from './viewFileSystem';
+import { SettingsStore } from '../settingsStore';
+import { stripSettings } from '../utils';
+import { partnerChoices, resolveStoredPartner, setPartner, type PartnerModel, type PartnerProject, type ResolvedPartner } from '../services/comparisonPartner';
 
 /** The project as SettingsStore returns it: plain JSON, not hydrated models. */
 export interface PairProject {
-    dbs?: Array<{ id: string; versionId?: string; isSelected?: boolean }>;
+    dbs?: Array<{ id: string; versionId?: string; isSelected?: boolean; comparePartner?: unknown; checkpoints?: unknown; clonedFrom?: unknown }>;
     upgradeConfig?: unknown;
 }
 
@@ -115,4 +118,44 @@ export function diffArguments(
 ): [vscode.Uri, vscode.Uri, string] {
     const uriOf = (side: { dbName: string; view: ViewRow }) => viewUri(side.dbName, side.view.id, side.view.xmlid ?? `view-${side.view.id}`);
     return [uriOf(original), uriOf(upgraded), `${upgraded.view.name}: ${original.dbName} ↔ ${upgraded.dbName}`];
+}
+
+/**
+ * The database's comparison partner (Part B): the upgrade's other side, else
+ * the stored one while it exists, else - when the caller may ask - one the user
+ * picks, which is then remembered.
+ */
+export async function partnerFor(project: PairProject | undefined, dbId: string, options: { ask: boolean }): Promise<ResolvedPartner | undefined> {
+    const resolved = resolveStoredPartner(project as PartnerProject | undefined, dbId, upgradePair(project));
+    if (resolved || !options.ask) {
+        return resolved;
+    }
+    const running = new Set((await getRunningInstances()).map(instance => instance.dbName));
+    const choices = partnerChoices(project as PartnerProject | undefined, dbId, running);
+    if (choices.length === 0) {
+        void showInfo(`The project has no other database or checkpoint to compare ${dbId} with.`);
+        return undefined;
+    }
+    const picked = await vscode.window.showQuickPick(choices.map(choice => ({
+        label: choice.kind === 'checkpoint' ? `$(history) ${choice.label}` : choice.dbName,
+        description: choice.kind === 'checkpoint' ? `checkpoint of ${dbId}` : (choice.running ? 'running' : undefined),
+        choice
+    })), { title: `Compare ${dbId} with…`, placeHolder: 'Its comparison partner, remembered for next time' });
+    if (!picked) {
+        return undefined;
+    }
+    const stored: PartnerModel = { dbName: picked.choice.dbName, kind: picked.choice.kind };
+    await storePartner(dbId, stored);
+    return resolveStoredPartner({ ...(project as PartnerProject), dbs: (project?.dbs ?? []).map(db => db.id === dbId ? { ...db, comparePartner: stored } : db) }, dbId, undefined);
+}
+
+/** Saves (or, with undefined, clears) a database's stored partner. */
+export async function storePartner(dbId: string, partner: PartnerModel | undefined): Promise<void> {
+    const result = await SettingsStore.getSelectedProject();
+    const db = (result?.project.dbs as Array<{ id: string; comparePartner?: unknown }> | undefined)?.find(entry => entry.id === dbId);
+    if (!result || !db) {
+        return;
+    }
+    setPartner(db, partner);
+    await SettingsStore.saveWithoutComments(stripSettings(result.data));
 }

@@ -648,6 +648,26 @@
         "category": "Odoo DevTools"
       },
       {
+        "command": "dbSelector.setComparisonPartner",
+        "title": "Set Comparison Partner…",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "dbSelector.clearComparisonPartner",
+        "title": "Clear Comparison Partner",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "dbSelector.runPartnerAlongside",
+        "title": "Run Partner Alongside",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "dbSelector.runPairAlongside",
+        "title": "Run Pair Alongside",
+        "category": "Odoo DevTools"
+      },
+      {
         "command": "dbSelector.createCheckpoint",
         "title": "Create Checkpoint",
         "category": "Odoo DevTools",
@@ -1468,6 +1488,21 @@
           "group": "2_run@3"
         },
         {
+          "command": "dbSelector.setComparisonPartner",
+          "when": "view == dbSelector && viewItem == database",
+          "group": "3_compare@1"
+        },
+        {
+          "command": "dbSelector.clearComparisonPartner",
+          "when": "view == dbSelector && viewItem == database",
+          "group": "3_compare@2"
+        },
+        {
+          "command": "dbSelector.runPartnerAlongside",
+          "when": "view == dbSelector && viewItem == database",
+          "group": "3_compare@3"
+        },
+        {
           "command": "dbSelector.openInBrowser",
           "when": "view == dbSelector && viewItem == database",
           "group": "2_open@1"
@@ -1499,6 +1534,7 @@
         }
       ],
       "commandPalette": [
+        { "command": "dbSelector.runPairAlongside", "when": "false" },
         { "command": "viewDoctor.openArch", "when": "false" },
         { "command": "viewDoctor.showAlsoOff", "when": "false" },
         { "command": "viewDoctor.hideAlsoOff", "when": "false" },

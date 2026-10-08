@@ -9,6 +9,8 @@ import { getDefaultSortOption } from '../sortOptions';
 import { getDatabaseLabel } from '../utils';
 import { activeIcon, selectedIcon } from './icons';
 import { readUpgradeConfig } from '../upgrade';
+import { resolveStoredPartner, type PartnerProject } from '../services/comparisonPartner';
+import { upgradePair } from './viewPairing';
 import { sanitizeProjectRepoBranchAssignments } from '../services/environment';
 import { getEffectiveOdooVersion } from '../dbs';
 import { getRunningInstances, runningDescriptionPart, RunningInstance } from '../services/runningState';
@@ -147,7 +149,7 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         const previous = new Map(this.rows);
         this.rows.clear();
         return sortedDbs.map(db => {
-            const fresh = this.buildDatabaseItem(db, running.get(db.id), upgradeConfig.sideForDb(db.id));
+            const fresh = this.buildDatabaseItem(db, running.get(db.id), upgradeConfig.sideForDb(db.id), project);
             // Every field is set on each build, so copying over the old object
             // leaves nothing stale behind.
             const row = Object.assign(previous.get(db.id) ?? fresh, fresh);
@@ -159,7 +161,8 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
     private buildDatabaseItem(
         db: DatabaseModel,
         running?: RunningInstance,
-        upgradeSide?: 'from' | 'to'
+        upgradeSide?: 'from' | 'to',
+        project?: PartnerProject
     ): vscode.TreeItem {
         // Handle date parsing defensively
         let editedDate = new Date(db.createdAt);
@@ -197,7 +200,7 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             descriptionParts.push(`${checkpointCount} checkpoint${checkpointCount === 1 ? '' : 's'}`);
         }
         treeItem.description = descriptionParts.filter(Boolean).join(' \u2022 ');
-        treeItem.tooltip = new vscode.MarkdownString(this.buildTooltip(db, dbLabel, formattedDate, running));
+        treeItem.tooltip = new vscode.MarkdownString(this.buildTooltip(db, dbLabel, formattedDate, running, project));
         // Unchanged for a pair member: the menus are keyed to `database`.
         treeItem.contextValue = 'database';
 
@@ -251,7 +254,7 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         return parts.join(' • ');
     }
 
-    private buildTooltip(db: DatabaseModel, dbLabel: string, formattedDate: string, running?: RunningInstance): string {
+    private buildTooltip(db: DatabaseModel, dbLabel: string, formattedDate: string, running?: RunningInstance, project?: PartnerProject): string {
         const tooltipDetails: string[] = [];
 
         tooltipDetails.push(`**${dbLabel}**`);
@@ -279,6 +282,13 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
             if (effectiveOdooVersion) {
                 tooltipDetails.push(`**Odoo Version:** ${effectiveOdooVersion}`);
             }
+        }
+
+        const partner = resolveStoredPartner(project, db.id, upgradePair(project));
+        if (partner) {
+            const note = partner.source === 'upgrade' ? ' (the other side of the upgrade)'
+                : partner.kind === 'checkpoint' ? ' (checkpoint)' : '';
+            tooltipDetails.push(`**Comparison partner:** ${partner.label}${note}`);
         }
 
         const projectRepoBranches = sanitizeProjectRepoBranchAssignments(db.projectRepoBranches);

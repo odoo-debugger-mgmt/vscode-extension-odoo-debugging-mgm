@@ -24,6 +24,8 @@ export interface RenderRequest {
     startCommand: string;
     /** The label of the button that runs it. */
     startLabel: string;
+    /** Arguments the start command is run with. */
+    startArgs?: unknown[];
     notice?: string;
 }
 
@@ -420,7 +422,7 @@ export class ViewRenderPanel implements vscode.Disposable {
         }
         this.starting = true;
         try {
-            await vscode.commands.executeCommand(this.request.startCommand);
+            await vscode.commands.executeCommand(this.request.startCommand, ...(this.request.startArgs ?? []));
             const ports = session.ports();
             const answered = await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Notification, title: 'Waiting for the Odoo servers…', cancellable: true },

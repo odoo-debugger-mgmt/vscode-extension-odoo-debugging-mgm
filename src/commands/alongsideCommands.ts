@@ -15,7 +15,7 @@ import { getRunningInstances, runningDescriptionPart } from '../services/running
 import { showInfo } from '../services/notifications';
 
 /** The row's database, or one picked from the project's when run from the palette. */
-async function databaseFor(event: unknown, title: string): Promise<DatabaseModel | undefined> {
+export async function databaseFor(event: unknown, title: string): Promise<DatabaseModel | undefined> {
     const fromRow = extractDatabaseFromEvent(event);
     if (fromRow) {
         return fromRow;
