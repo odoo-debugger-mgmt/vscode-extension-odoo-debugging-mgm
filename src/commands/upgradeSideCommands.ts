@@ -8,7 +8,7 @@ import { registerCommand } from './registerCommand';
 import { SettingsStore } from '../settingsStore';
 import { VersionsService } from '../versionsService';
 import { startServerForVersion } from '../debugger';
-import { getSessionByName, versionIdOfSession } from '../services/debugSessions';
+import { getSessionByName, runForDatabase, versionIdOfSession } from '../services/debugSessions';
 import { ensureUpgradeConfigModel, type UpgradeConfigModel } from '../models/upgrade';
 import { boundVersionId } from '../services/workspaceBinding';
 import { currentMainStore } from '../services/mainStore';
@@ -135,9 +135,16 @@ async function stopBothServers(): Promise<void> {
             await vscode.debug.stopDebugging(session);
             stopped.push(version.name);
         }
+        // The side's database may be running alongside rather than as F5.
+        const run = side?.dbId ? runForDatabase(side.dbId) : undefined;
+        const alongsideSession = run?.kind === 'alongside' ? getSessionByName(run.name) : undefined;
+        if (side && alongsideSession) {
+            await vscode.debug.stopDebugging(alongsideSession);
+            stopped.push(`"${side.dbId}" (alongside)`);
+        }
     }
     void showInfo(stopped.length > 0
-        ? `Stopped ${stopped.join(' and ')}.`
+        ? `Stopped ${stopped.length > 2 ? `${stopped.slice(0, -1).join(', ')} and ${stopped[stopped.length - 1]}` : stopped.join(' and ')}.`
         : 'Neither side of the upgrade is running in this window.');
 }
 

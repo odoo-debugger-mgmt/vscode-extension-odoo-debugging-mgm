@@ -15,7 +15,7 @@ suite('Alongside menus', () => {
         const titles = new Map(commands.map(c => [c.command, c.title]));
         assert.strictEqual(titles.get('dbSelector.runAlongside'), 'Run Alongside');
         assert.strictEqual(titles.get('dbSelector.runAlongsideNoDebug'), 'Run Alongside Without Debugging');
-        assert.strictEqual(titles.get('dbSelector.stopServer'), 'Stop Server');
+        assert.strictEqual(titles.get('dbSelector.stopServer'), "Stop This Database's Server");
     });
 
     test('on database rows, in the run group, never inline, never hidden by upgrade mode', () => {

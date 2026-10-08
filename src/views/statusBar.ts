@@ -82,7 +82,10 @@ export class StatusBarIndicators implements vscode.Disposable {
                 // runnable at once, "which localhost" is the question this
                 // item is most often consulted for.
                 const port = Number(version.settings?.portNumber) || undefined;
-                const running = (await getRunningInstances()).some(instance => instance.versionId === version.id);
+                // The version's own server: a database running alongside is
+                // not the version running.
+                const running = (await getRunningInstances())
+                    .some(instance => instance.versionId === version.id && instance.kind !== 'alongside');
                 const marker = running ? '$(debug-alt)' : '$(versions)';
                 this.versionItem.text = port
                     ? `${marker} ${version.odooVersion} :${port}`

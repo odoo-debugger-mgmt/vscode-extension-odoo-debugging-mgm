@@ -48,7 +48,7 @@ export function registerAlongsideCommands(deps: CommandDeps): void {
     }
 
     context.subscriptions.push(registerCommand('dbSelector.stopServer', async (event?: unknown) => {
-        const db = await databaseFor(event, 'Stop Server');
+        const db = await databaseFor(event, "Stop This Database's Server");
         if (!db) {
             return;
         }

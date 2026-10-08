@@ -644,7 +644,7 @@
       },
       {
         "command": "dbSelector.stopServer",
-        "title": "Stop Server",
+        "title": "Stop This Database's Server",
         "category": "Odoo DevTools"
       },
       {
