@@ -12,6 +12,20 @@ import { readUpgradeConfig } from '../upgrade';
 import { sanitizeProjectRepoBranchAssignments } from '../services/environment';
 import { getEffectiveOdooVersion } from '../dbs';
 import { getRunningInstances, runningDescriptionPart, RunningInstance } from '../services/runningState';
+import { checkpointsOf, checkpointSizeSql, formatAge, formatBytes, parseSizes, CheckpointModel } from '../services/checkpoints';
+import { runSql } from '../services/postgres';
+import { logger } from '../services/logger';
+
+type DbRow = vscode.TreeItem & { database?: DatabaseModel };
+type CheckpointRow = vscode.TreeItem & { database: DatabaseModel; checkpoint: CheckpointModel };
+
+export function extractCheckpointFromEvent(event: unknown): { database: DatabaseModel; checkpoint: CheckpointModel } | null {
+    const row = event as Partial<CheckpointRow> | undefined;
+    if (row && row.contextValue === 'checkpoint' && row.database && row.checkpoint) {
+        return { database: row.database, checkpoint: row.checkpoint };
+    }
+    return null;
+}
 
 /** Tree provider for the Databases view of the selected project. */
 export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
@@ -23,6 +37,11 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
      */
     private readonly rows = new Map<string, vscode.TreeItem>();
 
+    /** Checkpoint rows by id, reused for reveal like `rows`. */
+    private readonly checkpointRowCache = new Map<string, CheckpointRow>();
+    /** pg_database_size of every checkpoint, read once per refresh. */
+    private checkpointSizes = new Map<string, number>();
+
     constructor(private readonly sortPreferences: SortPreferences) {
         super();
     }
@@ -31,9 +50,61 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         return item;
     }
 
-    /** A flat list: required by `reveal`, and every row is top-level. */
-    getParent(_item: vscode.TreeItem): undefined {
+    /** Checkpoint rows sit under their database's row; databases are top-level. */
+    getParent(item: vscode.TreeItem): vscode.TreeItem | undefined {
+        if (item.contextValue === 'checkpoint') {
+            const db = (item as CheckpointRow).database;
+            return db ? this.rows.get(db.id) : undefined;
+        }
         return undefined;
+    }
+
+    setCheckpointSizes(sizes: Map<string, number>): void {
+        this.checkpointSizes = sizes;
+    }
+
+    checkpointRows(db: DatabaseModel): vscode.TreeItem[] {
+        const now = new Date();
+        return checkpointsOf(db)
+            .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+            .map(checkpoint => {
+                const id = `${db.id}::checkpoint::${checkpoint.id}`;
+                const size = this.checkpointSizes.get(checkpoint.id);
+                const fresh = new vscode.TreeItem(checkpoint.label, vscode.TreeItemCollapsibleState.None) as CheckpointRow;
+                fresh.id = id;
+                fresh.iconPath = new vscode.ThemeIcon('history');
+                fresh.contextValue = 'checkpoint';
+                fresh.description = [formatAge(checkpoint.createdAt, now), size === undefined ? '' : formatBytes(size)]
+                    .filter(Boolean).join(' \u2022 ');
+                const created = new Date(checkpoint.createdAt);
+                fresh.tooltip = new vscode.MarkdownString([
+                    `**${checkpoint.label}**`,
+                    `**Checkpoint of:** ${db.id}`,
+                    `**Created:** ${isNaN(created.getTime()) ? checkpoint.createdAt : created.toLocaleString()}`,
+                    ...(size === undefined ? [] : [`**Size:** ${formatBytes(size)}`]),
+                    `**Filestore:** ${checkpoint.filestore ? 'yes' : 'none (the database had no filestore folder)'}`,
+                    `**PostgreSQL name:** ${checkpoint.id}`
+                ].join('\n\n'));
+                fresh.database = db;
+                fresh.checkpoint = checkpoint;
+                const row = Object.assign(this.checkpointRowCache.get(id) ?? fresh, fresh);
+                this.checkpointRowCache.set(id, row);
+                return row;
+            });
+    }
+
+    private async readCheckpointSizes(dbs: DatabaseModel[]): Promise<void> {
+        const names = dbs.flatMap(db => checkpointsOf(db).map(cp => cp.id));
+        if (names.length === 0) {
+            this.checkpointSizes = new Map();
+            return;
+        }
+        try {
+            this.checkpointSizes = parseSizes(await runSql('postgres', checkpointSizeSql(names)));
+        } catch (error) {
+            logger.debug('Could not read checkpoint sizes:', error);
+            this.checkpointSizes = new Map();
+        }
     }
 
     /** The row currently shown for a database, when the view has drawn one. */
@@ -41,7 +112,14 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         return this.rows.get(dbId);
     }
 
-    async getChildren(_element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
+    async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
+        // A row asks for its own children: only a database row has any. Falling
+        // through to the root list here would make every collapsible row recurse.
+        if (element) {
+            const db = (element as DbRow).database;
+            return element.contextValue === 'database' && db ? this.checkpointRows(db) : [];
+        }
+
         // Silent: an empty list shows the view's welcome content.
         const result = await SettingsStore.peekSelectedProject().catch(noneOnStoreRead);
         if (!result) {
@@ -62,6 +140,8 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         const running = new Map<string, RunningInstance>(
             (await getRunningInstances()).map(instance => [instance.dbName, instance])
         );
+
+        await this.readCheckpointSizes(dbs);
 
         const upgradeConfig = readUpgradeConfig(project);
         const previous = new Map(this.rows);
@@ -91,7 +171,10 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
 
         const dbLabel = getDatabaseLabel(db);
 
-        const treeItem = new vscode.TreeItem(dbLabel, vscode.TreeItemCollapsibleState.None);
+        const treeItem = new vscode.TreeItem(
+            dbLabel,
+            checkpointsOf(db).length > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None
+        );
         treeItem.id = db.id;
         // Both databases of an upgrade read as checked, but the selected one
         // still has to stand out: during an upgrade, selecting a side is how
@@ -108,6 +191,10 @@ export class DbsTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         const descriptionParts = [this.buildDescription(db, running)];
         if (upgradeSide) {
             descriptionParts.push(upgradeSide === 'from' ? 'upgrading from' : 'upgrading to');
+        }
+        const checkpointCount = checkpointsOf(db).length;
+        if (checkpointCount > 0) {
+            descriptionParts.push(`${checkpointCount} checkpoint${checkpointCount === 1 ? '' : 's'}`);
         }
         treeItem.description = descriptionParts.filter(Boolean).join(' \u2022 ');
         treeItem.tooltip = new vscode.MarkdownString(this.buildTooltip(db, dbLabel, formattedDate, running));
