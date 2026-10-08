@@ -87,3 +87,21 @@ export function runningDescriptionPart(instance: RunningInstance | undefined): s
 export function invalidateRunningState(): void {
     invalidateActiveDatabasesCache();
 }
+
+/**
+ * Running instances keyed by version. When a version has both a primary and an
+ * alongside run, the primary one is kept: the version row describes it.
+ */
+export function runningByVersion(instances: RunningInstance[]): Map<string, RunningInstance> {
+    const map = new Map<string, RunningInstance>();
+    for (const instance of instances) {
+        if (!instance.versionId) {
+            continue;
+        }
+        const kept = map.get(instance.versionId);
+        if (!kept || (kept.kind === 'alongside' && instance.kind !== 'alongside')) {
+            map.set(instance.versionId, instance);
+        }
+    }
+    return map;
+}

@@ -19,6 +19,7 @@ import { registerProjectCommands } from './projectCommands';
 import { registerRepoCommands } from './repoCommands';
 import { registerDbCommands } from './dbCommands';
 import { registerCheckpointCommands } from './checkpointCommands';
+import { registerAlongsideCommands } from './alongsideCommands';
 import { registerModuleCommands } from './moduleCommands';
 import { registerTestingCommands } from './testingCommands';
 import { registerVersionCommands } from './versionCommands';
@@ -82,6 +83,7 @@ export function registerAllCommands(deps: CommandDeps): void {
     registerRepoCommands(deps);
     registerDbCommands(deps);
     registerCheckpointCommands(deps);
+    registerAlongsideCommands(deps);
     registerModuleCommands(deps);
     registerTestingCommands(deps);
     registerVersionCommands(deps);

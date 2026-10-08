@@ -6,7 +6,7 @@ import { VersionModel } from './models/version';
 import { VersionsService } from './versionsService';
 import { getSettingDisplayName, getSettingDisplayValue, resolveOptionalPath } from './utils';
 import { isVersionProvisioned } from './services/provisioning';
-import { getRunningInstances, RunningInstance } from './services/runningState';
+import { getRunningInstances, runningByVersion, RunningInstance } from './services/runningState';
 import { activeIcon, selectedIcon } from './views/icons';
 import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
@@ -200,11 +200,8 @@ export class VersionsTreeProvider extends BaseTreeProvider<VersionTreeItem | Ver
                 const sortId = this.sortPreferences.get('versionsManager', getDefaultSortOption('versionsManager'));
                 const versions = this.versionsService.getVersions().slice().sort((a, b) => this.compareVersions(a, b, sortId));
                 // Probed once per refresh, not once per row.
-                const running = new Map<string, RunningInstance>(
-                    (await getRunningInstances())
-                        .filter(instance => !!instance.versionId)
-                        .map(instance => [instance.versionId!, instance])
-                );
+                // A primary run wins over an alongside one for the same version.
+                const running = runningByVersion(await getRunningInstances());
                 const upgradeConfig = await currentUpgradeConfig();
                 await refreshRegistry();
                 return versions.map(version =>

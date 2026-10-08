@@ -633,6 +633,21 @@
         "icon": "$(checklist)"
       },
       {
+        "command": "dbSelector.runAlongside",
+        "title": "Run Alongside",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "dbSelector.runAlongsideNoDebug",
+        "title": "Run Alongside Without Debugging",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "dbSelector.stopServer",
+        "title": "Stop Server",
+        "category": "Odoo DevTools"
+      },
+      {
         "command": "dbSelector.createCheckpoint",
         "title": "Create Checkpoint",
         "category": "Odoo DevTools",
@@ -1436,6 +1451,21 @@
           "command": "dbSelector.deleteCheckpoint",
           "when": "view == dbSelector && viewItem == checkpoint",
           "group": "9_danger@1"
+        },
+        {
+          "command": "dbSelector.runAlongside",
+          "when": "view == dbSelector && viewItem == database",
+          "group": "2_run@1"
+        },
+        {
+          "command": "dbSelector.runAlongsideNoDebug",
+          "when": "view == dbSelector && viewItem == database",
+          "group": "2_run@2"
+        },
+        {
+          "command": "dbSelector.stopServer",
+          "when": "view == dbSelector && viewItem == database",
+          "group": "2_run@3"
         },
         {
           "command": "dbSelector.openInBrowser",
