@@ -3,7 +3,7 @@ import {
     describeConnection, parseConnections, releaseForCopy, DbConnection, ManagedRun, ReleaseHost, ReleaseUi
 } from '../services/connectionRelease';
 
-const RUN: ManagedRun = { versionId: 'v17', debuggerName: 'Odoo 17', noDebug: true };
+const RUN: ManagedRun = { versionId: 'v17', debuggerName: 'Odoo 17', noDebug: true, dbName: 'shop' };
 const PSQL: DbConnection = { pid: 41, application: 'psql', client: '', user: 'odoo' };
 const ODOO: DbConnection = { pid: 42, application: 'odoo-1234', client: '127.0.0.1', user: 'odoo' };
 

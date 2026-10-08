@@ -13,6 +13,11 @@ export interface CheckpointModel {
     createdAt: string;
     /** False when the source had no filestore folder. */
     filestore: boolean;
+    /**
+     * `<data dir>/filestore` it was taken under, so its folder is found again
+     * whatever the version's data dir is now. Missing on older records.
+     */
+    filestoreRoot?: string;
 }
 
 const MAX_IDENTIFIER_BYTES = 63;
@@ -36,14 +41,18 @@ export function checkpointsOf(db: { checkpoints?: unknown }): CheckpointModel[] 
             continue;
         }
         const id = raw.id.trim();
-        list.push({
+        const checkpoint: CheckpointModel = {
             id,
             label: typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : id,
             createdAt: typeof raw.createdAt === 'string' && !Number.isNaN(Date.parse(raw.createdAt))
                 ? raw.createdAt
                 : new Date().toISOString(),
             filestore: raw.filestore === true
-        });
+        };
+        if (typeof raw.filestoreRoot === 'string' && raw.filestoreRoot !== '') {
+            checkpoint.filestoreRoot = raw.filestoreRoot;
+        }
+        list.push(checkpoint);
     }
     return list;
 }

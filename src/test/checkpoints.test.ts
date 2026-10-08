@@ -28,6 +28,17 @@ suite('Checkpoints', () => {
         assert.ok(!Number.isNaN(Date.parse(list[1].createdAt)));
     });
 
+    test('checkpointsOf keeps the filestore root a checkpoint recorded, and only a real one', () => {
+        const list = checkpointsOf({ checkpoints: [
+            { id: 'a', filestoreRoot: '/data/filestore' },
+            { id: 'b', filestoreRoot: '' },
+            { id: 'c', filestoreRoot: 42 },
+            { id: 'd' }
+        ] });
+        assert.deepStrictEqual(list.map(cp => cp.filestoreRoot), ['/data/filestore', undefined, undefined, undefined]);
+        assert.ok(!('filestoreRoot' in list[3]), 'no empty key is written back');
+    });
+
     test('setCheckpoints writes the list back onto the plain object', () => {
         const db: { checkpoints?: unknown } = {};
         setCheckpoints(db, [{ id: 'a', label: 'a', createdAt: '2026-10-07T00:00:00.000Z', filestore: false }]);

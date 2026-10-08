@@ -11,7 +11,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawn, ChildProcess } from 'node:child_process';
 import { createDatabase, databaseExists, runSql } from '../services/postgres';
-import { copyDatabase, discardDatabase, stageRestore, swapInRestored } from '../services/databaseCopy';
+import { copyDatabase, discardDatabase, stageRestore, swapInRestored, verifyCheckpoint } from '../services/databaseCopy';
 import { releaseForCopy, ReleaseUi, DbConnection } from '../services/connectionRelease';
 import { realCopyBackend, realReleaseHost } from '../services/copyRuntime';
 import { sqlText } from '../services/views/viewQueries';
@@ -102,7 +102,9 @@ function listDbsQueries(): string[] {
         await fs.writeFile(path.join(root, db, 'ab', 'second'), 'two');
         await fs.rm(path.join(root, db, 'ab', 'first'));
 
-        const staged = await stageRestore(backend, db, checkpoint, root);
+        await verifyCheckpoint(backend, checkpoint, db, { mustExist: true });
+        await assert.rejects(verifyCheckpoint(backend, db, db, { mustExist: true }), /is not a checkpoint/);
+        const staged = await stageRestore(backend, db, checkpoint, root, { expectFilestore: true });
         await swapInRestored(backend, db, staged, root);
 
         assert.strictEqual(await runSql(db, 'SELECT string_agg(v::text, \',\' ORDER BY v) FROM odt_t;'), '1');
@@ -110,6 +112,11 @@ function listDbsQueries(): string[] {
         assert.strictEqual(await databaseExists(staged), false);
         assert.strictEqual(await databaseExists(`${db}__replaced`), false);
         assert.strictEqual(await databaseExists(checkpoint), true, 'the checkpoint is kept');
+        assert.strictEqual(
+            await runSql('postgres', `SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '${db}';`),
+            await runSql('postgres', 'SELECT current_user;'),
+            'the restored database keeps its owner'
+        );
     });
 
     test('a checkpoint is deleted with its filestore', async () => {

@@ -1,8 +1,9 @@
 import * as assert from 'assert';
 import * as path from 'node:path';
 import {
-    copyDatabase, createDatabaseSql, discardDatabase, retryWhileBusy, stageRestore, swapInRestored, CopyBackend
+    copyDatabase, createDatabaseSql, discardDatabase, retryWhileBusy, stageRestore, swapInRestored, verifyCheckpoint, CopyBackend
 } from '../services/databaseCopy';
+import { checkpointComment } from '../services/checkpoints';
 
 interface Fake extends CopyBackend {
     dbs: Set<string>;
@@ -10,7 +11,14 @@ interface Fake extends CopyBackend {
     calls: string[];
     failOn?: (call: string) => boolean;
     busyTimes: number;
+    /** Statements that report "being accessed by other users" this many more times. */
+    busy: Map<string, number>;
+    /** Protected databases and their comment, as pg_database would report them. */
+    templates: Map<string, string>;
+    owner: string;
 }
+
+const fromSqlText = (hex: string) => Buffer.from(hex, 'hex').toString('utf8');
 
 const ROOT = '/data/filestore';
 
@@ -20,6 +28,9 @@ function fake(dbs: string[], dirs: string[] = [], versionNum = 170006): Fake {
         dirs: new Set(dirs.map(dir => path.join(ROOT, dir))),
         calls: [],
         busyTimes: 0,
+        busy: new Map(),
+        templates: new Map(),
+        owner: 'odoo',
         log: () => undefined,
         sleep: async () => undefined,
         freeOwnConnections: async db => { f.calls.push(`free ${db}`); },
@@ -27,6 +38,11 @@ function fake(dbs: string[], dirs: string[] = [], versionNum = 170006): Fake {
             f.calls.push(statement);
             if (f.failOn?.(statement)) {
                 throw new Error(`failed: ${statement}`);
+            }
+            const busyLeft = f.busy.get(statement) ?? 0;
+            if (busyLeft > 0) {
+                f.busy.set(statement, busyLeft - 1);
+                throw new Error('database is being accessed by other users');
             }
             if (statement === 'SHOW server_version_num;') {
                 return String(versionNum);
@@ -56,7 +72,16 @@ function fake(dbs: string[], dirs: string[] = [], versionNum = 170006): Fake {
             }
             m = /^SELECT 1 FROM pg_database WHERE datname = convert_from\(decode\('([0-9a-f]+)'/.exec(statement);
             if (m) {
-                return f.dbs.has(Buffer.from(m[1], 'hex').toString('utf8')) ? '1' : '';
+                return f.dbs.has(fromSqlText(m[1])) ? '1' : '';
+            }
+            m = /^SELECT datistemplate::text \|\| '\|' \|\| coalesce\(shobj_description\(oid,'pg_database'\),''\) FROM pg_database WHERE datname = convert_from\(decode\('([0-9a-f]+)'/.exec(statement);
+            if (m) {
+                const name = fromSqlText(m[1]);
+                return f.dbs.has(name) ? `${f.templates.has(name)}|${f.templates.get(name) ?? ''}` : '';
+            }
+            m = /^SELECT pg_get_userbyid\(datdba\) FROM pg_database WHERE datname = convert_from\(decode\('([0-9a-f]+)'/.exec(statement);
+            if (m) {
+                return f.dbs.has(fromSqlText(m[1])) ? f.owner : '';
             }
             return '';
         },
@@ -80,7 +105,11 @@ function fake(dbs: string[], dirs: string[] = [], versionNum = 170006): Fake {
                 f.dirs.add(to);
             },
             remove: async dir => {
-                f.calls.push(`rm ${path.basename(dir)}`);
+                const call = `rm ${path.basename(dir)}`;
+                f.calls.push(call);
+                if (f.failOn?.(call)) {
+                    throw new Error(`failed: ${call}`);
+                }
                 f.dirs.delete(dir);
             }
         }
@@ -254,5 +283,95 @@ suite('Database copy', () => {
         f.failOn = call => call === 'DROP DATABASE IF EXISTS "shop__replaced";';
         await swapInRestored(f, 'shop', 'shop__restoring', ROOT);
         assert.ok(logs.some(line => line.includes('shop__replaced')));
+    });
+
+    test('discard: a folder that cannot be removed after the drop is logged, not an error', async () => {
+        const f = fake(['shop__cp_1'], ['shop__cp_1']);
+        const logs: string[] = [];
+        f.log = message => logs.push(message);
+        f.failOn = call => call === 'rm shop__cp_1';
+        await discardDatabase(f, 'shop__cp_1', ROOT);
+        assert.ok(!f.dbs.has('shop__cp_1'));
+        assert.ok(logs.some(line => line.includes(path.join(ROOT, 'shop__cp_1'))));
+    });
+
+    test('stageRestore refuses a checkpoint whose recorded filestore is missing, before anything else', async () => {
+        const f = fake(['shop', 'shop__cp_1', 'shop__restoring'], []);
+        await assert.rejects(
+            stageRestore(f, 'shop', 'shop__cp_1', ROOT, { expectFilestore: true }),
+            new RegExp(`The filestore of this checkpoint \\(${path.join(ROOT, 'shop__cp_1')}\\) is missing, so restoring it would lose the attachments\\.`)
+        );
+        assert.deepStrictEqual(f.calls, []);
+        assert.ok(f.dbs.has('shop__restoring'), 'nothing was dropped');
+    });
+
+    test('stageRestore without a recorded filestore, or with it present, goes ahead', async () => {
+        const f = fake(['shop', 'shop__cp_1'], []);
+        assert.strictEqual(await stageRestore(f, 'shop', 'shop__cp_1', ROOT, { expectFilestore: false }), 'shop__restoring');
+        const g = fake(['shop', 'shop__cp_1'], ['shop__cp_1']);
+        assert.strictEqual(await stageRestore(g, 'shop', 'shop__cp_1', ROOT, { expectFilestore: true }), 'shop__restoring');
+        assert.ok(g.dirs.has(path.join(ROOT, 'shop__restoring')));
+    });
+
+    test('stageRestore gives the staged copy the live database\'s owner', async () => {
+        const f = fake(['shop', 'shop__cp_1']);
+        f.owner = 'alice';
+        await stageRestore(f, 'shop', 'shop__cp_1', ROOT);
+        const create = f.calls.indexOf('CREATE DATABASE "shop__restoring" TEMPLATE "shop__cp_1" STRATEGY FILE_COPY;');
+        const read = f.calls.findIndex(call => call.startsWith('SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = convert_from('));
+        const alter = f.calls.findIndex(call => call.startsWith(`DO $$ BEGIN EXECUTE format('ALTER DATABASE %I OWNER TO %I', convert_from(`));
+        assert.ok(create >= 0 && create < read && read < alter, f.calls.join('\n'));
+        const hex = (value: string) => Buffer.from(value, 'utf8').toString('hex');
+        assert.ok(f.calls[read].includes(hex('shop')) && !f.calls[read].includes(hex('shop__restoring')));
+        assert.ok(f.calls[alter].includes(hex('shop__restoring')) && f.calls[alter].includes(hex('alice')));
+    });
+
+    test('stageRestore: failing to set the owner is logged, and the staged copy is kept', async () => {
+        const f = fake(['shop', 'shop__cp_1']);
+        const logs: string[] = [];
+        f.log = message => logs.push(message);
+        f.failOn = call => call.includes('OWNER TO');
+        assert.strictEqual(await stageRestore(f, 'shop', 'shop__cp_1', ROOT), 'shop__restoring');
+        assert.ok(f.dbs.has('shop__restoring'));
+        assert.ok(logs.some(line => line.includes('owner')));
+    });
+
+    test('the undo renames are retried while the database is busy', async () => {
+        const f = fake(['shop', 'shop__restoring'], ['shop', 'shop__restoring']);
+        f.failOn = call => call === 'mv shop__restoring -> shop';
+        f.busy.set('ALTER DATABASE "shop" RENAME TO "shop__restoring";', 1);
+        f.busy.set('ALTER DATABASE "shop__replaced" RENAME TO "shop";', 1);
+        await assert.rejects(swapInRestored(f, 'shop', 'shop__restoring', ROOT), /failed: mv/);
+        assert.deepStrictEqual([...f.dbs].sort(), ['shop', 'shop__restoring']);
+        assert.ok(f.calls.includes('free shop'));
+        assert.ok(f.calls.includes('free shop__replaced'));
+    });
+
+    test('verifyCheckpoint accepts a template carrying the checkpoint comment, in one query', async () => {
+        const f = fake(['shop__cp_1']);
+        f.templates.set('shop__cp_1', checkpointComment('shop'));
+        await verifyCheckpoint(f, 'shop__cp_1', 'shop', { mustExist: true });
+        await verifyCheckpoint(f, 'shop__cp_1', 'shop', { mustExist: false });
+        assert.strictEqual(f.calls.length, 2);
+    });
+
+    test('verifyCheckpoint refuses anything else, naming it', async () => {
+        const refused = /"shop__cp_1" is not a checkpoint of "shop", so it was left alone\./;
+        const plain = fake(['shop__cp_1']);
+        await assert.rejects(verifyCheckpoint(plain, 'shop__cp_1', 'shop', { mustExist: false }), refused);
+
+        const other = fake(['shop__cp_1']);
+        other.templates.set('shop__cp_1', checkpointComment('crm'));
+        await assert.rejects(verifyCheckpoint(other, 'shop__cp_1', 'shop', { mustExist: false }), refused);
+
+        const uncommented = fake(['shop__cp_1']);
+        uncommented.templates.set('shop__cp_1', '');
+        await assert.rejects(verifyCheckpoint(uncommented, 'shop__cp_1', 'shop', { mustExist: true }), refused);
+    });
+
+    test('verifyCheckpoint: a missing database is nothing to delete, but cannot be restored', async () => {
+        const f = fake([]);
+        await verifyCheckpoint(f, 'shop__cp_1', 'shop', { mustExist: false });
+        await assert.rejects(verifyCheckpoint(f, 'shop__cp_1', 'shop', { mustExist: true }), /"shop__cp_1" is not a checkpoint of "shop"/);
     });
 });

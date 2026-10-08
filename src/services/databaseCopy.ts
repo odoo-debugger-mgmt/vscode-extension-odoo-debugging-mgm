@@ -10,7 +10,7 @@ import * as path from 'node:path';
 import type { LinkTreeResult } from './filestore';
 import { quotePgIdentifier } from './postgres';
 import { sqlText } from './views/viewQueries';
-import { derivedDbName } from './checkpoints';
+import { checkpointComment, derivedDbName } from './checkpoints';
 
 export interface FilestoreOps {
     exists(dir: string): Promise<boolean>;
@@ -157,7 +157,12 @@ export async function discardDatabase(backend: CopyBackend, name: string, filest
     }
     const folder = path.join(filestoreRoot, name);
     if (existed) {
-        await backend.files.remove(folder);
+        // The database is gone either way; a leftover folder is only litter.
+        try {
+            await backend.files.remove(folder);
+        } catch (error) {
+            backend.log(`Dropped "${name}", but could not remove its filestore folder ${folder}: ${error}`);
+        }
     } else if (await backend.files.exists(folder)) {
         const orphan = `${folder}.orphan-${Date.now().toString(36)}`;
         await backend.files.rename(folder, orphan);
@@ -165,13 +170,44 @@ export async function discardDatabase(backend: CopyBackend, name: string, filest
     }
 }
 
+/**
+ * Refuses unless PostgreSQL says `id` is a protected checkpoint of
+ * `sourceDb`: the stored id is editable JSON, and a destructive step must not
+ * act on a database it names. A missing database is fine when there is
+ * nothing to drop (`mustExist: false`).
+ */
+export async function verifyCheckpoint(backend: CopyBackend, id: string, sourceDb: string, options: { mustExist: boolean }): Promise<void> {
+    const found = await backend.sql(
+        `SELECT datistemplate::text || '|' || coalesce(shobj_description(oid,'pg_database'),'') FROM pg_database WHERE datname = ${sqlText(id)};`
+    );
+    if (found === '' && !options.mustExist) {
+        return;
+    }
+    if (found !== `true|${checkpointComment(sourceDb)}`) {
+        throw new Error(`"${id}" is not a checkpoint of "${sourceDb}", so it was left alone.`);
+    }
+}
+
 const rename = (from: string, to: string) => `ALTER DATABASE ${quotePgIdentifier(from)} RENAME TO ${quotePgIdentifier(to)};`;
 
 /**
  * Restore, part one: the checkpoint copied to `<db>__restoring`, unprotected,
- * while the database and its server are still untouched.
+ * while the database and its server are still untouched. `expectFilestore`:
+ * the checkpoint was taken with a filestore, so its folder must be there.
  */
-export async function stageRestore(backend: CopyBackend, db: string, checkpointDb: string, filestoreRoot?: string): Promise<string> {
+export async function stageRestore(
+    backend: CopyBackend,
+    db: string,
+    checkpointDb: string,
+    filestoreRoot?: string,
+    options: { expectFilestore?: boolean } = {}
+): Promise<string> {
+    if (options.expectFilestore && filestoreRoot) {
+        const folder = path.join(filestoreRoot, checkpointDb);
+        if (!await backend.files.exists(folder)) {
+            throw new Error(`The filestore of this checkpoint (${folder}) is missing, so restoring it would lose the attachments.`);
+        }
+    }
     const replaced = derivedDbName(db, '__replaced');
     if (await databaseExistsVia(backend, replaced)) {
         throw new Error(`"${replaced}" is left over from an interrupted restore and may hold the data of "${db}". Rename or drop it in psql first.`);
@@ -186,6 +222,16 @@ export async function stageRestore(backend: CopyBackend, db: string, checkpointD
     // A leftover staging copy is only ever a copy of a checkpoint.
     await discardDatabase(backend, staged, filestoreRoot);
     await copyDatabase(backend, checkpointDb, staged, { filestoreRoot });
+    // The copy belongs to whoever ran it; once swapped in it should still
+    // belong to the role that owned the database.
+    try {
+        const owner = await backend.sql(`SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = ${sqlText(db)};`);
+        if (owner) {
+            await backend.sql(`DO $$ BEGIN EXECUTE format('ALTER DATABASE %I OWNER TO %I', ${sqlText(staged)}, ${sqlText(owner)}); END $$;`);
+        }
+    } catch (error) {
+        backend.log(`Could not give "${staged}" the owner of "${db}": ${error}`);
+    }
     return staged;
 }
 
@@ -204,9 +250,9 @@ export async function swapInRestored(backend: CopyBackend, db: string, staged: s
             throw new Error(`"${path.join(filestoreRoot, replaced)}" is left over from an interrupted restore and may hold the filestore of "${db}". Move or delete it first.`);
         }
         await retryWhileBusy(backend, db, () => backend.sql(rename(db, replaced)));
-        undo.push({ kind: 'db', run: () => backend.sql(rename(replaced, db)) });
+        undo.push({ kind: 'db', run: () => retryWhileBusy(backend, replaced, () => backend.sql(rename(replaced, db))) });
         await backend.sql(rename(staged, db));
-        undo.push({ kind: 'db', run: () => backend.sql(rename(db, staged)) });
+        undo.push({ kind: 'db', run: () => retryWhileBusy(backend, db, () => backend.sql(rename(db, staged))) });
 
         if (filestoreRoot) {
             const live = path.join(filestoreRoot, db);

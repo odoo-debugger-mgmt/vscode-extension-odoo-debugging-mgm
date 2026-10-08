@@ -20,6 +20,8 @@ export interface ManagedRun {
     versionId: string;
     debuggerName: string;
     noDebug: boolean;
+    /** The database it was started on (its `-d`), whatever its version selects now. */
+    dbName: string;
 }
 
 export interface ReleaseHost {

@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { CopyBackend } from './databaseCopy';
+import { CopyBackend, databaseExistsVia } from './databaseCopy';
 import { dirExists, linkTree, removeTree, renameDir } from './filestore';
 import { filestoreRootOf, resolveOdooDataDir } from './odooDataDir';
 import { releaseDatabase, runSql } from './postgres';
@@ -15,8 +15,10 @@ import { runCommand } from './process';
 import { ownQueryEnv, OWN_QUERY_APP_NAME } from './database';
 import { VIEW_WORKER_APP_NAME } from './views/viewWorkerArgs';
 import { CONNECTIONS_SQL, DbConnection, describeConnection, parseConnections, releaseForCopy, ReleaseHost, ReleaseUi } from './connectionRelease';
-import { getRunningInstances, invalidateRunningState } from './runningState';
-import { getSessionByName } from './debugSessions';
+import { invalidateRunningState } from './runningState';
+import { getSessionByName, runningDebuggerNames, versionIdOfSession } from './debugSessions';
+import { dbForVersion } from './dbResolution';
+import { SettingsStore } from '../settingsStore';
 import { VersionsService } from '../versionsService';
 import { runDirectory, startServerForVersion } from '../debugger';
 import { logger, errorMessage } from './logger';
@@ -51,18 +53,32 @@ export function realCopyBackend(): CopyBackend {
     };
 }
 
+/** The value after `-d` in the session's launch arguments (debugger.ts prepareArgs). */
+function sessionDatabase(session: vscode.DebugSession): string | undefined {
+    const args: unknown = session.configuration?.args;
+    if (!Array.isArray(args)) {
+        return undefined;
+    }
+    const at = args.indexOf('-d');
+    const value: unknown = at >= 0 ? args[at + 1] : undefined;
+    return typeof value === 'string' ? value : undefined;
+}
+
 export function realReleaseHost(): ReleaseHost {
     return {
         letGo: db => releaseDatabase(db),
+        // By the database the session was launched on, not the one its
+        // version selects now: selecting another must not make this one ours.
         ownRun: async db => {
-            invalidateRunningState();
-            const instance = (await getRunningInstances())
-                .find(entry => entry.origin === 'managed' && entry.dbName === db && entry.debuggerName && entry.versionId);
-            if (!instance?.debuggerName || !instance.versionId) {
-                return undefined;
+            for (const name of runningDebuggerNames()) {
+                const versionId = versionIdOfSession(name);
+                const session = getSessionByName(name);
+                if (!versionId || !session || sessionDatabase(session) !== db) {
+                    continue;
+                }
+                return { versionId, debuggerName: name, noDebug: session.configuration?.noDebug === true, dbName: db };
             }
-            const session = getSessionByName(instance.debuggerName);
-            return { versionId: instance.versionId, debuggerName: instance.debuggerName, noDebug: session?.configuration?.noDebug === true };
+            return undefined;
         },
         stop: async run => {
             const session = getSessionByName(run.debuggerName);
@@ -78,6 +94,11 @@ export function realReleaseHost(): ReleaseHost {
             }
         },
         start: async run => {
+            // The version starts whatever it selects now; that may not be the database it was stopped on.
+            const now = dbForVersion((await SettingsStore.peekSelectedProject())?.project, run.versionId)?.id;
+            if (now !== run.dbName) {
+                throw new Error(`"${run.debuggerName}" was not restarted: its version now runs "${now ?? 'no database'}".`);
+            }
             const result = await startServerForVersion(run.versionId, { noDebug: run.noDebug, quiet: true });
             if (!result.ok) {
                 throw new Error(result.message ?? `Could not start "${run.debuggerName}".`);
@@ -153,8 +174,13 @@ export async function withReleased<T>(
     try {
         value = await work();
     } catch (error) {
-        // The work failed, so what it was to remove is still there: bring the server back.
-        await restartAfter(db, release.restart);
+        // The work failed: bring the server back - unless the database it ran
+        // on is gone after all, or that cannot even be told.
+        if (restart || await databaseExistsVia(realCopyBackend(), db).catch(() => false)) {
+            await restartAfter(db, release.restart);
+        } else {
+            invalidateRunningState();
+        }
         throw error;
     }
     if (restart) {
