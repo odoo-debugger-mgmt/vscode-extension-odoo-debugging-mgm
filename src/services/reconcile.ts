@@ -1,5 +1,6 @@
 import { SettingsStore } from '../settingsStore';
-import { listPostgresDatabases } from './postgres';
+import { listPostgresDatabases, runSql } from './postgres';
+import { checkpointsOf, CHECKPOINT_COMMENTS_SQL, parseCheckpointComments, findOrphanCheckpoints, CheckpointModel } from './checkpoints';
 import { logger } from './logger';
 import type { DatabaseModel } from '../models/db';
 import type { DatabaseTemplateModel } from '../models/dbTemplate';
@@ -16,9 +17,37 @@ export interface StaleDatabaseReference {
     db: DatabaseModel;
 }
 
+export interface StaleCheckpointReference {
+    projectName: string;
+    dbId: string;
+    checkpoint: CheckpointModel;
+}
+
 export interface StaleReferences {
     databases: StaleDatabaseReference[];
     templates: DatabaseTemplateModel[];
+    checkpoints: StaleCheckpointReference[];
+    orphanCheckpoints: Array<{ name: string; source: string }>;
+}
+
+/** Checkpoint records whose database is gone, and every name recorded at all. */
+export function collectStaleCheckpoints(
+    projects: Array<{ name: string; dbs?: Array<{ id?: string; checkpoints?: unknown }> }>,
+    existingLower: Set<string>
+): { stale: StaleCheckpointReference[]; recorded: Set<string> } {
+    const stale: StaleCheckpointReference[] = [];
+    const recorded = new Set<string>();
+    for (const project of projects) {
+        for (const db of project.dbs ?? []) {
+            for (const checkpoint of checkpointsOf(db ?? {})) {
+                recorded.add(checkpoint.id.toLowerCase());
+                if (db?.id && !existingLower.has(checkpoint.id.toLowerCase())) {
+                    stale.push({ projectName: project.name, dbId: db.id, checkpoint });
+                }
+            }
+        }
+    }
+    return { stale, recorded };
 }
 
 /**
@@ -49,7 +78,15 @@ export async function findStaleReferences(): Promise<StaleReferences | undefined
         template.templateDbName && !existingLower.has(template.templateDbName.toLowerCase())
     );
 
-    return { databases, templates };
+    const { stale: checkpoints, recorded } = collectStaleCheckpoints(data.projects ?? [], existingLower);
+    let orphanCheckpoints: Array<{ name: string; source: string }> = [];
+    try {
+        orphanCheckpoints = findOrphanCheckpoints(parseCheckpointComments(await runSql('postgres', CHECKPOINT_COMMENTS_SQL)), existingLower, recorded);
+    } catch (error) {
+        logger.debug('Could not read checkpoint comments:', error);
+    }
+
+    return { databases, templates, checkpoints, orphanCheckpoints };
 }
 
 /** Activation-time check: logs stale references, never prompts. */
@@ -59,7 +96,7 @@ export async function logStaleReferences(): Promise<void> {
         if (!stale) {
             return;
         }
-        const total = stale.databases.length + stale.templates.length;
+        const total = stale.databases.length + stale.templates.length + stale.checkpoints.length + stale.orphanCheckpoints.length;
         if (total === 0) {
             return;
         }

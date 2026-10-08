@@ -17,7 +17,7 @@ import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import { rememberDbForVersion } from './services/dbResolution';
 import { generateDatabaseIdentifiers, DatabaseKind } from './services/dbNaming';
-import { detectOdooSeries } from './services/database';
+import { detectOdooSeries, clearInstalledModuleCache } from './services/database';
 import { readUpgradeConfig, refuseDuringUpgrade } from './upgrade';
 import {
     RESERVED_DATABASE_NAMES,
@@ -25,7 +25,6 @@ import {
     databaseExists,
     createDatabase,
     dropDatabase,
-    dropDatabaseIfExists,
     renameDatabase,
     neutralizeDatabase
 } from './services/postgres';
@@ -45,6 +44,10 @@ import {
     persistDatabaseTemplates
 } from './services/templates';
 import { findStaleReferences } from './services/reconcile';
+import { copyDatabase, discardDatabase, databaseExistsVia } from './services/databaseCopy';
+import { filestoreRootFor, realCopyBackend, withReleased } from './services/copyRuntime';
+import { checkpointsOf, setCheckpoints } from './services/checkpoints';
+import { dirExists, renameDir } from './services/filestore';
 import {
     alignEnvironment,
     buildDatabaseEnvironmentTarget,
@@ -768,7 +771,9 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
     if (creationMethod === 'dump' && sqlDumpPath) {
         await setupDatabase(dbName, sqlDumpPath);
     } else if (creationMethod === 'template' && selectedTemplate) {
-        await cloneDatabaseFromTemplate(dbName, selectedTemplate.templateDbName);
+        if (!await cloneDatabaseFromTemplate(dbName, selectedTemplate.templateDbName)) {
+            return undefined;
+        }
     } else if (creationMethod === 'fresh') {
         await setupDatabase(dbName, undefined);
     }
@@ -793,24 +798,29 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
     });
 }
 
-/** Clones `templateDbName` into `targetDbName`, replacing any existing DB. */
-export async function cloneDatabaseFromTemplate(targetDbName: string, templateDbName: string): Promise<void> {
-    await vscode.window.withProgress({
+/**
+ * Copies `templateDbName` into `targetDbName` - the database and its
+ * filestore - replacing any existing database of that name. Returns false
+ * when the user declined to free the source.
+ */
+export async function cloneDatabaseFromTemplate(targetDbName: string, templateDbName: string, versionId?: string): Promise<boolean> {
+    const backend = realCopyBackend();
+    const root = filestoreRootFor(versionId);
+    const outcome = await withReleased(templateDbName, 'copy it', async () => vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: `Setting up database ${targetDbName}`,
         cancellable: false
     }, async (progress) => {
-        progress.report({ message: 'Checking database existence...', increment: 20 });
-        if (await databaseExists(targetDbName)) {
+        if (await databaseExistsVia(backend, targetDbName)) {
             progress.report({ message: 'Dropping existing database...', increment: 20 });
-            await dropDatabase(targetDbName);
+            await discardDatabase(backend, targetDbName, root);
         }
-
-        progress.report({ message: `Cloning from template "${templateDbName}"...`, increment: 50 });
-        await createDatabase(targetDbName, templateDbName);
-
+        progress.report({ message: `Copying "${templateDbName}"...`, increment: 50 });
+        await copyDatabase(backend, templateDbName, targetDbName, { filestoreRoot: root });
+        clearInstalledModuleCache(targetDbName);
         progress.report({ message: 'Complete!', increment: 30 });
-    });
+    }));
+    return outcome.done;
 }
 
 /**
@@ -1057,17 +1067,32 @@ export async function deleteDb(event: unknown) {
     }
 
     // Ask for confirmation
-    const confirm = await showModalWarning(
-        `Are you sure you want to delete the database "${dbLabel}"?`,
-        'Delete'
-    );
-
-    if (confirm !== 'Delete') {
+    const checkpoints = checkpointsOf(db);
+    const withAll = `Delete with ${checkpoints.length} Checkpoint${checkpoints.length === 1 ? '' : 's'}`;
+    const confirm = checkpoints.length === 0
+        ? await showModalWarning(`Are you sure you want to delete the database "${dbLabel}"?`, 'Delete')
+        : await showModalWarning(
+            `Delete the database "${dbLabel}"? It has ${checkpoints.length === 1 ? 'a checkpoint' : `${checkpoints.length} checkpoints`}: `
+            + `${checkpoints.map(cp => cp.label).join(', ')}. Delete keeps them; Reconcile Databases lists them afterwards.`,
+            'Delete',
+            withAll
+        );
+    if (confirm !== 'Delete' && confirm !== withAll) {
         return; // User cancelled
     }
 
     // Delete the database from PostgreSQL
     await setupDatabase(db.id, undefined, true);
+    const backend = realCopyBackend();
+    const root = filestoreRootFor(db.versionId);
+    // Odoo's own drop removes the filestore too; a checkpoint's links keep its files.
+    await discardDatabase(backend, db.id, root).catch(error => logger.warn(`Could not remove the filestore of ${db.id}:`, error));
+    if (confirm === withAll) {
+        for (const checkpoint of checkpoints) {
+            await discardDatabase(backend, checkpoint.id, root)
+                .catch(error => logger.warn(`Could not delete checkpoint ${checkpoint.id}:`, error));
+        }
+    }
 
     // Remove from project data
     project.dbs = project.dbs.filter((database: DatabaseModel) => database.id !== db.id);
@@ -1142,7 +1167,9 @@ export async function cloneDatabaseFlow(event: unknown): Promise<void> {
     }
     const targetName = nameInput.trim();
 
-    await cloneDatabaseFromTemplate(targetName, db.id);
+    if (!await cloneDatabaseFromTemplate(targetName, db.id, db.versionId)) {
+        return;
+    }
 
     // A clone runs the same environment as its source; the current checkouts
     // are irrelevant to it.
@@ -1174,13 +1201,13 @@ export async function reconcileDatabasesFlow(): Promise<void> {
         return;
     }
 
-    const total = stale.databases.length + stale.templates.length;
+    const total = stale.databases.length + stale.templates.length + stale.checkpoints.length + stale.orphanCheckpoints.length;
     if (total === 0) {
         showAutoInfo('All linked databases and templates exist in PostgreSQL.', 2500);
         return;
     }
 
-    type StalePick = vscode.QuickPickItem & { staleKind: 'db' | 'template'; key: string; projectName?: string };
+    type StalePick = vscode.QuickPickItem & { staleKind: 'db' | 'template' | 'checkpoint' | 'orphan'; key: string; projectName?: string; dbId?: string };
     const picks: StalePick[] = [
         ...stale.databases.map(entry => ({
             label: `$(database) ${getDatabaseLabel(entry.db)}`,
@@ -1198,6 +1225,25 @@ export async function reconcileDatabasesFlow(): Promise<void> {
             picked: true,
             staleKind: 'template' as const,
             key: template.templateDbName
+        })),
+        ...stale.checkpoints.map(entry => ({
+            label: `$(history) ${entry.checkpoint.label}`,
+            description: `Checkpoint of "${entry.dbId}" in project "${entry.projectName}"`,
+            detail: `Checkpoint database "${entry.checkpoint.id}" no longer exists`,
+            picked: true,
+            staleKind: 'checkpoint' as const,
+            key: entry.checkpoint.id,
+            projectName: entry.projectName,
+            dbId: entry.dbId
+        })),
+        // Dropping a database is destructive, and another workspace may own it: unticked.
+        ...stale.orphanCheckpoints.map(orphan => ({
+            label: `$(trash) ${orphan.name}`,
+            description: 'Orphaned checkpoint database',
+            detail: `A checkpoint of "${orphan.source}", which no longer exists. Ticking it drops the database.`,
+            picked: false,
+            staleKind: 'orphan' as const,
+            key: orphan.name
         }))
     ];
 
@@ -1212,6 +1258,7 @@ export async function reconcileDatabasesFlow(): Promise<void> {
 
     const dbKeys = new Map<string, Set<string>>();
     const templateKeys = new Set<string>();
+    const checkpointKeys = new Set<string>();
     for (const pick of chosen) {
         if (pick.staleKind === 'db' && pick.projectName) {
             const set = dbKeys.get(pick.projectName) ?? new Set<string>();
@@ -1219,11 +1266,30 @@ export async function reconcileDatabasesFlow(): Promise<void> {
             dbKeys.set(pick.projectName, set);
         } else if (pick.staleKind === 'template') {
             templateKeys.add(pick.key.toLowerCase());
+        } else if (pick.staleKind === 'checkpoint') {
+            checkpointKeys.add(pick.key.toLowerCase());
+        }
+    }
+    let orphanNames = chosen.filter(pick => pick.staleKind === 'orphan').map(pick => pick.key);
+    if (orphanNames.length > 0) {
+        const answer = await showModalWarning(
+            `Drop ${orphanNames.length} orphaned checkpoint database${orphanNames.length === 1 ? '' : 's'}? This cannot be undone.`,
+            'Drop'
+        );
+        if (answer !== 'Drop') {
+            orphanNames = [];
         }
     }
 
     const data = await SettingsStore.get('odoo-debugger-data.json');
     for (const project of data.projects ?? []) {
+        for (const db of project.dbs ?? []) {
+            const all = checkpointsOf(db);
+            const kept = all.filter(cp => !checkpointKeys.has(cp.id.toLowerCase()));
+            if (kept.length !== all.length) {
+                setCheckpoints(db, kept);
+            }
+        }
         const staleForProject = dbKeys.get(project.name);
         if (!staleForProject || !Array.isArray(project.dbs)) {
             continue;
@@ -1239,7 +1305,11 @@ export async function reconcileDatabasesFlow(): Promise<void> {
     }
 
     await SettingsStore.saveWithoutComments(stripSettings(data));
-    showAutoInfo(`Removed ${chosen.length} stale database reference(s)`, 3000);
+    for (const name of orphanNames) {
+        await discardDatabase(realCopyBackend(), name, filestoreRootFor());
+    }
+    const orphansSkipped = chosen.filter(pick => pick.staleKind === 'orphan').length - orphanNames.length;
+    showAutoInfo(`Removed ${chosen.length - orphansSkipped} stale database reference(s)`, 3000);
 }
 
 export async function changeDatabaseVersion(event: unknown) {
@@ -1549,15 +1619,23 @@ async function createTemplateFromSource(data: DebuggerData, templates: DatabaseT
     }
 
     const templateDbName = templateNameInput.trim();
-    await vscode.window.withProgress({
+    const sourceVersionId = (data.projects ?? [])
+        .flatMap(project => (project.dbs ?? []) as DatabaseModel[])
+        .find(db => db.id === sourceDbName)?.versionId;
+    const backend = realCopyBackend();
+    const root = filestoreRootFor(sourceVersionId);
+    const outcome = await withReleased(sourceDbName, 'copy it', async () => vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: `Creating template ${templateDbName}`,
         cancellable: false
     }, async (progress) => {
-        progress.report({ message: `Cloning "${sourceDbName}"...`, increment: 30 });
-        await createDatabase(templateDbName, sourceDbName);
+        progress.report({ message: `Copying "${sourceDbName}"...`, increment: 30 });
+        await copyDatabase(backend, sourceDbName, templateDbName, { filestoreRoot: root });
         progress.report({ message: 'Saving template metadata...', increment: 70 });
-    });
+    }));
+    if (!outcome.done) {
+        return templates;
+    }
 
     const now = new Date().toISOString();
     const updated = await persistDatabaseTemplates(data, [
@@ -1736,6 +1814,11 @@ async function manageSingleTemplate(data: DebuggerData, templates: DatabaseTempl
         }
 
         await renameDatabase(selectedTemplate.templateDbName, newTemplateDbName);
+        const root = filestoreRootFor();
+        const oldFolder = path.join(root, selectedTemplate.templateDbName);
+        if (await dirExists(oldFolder)) {
+            await renameDir(oldFolder, path.join(root, newTemplateDbName));
+        }
 
         const now = new Date().toISOString();
         const updated = await persistDatabaseTemplates(
@@ -1765,7 +1848,7 @@ async function manageSingleTemplate(data: DebuggerData, templates: DatabaseTempl
     }
 
     if (deleteChoice === 'Delete Template DB + Metadata') {
-        await dropDatabaseIfExists(selectedTemplate.templateDbName);
+        await discardDatabase(realCopyBackend(), selectedTemplate.templateDbName, filestoreRootFor());
     }
 
     const updated = await persistDatabaseTemplates(
