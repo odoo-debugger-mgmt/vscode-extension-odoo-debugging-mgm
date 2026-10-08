@@ -77,8 +77,8 @@ const enabled = Boolean(python && odoo);
 
     test('a model without a table is explained', async () => {
         assert.deepStrictEqual(await readRecord(a, { kind: 'id', model: 'ir.qweb', id: 1 }, runSql),
-            { error: `ir.qweb has no table in ${a} (an abstract or transient model?).` });
+            { error: `ir.qweb has no table in ${a} (an abstract or transient model?).`, code: 'no-table' });
         assert.deepStrictEqual(await readRecord(a, { kind: 'xmlid', module: 'base', name: "nope'" }, runSql),
-            { error: `base.nope' does not exist in ${a}.` });
+            { error: `base.nope' does not exist in ${a}.`, code: 'missing' });
     });
 });

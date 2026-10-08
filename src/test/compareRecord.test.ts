@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import { createHash } from 'node:crypto';
-import { fieldsSql, parseRecordRef, readRecord, renderRecord, rowSql, xmlidSql } from '../services/compare/recordCompare';
+import { sqlText } from '../services/views/viewQueries';
+import { fieldsSql, parseRecordRef, planSides, readRecord, renderRecord, rowSql, xmlidSql } from '../services/compare/recordCompare';
 
 suite('Compare a record', () => {
     test('parses an external id and model with id', () => {
@@ -33,9 +34,9 @@ suite('Compare a record', () => {
 
     test('readRecord explains a missing record and a missing table, and reads a found one', async () => {
         const none = await readRecord('d', { kind: 'xmlid', module: 'sale', name: 'x' }, fake([]));
-        assert.deepStrictEqual(none, { error: 'sale.x does not exist in d.' });
+        assert.deepStrictEqual(none, { error: 'sale.x does not exist in d.', code: 'missing' });
         const noTable = await readRecord('d', { kind: 'id', model: 'ir.qweb', id: 1 }, fake([]));
-        assert.deepStrictEqual(noTable, { error: 'ir.qweb has no table in d (an abstract or transient model?).' });
+        assert.deepStrictEqual(noTable, { error: 'ir.qweb has no table in d (an abstract or transient model?).', code: 'no-table' });
         const ok = await readRecord('d', { kind: 'xmlid', module: 'base', name: 'p' }, fake([
             [/FROM ir_model_data/, 'res.partner|3'],
             [/FROM ir_model_fields/, 'name|char\nid|integer'],
@@ -43,16 +44,34 @@ suite('Compare a record', () => {
         ]));
         assert.deepStrictEqual(ok, { model: 'res.partner', id: 3, text: 'id: 3\nname: Bob\n' });
         const gone = await readRecord('d', { kind: 'id', model: 'res.partner', id: 9 }, fake([[/FROM ir_model_fields/, 'id|integer']]));
-        assert.deepStrictEqual(gone, { error: 'res.partner,9 does not exist in d.' });
+        assert.deepStrictEqual(gone, { error: 'res.partner,9 does not exist in d.', code: 'missing' });
     });
 
     test('user text reaches SQL only as hex or a quoted identifier', () => {
         const sql = xmlidSql({ kind: 'xmlid', module: "m'; DROP TABLE x;--", name: "n'" });
         assert.ok(!sql.includes("m'") && !sql.includes('DROP'), sql);
+        assert.ok(sql.includes(sqlText("m'; DROP TABLE x;--")) && sql.includes(sqlText("n'")), sql);
+        assert.ok(fieldsSql("a.b'c").includes(sqlText("a.b'c")) && fieldsSql("a.b'c").includes(sqlText("a_b'c")));
         const fields = fieldsSql("a.b'c");
         assert.ok(!fields.includes("b'c"), fields);
         assert.ok(fields.includes('current_schema()'));
         assert.strictEqual(rowSql('res.partner', 3, ['id', 'na"me']), 'SELECT row_to_json(t) FROM (SELECT "id", "na""me" FROM "res_partner" WHERE id = 3) t;');
         assert.throws(() => rowSql('res.partner', NaN, ['id']));
+    });
+
+    test('an object value shows every key unless the field is translatable', () => {
+        const text = renderRecord([{ name: 'props', ttype: 'properties' }, { name: 'title', ttype: 'char' }],
+            { props: { b: 1, a: { z: 2, y: [3] } }, title: { en_US: 'Hi', fr_FR: 'Salut' } }, '');
+        assert.strictEqual(text, 'props: {"a":{"y":[3],"z":2},"b":1}\ntitle: Hi\n');
+    });
+
+    test('planSides decides what a diff shows', () => {
+        const ok = { model: 'm.x', id: 1, text: 'a: 1\n' };
+        const missing = { error: 'm.x,1 does not exist in B.', code: 'missing' as const };
+        const noTable = { error: 'm.x has no table in B (an abstract or transient model?).', code: 'no-table' as const };
+        assert.deepStrictEqual(planSides(ok, noTable, 'A', 'B', 'm.x,1'), { left: 'a: 1\n', right: '(model not installed in B)\n' });
+        assert.deepStrictEqual(planSides(ok, missing, 'A', 'B', 'm.x,1'), { left: 'a: 1\n', right: '(no such record in B)\n' });
+        assert.deepStrictEqual(planSides(missing, missing, 'A', 'B', 'sale.order_1'), { message: 'sale.order_1 does not exist in A or in B.' });
+        assert.deepStrictEqual(planSides(noTable, noTable, 'A', 'B', 'm.x,1'), { message: noTable.error });
     });
 });

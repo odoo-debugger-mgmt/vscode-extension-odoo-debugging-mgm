@@ -22,7 +22,7 @@ import { resolveViewDoctorTarget } from '../views/viewDoctorView';
 import { comparisonSides } from '../services/comparisonPartner';
 import { withCheckpointOpen } from '../services/checkpointReads';
 import { runSql } from '../services/postgres';
-import { parseRecordRef, readRecord, renderRecord } from '../services/compare/recordCompare';
+import { parseRecordRef, planSides, readRecord } from '../services/compare/recordCompare';
 
 type Project = Parameters<typeof codeSides>[0];
 
@@ -387,25 +387,17 @@ export function registerCompareCommands(deps: CommandDeps): void {
             return;
         }
         const [left, right] = reads;
-        const hard = [left, right].find(read => 'error' in read && !/does not exist/.test(read.error));
-        if (hard && 'error' in hard) {
-            void showInfo(hard.error);
-            return;
-        }
-        const found = [left, right].find(read => !('error' in read));
-        if (!found || 'error' in found) {
-            void showInfo(`${'error' in left ? left.error : ''}`.trim() || 'The record does not exist.');
-            return;
-        }
-        const textOf = (read: typeof left, name: string) => 'error' in read
-            ? renderRecord([], undefined, `(no such record in ${labelOf(name)})`)
-            : read.text;
         const what = ref.kind === 'xmlid' ? `${ref.module}.${ref.name}` : `${ref.model},${ref.id}`;
         const leftLabel = labelOf(names.left);
         const rightLabel = labelOf(names.right);
+        const plan = planSides(left, right, leftLabel, rightLabel, what);
+        if ('message' in plan) {
+            void showInfo(plan.message);
+            return;
+        }
         await vscode.commands.executeCommand('vscode.diff',
-            compareDocuments.snapshotUri('left', `${what} · ${leftLabel}.txt`, textOf(left, names.left)),
-            compareDocuments.snapshotUri('right', `${what} · ${rightLabel}.txt`, textOf(right, names.right)),
+            compareDocuments.snapshotUri('left', `${what} · ${leftLabel}.txt`, plan.left),
+            compareDocuments.snapshotUri('right', `${what} · ${rightLabel}.txt`, plan.right),
             `${what}: ${leftLabel} ↔ ${rightLabel}`);
     }));
 }

@@ -71,13 +71,13 @@ function renderValue(ttype: string, value: unknown): string {
     let shown: string;
     if (typeof value === 'string') {
         shown = value;
-    } else if (typeof value === 'object' && !Array.isArray(value) && ttype !== 'json') {
+    } else if (typeof value === 'object' && !Array.isArray(value) && ['char', 'text', 'html'].includes(ttype)) {
         // A translated field of Odoo 16 and later: jsonb keyed by language.
         const map = value as Record<string, unknown>;
         const pick = 'en_US' in map ? map.en_US : map[Object.keys(map)[0]];
-        shown = typeof pick === 'string' ? pick : JSON.stringify(pick ?? false);
+        shown = typeof pick === 'string' ? pick : stableJson(pick ?? false);
     } else {
-        shown = typeof value === 'object' ? JSON.stringify(value) : String(value);
+        shown = typeof value === 'object' ? stableJson(value) : String(value);
     }
     return shown.replace(/\r?\n/g, '\\n');
 }
@@ -93,7 +93,41 @@ export function renderRecord(fields: Array<{ name: string; ttype: string }>, row
         .join('\n') + '\n';
 }
 
-export type RecordRead = { model: string; id: number; text: string } | { error: string };
+export type RecordRead = { model: string; id: number; text: string } | { error: string; code: 'missing' | 'no-table' };
+
+/** JSON with sorted keys at every level, so equal values print equal. */
+function stableJson(value: unknown): string {
+    const sort = (v: unknown): unknown => Array.isArray(v) ? v.map(sort)
+        : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, sort((v as Record<string, unknown>)[k])]))
+        : v;
+    return JSON.stringify(sort(value));
+}
+
+/**
+ * What to show for the two reads: a message and nothing to open, or the two texts.
+ * A side without the table of a model the other has renders "(model not installed in <db>)";
+ * a side without the record renders "(no such record in <db>)".
+ */
+export function planSides(
+    left: RecordRead, right: RecordRead, leftLabel: string, rightLabel: string, what: string
+): { message: string } | { left: string; right: string } {
+    const err = (r: RecordRead) => 'error' in r ? r : undefined;
+    const [l, r] = [err(left), err(right)];
+    const hard = [l, r].find(e => e && e.code !== 'missing' && e.code !== 'no-table');
+    if (hard) {
+        return { message: hard.error };
+    }
+    if (l?.code === 'missing' && r?.code === 'missing') {
+        return { message: `${what} does not exist in ${leftLabel} or in ${rightLabel}.` };
+    }
+    if (l?.code === 'no-table' && r?.code === 'no-table') {
+        return { message: l.error };
+    }
+    const show = (read: RecordRead, label: string) => 'error' in read
+        ? renderRecord([], undefined, read.code === 'no-table' ? `(model not installed in ${label})` : `(no such record in ${label})`)
+        : read.text;
+    return { left: show(left, leftLabel), right: show(right, rightLabel) };
+}
 
 export async function readRecord(
     dbName: string,
@@ -106,7 +140,7 @@ export async function readRecord(
         const found = (await sql(dbName, xmlidSql(ref))).trim();
         const match = /^([a-z][a-z0-9_.]*)\|(\d+)$/.exec(found);
         if (!match || !MODEL.test(match[1])) {
-            return { error: `${ref.module}.${ref.name} does not exist in ${dbName}.` };
+            return { error: `${ref.module}.${ref.name} does not exist in ${dbName}.`, code: 'missing' };
         }
         model = match[1];
         id = Number(match[2]);
@@ -118,11 +152,11 @@ export async function readRecord(
         return { name: line.slice(0, cut), ttype: line.slice(cut + 1) };
     });
     if (fields.length === 0) {
-        return { error: `${model} has no table in ${dbName} (an abstract or transient model?).` };
+        return { error: `${model} has no table in ${dbName} (an abstract or transient model?).`, code: 'no-table' };
     }
     const raw = (await sql(dbName, rowSql(model, id, fields.map(f => f.name)))).trim();
     if (!raw) {
-        return { error: `${model},${id} does not exist in ${dbName}.` };
+        return { error: `${model},${id} does not exist in ${dbName}.`, code: 'missing' };
     }
     return { model, id, text: renderRecord(fields, JSON.parse(raw) as Record<string, unknown>, '') };
 }
