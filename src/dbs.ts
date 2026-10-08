@@ -44,7 +44,7 @@ import {
     persistDatabaseTemplates
 } from './services/templates';
 import { findStaleReferences } from './services/reconcile';
-import { copyDatabase, discardDatabase, databaseExistsVia } from './services/databaseCopy';
+import { copyDatabase, discardDatabase, verifyCheckpoint } from './services/databaseCopy';
 import { filestoreRootFor, realCopyBackend, withReleased } from './services/copyRuntime';
 import { checkpointsOf, setCheckpoints } from './services/checkpoints';
 import { dirExists, renameDir } from './services/filestore';
@@ -611,6 +611,13 @@ async function resolveVersionForNewDatabase(dbName: string, method: CreationMeth
     return { versionId: undefined, odooVersion: series };
 }
 
+const POSTGRES_NAME_TAKEN = 'A database with this name already exists in PostgreSQL.';
+
+/** Every database in PostgreSQL, lower-cased, linked or not. */
+async function postgresDatabaseNames(): Promise<Set<string>> {
+    return new Set((await listPostgresDatabases()).map(name => name.toLowerCase()));
+}
+
 export async function createDb(projectName: string, repos: RepoModel[], dumpFolderPath: string, _settings: SettingsModel, options: CreateDbOptions = {}): Promise<DatabaseModel | undefined> {
     // Steps 1-4 are one backable wizard. Everything that could invalidate the
     // work is asked before any of it starts, so Back is always free here: no
@@ -712,11 +719,13 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
                 dbName = existingDbName;
                 return 'next';
             }
+            // A template copy never replaces a database, linked here or not.
+            const inPostgres = creationMethod === 'template' ? await postgresDatabaseNames() : new Set<string>();
             const suggestion = dbName || generateDatabaseIdentifiers({
                 projectName,
                 kind: creationMethod as DatabaseKind,
                 timestamp: creationTimestamp,
-                existingInternalNames: existingIdentifiers
+                existingInternalNames: new Set([...existingIdentifiers, ...inPostgres])
             }).internalName;
 
             const nameInput = await inputStep({
@@ -737,6 +746,9 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
                     }
                     if (existingIdentifiers.has(trimmed.toLowerCase())) {
                         return 'A database with this name is already linked to a project.';
+                    }
+                    if (inPostgres.has(trimmed.toLowerCase())) {
+                        return POSTGRES_NAME_TAKEN;
                     }
                     return undefined;
                 }
@@ -800,8 +812,9 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
 
 /**
  * Copies `templateDbName` into `targetDbName` - the database and its
- * filestore - replacing any existing database of that name. Returns false
- * when the user declined to free the source.
+ * filestore. Never replaces a database: the copy refuses a name that exists,
+ * and the name prompts refuse it first. Returns false when the user declined
+ * to free the source.
  */
 export async function cloneDatabaseFromTemplate(targetDbName: string, templateDbName: string, versionId?: string, explicitRoot?: string): Promise<boolean> {
     const backend = realCopyBackend();
@@ -811,11 +824,7 @@ export async function cloneDatabaseFromTemplate(targetDbName: string, templateDb
         title: `Setting up database ${targetDbName}`,
         cancellable: false
     }, async (progress) => {
-        if (await databaseExistsVia(backend, targetDbName)) {
-            progress.report({ message: 'Dropping existing database...', increment: 20 });
-            await discardDatabase(backend, targetDbName, root);
-        }
-        progress.report({ message: `Copying "${templateDbName}"...`, increment: 50 });
+        progress.report({ message: `Copying "${templateDbName}"...`, increment: 70 });
         await copyDatabase(backend, templateDbName, targetDbName, { filestoreRoot: root });
         clearInstalledModuleCache(targetDbName);
         progress.report({ message: 'Complete!', increment: 30 });
@@ -1093,9 +1102,20 @@ export async function deleteDb(event: unknown) {
         return;
     }
     if (confirm === withAll) {
+        const refused: string[] = [];
         for (const checkpoint of checkpoints) {
-            await discardDatabase(backend, checkpoint.id, root)
+            try {
+                await verifyCheckpoint(backend, checkpoint.id, db.id, { mustExist: false });
+            } catch (error) {
+                logger.warn(errorMessage(error));
+                refused.push(errorMessage(error));
+                continue;
+            }
+            await discardDatabase(backend, checkpoint.id, checkpoint.filestoreRoot ?? root)
                 .catch(error => logger.warn(`Could not delete checkpoint ${checkpoint.id}:`, error));
+        }
+        if (refused.length > 0) {
+            void showWarning(refused.join(' '));
         }
     }
 
@@ -1141,8 +1161,9 @@ export async function cloneDatabaseFlow(event: unknown): Promise<void> {
     const { data, project } = result;
 
     const existingIdentifiers = await collectExistingDatabaseIdentifiers();
+    const inPostgres = await postgresDatabaseNames();
     let suggestion = `${db.id}-copy`;
-    for (let i = 2; existingIdentifiers.has(suggestion.toLowerCase()); i++) {
+    for (let i = 2; existingIdentifiers.has(suggestion.toLowerCase()) || inPostgres.has(suggestion.toLowerCase()); i++) {
         suggestion = `${db.id}-copy${i}`;
     }
 
@@ -1163,6 +1184,9 @@ export async function cloneDatabaseFlow(event: unknown): Promise<void> {
             }
             if (existingIdentifiers.has(trimmed.toLowerCase())) {
                 return 'A database with this name is already linked to a project.';
+            }
+            if (inPostgres.has(trimmed.toLowerCase())) {
+                return POSTGRES_NAME_TAKEN;
             }
             return null;
         }
@@ -1819,11 +1843,28 @@ async function manageSingleTemplate(data: DebuggerData, templates: DatabaseTempl
             return templates;
         }
 
-        await renameDatabase(selectedTemplate.templateDbName, newTemplateDbName);
         const root = selectedTemplate.filestoreRoot ?? filestoreRootFor();
         const oldFolder = path.join(root, selectedTemplate.templateDbName);
+        const newFolder = path.join(root, newTemplateDbName);
+        // Renaming onto it would make someone else's folder the template's filestore.
+        if (await dirExists(newFolder)) {
+            void showError(`A filestore folder "${newFolder}" already exists, so the template was not renamed.`);
+            return templates;
+        }
+        await renameDatabase(selectedTemplate.templateDbName, newTemplateDbName);
         if (await dirExists(oldFolder)) {
-            await renameDir(oldFolder, path.join(root, newTemplateDbName));
+            try {
+                await renameDir(oldFolder, newFolder);
+            } catch (error) {
+                // The database and its folder keep one name: put the database back.
+                try {
+                    await renameDatabase(newTemplateDbName, selectedTemplate.templateDbName);
+                } catch (undoError) {
+                    throw new Error(`Could not move the filestore of "${selectedTemplate.templateDbName}" (${errorMessage(error)}), `
+                        + `and could not rename the database back from "${newTemplateDbName}" (${errorMessage(undoError)}).`);
+                }
+                throw error;
+            }
         }
 
         const now = new Date().toISOString();

@@ -10,13 +10,13 @@ import type { DatabaseModel } from '../models/db';
 import { extractDatabaseFromEvent } from '../dbs';
 import { extractCheckpointFromEvent } from '../views/dbsView';
 import { getDatabaseLabel, stripSettings } from '../utils';
-import { listPostgresDatabases } from '../services/postgres';
+import { listPostgresDatabases, releaseDatabase } from '../services/postgres';
 import { clearInstalledModuleCache } from '../services/database';
 import { invalidateRunningState } from '../services/runningState';
 import {
     checkpointComment, checkpointDbName, checkpointsOf, defaultCheckpointLabel, setCheckpoints, CheckpointModel
 } from '../services/checkpoints';
-import { copyDatabase, discardDatabase, stageRestore, swapInRestored } from '../services/databaseCopy';
+import { copyDatabase, discardDatabase, stageRestore, swapInRestored, verifyCheckpoint } from '../services/databaseCopy';
 import { filestoreRootFor, realCopyBackend, withReleased } from '../services/copyRuntime';
 import { showAutoInfo, showError, showModalWarning } from '../services/notifications';
 import { logger, errorMessage } from '../services/logger';
@@ -45,7 +45,7 @@ async function takeCheckpoint(db: DatabaseModel, label: string, root: string): P
     const now = new Date();
     const id = checkpointDbName(db.id, now, await takenNames());
     const copied = await copyDatabase(realCopyBackend(), db.id, id, { filestoreRoot: root, protect: { comment: checkpointComment(db.id) } });
-    const checkpoint: CheckpointModel = { id, label, createdAt: now.toISOString(), filestore: copied.filestore };
+    const checkpoint: CheckpointModel = { id, label, createdAt: now.toISOString(), filestore: copied.filestore, filestoreRoot: root };
     let reason: string | undefined;
     try {
         if (!await updateCheckpoints(db.id, list => [...list, checkpoint])) {
@@ -118,7 +118,8 @@ export function registerCheckpointCommands(deps: CommandDeps): void {
             return;
         }
         const backend = realCopyBackend();
-        const root = filestoreRootFor(db.versionId);
+        // Where it was taken; the live database's folder is swapped under the same root.
+        const root = checkpoint.filestoreRoot ?? filestoreRootFor(db.versionId);
         let staged: string | undefined;
         try {
             await vscode.window.withProgress({
@@ -126,7 +127,8 @@ export function registerCheckpointCommands(deps: CommandDeps): void {
                 title: `Restoring ${db.id} to "${checkpoint.label}"`
             }, async progress => {
                 progress.report({ message: 'Copying the checkpoint...' });
-                staged = await stageRestore(backend, db.id, checkpoint.id, root);
+                await verifyCheckpoint(backend, checkpoint.id, db.id, { mustExist: true });
+                staged = await stageRestore(backend, db.id, checkpoint.id, root, { expectFilestore: checkpoint.filestore });
                 const outcome = await withReleased(db.id, 'restore it', async () => {
                     if (choice === CHECKPOINT_THEN_RESTORE) {
                         progress.report({ message: 'Checkpointing the current state...' });
@@ -136,6 +138,8 @@ export function registerCheckpointCommands(deps: CommandDeps): void {
                     await swapInRestored(backend, db.id, staged!, root);
                 });
                 if (outcome.done) {
+                    // The View Doctor still holds what it read from the replaced database.
+                    await releaseDatabase(db.id);
                     showAutoInfo(`"${dbLabel}" is back to "${checkpoint.label}".`, 3000);
                 }
             });
@@ -186,7 +190,9 @@ export function registerCheckpointCommands(deps: CommandDeps): void {
             return;
         }
         try {
-            await discardDatabase(realCopyBackend(), checkpoint.id, filestoreRootFor(db.versionId));
+            const backend = realCopyBackend();
+            await verifyCheckpoint(backend, checkpoint.id, db.id, { mustExist: false });
+            await discardDatabase(backend, checkpoint.id, checkpoint.filestoreRoot ?? filestoreRootFor(db.versionId));
             await updateCheckpoints(db.id, list => list.filter(cp => cp.id !== checkpoint.id));
             showAutoInfo(`Checkpoint "${checkpoint.label}" deleted.`, 2500);
         } catch (err) {
