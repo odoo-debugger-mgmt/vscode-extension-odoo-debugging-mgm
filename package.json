@@ -106,6 +106,8 @@
       ]
     },
     "commands": [
+      { "command": "odoo.compareFileWithPartner", "title": "Compare with Partner", "category": "Odoo DevTools", "icon": "$(diff)" },
+      { "command": "odoo.compareModuleWithPartner", "title": "Compare Module with Partner", "category": "Odoo DevTools" },
       { "command": "viewDoctor.openArch", "title": "Open Arch", "category": "Odoo DevTools", "icon": "$(go-to-file)" },
       { "command": "viewDoctor.openParent", "title": "Open Parent View", "category": "Odoo DevTools" },
       { "command": "viewDoctor.openRoot", "title": "Open Root View", "category": "Odoo DevTools" },
@@ -895,6 +897,7 @@
     ],
     "menus": {
       "editor/title": [
+        { "command": "odoo.compareFileWithPartner", "when": "odoo-debugger.is_active && resourceScheme == file", "group": "odoo_compare@1" },
         { "command": "viewDoctor.compare", "when": "resourceScheme == odoo-view", "group": "navigation@1" },
         { "command": "viewDoctor.render", "when": "resourceScheme == odoo-view", "group": "navigation@2" },
         { "command": "viewDoctor.checkXpaths", "when": "resourceScheme == odoo-view", "group": "navigation@3" },
@@ -904,6 +907,11 @@
         { "command": "viewDoctor.addToScript", "when": "resourceScheme == odoo-view", "group": "2_script@1" }
       ],
       "editor/context": [
+        {
+          "command": "odoo.compareFileWithPartner",
+          "when": "odoo-debugger.is_active && resourceScheme == file",
+          "group": "odoo@4"
+        },
         {
           "command": "odoo.runTestsForCurrentFile",
           "when": "odoo-debugger.is_active && config.odooDebugger.editorActions.enabled && resourceScheme == file && resourceFilename =~ /^test_.*\\.py$/",
@@ -918,6 +926,18 @@
           "command": "odoo.revealModuleInView",
           "when": "odoo-debugger.is_active && config.odooDebugger.editorActions.enabled && resourceScheme == file",
           "group": "odoo@3"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "odoo.compareFileWithPartner",
+          "when": "odoo-debugger.is_active && !explorerResourceIsFolder",
+          "group": "odoo@1"
+        },
+        {
+          "command": "odoo.compareModuleWithPartner",
+          "when": "odoo-debugger.is_active && explorerResourceIsFolder",
+          "group": "odoo@2"
         }
       ],
       "view/title": [
@@ -1203,6 +1223,7 @@
         }
       ],
       "view/item/context": [
+        { "command": "odoo.compareModuleWithPartner", "when": "view == moduleSelector && viewItem == module", "group": "2_compare@1" },
         { "command": "viewDoctor.openArch", "when": "view == viewDoctor && viewItem =~ /^odooView\\./", "group": "inline@1" },
         { "command": "viewDoctor.compare", "when": "view == viewDoctor && viewItem =~ /^odooView\\./", "group": "inline@2" },
         { "command": "viewDoctor.render", "when": "view == viewDoctor && viewItem =~ /^odooView\\./", "group": "inline@3" },

@@ -43,6 +43,7 @@ const MUST_STAY = [
     'dbSelector.runPartnerAlongside',
     'dbSelector.openInBrowser',
     'dbSelector.openPsqlShell',
+    'odoo.compareModuleWithPartner',
     'odoo.openVersionInBrowser',
     'odoo.cloneVersion'
 ];
