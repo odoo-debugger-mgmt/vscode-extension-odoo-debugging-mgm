@@ -91,8 +91,12 @@ export async function resolveCounterpart(file: string, from: SideRoots, to: Side
             return { kind: 'found', path: same };
         }
     }
+    if (hit.root.role === 'odoo') {
+        // Framework files (odoo/models.py) have no same-name search.
+        return { kind: 'none' };
+    }
     const name = path.basename(file);
-    if (hit.root.role !== 'odoo') {
+    {
         const slash = hit.rel.indexOf('/');
         const module = slash < 0 ? hit.rel : hit.rel.slice(0, slash);
         const inner = slash < 0 ? '' : hit.rel.slice(slash + 1);

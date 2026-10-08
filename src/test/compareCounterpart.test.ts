@@ -98,6 +98,24 @@ suite('Compare: counterpart files', () => {
         assert.strictEqual((r as { candidates: string[] }).candidates.length, 50);
     });
 
+    test('rootOf does not match a sibling that shares a prefix', () => {
+        const side: SideRoots = { label: 'x', roots: [{ role: 'odoo', path: '/a/odoo' }] };
+        assert.strictEqual(rootOf('/a/odoo2/x.py', side), undefined);
+    });
+
+    test('a framework file without a same-path counterpart has none', async () => {
+        await touch(path.join(tmp, '17/odoo/odoo/only17.py'));
+        await touch(path.join(tmp, '18/odoo/addons/sale/only17.py'));
+        assert.deepStrictEqual(await resolveCounterpart(path.join(tmp, '17/odoo/odoo/only17.py'), s17, s18, realFsProbe), { kind: 'none' });
+    });
+
+    test('same-name files under __pycache__ and dot-folders are not offered', async () => {
+        await touch(path.join(tmp, '17/acme/gone/hooks.py'));
+        await touch(path.join(tmp, '18/acme/m/__pycache__/hooks.py'));
+        await touch(path.join(tmp, '18/acme/m/.git/hooks.py'));
+        assert.deepStrictEqual(await resolveCounterpart(path.join(tmp, '17/acme/gone/hooks.py'), s17, s18, realFsProbe), { kind: 'none' });
+    });
+
     test('sideRolesFor maps roots by position and adds repos', () => {
         const roots = sideRolesFor(
             { odooPath: '/w/odoo', enterprisePath: '/w/enterprise', designThemesPath: '/w/themes' },

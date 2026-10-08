@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import type { DatabaseModel } from '../../models/db';
 import type { ProjectModel } from '../../models/project';
 import { VersionsService } from '../../versionsService';
+import { resolveOptionalPath } from '../../utils';
 import { partnerFor, upgradePair, type PairProject } from '../../views/viewPairing';
 import { resolveViewDoctorTarget } from '../../views/viewDoctorView';
 import { comparisonSides, type ResolvedPartner } from '../comparisonPartner';
@@ -53,7 +54,11 @@ export async function sideRootsFor(
     }
     const model = (project.dbs ?? []).find(d => d.id === db.id) ?? (db as DatabaseModel);
     const repos = await resolveReposForDatabase(project, model);
-    return { label, roots: sideRolesFor(version.settings, repos) };
+    return { label, roots: sideRolesFor({
+        odooPath: resolveOptionalPath(version.settings.odooPath),
+        enterprisePath: resolveOptionalPath(version.settings.enterprisePath),
+        designThemesPath: resolveOptionalPath(version.settings.designThemesPath)
+    }, repos) };
 }
 
 export type CodeSides = {
