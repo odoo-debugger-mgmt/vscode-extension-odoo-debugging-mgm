@@ -771,7 +771,7 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
     if (creationMethod === 'dump' && sqlDumpPath) {
         await setupDatabase(dbName, sqlDumpPath);
     } else if (creationMethod === 'template' && selectedTemplate) {
-        if (!await cloneDatabaseFromTemplate(dbName, selectedTemplate.templateDbName)) {
+        if (!await cloneDatabaseFromTemplate(dbName, selectedTemplate.templateDbName, undefined, selectedTemplate.filestoreRoot)) {
             return undefined;
         }
     } else if (creationMethod === 'fresh') {
@@ -803,9 +803,9 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
  * filestore - replacing any existing database of that name. Returns false
  * when the user declined to free the source.
  */
-export async function cloneDatabaseFromTemplate(targetDbName: string, templateDbName: string, versionId?: string): Promise<boolean> {
+export async function cloneDatabaseFromTemplate(targetDbName: string, templateDbName: string, versionId?: string, explicitRoot?: string): Promise<boolean> {
     const backend = realCopyBackend();
-    const root = filestoreRootFor(versionId);
+    const root = explicitRoot ?? filestoreRootFor(versionId);
     const outcome = await withReleased(templateDbName, 'copy it', async () => vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: `Setting up database ${targetDbName}`,
@@ -1081,12 +1081,17 @@ export async function deleteDb(event: unknown) {
         return; // User cancelled
     }
 
-    // Delete the database from PostgreSQL
-    await setupDatabase(db.id, undefined, true);
+    // Errors propagate to the command wrapper; nothing else changes unless the database is gone.
     const backend = realCopyBackend();
     const root = filestoreRootFor(db.versionId);
-    // Odoo's own drop removes the filestore too; a checkpoint's links keep its files.
-    await discardDatabase(backend, db.id, root).catch(error => logger.warn(`Could not remove the filestore of ${db.id}:`, error));
+    const outcome = await withReleased(db.id, 'delete it', async () => vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Deleting database ${dbLabel}`,
+        cancellable: false
+    }, () => discardDatabase(backend, db.id, root)));
+    if (!outcome.done) {
+        return;
+    }
     if (confirm === withAll) {
         for (const checkpoint of checkpoints) {
             await discardDatabase(backend, checkpoint.id, root)
@@ -1644,6 +1649,7 @@ async function createTemplateFromSource(data: DebuggerData, templates: DatabaseT
             name: templateDbName,
             templateDbName,
             sourceDbName,
+            filestoreRoot: root,
             createdAt: now,
             updatedAt: now
         }
@@ -1814,7 +1820,7 @@ async function manageSingleTemplate(data: DebuggerData, templates: DatabaseTempl
         }
 
         await renameDatabase(selectedTemplate.templateDbName, newTemplateDbName);
-        const root = filestoreRootFor();
+        const root = selectedTemplate.filestoreRoot ?? filestoreRootFor();
         const oldFolder = path.join(root, selectedTemplate.templateDbName);
         if (await dirExists(oldFolder)) {
             await renameDir(oldFolder, path.join(root, newTemplateDbName));
@@ -1828,6 +1834,7 @@ async function manageSingleTemplate(data: DebuggerData, templates: DatabaseTempl
                     ...template,
                     name: newTemplateDbName,
                     templateDbName: newTemplateDbName,
+                    filestoreRoot: root,
                     updatedAt: now
                 }
                 : template
@@ -1848,7 +1855,7 @@ async function manageSingleTemplate(data: DebuggerData, templates: DatabaseTempl
     }
 
     if (deleteChoice === 'Delete Template DB + Metadata') {
-        await discardDatabase(realCopyBackend(), selectedTemplate.templateDbName, filestoreRootFor());
+        await discardDatabase(realCopyBackend(), selectedTemplate.templateDbName, selectedTemplate.filestoreRoot ?? filestoreRootFor());
     }
 
     const updated = await persistDatabaseTemplates(

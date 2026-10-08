@@ -166,6 +166,14 @@ suite('Database copy', () => {
         assert.strictEqual(f.dbs.size + f.dirs.size, 0);
     });
 
+    test('discard moves a folder aside when no database of that name existed', async () => {
+        const f = fake([], ['ghost']);
+        await discardDatabase(f, 'ghost', ROOT);
+        assert.ok(!f.dirs.has(path.join(ROOT, 'ghost')));
+        assert.ok([...f.dirs].some(dir => dir.startsWith(path.join(ROOT, 'ghost.orphan-'))));
+        assert.ok(!f.calls.includes('rm ghost'));
+    });
+
     test('stageRestore copies the checkpoint, unprotected, and drops a leftover staging copy first', async () => {
         const f = fake(['shop', 'shop__cp_1', 'shop__restoring'], ['shop__cp_1']);
         const staged = await stageRestore(f, 'shop', 'shop__cp_1', ROOT);

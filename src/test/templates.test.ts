@@ -12,6 +12,15 @@ suite('Database templates', () => {
         assert.strictEqual(templates[0].name, 'tpl_legacy');
     });
 
+    test('keeps the filestore root a template was copied with', () => {
+        const templates = sanitizeDatabaseTemplates([
+            { name: 'a', templateDbName: 'tpl_a', filestoreRoot: '/data/filestore' },
+            { name: 'b', templateDbName: 'tpl_b', filestoreRoot: '' }
+        ]);
+        assert.strictEqual(templates[0].filestoreRoot, '/data/filestore');
+        assert.strictEqual(templates[1].filestoreRoot, undefined);
+    });
+
     test('dedupes by PostgreSQL name case-insensitively', () => {
         const templates = sanitizeDatabaseTemplates([
             { name: 'A', templateDbName: 'tpl_base' },

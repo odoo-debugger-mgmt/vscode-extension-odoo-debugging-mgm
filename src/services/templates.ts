@@ -57,10 +57,15 @@ export function sanitizeDatabaseTemplates(source: unknown): DatabaseTemplateMode
             ? candidate.updatedAt
             : undefined;
 
+        const filestoreRoot = typeof candidate.filestoreRoot === 'string' && candidate.filestoreRoot.trim() !== ''
+            ? candidate.filestoreRoot
+            : undefined;
+
         normalized.push({
             name,
             templateDbName,
             sourceDbName,
+            filestoreRoot,
             createdAt,
             updatedAt
         });

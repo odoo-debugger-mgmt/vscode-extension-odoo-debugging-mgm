@@ -140,14 +140,28 @@ export async function copyDatabase(backend: CopyBackend, source: string, target:
     }
 }
 
-/** Drops a database - a protected one too - and its filestore folder. */
+/**
+ * Drops a database - a protected one too - and its filestore folder. The
+ * folder is removed only when this call dropped the database: a folder under
+ * a name with no database may belong to another cluster sharing the data
+ * dir, so it is moved aside instead.
+ */
 export async function discardDatabase(backend: CopyBackend, name: string, filestoreRoot?: string): Promise<void> {
-    if (await databaseExistsVia(backend, name)) {
+    const existed = await databaseExistsVia(backend, name);
+    if (existed) {
         await backend.sql(`ALTER DATABASE ${quotePgIdentifier(name)} WITH IS_TEMPLATE false;`);
         await retryWhileBusy(backend, name, () => backend.sql(`DROP DATABASE IF EXISTS ${quotePgIdentifier(name)};`));
     }
-    if (filestoreRoot) {
-        await backend.files.remove(path.join(filestoreRoot, name));
+    if (!filestoreRoot) {
+        return;
+    }
+    const folder = path.join(filestoreRoot, name);
+    if (existed) {
+        await backend.files.remove(folder);
+    } else if (await backend.files.exists(folder)) {
+        const orphan = `${folder}.orphan-${Date.now().toString(36)}`;
+        await backend.files.rename(folder, orphan);
+        backend.log(`No database "${name}" exists, so its filestore folder was moved to ${orphan} instead of deleted.`);
     }
 }
 

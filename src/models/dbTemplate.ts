@@ -14,6 +14,11 @@ export interface DatabaseTemplateModel {
      * Original database this template was cloned from (best-effort metadata).
      */
     sourceDbName?: string;
+    /**
+     * `<data dir>/filestore` the template's filestore lives under; set when
+     * the template was copied, so it is found again whatever version is active.
+     */
+    filestoreRoot?: string;
     createdAt: string;
     updatedAt?: string;
 }
