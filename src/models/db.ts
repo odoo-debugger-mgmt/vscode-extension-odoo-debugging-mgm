@@ -5,6 +5,7 @@
 import { ModuleModel } from "./module";
 import { VersionsService } from "../versionsService";
 import { logger } from '../services/logger';
+import type { CheckpointModel } from '../services/checkpoints';
 
 export interface DatabaseOptions {
     modules?: ModuleModel[];
@@ -19,6 +20,7 @@ export interface DatabaseOptions {
     kind?: string;
     projectRepoBranches?: ProjectRepoBranchAssignment[];
     testingModuleStates?: SavedModuleState[];
+    checkpoints?: CheckpointModel[];
 }
 
 /** A module's install/upgrade mark, as stashed while testing mode is on. */
@@ -54,6 +56,12 @@ export class DatabaseModel {
      * marks go back to the database they came from.
      */
     testingModuleStates?: SavedModuleState[];
+    /**
+     * Protected copies of this database (see services/checkpoints.ts). Read
+     * it only through checkpointsOf(): a project from the store is plain
+     * JSON, so this is undefined on every database saved before it existed.
+     */
+    checkpoints?: CheckpointModel[];
 
     constructor(name: string, createdAt: Date, options: DatabaseOptions = {}) {
         this.displayName = options.displayName || name;
@@ -77,6 +85,7 @@ export class DatabaseModel {
                 }))
             : [];
         this.testingModuleStates = Array.isArray(options.testingModuleStates) ? options.testingModuleStates : undefined;
+        this.checkpoints = Array.isArray(options.checkpoints) ? options.checkpoints : undefined;
 
         if (options.internalName) {
             this.internalName = options.internalName;
