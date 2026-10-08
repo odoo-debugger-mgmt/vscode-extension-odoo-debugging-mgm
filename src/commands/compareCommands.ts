@@ -16,6 +16,13 @@ import { diffTrees, listTree } from '../services/compare/moduleDiff';
 import { enclosingSymbol, findMethodInSources, modelKeyOf, scanPythonSymbols, symbolText, type PySymbol } from '../services/compare/pythonSymbols';
 import { findXmlElementById, xmlElementAt } from '../services/compare/xmlElements';
 import { compareDocuments } from '../views/compareDocuments';
+import { extractDatabaseFromEvent } from '../dbs';
+import { partnerFor, upgradePair, type PairProject } from '../views/viewPairing';
+import { resolveViewDoctorTarget } from '../views/viewDoctorView';
+import { comparisonSides } from '../services/comparisonPartner';
+import { withCheckpointOpen } from '../services/checkpointReads';
+import { runSql } from '../services/postgres';
+import { parseRecordRef, readRecord, renderRecord } from '../services/compare/recordCompare';
 
 type Project = Parameters<typeof codeSides>[0];
 
@@ -342,5 +349,63 @@ export function registerCompareCommands(deps: CommandDeps): void {
         if (other !== undefined) {
             await show(mine.qualified, symbolText(text, mine), other);
         }
+    }));
+
+    context.subscriptions.push(registerCommand('dbSelector.compareRecord', async (event?: unknown) => {
+        const project = (await SettingsStore.getSelectedProject())?.project as (PairProject & { dbs?: Array<{ id: string; isSelected?: boolean }> }) | undefined;
+        const thisDb = extractDatabaseFromEvent(event)?.id ?? resolveViewDoctorTarget(project)?.dbName;
+        if (!project || !thisDb) {
+            void showInfo(project ? 'Select a database first.' : 'Open a project first.');
+            return;
+        }
+        const partner = await partnerFor(project, thisDb, { ask: true, onStored: refresh });
+        if (!partner) {
+            return;
+        }
+        const input = await vscode.window.showInputBox({
+            title: `Compare Record: ${thisDb} ↔ ${partner.label}`,
+            prompt: 'A record: an external id (sale.order_1) or model and id (res.partner,3)',
+            validateInput: value => parseRecordRef(value) ? undefined : 'An external id (module.name) or a model and an id (res.partner,3)'
+        });
+        const ref = input === undefined ? undefined : parseRecordRef(input);
+        if (!ref) {
+            return;
+        }
+        const names = comparisonSides(thisDb, partner, upgradePair(project));
+        const labelOf = (name: string) => name === partner.dbName ? partner.label : name;
+        const readSide = (name: string) => name === partner.dbName && partner.kind === 'checkpoint'
+            ? withCheckpointOpen(name, () => readRecord(name, ref, runSql))
+            : readRecord(name, ref, runSql);
+        let reads;
+        try {
+            reads = await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Notification, title: 'Reading the record…' },
+                async () => [await readSide(names.left), await readSide(names.right)] as const
+            );
+        } catch (error) {
+            void showInfo(`Could not read the record: ${error instanceof Error ? error.message : String(error)}`);
+            return;
+        }
+        const [left, right] = reads;
+        const hard = [left, right].find(read => 'error' in read && !/does not exist/.test(read.error));
+        if (hard && 'error' in hard) {
+            void showInfo(hard.error);
+            return;
+        }
+        const found = [left, right].find(read => !('error' in read));
+        if (!found || 'error' in found) {
+            void showInfo(`${'error' in left ? left.error : ''}`.trim() || 'The record does not exist.');
+            return;
+        }
+        const textOf = (read: typeof left, name: string) => 'error' in read
+            ? renderRecord([], undefined, `(no such record in ${labelOf(name)})`)
+            : read.text;
+        const what = ref.kind === 'xmlid' ? `${ref.module}.${ref.name}` : `${ref.model},${ref.id}`;
+        const leftLabel = labelOf(names.left);
+        const rightLabel = labelOf(names.right);
+        await vscode.commands.executeCommand('vscode.diff',
+            compareDocuments.snapshotUri('left', `${what} · ${leftLabel}.txt`, textOf(left, names.left)),
+            compareDocuments.snapshotUri('right', `${what} · ${rightLabel}.txt`, textOf(right, names.right)),
+            `${what}: ${leftLabel} ↔ ${rightLabel}`);
     }));
 }

@@ -109,6 +109,7 @@
       { "command": "odoo.compareFileWithPartner", "title": "Compare with Partner", "category": "Odoo DevTools", "icon": "$(diff)" },
       { "command": "odoo.compareModuleWithPartner", "title": "Compare Module with Partner", "category": "Odoo DevTools" },
       { "command": "odoo.compareThisWithPartner", "title": "Compare This with Partner", "category": "Odoo DevTools" },
+      { "command": "dbSelector.compareRecord", "title": "Compare Record…", "category": "Odoo DevTools" },
       { "command": "viewDoctor.openArch", "title": "Open Arch", "category": "Odoo DevTools", "icon": "$(go-to-file)" },
       { "command": "viewDoctor.openParent", "title": "Open Parent View", "category": "Odoo DevTools" },
       { "command": "viewDoctor.openRoot", "title": "Open Root View", "category": "Odoo DevTools" },
@@ -1528,6 +1529,11 @@
           "command": "dbSelector.runPartnerAlongside",
           "when": "view == dbSelector && viewItem == database",
           "group": "3_compare@3"
+        },
+        {
+          "command": "dbSelector.compareRecord",
+          "when": "view == dbSelector && viewItem == database",
+          "group": "3_compare@4"
         },
         {
           "command": "dbSelector.openInBrowser",
