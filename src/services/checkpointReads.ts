@@ -82,7 +82,14 @@ export async function closeOpenCheckpointsWith(deps: SweepDeps): Promise<string[
     }
     const closed: string[] = [];
     for (const name of await deps.openNow(names)) {
-        if (openings.has(name) || await deps.connected(name).catch(() => true)) {
+        if (openings.has(name)) {
+            continue;
+        }
+        const connected = await deps.connected(name).catch(() => true);
+        // Re-check synchronously: a read may have started during the round trip,
+        // before its own connection showed up. Nothing yields between here and
+        // closeChained registering the close.
+        if (connected || openings.has(name)) {
             continue;
         }
         await closeChained(name, deps.opener);

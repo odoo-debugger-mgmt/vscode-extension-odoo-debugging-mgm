@@ -169,4 +169,25 @@ suite('Sweeping open checkpoints', () => {
         await read;
         assert.deepStrictEqual(calls, ['close cp', 'closed cp', 'open cp', 'close cp', 'closed cp']);
     });
+
+    test('a read that starts during the connection check is not closed under', async () => {
+        const calls: string[] = [];
+        const opener: CheckpointOpener = { open: async db => { calls.push(`open ${db}`); }, close: async db => { calls.push(`close ${db}`); } };
+        const check = deferred();
+        const sweep = closeOpenCheckpointsWith({
+            recorded: async () => ['cp'], openNow: async () => ['cp'],
+            connected: async () => { await check.promise; return false; }, opener
+        });
+        await flush();
+        const gate = deferred();
+        const started = deferred();
+        const read = withCheckpointOpen('cp', async () => { started.resolve(); await gate.promise; }, opener);
+        await started.promise;
+        check.resolve();
+        assert.deepStrictEqual(await sweep, []);
+        assert.deepStrictEqual(calls, ['open cp']);
+        gate.resolve();
+        await read;
+        assert.deepStrictEqual(calls, ['open cp', 'close cp']);
+    });
 });
