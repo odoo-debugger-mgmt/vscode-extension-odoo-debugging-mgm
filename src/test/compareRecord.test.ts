@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import { createHash } from 'node:crypto';
 import { sqlText } from '../services/views/viewQueries';
-import { attachmentsSql, fieldsSql, tableOf, parseRecordRef, planSides, readRecord, renderRecord, rowSql, xmlidSql } from '../services/compare/recordCompare';
+import { attachmentsSql, fieldsSql, storedCountSql, tableOf, parseRecordRef, planSides, readRecord, renderRecord, rowSql, xmlidSql } from '../services/compare/recordCompare';
 
 suite('Compare a record', () => {
     test('parses an external id and model with id', () => {
@@ -77,6 +77,10 @@ suite('Compare a record', () => {
     test('a model with stored fields but no table says so without guessing abstract', async () => {
         const read = await readRecord('d', { kind: 'id', model: 'x.custom', id: 1 }, fake([[/count\(\*\) FROM ir_model_fields/, '4']]));
         assert.deepStrictEqual(read, { error: 'x.custom has stored fields in d, but no table of the expected name (a custom _table?).', code: 'no-table' });
+    });
+
+    test('the stored-field count leaves out one2many and many2many, which have no column', () => {
+        assert.match(storedCountSql('mail.thread'), /AND store AND ttype NOT IN \('one2many', 'many2many'\);$/);
     });
 
     test('attachment binaries show size and sha1 beside the columns', async () => {

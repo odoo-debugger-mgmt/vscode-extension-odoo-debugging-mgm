@@ -102,6 +102,8 @@ suite('Compare: sides and locating', () => {
         test('without a matching file it searches the module first, then asks', async () => {
             await touch(path.join(tmp, 'l/m/models/a.py'));
             await touch(path.join(tmp, 'r/m/models/b.py'));
+            await touch(path.join(tmp, 'l/m/__manifest__.py'));
+            await touch(path.join(tmp, 'r/m/__manifest__.py'));
             const hit = await locateCounterpart(path.join(tmp, 'l/m/models/a.py'), left, right, { left, right }, 'Order',
                 deps({ search: async (files, moduleDir) => { searched.push({ files, moduleDir }); return moduleDir ? 'FROM MODULE' : undefined; } }));
             assert.strictEqual(hit, 'FROM MODULE');

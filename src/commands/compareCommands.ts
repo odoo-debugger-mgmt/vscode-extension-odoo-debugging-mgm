@@ -321,7 +321,7 @@ export function registerCompareCommands(deps: CommandDeps): void {
             return;
         }
         const input = await vscode.window.showInputBox({
-            title: `Compare Record: ${thisDb} ↔ ${partner.label}`,
+            title: `Compare Record: ${thisDb} with ${partner.label}`,
             prompt: 'A record: an external id (sale.order_1) or model and id (res.partner,3)',
             validateInput: value => parseRecordRef(value) ? undefined : 'An external id (module.name) or a model and an id (res.partner,3)'
         });

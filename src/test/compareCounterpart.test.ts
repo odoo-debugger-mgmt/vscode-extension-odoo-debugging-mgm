@@ -45,6 +45,11 @@ suite('Compare: counterpart files', () => {
         await touch(path.join(tmp, '17/odoo/addons/account_edi/models/edi_format.py'));
         await touch(path.join(tmp, '18/odoo/addons/account_edi_ubl/models/edi_format.py'));
         await touch(path.join(tmp, '18/enterprise/account_edi_x/models/edi_format.py'));
+        for (const module of ['17/odoo/addons/sale', '18/odoo/addons/sale', '17/acme/acme_sale', '18/acme/acme_sale',
+            '17/odoo/addons/stock', '18/odoo/addons/stock', '17/enterprise/web_studio_lite', '18/odoo/addons/web_studio_lite',
+            '17/odoo/addons/account_edi', '18/odoo/addons/account_edi_ubl', '18/enterprise/account_edi_x']) {
+            await touch(path.join(tmp, module, '__manifest__.py'));
+        }
     });
 
     teardown(async () => { await fs.rm(tmp, { recursive: true, force: true }); });
@@ -167,6 +172,13 @@ suite('Compare: counterpart files', () => {
         await touch(path.join(tmp, '18/enterprise/sale/models/x.py'));
         assert.strictEqual(await counterpartModuleDir(path.join(tmp, '17/odoo/addons/sale/models/sale_order.py'), s17, s18, realFsProbe),
             path.join(tmp, '18/odoo/addons/sale'), 'the same root wins');
+    });
+
+    test('counterpartModuleDir: a same-named folder without a manifest is not the module', async () => {
+        await touch(path.join(tmp, '17/odoo/addons/gone/models/a.py'));
+        await touch(path.join(tmp, '17/odoo/addons/gone/__manifest__.py'));
+        await touch(path.join(tmp, '18/odoo/addons/gone/__pycache__/a.pyc'));
+        assert.strictEqual(await counterpartModuleDir(path.join(tmp, '17/odoo/addons/gone/models/a.py'), s17, s18, realFsProbe), undefined);
     });
 
     test('counterpartModuleDir: none for a renamed module, a framework file or a file outside the roots', async () => {

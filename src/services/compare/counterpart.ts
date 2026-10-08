@@ -148,6 +148,11 @@ export async function resolveCounterpart(file: string, from: SideRoots, to: Side
     return verdict([...new Set(all)]);
 }
 
+/** A folder holding a `__manifest__.py`; a leftover folder (only `__pycache__` after a branch switch) is not a module. */
+async function isModuleDir(folder: string, fsProbe: FsProbe): Promise<boolean> {
+    return await fsProbe.isDir(folder) && await fsProbe.exists(path.join(folder, '__manifest__.py'));
+}
+
 /**
  * The same-named module's folder on the other side (C1 step 3): the same root first, then the other
  * addons roots. Undefined for framework files and when no such module exists.
@@ -161,13 +166,13 @@ export async function counterpartModuleDir(file: string, from: SideRoots, to: Si
     const sameRole = to.roots.find(root => root.role === hit.root.role);
     if (sameRole) {
         const folder = path.join(sameRole.path, module.dir);
-        if (await fsProbe.isDir(folder)) {
+        if (await isModuleDir(folder, fsProbe)) {
             return folder;
         }
     }
     for (const root of addonsRoots(to).filter(r => r !== sameRole)) {
         const folder = path.join(root.path, module.name);
-        if (await fsProbe.isDir(folder)) {
+        if (await isModuleDir(folder, fsProbe)) {
             return folder;
         }
     }

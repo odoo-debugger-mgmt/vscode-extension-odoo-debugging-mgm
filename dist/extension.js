@@ -32087,7 +32087,7 @@ function registerCompareCommands(deps) {
             return;
         }
         const input = await vscode.window.showInputBox({
-            title: `Compare Record: ${thisDb} ↔ ${partner.label}`,
+            title: `Compare Record: ${thisDb} with ${partner.label}`,
             prompt: 'A record: an external id (sale.order_1) or model and id (res.partner,3)',
             validateInput: value => (0, recordCompare_1.parseRecordRef)(value) ? undefined : 'An external id (module.name) or a model and an id (res.partner,3)'
         });
@@ -32411,6 +32411,10 @@ async function resolveCounterpart(file, from, to, fsProbe) {
     }
     return verdict([...new Set(all)]);
 }
+/** A folder holding a `__manifest__.py`; a leftover folder (only `__pycache__` after a branch switch) is not a module. */
+async function isModuleDir(folder, fsProbe) {
+    return await fsProbe.isDir(folder) && await fsProbe.exists(path.join(folder, '__manifest__.py'));
+}
 /**
  * The same-named module's folder on the other side (C1 step 3): the same root first, then the other
  * addons roots. Undefined for framework files and when no such module exists.
@@ -32424,13 +32428,13 @@ async function counterpartModuleDir(file, from, to, fsProbe) {
     const sameRole = to.roots.find(root => root.role === hit.root.role);
     if (sameRole) {
         const folder = path.join(sameRole.path, module.dir);
-        if (await fsProbe.isDir(folder)) {
+        if (await isModuleDir(folder, fsProbe)) {
             return folder;
         }
     }
     for (const root of addonsRoots(to).filter(r => r !== sameRole)) {
         const folder = path.join(root.path, module.name);
-        if (await fsProbe.isDir(folder)) {
+        if (await isModuleDir(folder, fsProbe)) {
             return folder;
         }
     }
@@ -33017,7 +33021,7 @@ function tableOf(model) {
 }
 /** How many stored fields the model has, whatever its table is called. */
 function storedCountSql(model) {
-    return `SELECT count(*) FROM ir_model_fields WHERE model = ${(0, viewQueries_1.sqlText)(model)} AND store;`;
+    return `SELECT count(*) FROM ir_model_fields WHERE model = ${(0, viewQueries_1.sqlText)(model)} AND store AND ttype NOT IN ('one2many', 'many2many');`;
 }
 /** `res_field|file_size|checksum` of the attachment-stored binaries of a record. */
 function attachmentsSql(model, id) {

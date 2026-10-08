@@ -47,7 +47,7 @@ export function tableOf(model: string): string {
 
 /** How many stored fields the model has, whatever its table is called. */
 export function storedCountSql(model: string): string {
-    return `SELECT count(*) FROM ir_model_fields WHERE model = ${sqlText(model)} AND store;`;
+    return `SELECT count(*) FROM ir_model_fields WHERE model = ${sqlText(model)} AND store AND ttype NOT IN ('one2many', 'many2many');`;
 }
 
 /** `res_field|file_size|checksum` of the attachment-stored binaries of a record. */
