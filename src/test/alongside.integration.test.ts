@@ -60,6 +60,8 @@ async function stop(child: ChildProcess | undefined): Promise<void> {
     const b = `${prefix}_b`;
     const backend = realCopyBackend();
     const servers: ChildProcess[] = [];
+    let serverA: ChildProcess | undefined;
+    let serverB: ChildProcess | undefined;
     let portA = 0;
     let portB = 0;
 
@@ -68,6 +70,9 @@ async function stop(child: ChildProcess | undefined): Promise<void> {
     const launch = (db: string, port: number): ChildProcess => {
         const child = spawn(python!, [path.join(odoo!, 'odoo-bin'), ...alongsideArgs(base(db), port)], { env, stdio: 'ignore' });
         servers.push(child);
+        child.once('error', error => {
+            throw error;
+        });
         return child;
     };
 
@@ -90,25 +95,41 @@ async function stop(child: ChildProcess | undefined): Promise<void> {
         const mine = prefix.replace(/[\\_%]/g, '\\$&') + '%';
         const names = (await runSql('postgres', `SELECT datname FROM pg_database WHERE datname LIKE ${sqlText(mine)};`)).split('\n').filter(Boolean);
         for (const name of names) {
-            await discardDatabase(backend, name).catch(() => undefined);
+            await discardDatabase(backend, name).catch(error => console.error(`could not drop ${name}:`, error));
         }
     });
 
     test('two databases of one version answer on their own ports', async () => {
         portA = await pickFreePort(isPortOpen, new Set());
-        launch(a, portA);
+        serverA = launch(a, portA);
         assert.ok(await waitForPort(portA, 120000), 'server A listens');
         portB = await pickFreePort(isPortOpen, new Set());
         assert.notStrictEqual(portB, portA);
-        launch(b, portB);
+        serverB = launch(b, portB);
         assert.ok(await waitForPort(portB, 120000), 'server B listens');
-        assert.ok([200, 303].includes(await get(portA, a)));
-        assert.ok([200, 303].includes(await get(portB, b)));
+        assert.strictEqual(await get(portA, a), 200);
+        assert.strictEqual(await get(portB, b), 200);
+    });
+
+    test('each server connects only to its own database', async () => {
+        const databasesOf = async (child: ChildProcess | undefined): Promise<string[]> => {
+            const sql = `SELECT DISTINCT datname FROM pg_stat_activity WHERE application_name = 'odoo-${child?.pid}' AND datname IS NOT NULL;`;
+            let names: string[] = [];
+            for (let i = 0; i < 20 && names.length === 0; i++) {
+                names = (await runSql('postgres', sql)).split('\n').filter(Boolean);
+                if (names.length === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+            }
+            return names;
+        };
+        assert.deepStrictEqual(await databasesOf(serverA), [a]);
+        assert.deepStrictEqual(await databasesOf(serverB), [b]);
     });
 
     test('stopping one leaves the other running', async () => {
-        await stop(servers[servers.length - 2]);
+        await stop(serverA);
         assert.strictEqual(await isPortOpen(portA), false);
-        assert.ok([200, 303].includes(await get(portB, b)));
+        assert.strictEqual(await get(portB, b), 200);
     });
 });
