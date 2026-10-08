@@ -34,6 +34,8 @@ export interface ReleaseHost {
     endOwnQueries(db: string): Promise<void>;
     end(db: string, pids: number[]): Promise<void>;
     sleep(ms: number): Promise<void>;
+    /** Called when releaseForCopy's own restart of a stopped server fails. */
+    restartFailed?(run: ManagedRun, error: unknown): void;
 }
 
 export interface ReleaseUi {
@@ -104,21 +106,39 @@ export async function releaseForCopy(db: string, host: ReleaseHost, ui: ReleaseU
         }
     };
 
-    await host.endOwnQueries(db);
-    let others = run ? await pollUntilEmpty(host, db, SERVER_EXIT_POLLS) : await host.connections(db);
-    if (others.length === 0) {
-        return release;
-    }
+    // From here the server is down: whatever goes wrong, bring it back and
+    // report the original problem. A failed restart is reported, not thrown.
+    let restartedHere = false;
+    const restartQuietly = async () => {
+        if (!run || restartedHere) {
+            return;
+        }
+        restartedHere = true;
+        try {
+            await host.start(run);
+        } catch (error) {
+            host.restartFailed?.(run, error);
+        }
+    };
+    try {
+        await host.endOwnQueries(db);
+        let others = run ? await pollUntilEmpty(host, db, SERVER_EXIT_POLLS) : await host.connections(db);
+        if (others.length === 0) {
+            return release;
+        }
 
-    if (!await ui.confirmEnd(db, others)) {
-        await release.restart();
-        return undefined;
+        if (!await ui.confirmEnd(db, others)) {
+            await restartQuietly();
+            return undefined;
+        }
+        await host.end(db, others.map(connection => connection.pid));
+        others = await pollUntilEmpty(host, db, ENDED_POLLS);
+        if (others.length > 0) {
+            throw new Error(`Could not end the connections to "${db}": ${others.map(describeConnection).join(', ')}.`);
+        }
+        return release;
+    } catch (error) {
+        await restartQuietly();
+        throw error;
     }
-    await host.end(db, others.map(connection => connection.pid));
-    others = await pollUntilEmpty(host, db, ENDED_POLLS);
-    if (others.length > 0) {
-        await release.restart();
-        throw new Error(`Could not end the connections to "${db}": ${others.map(describeConnection).join(', ')}.`);
-    }
-    return release;
 }

@@ -86,7 +86,10 @@ export function realReleaseHost(): ReleaseHost {
         connections: async db => parseConnections(await psqlWithDb(db, CONNECTIONS_SQL, ['-F', '\x1f'])),
         endOwnQueries: async db => { await psqlWithDb(db, END_OWN_SQL); },
         end: async (db, pids) => { await psqlWithDb(db, END_PIDS_SQL, ['-v', `pids=${pids.join(',')}`]); },
-        sleep
+        sleep,
+        restartFailed: (run, error) => {
+            void showWarning(`The server for "${run.debuggerName}" did not restart: ${errorMessage(error)}`);
+        }
     };
 }
 

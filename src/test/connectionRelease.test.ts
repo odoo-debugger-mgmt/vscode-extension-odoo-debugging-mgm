@@ -7,22 +7,24 @@ const RUN: ManagedRun = { versionId: 'v17', debuggerName: 'Odoo 17', noDebug: tr
 const PSQL: DbConnection = { pid: 41, application: 'psql', client: '', user: 'odoo' };
 const ODOO: DbConnection = { pid: 42, application: 'odoo-1234', client: '127.0.0.1', user: 'odoo' };
 
-function host(opts: { run?: ManagedRun; connections?: DbConnection[][] } = {}) {
+function host(opts: { run?: ManagedRun; connections?: DbConnection[][]; endFails?: boolean; connectionsFail?: boolean; startFails?: boolean } = {}) {
     const calls: string[] = [];
     // Each connections() call takes the next snapshot; the last one repeats.
     const snapshots = opts.connections ?? [[]];
     let read = 0;
+    const restartFailures: unknown[] = [];
     const h: ReleaseHost = {
         letGo: async db => { calls.push(`letGo ${db}`); },
         ownRun: async () => opts.run,
         stop: async run => { calls.push(`stop ${run.debuggerName}`); },
-        start: async run => { calls.push(`start ${run.debuggerName} noDebug=${run.noDebug}`); },
-        connections: async () => snapshots[Math.min(read++, snapshots.length - 1)],
+        start: async run => { if (opts.startFails) { throw new Error('start broke'); } calls.push(`start ${run.debuggerName} noDebug=${run.noDebug}`); },
+        connections: async () => { if (opts.connectionsFail) { throw new Error('connections broke'); } return snapshots[Math.min(read++, snapshots.length - 1)]; },
         endOwnQueries: async db => { calls.push(`endOwn ${db}`); },
-        end: async (db, pids) => { calls.push(`end ${db} ${pids.join(',')}`); },
-        sleep: async () => undefined
+        end: async (db, pids) => { if (opts.endFails) { throw new Error('end broke'); } calls.push(`end ${db} ${pids.join(',')}`); },
+        sleep: async () => undefined,
+        restartFailed: (_run, error) => { restartFailures.push(error); }
     };
-    return { h, calls };
+    return { h, calls, restartFailures };
 }
 
 function ui(answers: { stop?: boolean; end?: boolean } = {}) {
@@ -86,6 +88,27 @@ suite('Releasing a database', () => {
         const { u } = ui();
         await assert.rejects(releaseForCopy('shop', h, u), /psql/);
         assert.ok(calls.includes('start Odoo 17 noDebug=true'));
+    });
+
+    test('end throwing after a stop still restarts, and the original error wins', async () => {
+        const { h, calls } = host({ run: RUN, connections: [[PSQL]], endFails: true });
+        const { u } = ui();
+        await assert.rejects(releaseForCopy('shop', h, u), /end broke/);
+        assert.ok(calls.includes('start Odoo 17 noDebug=true'));
+    });
+
+    test('connections throwing after a stop still restarts, and the original error wins', async () => {
+        const { h, calls } = host({ run: RUN, connectionsFail: true });
+        const { u } = ui();
+        await assert.rejects(releaseForCopy('shop', h, u), /connections broke/);
+        assert.ok(calls.includes('start Odoo 17 noDebug=true'));
+    });
+
+    test('a restart that fails while declining is reported, and declining still returns undefined', async () => {
+        const { h, restartFailures } = host({ run: RUN, connections: [[PSQL]], startFails: true });
+        const { u } = ui({ end: false });
+        assert.strictEqual(await releaseForCopy('shop', h, u), undefined);
+        assert.strictEqual(restartFailures.length, 1);
     });
 
     test('parses the connection query and describes each one', () => {
