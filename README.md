@@ -89,14 +89,16 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 
 ### Databases
 
-- Create databases four ways: **Fresh**, **From Dump** (folder with `dump.sql`, `.zip`, `.sql`, `.sql.gz` — streamed straight into psql), **From Template** (`createdb -T` clone), or **Connect to Existing** (picked from your live PostgreSQL instance).
+- Create databases four ways: **Fresh**, **From Dump** (folder with `dump.sql`, `.zip`, `.sql`, `.sql.gz` — streamed straight into psql), **From Template** (a copy of a template database, attachments included), or **Connect to Existing** (picked from your live PostgreSQL instance).
 - Restored dumps are neutralized for development: crons and outgoing mail disabled, passwords reset (`admin`/`admin`), fresh database UUID, extended expiration, mailcatcher entry.
 - The Odoo version is **auto-detected** from the database contents and linked to the matching version profile.
 - Context actions: **rename display name**, copy name, clone, restore, **open in browser**, **open psql shell**, change linked version, configure per-repo branches, delete. Renaming only changes the label — the PostgreSQL database keeps its name.
-- **Templates** (`Manage Database Templates`): register or create template databases and clone from them in seconds; import/export template lists as JSON.
+- **Templates** (`Manage Database Templates`): register or create template databases and clone from them in seconds; import/export template lists as JSON. A template remembers the data dir it was created in.
+- **Checkpoints** keep a database's state to come back to. Right-click a database → **Create Checkpoint**, or use its bookmark icon. The checkpoint is a full PostgreSQL copy, taken in seconds, with its attachments linked rather than copied. It is listed under the database with its age and size. Right-click it → **Restore Checkpoint** puts the database back exactly as it was, attachments included; the checkpoint is kept, so you can restore it again. Restore refuses while an interrupted earlier restore left `<db>__replaced` behind, and names it. **Checkpoint Current State, then Restore** keeps what you had too. A server running the database in this window is stopped after asking and restarted afterwards. Checkpoints refuse connections, so they cannot change, and Odoo's database list does not show them. Deleting a database asks whether to delete its checkpoints too; it stops a server running it in this window after asking, without restarting it, and removes its filestore folder.
+- **Clone** and **Templates** copy the filestore as well, so a copy's attachments and stored assets work. They first ask to stop a server running the source, or to end other connections to it. A filestore folder found under a new copy's name, with no database behind it, is moved aside as `<name>.orphan-<id>` rather than deleted.
 - **Creating a database asks which branch each project repo should use** — before anything is created or restored, so cancelling costs nothing. *Use current branches* is one of the answers; it is no longer an assumption. Cloning a database inherits its source's mapping.
 - **Running databases are marked** in the list: `running :8017` for a server this extension started, `running (external)` for one started from a terminal or another window. Each version also remembers the database it last launched, so switching versions restores the right `-d`.
-- **Reconcile Databases** finds stored references whose PostgreSQL database no longer exists and removes them in one pass.
+- **Reconcile Databases** finds stored references whose PostgreSQL database no longer exists and removes them in one pass. It also lists checkpoint records whose database is gone, and checkpoint databases whose source is gone.
 
 ### Modules
 

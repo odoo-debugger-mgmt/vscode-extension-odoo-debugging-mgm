@@ -46,57 +46,57 @@ const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const dbsView_1 = __webpack_require__(4);
 const environment_1 = __webpack_require__(51);
-const dataMigration_1 = __webpack_require__(89);
-const project_1 = __webpack_require__(90);
-const repos_1 = __webpack_require__(97);
-const module_1 = __webpack_require__(98);
-const testing_1 = __webpack_require__(100);
+const dataMigration_1 = __webpack_require__(100);
+const project_1 = __webpack_require__(101);
+const repos_1 = __webpack_require__(106);
+const module_1 = __webpack_require__(107);
+const testing_1 = __webpack_require__(109);
 const upgrade_1 = __webpack_require__(40);
-const debugger_1 = __webpack_require__(101);
-const provisionQueue_1 = __webpack_require__(103);
+const debugger_1 = __webpack_require__(89);
+const provisionQueue_1 = __webpack_require__(110);
 const odooInstaller_1 = __webpack_require__(66);
 const settingsStore_1 = __webpack_require__(6);
 const mainStore_1 = __webpack_require__(27);
-const versionsTreeProvider_1 = __webpack_require__(104);
+const versionsTreeProvider_1 = __webpack_require__(111);
 const versionsService_1 = __webpack_require__(33);
 const context_1 = __webpack_require__(42);
-const server_1 = __webpack_require__(102);
-const sortPreferences_1 = __webpack_require__(105);
-const viewDoctorView_1 = __webpack_require__(106);
-const viewService_1 = __webpack_require__(111);
-const viewWorker_1 = __webpack_require__(115);
-const viewWorkerPool_1 = __webpack_require__(116);
-const viewWorkerSpec_1 = __webpack_require__(117);
+const server_1 = __webpack_require__(96);
+const sortPreferences_1 = __webpack_require__(112);
+const viewDoctorView_1 = __webpack_require__(113);
+const viewService_1 = __webpack_require__(117);
+const viewWorker_1 = __webpack_require__(121);
+const viewWorkerPool_1 = __webpack_require__(122);
+const viewWorkerSpec_1 = __webpack_require__(123);
 const postgres_1 = __webpack_require__(47);
-const projectReposExplorer_1 = __webpack_require__(118);
+const projectReposExplorer_1 = __webpack_require__(124);
 const logger_1 = __webpack_require__(12);
 const reconcile_1 = __webpack_require__(79);
 const runningState_1 = __webpack_require__(87);
-const wrongCopyGuard_1 = __webpack_require__(120);
-const versionMigration_1 = __webpack_require__(121);
+const wrongCopyGuard_1 = __webpack_require__(126);
+const versionMigration_1 = __webpack_require__(127);
 const versionProposal_1 = __webpack_require__(60);
 const environment_2 = __webpack_require__(51);
 const branches_1 = __webpack_require__(52);
 const setupState_1 = __webpack_require__(71);
 const notifications_1 = __webpack_require__(16);
-const viewRenderPanel_1 = __webpack_require__(122);
-const viewFileSystem_1 = __webpack_require__(110);
-const viewPoll_1 = __webpack_require__(128);
-const viewPairing_1 = __webpack_require__(107);
-const xpathDiagnostics_1 = __webpack_require__(129);
-const viewSaveHook_1 = __webpack_require__(130);
-const viewQueries_1 = __webpack_require__(108);
+const viewRenderPanel_1 = __webpack_require__(128);
+const viewFileSystem_1 = __webpack_require__(116);
+const viewPoll_1 = __webpack_require__(134);
+const viewPairing_1 = __webpack_require__(114);
+const xpathDiagnostics_1 = __webpack_require__(135);
+const viewSaveHook_1 = __webpack_require__(136);
+const viewQueries_1 = __webpack_require__(81);
 const utils_1 = __webpack_require__(8);
-const statusBar_1 = __webpack_require__(132);
-const viewNoteService_1 = __webpack_require__(133);
-const viewNotes_1 = __webpack_require__(134);
-const commands_1 = __webpack_require__(135);
-const projectWorkspace_1 = __webpack_require__(139);
+const statusBar_1 = __webpack_require__(138);
+const viewNoteService_1 = __webpack_require__(139);
+const viewNotes_1 = __webpack_require__(140);
+const commands_1 = __webpack_require__(141);
+const projectWorkspace_1 = __webpack_require__(145);
 const workspaceBinding_1 = __webpack_require__(63);
-const workspaceRegistry_1 = __webpack_require__(82);
-const bindingCommand_1 = __webpack_require__(84);
-const goneElsewhere_1 = __webpack_require__(169);
-const storeSwitch_1 = __webpack_require__(170);
+const workspaceRegistry_1 = __webpack_require__(94);
+const bindingCommand_1 = __webpack_require__(97);
+const goneElsewhere_1 = __webpack_require__(176);
+const storeSwitch_1 = __webpack_require__(177);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -682,6 +682,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.DbsTreeProvider = void 0;
+exports.extractCheckpointFromEvent = extractCheckpointFromEvent;
 const vscode = __importStar(__webpack_require__(1));
 const path = __importStar(__webpack_require__(3));
 const baseTreeProvider_1 = __webpack_require__(5);
@@ -694,6 +695,16 @@ const upgrade_1 = __webpack_require__(40);
 const environment_1 = __webpack_require__(51);
 const dbs_1 = __webpack_require__(64);
 const runningState_1 = __webpack_require__(87);
+const checkpoints_1 = __webpack_require__(80);
+const postgres_1 = __webpack_require__(47);
+const logger_1 = __webpack_require__(12);
+function extractCheckpointFromEvent(event) {
+    const row = event;
+    if (row && row.contextValue === 'checkpoint' && row.database && row.checkpoint) {
+        return { database: row.database, checkpoint: row.checkpoint };
+    }
+    return null;
+}
 /** Tree provider for the Databases view of the selected project. */
 class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     sortPreferences;
@@ -704,6 +715,10 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
      * view's own highlight.
      */
     rows = new Map();
+    /** Checkpoint rows by id, reused for reveal like `rows`. */
+    checkpointRowCache = new Map();
+    /** pg_database_size of every checkpoint, read once per refresh. */
+    checkpointSizes = new Map();
     constructor(sortPreferences) {
         super();
         this.sortPreferences = sortPreferences;
@@ -711,15 +726,71 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
     getTreeItem(item) {
         return item;
     }
-    /** A flat list: required by `reveal`, and every row is top-level. */
-    getParent(_item) {
+    /** Checkpoint rows sit under their database's row; databases are top-level. */
+    getParent(item) {
+        if (item.contextValue === 'checkpoint') {
+            const db = item.database;
+            return db ? this.rows.get(db.id) : undefined;
+        }
         return undefined;
+    }
+    setCheckpointSizes(sizes) {
+        this.checkpointSizes = sizes;
+    }
+    checkpointRows(db) {
+        const now = new Date();
+        return (0, checkpoints_1.checkpointsOf)(db)
+            .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+            .map(checkpoint => {
+            const id = `${db.id}::checkpoint::${checkpoint.id}`;
+            const size = this.checkpointSizes.get(checkpoint.id);
+            const fresh = new vscode.TreeItem(checkpoint.label, vscode.TreeItemCollapsibleState.None);
+            fresh.id = id;
+            fresh.iconPath = new vscode.ThemeIcon('history');
+            fresh.contextValue = 'checkpoint';
+            fresh.description = [(0, checkpoints_1.formatAge)(checkpoint.createdAt, now), size === undefined ? '' : (0, checkpoints_1.formatBytes)(size)]
+                .filter(Boolean).join(' \u2022 ');
+            const created = new Date(checkpoint.createdAt);
+            fresh.tooltip = new vscode.MarkdownString([
+                `**${checkpoint.label}**`,
+                `**Checkpoint of:** ${db.id}`,
+                `**Created:** ${isNaN(created.getTime()) ? checkpoint.createdAt : created.toLocaleString()}`,
+                ...(size === undefined ? [] : [`**Size:** ${(0, checkpoints_1.formatBytes)(size)}`]),
+                `**Filestore:** ${checkpoint.filestore ? 'yes' : 'none (the database had no filestore folder)'}`,
+                `**PostgreSQL name:** ${checkpoint.id}`
+            ].join('\n\n'));
+            fresh.database = db;
+            fresh.checkpoint = checkpoint;
+            const row = Object.assign(this.checkpointRowCache.get(id) ?? fresh, fresh);
+            this.checkpointRowCache.set(id, row);
+            return row;
+        });
+    }
+    async readCheckpointSizes(dbs) {
+        const names = dbs.flatMap(db => (0, checkpoints_1.checkpointsOf)(db).map(cp => cp.id));
+        if (names.length === 0) {
+            this.checkpointSizes = new Map();
+            return;
+        }
+        try {
+            this.checkpointSizes = (0, checkpoints_1.parseSizes)(await (0, postgres_1.runSql)('postgres', (0, checkpoints_1.checkpointSizeSql)(names)));
+        }
+        catch (error) {
+            logger_1.logger.debug('Could not read checkpoint sizes:', error);
+            this.checkpointSizes = new Map();
+        }
     }
     /** The row currently shown for a database, when the view has drawn one. */
     rowFor(dbId) {
         return this.rows.get(dbId);
     }
-    async getChildren(_element) {
+    async getChildren(element) {
+        // A row asks for its own children: only a database row has any. Falling
+        // through to the root list here would make every collapsible row recurse.
+        if (element) {
+            const db = element.database;
+            return element.contextValue === 'database' && db ? this.checkpointRows(db) : [];
+        }
         // Silent: an empty list shows the view's welcome content.
         const result = await settingsStore_1.SettingsStore.peekSelectedProject().catch(settingsStore_1.noneOnStoreRead);
         if (!result) {
@@ -735,6 +806,7 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         const sortedDbs = [...dbs].sort((a, b) => this.compareDatabases(a, b, sortId));
         // Probed once per refresh, not once per row.
         const running = new Map((await (0, runningState_1.getRunningInstances)()).map(instance => [instance.dbName, instance]));
+        await this.readCheckpointSizes(dbs);
         const upgradeConfig = (0, upgrade_1.readUpgradeConfig)(project);
         const previous = new Map(this.rows);
         this.rows.clear();
@@ -755,7 +827,7 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         }
         const formattedDate = `${editedDate.toISOString().split('T')[0]} ${editedDate.toTimeString().split(' ')[0]}`;
         const dbLabel = (0, utils_1.getDatabaseLabel)(db);
-        const treeItem = new vscode.TreeItem(dbLabel, vscode.TreeItemCollapsibleState.None);
+        const treeItem = new vscode.TreeItem(dbLabel, (0, checkpoints_1.checkpointsOf)(db).length > 0 ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
         treeItem.id = db.id;
         // Both databases of an upgrade read as checked, but the selected one
         // still has to stand out: during an upgrade, selecting a side is how
@@ -772,6 +844,10 @@ class DbsTreeProvider extends baseTreeProvider_1.BaseTreeProvider {
         const descriptionParts = [this.buildDescription(db, running)];
         if (upgradeSide) {
             descriptionParts.push(upgradeSide === 'from' ? 'upgrading from' : 'upgrading to');
+        }
+        const checkpointCount = (0, checkpoints_1.checkpointsOf)(db).length;
+        if (checkpointCount > 0) {
+            descriptionParts.push(`${checkpointCount} checkpoint${checkpointCount === 1 ? '' : 's'}`);
         }
         treeItem.description = descriptionParts.filter(Boolean).join(' \u2022 ');
         treeItem.tooltip = new vscode.MarkdownString(this.buildTooltip(db, dbLabel, formattedDate, running));
@@ -8785,6 +8861,12 @@ class DatabaseModel {
      * marks go back to the database they came from.
      */
     testingModuleStates;
+    /**
+     * Protected copies of this database (see services/checkpoints.ts). Read
+     * it only through checkpointsOf(): a project from the store is plain
+     * JSON, so this is undefined on every database saved before it existed.
+     */
+    checkpoints;
     constructor(name, createdAt, options = {}) {
         this.displayName = options.displayName || name;
         this.name = this.displayName;
@@ -8807,6 +8889,7 @@ class DatabaseModel {
             }))
             : [];
         this.testingModuleStates = Array.isArray(options.testingModuleStates) ? options.testingModuleStates : undefined;
+        this.checkpoints = Array.isArray(options.checkpoints) ? options.checkpoints : undefined;
         if (options.internalName) {
             this.internalName = options.internalName;
         }
@@ -11594,10 +11677,14 @@ const postgres_1 = __webpack_require__(47);
 const dumpImport_1 = __webpack_require__(75);
 const templates_1 = __webpack_require__(78);
 const reconcile_1 = __webpack_require__(79);
+const databaseCopy_1 = __webpack_require__(82);
+const copyRuntime_1 = __webpack_require__(83);
+const checkpoints_1 = __webpack_require__(80);
+const filestore_1 = __webpack_require__(84);
 const environment_1 = __webpack_require__(51);
-const versionRepos_1 = __webpack_require__(80);
+const versionRepos_1 = __webpack_require__(92);
 const workspaceBinding_1 = __webpack_require__(63);
-const bindingCommand_1 = __webpack_require__(84);
+const bindingCommand_1 = __webpack_require__(97);
 /**
  * Database UI flows: creation wizard, selection, deletion, restore, version
  * and branch-mapping edits, and template management. All PostgreSQL / dump
@@ -12207,7 +12294,9 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
         await setupDatabase(dbName, sqlDumpPath);
     }
     else if (creationMethod === 'template' && selectedTemplate) {
-        await cloneDatabaseFromTemplate(dbName, selectedTemplate.templateDbName);
+        if (!await cloneDatabaseFromTemplate(dbName, selectedTemplate.templateDbName, undefined, selectedTemplate.filestoreRoot)) {
+            return undefined;
+        }
     }
     else if (creationMethod === 'fresh') {
         await setupDatabase(dbName, undefined);
@@ -12229,22 +12318,29 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
         projectRepoBranches
     });
 }
-/** Clones `templateDbName` into `targetDbName`, replacing any existing DB. */
-async function cloneDatabaseFromTemplate(targetDbName, templateDbName) {
-    await vscode.window.withProgress({
+/**
+ * Copies `templateDbName` into `targetDbName` - the database and its
+ * filestore - replacing any existing database of that name. Returns false
+ * when the user declined to free the source.
+ */
+async function cloneDatabaseFromTemplate(targetDbName, templateDbName, versionId, explicitRoot) {
+    const backend = (0, copyRuntime_1.realCopyBackend)();
+    const root = explicitRoot ?? (0, copyRuntime_1.filestoreRootFor)(versionId);
+    const outcome = await (0, copyRuntime_1.withReleased)(templateDbName, 'copy it', async () => vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: `Setting up database ${targetDbName}`,
         cancellable: false
     }, async (progress) => {
-        progress.report({ message: 'Checking database existence...', increment: 20 });
-        if (await (0, postgres_1.databaseExists)(targetDbName)) {
+        if (await (0, databaseCopy_1.databaseExistsVia)(backend, targetDbName)) {
             progress.report({ message: 'Dropping existing database...', increment: 20 });
-            await (0, postgres_1.dropDatabase)(targetDbName);
+            await (0, databaseCopy_1.discardDatabase)(backend, targetDbName, root);
         }
-        progress.report({ message: `Cloning from template "${templateDbName}"...`, increment: 50 });
-        await (0, postgres_1.createDatabase)(targetDbName, templateDbName);
+        progress.report({ message: `Copying "${templateDbName}"...`, increment: 50 });
+        await (0, databaseCopy_1.copyDatabase)(backend, templateDbName, targetDbName, { filestoreRoot: root });
+        (0, database_1.clearInstalledModuleCache)(targetDbName);
         progress.report({ message: 'Complete!', increment: 30 });
-    });
+    }));
+    return outcome.done;
 }
 /**
  * Creates (or drops, with `remove`) the PostgreSQL database, importing and
@@ -12452,12 +12548,32 @@ async function deleteDb(event) {
         return;
     }
     // Ask for confirmation
-    const confirm = await (0, notifications_1.showModalWarning)(`Are you sure you want to delete the database "${dbLabel}"?`, 'Delete');
-    if (confirm !== 'Delete') {
+    const checkpoints = (0, checkpoints_1.checkpointsOf)(db);
+    const withAll = `Delete with ${checkpoints.length} Checkpoint${checkpoints.length === 1 ? '' : 's'}`;
+    const confirm = checkpoints.length === 0
+        ? await (0, notifications_1.showModalWarning)(`Are you sure you want to delete the database "${dbLabel}"?`, 'Delete')
+        : await (0, notifications_1.showModalWarning)(`Delete the database "${dbLabel}"? It has ${checkpoints.length === 1 ? 'a checkpoint' : `${checkpoints.length} checkpoints`}: `
+            + `${checkpoints.map(cp => cp.label).join(', ')}. Delete keeps them; Reconcile Databases lists them afterwards.`, 'Delete', withAll);
+    if (confirm !== 'Delete' && confirm !== withAll) {
         return; // User cancelled
     }
-    // Delete the database from PostgreSQL
-    await setupDatabase(db.id, undefined, true);
+    // Errors propagate to the command wrapper; nothing else changes unless the database is gone.
+    const backend = (0, copyRuntime_1.realCopyBackend)();
+    const root = (0, copyRuntime_1.filestoreRootFor)(db.versionId);
+    const outcome = await (0, copyRuntime_1.withReleased)(db.id, 'delete it', async () => vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Deleting database ${dbLabel}`,
+        cancellable: false
+    }, () => (0, databaseCopy_1.discardDatabase)(backend, db.id, root)), { restart: false });
+    if (!outcome.done) {
+        return;
+    }
+    if (confirm === withAll) {
+        for (const checkpoint of checkpoints) {
+            await (0, databaseCopy_1.discardDatabase)(backend, checkpoint.id, root)
+                .catch(error => logger_1.logger.warn(`Could not delete checkpoint ${checkpoint.id}:`, error));
+        }
+    }
     // Remove from project data
     project.dbs = project.dbs.filter((database) => database.id !== db.id);
     // If the deleted database was selected and there are other databases, select the first one
@@ -12521,7 +12637,9 @@ async function cloneDatabaseFlow(event) {
         return;
     }
     const targetName = nameInput.trim();
-    await cloneDatabaseFromTemplate(targetName, db.id);
+    if (!await cloneDatabaseFromTemplate(targetName, db.id, db.versionId)) {
+        return;
+    }
     // A clone runs the same environment as its source; the current checkouts
     // are irrelevant to it.
     const projectRepoBranches = (0, environment_1.sanitizeProjectRepoBranchAssignments)(db.projectRepoBranches);
@@ -12549,7 +12667,7 @@ async function reconcileDatabasesFlow() {
         void (0, notifications_1.showWarning)('Could not query PostgreSQL to verify database references.');
         return;
     }
-    const total = stale.databases.length + stale.templates.length;
+    const total = stale.databases.length + stale.templates.length + stale.checkpoints.length + stale.orphanCheckpoints.length;
     if (total === 0) {
         (0, notifications_1.showAutoInfo)('All linked databases and templates exist in PostgreSQL.', 2500);
         return;
@@ -12571,6 +12689,25 @@ async function reconcileDatabasesFlow() {
             picked: true,
             staleKind: 'template',
             key: template.templateDbName
+        })),
+        ...stale.checkpoints.map(entry => ({
+            label: `$(history) ${entry.checkpoint.label}`,
+            description: `Checkpoint of "${entry.dbId}" in project "${entry.projectName}"`,
+            detail: `Checkpoint database "${entry.checkpoint.id}" no longer exists`,
+            picked: true,
+            staleKind: 'checkpoint',
+            key: entry.checkpoint.id,
+            projectName: entry.projectName,
+            dbId: entry.dbId
+        })),
+        // Dropping a database is destructive, and another workspace may own it: unticked.
+        ...stale.orphanCheckpoints.map(orphan => ({
+            label: `$(trash) ${orphan.name}`,
+            description: 'Orphaned checkpoint database',
+            detail: `A checkpoint of "${orphan.source}", which no longer exists. Ticking it drops the database.`,
+            picked: false,
+            staleKind: 'orphan',
+            key: orphan.name
         }))
     ];
     const chosen = await vscode.window.showQuickPick(picks, {
@@ -12583,6 +12720,7 @@ async function reconcileDatabasesFlow() {
     }
     const dbKeys = new Map();
     const templateKeys = new Set();
+    const checkpointKeys = new Set();
     for (const pick of chosen) {
         if (pick.staleKind === 'db' && pick.projectName) {
             const set = dbKeys.get(pick.projectName) ?? new Set();
@@ -12592,9 +12730,26 @@ async function reconcileDatabasesFlow() {
         else if (pick.staleKind === 'template') {
             templateKeys.add(pick.key.toLowerCase());
         }
+        else if (pick.staleKind === 'checkpoint') {
+            checkpointKeys.add(pick.key.toLowerCase());
+        }
+    }
+    let orphanNames = chosen.filter(pick => pick.staleKind === 'orphan').map(pick => pick.key);
+    if (orphanNames.length > 0) {
+        const answer = await (0, notifications_1.showModalWarning)(`Drop ${orphanNames.length} orphaned checkpoint database${orphanNames.length === 1 ? '' : 's'}? This cannot be undone.`, 'Drop');
+        if (answer !== 'Drop') {
+            orphanNames = [];
+        }
     }
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     for (const project of data.projects ?? []) {
+        for (const db of project.dbs ?? []) {
+            const all = (0, checkpoints_1.checkpointsOf)(db);
+            const kept = all.filter(cp => !checkpointKeys.has(cp.id.toLowerCase()));
+            if (kept.length !== all.length) {
+                (0, checkpoints_1.setCheckpoints)(db, kept);
+            }
+        }
         const staleForProject = dbKeys.get(project.name);
         if (!staleForProject || !Array.isArray(project.dbs)) {
             continue;
@@ -12609,7 +12764,11 @@ async function reconcileDatabasesFlow() {
         data.dbTemplates = (data.dbTemplates ?? []).filter(template => !templateKeys.has(template.templateDbName.toLowerCase()));
     }
     await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(data));
-    (0, notifications_1.showAutoInfo)(`Removed ${chosen.length} stale database reference(s)`, 3000);
+    for (const name of orphanNames) {
+        await (0, databaseCopy_1.discardDatabase)((0, copyRuntime_1.realCopyBackend)(), name, (0, copyRuntime_1.filestoreRootFor)());
+    }
+    const orphansSkipped = chosen.filter(pick => pick.staleKind === 'orphan').length - orphanNames.length;
+    (0, notifications_1.showAutoInfo)(`Removed ${chosen.length - orphansSkipped} stale database reference(s)`, 3000);
 }
 async function changeDatabaseVersion(event) {
     try {
@@ -12869,15 +13028,23 @@ async function createTemplateFromSource(data, templates) {
         return templates;
     }
     const templateDbName = templateNameInput.trim();
-    await vscode.window.withProgress({
+    const sourceVersionId = (data.projects ?? [])
+        .flatMap(project => (project.dbs ?? []))
+        .find(db => db.id === sourceDbName)?.versionId;
+    const backend = (0, copyRuntime_1.realCopyBackend)();
+    const root = (0, copyRuntime_1.filestoreRootFor)(sourceVersionId);
+    const outcome = await (0, copyRuntime_1.withReleased)(sourceDbName, 'copy it', async () => vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: `Creating template ${templateDbName}`,
         cancellable: false
     }, async (progress) => {
-        progress.report({ message: `Cloning "${sourceDbName}"...`, increment: 30 });
-        await (0, postgres_1.createDatabase)(templateDbName, sourceDbName);
+        progress.report({ message: `Copying "${sourceDbName}"...`, increment: 30 });
+        await (0, databaseCopy_1.copyDatabase)(backend, sourceDbName, templateDbName, { filestoreRoot: root });
         progress.report({ message: 'Saving template metadata...', increment: 70 });
-    });
+    }));
+    if (!outcome.done) {
+        return templates;
+    }
     const now = new Date().toISOString();
     const updated = await (0, templates_1.persistDatabaseTemplates)(data, [
         ...templates,
@@ -12885,6 +13052,7 @@ async function createTemplateFromSource(data, templates) {
             name: templateDbName,
             templateDbName,
             sourceDbName,
+            filestoreRoot: root,
             createdAt: now,
             updatedAt: now
         }
@@ -13026,12 +13194,18 @@ async function manageSingleTemplate(data, templates, selectedTemplate) {
             return templates;
         }
         await (0, postgres_1.renameDatabase)(selectedTemplate.templateDbName, newTemplateDbName);
+        const root = selectedTemplate.filestoreRoot ?? (0, copyRuntime_1.filestoreRootFor)();
+        const oldFolder = path.join(root, selectedTemplate.templateDbName);
+        if (await (0, filestore_1.dirExists)(oldFolder)) {
+            await (0, filestore_1.renameDir)(oldFolder, path.join(root, newTemplateDbName));
+        }
         const now = new Date().toISOString();
         const updated = await (0, templates_1.persistDatabaseTemplates)(data, templates.map(template => template.templateDbName.toLowerCase() === selectedTemplate.templateDbName.toLowerCase()
             ? {
                 ...template,
                 name: newTemplateDbName,
                 templateDbName: newTemplateDbName,
+                filestoreRoot: root,
                 updatedAt: now
             }
             : template));
@@ -13043,7 +13217,7 @@ async function manageSingleTemplate(data, templates, selectedTemplate) {
         return templates;
     }
     if (deleteChoice === 'Delete Template DB + Metadata') {
-        await (0, postgres_1.dropDatabaseIfExists)(selectedTemplate.templateDbName);
+        await (0, databaseCopy_1.discardDatabase)((0, copyRuntime_1.realCopyBackend)(), selectedTemplate.templateDbName, selectedTemplate.filestoreRoot ?? (0, copyRuntime_1.filestoreRootFor)());
     }
     const updated = await (0, templates_1.persistDatabaseTemplates)(data, templates.filter(template => template.templateDbName.toLowerCase() !== selectedTemplate.templateDbName.toLowerCase()));
     (0, notifications_1.showAutoInfo)(`Template "${selectedTemplate.name}" deleted`, 2500);
@@ -15486,10 +15660,14 @@ function sanitizeDatabaseTemplates(source) {
         const updatedAt = typeof candidate.updatedAt === 'string' && candidate.updatedAt.trim() !== ''
             ? candidate.updatedAt
             : undefined;
+        const filestoreRoot = typeof candidate.filestoreRoot === 'string' && candidate.filestoreRoot.trim() !== ''
+            ? candidate.filestoreRoot
+            : undefined;
         normalized.push({
             name,
             templateDbName,
             sourceDbName,
+            filestoreRoot,
             createdAt,
             updatedAt
         });
@@ -15529,11 +15707,29 @@ async function persistDatabaseTemplates(data, templates) {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.collectStaleCheckpoints = collectStaleCheckpoints;
 exports.findStaleReferences = findStaleReferences;
 exports.logStaleReferences = logStaleReferences;
 const settingsStore_1 = __webpack_require__(6);
 const postgres_1 = __webpack_require__(47);
+const checkpoints_1 = __webpack_require__(80);
 const logger_1 = __webpack_require__(12);
+/** Checkpoint records whose database is gone, and every name recorded at all. */
+function collectStaleCheckpoints(projects, existingLower) {
+    const stale = [];
+    const recorded = new Set();
+    for (const project of projects) {
+        for (const db of project.dbs ?? []) {
+            for (const checkpoint of (0, checkpoints_1.checkpointsOf)(db ?? {})) {
+                recorded.add(checkpoint.id.toLowerCase());
+                if (db?.id && !existingLower.has(checkpoint.id.toLowerCase())) {
+                    stale.push({ projectName: project.name, dbId: db.id, checkpoint });
+                }
+            }
+        }
+    }
+    return { stale, recorded };
+}
 /**
  * Returns references to PostgreSQL databases that no longer exist, or
  * undefined when PostgreSQL is unreachable (nothing can be verified then).
@@ -15556,7 +15752,15 @@ async function findStaleReferences() {
         }
     }
     const templates = (data.dbTemplates ?? []).filter(template => template.templateDbName && !existingLower.has(template.templateDbName.toLowerCase()));
-    return { databases, templates };
+    const { stale: checkpoints, recorded } = collectStaleCheckpoints(data.projects ?? [], existingLower);
+    let orphanCheckpoints = [];
+    try {
+        orphanCheckpoints = (0, checkpoints_1.findOrphanCheckpoints)((0, checkpoints_1.parseCheckpointComments)(await (0, postgres_1.runSql)('postgres', checkpoints_1.CHECKPOINT_COMMENTS_SQL)), existingLower, recorded);
+    }
+    catch (error) {
+        logger_1.logger.debug('Could not read checkpoint comments:', error);
+    }
+    return { databases, templates, checkpoints, orphanCheckpoints };
 }
 /** Activation-time check: logs stale references, never prompts. */
 async function logStaleReferences() {
@@ -15565,7 +15769,7 @@ async function logStaleReferences() {
         if (!stale) {
             return;
         }
-        const total = stale.databases.length + stale.templates.length;
+        const total = stale.databases.length + stale.templates.length + stale.checkpoints.length + stale.orphanCheckpoints.length;
         if (total === 0) {
             return;
         }
@@ -15618,6 +15822,2444 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CHECKPOINT_COMMENTS_SQL = exports.CHECKPOINT_COMMENT_PREFIX = void 0;
+exports.checkpointsOf = checkpointsOf;
+exports.setCheckpoints = setCheckpoints;
+exports.derivedDbName = derivedDbName;
+exports.checkpointDbName = checkpointDbName;
+exports.defaultCheckpointLabel = defaultCheckpointLabel;
+exports.formatAge = formatAge;
+exports.formatBytes = formatBytes;
+exports.checkpointSizeSql = checkpointSizeSql;
+exports.parseSizes = parseSizes;
+exports.checkpointComment = checkpointComment;
+exports.parseCheckpointComments = parseCheckpointComments;
+exports.findOrphanCheckpoints = findOrphanCheckpoints;
+/**
+ * Database checkpoints: protected PostgreSQL copies of a database, listed
+ * under it, restored by swapping them in. This module is the pure part: the
+ * stored record, names, labels and the SQL text of the read-only queries.
+ */
+const crypto = __importStar(__webpack_require__(65));
+const viewQueries_1 = __webpack_require__(81);
+const MAX_IDENTIFIER_BYTES = 63;
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/**
+ * The checkpoints of a database read from the store. Projects there are
+ * plain JSON, so the field may be missing or malformed on any of them.
+ */
+function checkpointsOf(db) {
+    if (!Array.isArray(db.checkpoints)) {
+        return [];
+    }
+    const list = [];
+    for (const entry of db.checkpoints) {
+        if (!entry || typeof entry !== 'object') {
+            continue;
+        }
+        const raw = entry;
+        if (typeof raw.id !== 'string' || raw.id.trim() === '') {
+            continue;
+        }
+        const id = raw.id.trim();
+        list.push({
+            id,
+            label: typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : id,
+            createdAt: typeof raw.createdAt === 'string' && !Number.isNaN(Date.parse(raw.createdAt))
+                ? raw.createdAt
+                : new Date().toISOString(),
+            filestore: raw.filestore === true
+        });
+    }
+    return list;
+}
+function setCheckpoints(db, list) {
+    db.checkpoints = list.map(entry => ({ ...entry }));
+}
+function cutToBytes(value, maxBytes) {
+    let out = '';
+    for (const char of value) {
+        if (Buffer.byteLength(out + char, 'utf8') > maxBytes) {
+            break;
+        }
+        out += char;
+    }
+    return out;
+}
+/**
+ * `base + suffix`, kept within PostgreSQL's 63 bytes. PostgreSQL would
+ * truncate a longer name silently, and two of them could then be one; so the
+ * base is cut instead and a hash of the full name keeps them apart.
+ */
+function derivedDbName(base, suffix) {
+    const full = `${base}${suffix}`;
+    if (Buffer.byteLength(full, 'utf8') <= MAX_IDENTIFIER_BYTES) {
+        return full;
+    }
+    const hash = crypto.createHash('sha1').update(full).digest('hex').slice(0, 6);
+    const tail = `_${hash}${suffix}`;
+    const head = cutToBytes(base, MAX_IDENTIFIER_BYTES - Buffer.byteLength(tail, 'utf8')).replace(/_+$/, '');
+    return `${head || 'db'}${tail}`;
+}
+/** `<db>__cp_<base36 epoch seconds>`, moved on a second when taken. */
+function checkpointDbName(db, now, taken) {
+    let seconds = Math.floor(now.getTime() / 1000);
+    for (;;) {
+        const name = derivedDbName(db, `__cp_${seconds.toString(36)}`);
+        if (!taken.has(name.toLowerCase())) {
+            return name;
+        }
+        seconds++;
+    }
+}
+function defaultCheckpointLabel(now) {
+    const pad = (n) => `${n}`.padStart(2, '0');
+    return `${now.getDate()} ${MONTHS[now.getMonth()]} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+}
+function formatAge(createdAt, now) {
+    const then = Date.parse(createdAt);
+    if (Number.isNaN(then)) {
+        return '';
+    }
+    const minutes = Math.floor((now.getTime() - then) / 60000);
+    if (minutes < 1) {
+        return 'just now';
+    }
+    if (minutes < 60) {
+        return `${minutes} min ago`;
+    }
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) {
+        return `${hours} h ago`;
+    }
+    return `${Math.floor(hours / 24)} d ago`;
+}
+function formatBytes(bytes) {
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit++;
+    }
+    const shown = unit === 0 || value >= 10 ? Math.round(value).toString() : (Math.floor(value * 10) / 10).toString();
+    return `${shown} ${units[unit]}`;
+}
+/**
+ * One query for every checkpoint's size. pg_database_size reads the files;
+ * it never connects to the checkpoint, which refuses connections.
+ */
+function checkpointSizeSql(names) {
+    const list = names.map(viewQueries_1.sqlText).join(', ');
+    return `SELECT datname, pg_database_size(oid) FROM pg_database WHERE datname IN (${list});`;
+}
+/** `name|bytes` lines, as `runSql` prints them. */
+function parseSizes(output) {
+    const sizes = new Map();
+    for (const line of output.split('\n')) {
+        const cut = line.lastIndexOf('|');
+        if (cut <= 0) {
+            continue;
+        }
+        const value = Number(line.slice(cut + 1).trim());
+        if (Number.isFinite(value)) {
+            sizes.set(line.slice(0, cut).trim(), value);
+        }
+    }
+    return sizes;
+}
+exports.CHECKPOINT_COMMENT_PREFIX = 'odoo-devtools checkpoint of ';
+function checkpointComment(source) {
+    return `${exports.CHECKPOINT_COMMENT_PREFIX}${source}`;
+}
+/** Every protected database with its comment; checkpoints are among them. */
+exports.CHECKPOINT_COMMENTS_SQL = "SELECT datname, coalesce(shobj_description(oid, 'pg_database'), '') FROM pg_database WHERE datistemplate;";
+function parseCheckpointComments(output) {
+    const rows = [];
+    for (const line of output.split('\n')) {
+        const cut = line.indexOf('|');
+        if (cut <= 0) {
+            continue;
+        }
+        const comment = line.slice(cut + 1);
+        if (comment.startsWith(exports.CHECKPOINT_COMMENT_PREFIX)) {
+            rows.push({ name: line.slice(0, cut), source: comment.slice(exports.CHECKPOINT_COMMENT_PREFIX.length) });
+        }
+    }
+    return rows;
+}
+/** Checkpoints whose source database is gone and that nothing here records. */
+function findOrphanCheckpoints(rows, existing, recorded) {
+    return rows.filter(row => !existing.has(row.source.toLowerCase()) && !recorded.has(row.name.toLowerCase()));
+}
+
+
+/***/ }),
+/* 81 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.VIEW_MODELS_SQL = void 0;
+exports.sqlIdList = sqlIdList;
+exports.sqlText = sqlText;
+exports.firstXmlidSql = firstXmlidSql;
+exports.viewRowsSql = viewRowsSql;
+exports.parseViewRows = parseViewRows;
+exports.parseReportMessages = parseReportMessages;
+exports.parseWriteDates = parseWriteDates;
+exports.listInactiveViews = listInactiveViews;
+exports.getViewRows = getViewRows;
+exports.getReportMessages = getReportMessages;
+exports.getWriteDates = getWriteDates;
+exports.viewByXmlidSql = viewByXmlidSql;
+exports.findViewByXmlid = findViewByXmlid;
+exports.viewsLikeSql = viewsLikeSql;
+exports.findViewsLike = findViewsLike;
+exports.fingerprintsSql = fingerprintsSql;
+exports.parseFingerprints = parseFingerprints;
+exports.getViewFingerprints = getViewFingerprints;
+exports.getDatabaseUuid = getDatabaseUuid;
+exports.parseViewModels = parseViewModels;
+exports.viewModels = viewModels;
+exports.viewsOfModelSql = viewsOfModelSql;
+exports.viewsOfModel = viewsOfModel;
+exports.descendantsSql = descendantsSql;
+exports.descendants = descendants;
+exports.inactiveViewIds = inactiveViewIds;
+/**
+ * Read-only SQL for the View Doctor, through psql. Every query returns one
+ * JSON value (json_agg / json_object_agg): view names and Discuss bodies are
+ * free text with tabs and newlines, which the `|`-separated readers in
+ * database.ts would split. Ported from odoo-manager's docker_manager.py
+ * (list_disabled_views, _first_xmlid, the Discuss report query). Ids are
+ * validated integers and text goes in hex-encoded (sqlText); nothing else is
+ * ever interpolated.
+ */
+const postgres_1 = __webpack_require__(47);
+/** Ids for embedding in SQL; throws on anything that is not a positive integer. */
+function sqlIdList(ids) {
+    for (const id of ids) {
+        if (!Number.isSafeInteger(id) || id <= 0) {
+            throw new Error(`Not a view id: ${id}`);
+        }
+    }
+    return ids.join(',');
+}
+/**
+ * Text for embedding in SQL. Hex digits cannot close a literal, so no value
+ * - a model, a view name, an external id - can change the query.
+ */
+function sqlText(value) {
+    return `convert_from(decode('${Buffer.from(value, 'utf-8').toString('hex')}', 'hex'), 'UTF8')`;
+}
+/**
+ * A column of the view `v`'s first external id. ir.ui.view.xml_id is
+ * computed, with no column: Odoo takes the first ir_model_data row in that
+ * model's order (module, name). Every query that names or classifies a view
+ * by its external id goes through this, so a view with several is the same
+ * view everywhere.
+ */
+function firstXmlidSql(column) {
+    return `(SELECT ${column} FROM ir_model_data d WHERE d.model = 'ir.ui.view' AND d.res_id = v.id ORDER BY d.module, d.name LIMIT 1)`;
+}
+/**
+ * The view rows matching `where`, an expression over ir_ui_view aliased `v`.
+ * The root comes from a walk up inherit_id bounded at 50 steps, so a corrupt
+ * cycle cannot hang the query. A root counts as a report when any of its
+ * external ids is an ir.actions.report's report_name.
+ */
+function viewRowsSql(where) {
+    return `
+WITH RECURSIVE chain AS (
+    SELECT v.id AS start_id, v.id AS cur_id, v.inherit_id, 0 AS depth
+    FROM ir_ui_view v WHERE ${where}
+    UNION ALL
+    SELECT c.start_id, p.id, p.inherit_id, c.depth + 1
+    FROM chain c JOIN ir_ui_view p ON p.id = c.inherit_id
+    WHERE c.depth < 50
+), roots AS (
+    SELECT DISTINCT ON (start_id) start_id, cur_id AS root_id
+    FROM chain ORDER BY start_id, depth DESC
+)
+SELECT coalesce(json_agg(json_build_object(
+    'id', v.id,
+    'name', coalesce(v.name, v.type),
+    'model', coalesce(v.model, ''),
+    'type', v.type,
+    'active', v.active,
+    'inherit_id', v.inherit_id,
+    'xmlid', ${firstXmlidSql("d.module || '.' || d.name")},
+    'root_id', r.root_id,
+    'is_report', EXISTS (
+        SELECT 1 FROM ir_model_data rd
+        JOIN ir_act_report_xml a ON a.report_name = rd.module || '.' || rd.name
+        WHERE rd.model = 'ir.ui.view' AND rd.res_id = r.root_id),
+    'write_date', floor(extract(epoch FROM v.write_date) * 1000)
+) ORDER BY v.model, v.id), '[]'::json)
+FROM ir_ui_view v JOIN roots r ON r.start_id = v.id;`.trim();
+}
+const REPORT_MESSAGES_SQL = `
+SELECT coalesce(json_agg(json_build_object('id', id, 'date', create_date, 'body', body) ORDER BY id), '[]'::json)
+FROM mail_message
+WHERE model IN ('discuss.channel', 'mail.channel') AND body LIKE '%Disabled views%';`.trim();
+function parseJson(output, fallback) {
+    return JSON.parse(output.trim() || fallback);
+}
+function parseViewRows(output) {
+    const raw = parseJson(output, '[]');
+    if (!Array.isArray(raw)) {
+        throw new Error('Unexpected output from the view query.');
+    }
+    return raw.map(entry => {
+        const row = entry;
+        const id = Number(row.id);
+        return {
+            id,
+            name: String(row.name ?? ''),
+            model: String(row.model ?? ''),
+            type: String(row.type ?? ''),
+            active: row.active === true,
+            inheritId: typeof row.inherit_id === 'number' ? row.inherit_id : null,
+            xmlid: typeof row.xmlid === 'string' ? row.xmlid : null,
+            rootId: typeof row.root_id === 'number' ? row.root_id : id,
+            isReport: row.is_report === true,
+            writeDate: typeof row.write_date === 'number' ? row.write_date : 0
+        };
+    });
+}
+function parseReportMessages(output) {
+    const raw = parseJson(output, '[]');
+    if (!Array.isArray(raw)) {
+        throw new Error('Unexpected output from the report query.');
+    }
+    return raw.map(entry => {
+        const message = entry;
+        return { id: Number(message.id), body: String(message.body ?? '') };
+    });
+}
+function parseWriteDates(output) {
+    const raw = parseJson(output, '{}');
+    return new Map(Object.entries(raw).map(([id, ms]) => [Number(id), typeof ms === 'number' ? ms : 0]));
+}
+/** Every view that is off right now, whatever turned it off. */
+async function listInactiveViews(dbName) {
+    return parseViewRows(await (0, postgres_1.runSql)(dbName, viewRowsSql('v.active = false')));
+}
+/** The rows for these ids; an id with no view is absent. */
+async function getViewRows(dbName, ids) {
+    if (ids.length === 0) {
+        return [];
+    }
+    return parseViewRows(await (0, postgres_1.runSql)(dbName, viewRowsSql(`v.id IN (${sqlIdList(ids)})`)));
+}
+/** upgrade-util's post-upgrade report messages; none on a database without Discuss. */
+async function getReportMessages(dbName) {
+    const hasTable = await (0, postgres_1.runSql)(dbName, "SELECT to_regclass('mail_message') IS NOT NULL;");
+    if (hasTable !== 't') {
+        return [];
+    }
+    return parseReportMessages(await (0, postgres_1.runSql)(dbName, REPORT_MESSAGES_SQL));
+}
+/** write_date of each view in epoch ms; an id with no view is absent. */
+async function getWriteDates(dbName, ids) {
+    if (ids.length === 0) {
+        return new Map();
+    }
+    const sql = 'SELECT coalesce(json_object_agg(id, floor(extract(epoch FROM write_date) * 1000)), \'{}\'::json) '
+        + `FROM ir_ui_view WHERE id IN (${sqlIdList(ids)});`;
+    return parseWriteDates(await (0, postgres_1.runSql)(dbName, sql));
+}
+/** The query for the view with this external id; undefined for a string that is not module.name. */
+function viewByXmlidSql(xmlid) {
+    const dot = xmlid.indexOf('.');
+    if (dot <= 0 || dot === xmlid.length - 1) {
+        return undefined;
+    }
+    return viewRowsSql(`v.id IN (SELECT d.res_id FROM ir_model_data d WHERE d.model = 'ir.ui.view'
+        AND d.module = ${sqlText(xmlid.slice(0, dot))} AND d.name = ${sqlText(xmlid.slice(dot + 1))})`);
+}
+/** The view with this external id, if the database has one. */
+async function findViewByXmlid(dbName, xmlid) {
+    const sql = viewByXmlidSql(xmlid);
+    return sql ? parseViewRows(await (0, postgres_1.runSql)(dbName, sql))[0] : undefined;
+}
+/** The query for the view with this id and every view of the same model and type. */
+function viewsLikeSql(view) {
+    // 18.0 renamed the list type from 'tree': an upgraded list view is 'list', its original 'tree'.
+    const type = view.type === 'tree' || view.type === 'list'
+        ? `v.type IN (${sqlText('tree')}, ${sqlText('list')})`
+        : `v.type = ${sqlText(view.type)}`;
+    return viewRowsSql(`(v.id = ${sqlIdList([view.id])} OR (v.model = ${sqlText(view.model)} AND ${type}))`);
+}
+/** What matching a view of another database picks from: the same id, and its model and type's views. */
+async function findViewsLike(dbName, view) {
+    return parseViewRows(await (0, postgres_1.runSql)(dbName, viewsLikeSql(view)));
+}
+/**
+ * What tells whether views' arches were edited, for many at once (port of
+ * odoo-manager's get_view_fingerprints). arch_md5 hashes the raw arch_db as
+ * text, so one query covers the text column of 15 and the per-language jsonb
+ * of 16+. written is write_date: any ORM write moves it, turning a view on
+ * included, so it only ever proves a view untouched. arch_updated flips only
+ * when the arch itself is written. module/noupdate tell a module's own view
+ * from one that lives only in the database.
+ */
+function fingerprintsSql(ids) {
+    const unique = [...new Set(ids)].sort((a, b) => a - b);
+    return `SELECT coalesce(json_object_agg(v.id, json_build_object(
+    'arch_md5', md5(v.arch_db::text),
+    'written', floor(extract(epoch FROM v.write_date) * 1000),
+    'arch_updated', v.arch_updated,
+    'module', ${firstXmlidSql('d.module')},
+    'noupdate', ${firstXmlidSql('d.noupdate')}
+)), '{}'::json)
+FROM ir_ui_view v WHERE v.id IN (${sqlIdList(unique)});`;
+}
+function parseFingerprints(output) {
+    const raw = parseJson(output, '{}');
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new Error('Unexpected output from the fingerprint query.');
+    }
+    return new Map(Object.entries(raw).map(([id, fp]) => [Number(id), {
+            archMd5: typeof fp?.arch_md5 === 'string' ? fp.arch_md5 : null,
+            written: typeof fp?.written === 'number' ? fp.written : null,
+            archUpdated: typeof fp?.arch_updated === 'boolean' ? fp.arch_updated : null,
+            module: typeof fp?.module === 'string' ? fp.module : null,
+            noupdate: typeof fp?.noupdate === 'boolean' ? fp.noupdate : null
+        }]));
+}
+/** Fingerprints of these views; an id with no view is absent. Throws when they cannot be read. */
+async function getViewFingerprints(dbName, ids) {
+    if (ids.length === 0) {
+        return new Map();
+    }
+    return parseFingerprints(await (0, postgres_1.runSql)(dbName, fingerprintsSql(ids)));
+}
+/** The database's database.uuid, which a database recreated under the same name does not share. */
+async function getDatabaseUuid(dbName) {
+    const raw = parseJson(await (0, postgres_1.runSql)(dbName, "SELECT coalesce(json_agg(value), '[]'::json) FROM ir_config_parameter WHERE key = 'database.uuid';"), '[]');
+    return Array.isArray(raw) && typeof raw[0] === 'string' && raw[0] ? raw[0] : undefined;
+}
+/** The models that have views, with how many; Find View offers them. */
+exports.VIEW_MODELS_SQL = `
+SELECT coalesce(json_agg(json_build_object('model', model, 'count', n) ORDER BY model), '[]'::json)
+FROM (SELECT model, count(*) AS n FROM ir_ui_view WHERE model IS NOT NULL AND model <> '' GROUP BY model) m;`.trim();
+function parseViewModels(output) {
+    const raw = parseJson(output, '[]');
+    if (!Array.isArray(raw)) {
+        throw new Error('Unexpected output from the model query.');
+    }
+    return raw.map(entry => {
+        const model = entry;
+        return { model: String(model.model ?? ''), count: Number(model.count ?? 0) };
+    });
+}
+async function viewModels(dbName) {
+    return parseViewModels(await (0, postgres_1.runSql)(dbName, exports.VIEW_MODELS_SQL));
+}
+/** Every view of a model, on or off. */
+function viewsOfModelSql(model) {
+    return viewRowsSql(`v.model = ${sqlText(model)}`);
+}
+async function viewsOfModel(dbName, model) {
+    return parseViewRows(await (0, postgres_1.runSql)(dbName, viewsOfModelSql(model)));
+}
+/** The view and every view inheriting from it, at any depth, on or off; bounded like the root walk. */
+function descendantsSql(viewId) {
+    return viewRowsSql(`v.id IN (
+    WITH RECURSIVE tree AS (
+        SELECT id, 0 AS depth FROM ir_ui_view WHERE id = ${sqlIdList([viewId])}
+        UNION ALL
+        SELECT c.id, t.depth + 1 FROM ir_ui_view c JOIN tree t ON c.inherit_id = t.id WHERE t.depth < 50
+    ) SELECT id FROM tree)`);
+}
+async function descendants(dbName, viewId) {
+    return parseViewRows(await (0, postgres_1.runSql)(dbName, descendantsSql(viewId)));
+}
+/** The ids of the views that are off: what "also off in the original" compares with. */
+async function inactiveViewIds(dbName) {
+    const raw = parseJson(await (0, postgres_1.runSql)(dbName, "SELECT coalesce(json_agg(id), '[]'::json) FROM ir_ui_view WHERE active = false;"), '[]');
+    if (!Array.isArray(raw)) {
+        throw new Error('Unexpected output from the inactive view query.');
+    }
+    return raw.filter((id) => Number.isSafeInteger(id));
+}
+
+
+/***/ }),
+/* 82 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.serverVersionNum = serverVersionNum;
+exports.createDatabaseSql = createDatabaseSql;
+exports.databaseExistsVia = databaseExistsVia;
+exports.retryWhileBusy = retryWhileBusy;
+exports.copyDatabase = copyDatabase;
+exports.discardDatabase = discardDatabase;
+exports.stageRestore = stageRestore;
+exports.swapInRestored = swapInRestored;
+/**
+ * Copying, dropping and swapping whole databases, with their filestore. One
+ * routine for checkpoints, Clone and Templates. Pure over `CopyBackend`, so
+ * step order and rollback are tested as data; copyRuntime.ts wires the real
+ * psql and file system in. Releasing the source - stopping a server, ending
+ * connections - is the caller's job (connectionRelease.ts), done once around
+ * however many steps need it.
+ */
+const path = __importStar(__webpack_require__(3));
+const postgres_1 = __webpack_require__(47);
+const viewQueries_1 = __webpack_require__(81);
+const checkpoints_1 = __webpack_require__(80);
+const BUSY = /is being accessed by other users/;
+const BUSY_ATTEMPTS = 4;
+const BUSY_DELAY_MS = 500;
+const versionCache = new WeakMap();
+function serverVersionNum(backend) {
+    let cached = versionCache.get(backend);
+    if (!cached) {
+        cached = backend.sql('SHOW server_version_num;').then(out => Number.parseInt(out, 10) || 0);
+        versionCache.set(backend, cached);
+    }
+    return cached;
+}
+/**
+ * FILE_COPY copies the data files instead of writing every page to the WAL:
+ * seconds instead of minutes on a large database. Before 15 that was the
+ * only strategy, and the keyword does not exist.
+ */
+function createDatabaseSql(target, source, versionNum) {
+    const strategy = versionNum >= 150000 ? ' STRATEGY FILE_COPY' : '';
+    return `CREATE DATABASE ${(0, postgres_1.quotePgIdentifier)(target)} TEMPLATE ${(0, postgres_1.quotePgIdentifier)(source)}${strategy};`;
+}
+async function databaseExistsVia(backend, name) {
+    return (await backend.sql(`SELECT 1 FROM pg_database WHERE datname = ${(0, viewQueries_1.sqlText)(name)};`)) === '1';
+}
+/**
+ * Runs `run`, retrying while PostgreSQL says `db` has other sessions. Between
+ * tries only the extension's own backends are ended - the View Doctor's arch
+ * poll reconnects every 3 s. Anyone else's connection is the release step's
+ * to ask about, never ended here.
+ */
+async function retryWhileBusy(backend, db, run) {
+    for (let attempt = 1;; attempt++) {
+        try {
+            return await run();
+        }
+        catch (error) {
+            if (attempt >= BUSY_ATTEMPTS || !BUSY.test(String(error?.message ?? error))) {
+                throw error;
+            }
+            await backend.freeOwnConnections(db);
+            await backend.sleep(BUSY_DELAY_MS);
+        }
+    }
+}
+async function copyDatabase(backend, source, target, options) {
+    if (await databaseExistsVia(backend, target)) {
+        throw new Error(`A database named "${target}" already exists.`);
+    }
+    const versionNum = await serverVersionNum(backend);
+    const root = options.filestoreRoot;
+    let createdDb = false;
+    let createdFiles = false;
+    try {
+        await retryWhileBusy(backend, source, () => backend.sql(createDatabaseSql(target, source, versionNum)));
+        createdDb = true;
+        let filestore = false;
+        let copiedFiles = 0;
+        if (root && await backend.files.exists(path.join(root, source))) {
+            const to = path.join(root, target);
+            // No database owns a folder under a name that has no database, but
+            // it may belong to another cluster sharing the data dir: move it
+            // aside, never delete it.
+            if (await backend.files.exists(to)) {
+                const orphan = `${to}.orphan-${Date.now().toString(36)}`;
+                await backend.files.rename(to, orphan);
+                backend.log(`A filestore folder already existed for ${target}; moved it to ${orphan}.`);
+            }
+            createdFiles = true;
+            const linked = await backend.files.linkTree(path.join(root, source), to);
+            filestore = true;
+            copiedFiles = linked.copied;
+            if (linked.copied > 0) {
+                backend.log(`Filestore of ${source}: links were refused, so ${linked.copied} of ${linked.files} files were copied.`);
+            }
+        }
+        if (options.protect) {
+            // COMMENT takes only a string literal, so it is built server-side.
+            await backend.sql(`DO $$ BEGIN EXECUTE format('COMMENT ON DATABASE %I IS %L', ${(0, viewQueries_1.sqlText)(target)}, ${(0, viewQueries_1.sqlText)(options.protect.comment)}); END $$;`);
+            await backend.sql(`ALTER DATABASE ${(0, postgres_1.quotePgIdentifier)(target)} WITH ALLOW_CONNECTIONS false IS_TEMPLATE true;`);
+        }
+        return { filestore, copiedFiles };
+    }
+    catch (error) {
+        if (createdDb) {
+            await discardDatabase(backend, target).catch(cleanup => backend.log(`Could not drop the partial copy ${target}: ${cleanup}`));
+        }
+        if (createdFiles && root) {
+            await backend.files.remove(path.join(root, target)).catch(cleanup => backend.log(`Could not remove ${target}'s filestore: ${cleanup}`));
+        }
+        throw error;
+    }
+}
+/**
+ * Drops a database - a protected one too - and its filestore folder. The
+ * folder is removed only when this call dropped the database: a folder under
+ * a name with no database may belong to another cluster sharing the data
+ * dir, so it is moved aside instead.
+ */
+async function discardDatabase(backend, name, filestoreRoot) {
+    const existed = await databaseExistsVia(backend, name);
+    if (existed) {
+        await backend.sql(`ALTER DATABASE ${(0, postgres_1.quotePgIdentifier)(name)} WITH IS_TEMPLATE false;`);
+        await retryWhileBusy(backend, name, () => backend.sql(`DROP DATABASE IF EXISTS ${(0, postgres_1.quotePgIdentifier)(name)};`));
+    }
+    if (!filestoreRoot) {
+        return;
+    }
+    const folder = path.join(filestoreRoot, name);
+    if (existed) {
+        await backend.files.remove(folder);
+    }
+    else if (await backend.files.exists(folder)) {
+        const orphan = `${folder}.orphan-${Date.now().toString(36)}`;
+        await backend.files.rename(folder, orphan);
+        backend.log(`No database "${name}" exists, so its filestore folder was moved to ${orphan} instead of deleted.`);
+    }
+}
+const rename = (from, to) => `ALTER DATABASE ${(0, postgres_1.quotePgIdentifier)(from)} RENAME TO ${(0, postgres_1.quotePgIdentifier)(to)};`;
+/**
+ * Restore, part one: the checkpoint copied to `<db>__restoring`, unprotected,
+ * while the database and its server are still untouched.
+ */
+async function stageRestore(backend, db, checkpointDb, filestoreRoot) {
+    const replaced = (0, checkpoints_1.derivedDbName)(db, '__replaced');
+    if (await databaseExistsVia(backend, replaced)) {
+        throw new Error(`"${replaced}" is left over from an interrupted restore and may hold the data of "${db}". Rename or drop it in psql first.`);
+    }
+    if (filestoreRoot) {
+        const folder = path.join(filestoreRoot, replaced);
+        if (await backend.files.exists(folder)) {
+            throw new Error(`"${folder}" is left over from an interrupted restore and may hold the filestore of "${db}". Move or delete it first.`);
+        }
+    }
+    const staged = (0, checkpoints_1.derivedDbName)(db, '__restoring');
+    // A leftover staging copy is only ever a copy of a checkpoint.
+    await discardDatabase(backend, staged, filestoreRoot);
+    await copyDatabase(backend, checkpointDb, staged, { filestoreRoot });
+    return staged;
+}
+/**
+ * Restore, part two, with `db` released: renamed out of the way, the staged
+ * copy renamed in, the filestore folders swapped the same way, then the old
+ * state dropped. The database never goes missing: any failure undoes the
+ * steps done, in reverse.
+ */
+async function swapInRestored(backend, db, staged, filestoreRoot) {
+    const replaced = (0, checkpoints_1.derivedDbName)(db, '__replaced');
+    const undo = [];
+    try {
+        // A leftover folder may be the only copy of the live filestore.
+        if (filestoreRoot && await backend.files.exists(path.join(filestoreRoot, replaced))) {
+            throw new Error(`"${path.join(filestoreRoot, replaced)}" is left over from an interrupted restore and may hold the filestore of "${db}". Move or delete it first.`);
+        }
+        await retryWhileBusy(backend, db, () => backend.sql(rename(db, replaced)));
+        undo.push({ kind: 'db', run: () => backend.sql(rename(replaced, db)) });
+        await backend.sql(rename(staged, db));
+        undo.push({ kind: 'db', run: () => backend.sql(rename(db, staged)) });
+        if (filestoreRoot) {
+            const live = path.join(filestoreRoot, db);
+            const old = path.join(filestoreRoot, replaced);
+            const next = path.join(filestoreRoot, staged);
+            if (await backend.files.exists(live)) {
+                await backend.files.rename(live, old);
+                undo.push({ kind: 'files', run: () => backend.files.rename(old, live) });
+            }
+            if (await backend.files.exists(next)) {
+                await backend.files.rename(next, live);
+                undo.push({ kind: 'files', run: () => backend.files.rename(live, next) });
+            }
+        }
+    }
+    catch (error) {
+        const failed = new Set();
+        for (const step of undo.reverse()) {
+            try {
+                await step.run();
+            }
+            catch (undoError) {
+                failed.add(step.kind);
+                backend.log(`Could not undo a restore step: ${undoError}`);
+            }
+        }
+        if (failed.size > 0) {
+            const where = [];
+            if (failed.has('db')) {
+                where.push(`its database's previous state is in database "${replaced}"`);
+            }
+            if (failed.has('files') && filestoreRoot) {
+                where.push(`its filestore is in folder "${path.join(filestoreRoot, replaced)}"`);
+            }
+            throw new Error(`Restoring "${db}" failed and could not be undone: ${where.join(', and ')}. ${error?.message ?? error}`);
+        }
+        throw error;
+    }
+    try {
+        await discardDatabase(backend, replaced, filestoreRoot);
+    }
+    catch (error) {
+        backend.log(`Restored "${db}", but could not drop its previous state "${replaced}": ${error}`);
+    }
+}
+
+
+/***/ }),
+/* 83 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.realCopyBackend = realCopyBackend;
+exports.realReleaseHost = realReleaseHost;
+exports.dialogReleaseUi = dialogReleaseUi;
+exports.filestoreRootFor = filestoreRootFor;
+exports.withReleased = withReleased;
+/**
+ * The real CopyBackend, ReleaseHost and dialogs: psql, the file system, this
+ * window's debug sessions. Kept apart so databaseCopy.ts and
+ * connectionRelease.ts stay testable as data.
+ */
+const vscode = __importStar(__webpack_require__(1));
+const fs = __importStar(__webpack_require__(2));
+const os = __importStar(__webpack_require__(18));
+const path = __importStar(__webpack_require__(3));
+const filestore_1 = __webpack_require__(84);
+const odooDataDir_1 = __webpack_require__(85);
+const postgres_1 = __webpack_require__(47);
+const process_1 = __webpack_require__(13);
+const database_1 = __webpack_require__(48);
+const viewWorkerArgs_1 = __webpack_require__(50);
+const connectionRelease_1 = __webpack_require__(86);
+const runningState_1 = __webpack_require__(87);
+const debugSessions_1 = __webpack_require__(88);
+const versionsService_1 = __webpack_require__(33);
+const debugger_1 = __webpack_require__(89);
+const logger_1 = __webpack_require__(12);
+const notifications_1 = __webpack_require__(16);
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+async function psqlWithDb(db, sql, extra = []) {
+    const { stdout } = await (0, process_1.runCommand)('psql', [
+        '--no-psqlrc', '-v', 'ON_ERROR_STOP=1', '-v', `db=${db}`, ...extra, '-d', 'postgres', '-tA'
+    ], { env: (0, database_1.ownQueryEnv)(), input: sql });
+    return stdout;
+}
+const END_OWN_SQL = `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+WHERE datname = :'db' AND pid <> pg_backend_pid()
+  AND application_name IN ('${database_1.OWN_QUERY_APP_NAME}', '${viewWorkerArgs_1.VIEW_WORKER_APP_NAME}');
+`;
+// Only the pids the user saw and agreed to; a newcomer is not among them.
+const END_PIDS_SQL = `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+WHERE datname = :'db' AND pid = ANY(string_to_array(:'pids', ',')::int[]);
+`;
+function realCopyBackend() {
+    return {
+        sql: statement => (0, postgres_1.runSql)('postgres', statement),
+        freeOwnConnections: async (db) => { await psqlWithDb(db, END_OWN_SQL); },
+        files: { exists: filestore_1.dirExists, linkTree: (src, dst) => (0, filestore_1.linkTree)(src, dst), rename: filestore_1.renameDir, remove: filestore_1.removeTree },
+        log: message => logger_1.logger.info(message),
+        sleep
+    };
+}
+function realReleaseHost() {
+    return {
+        letGo: db => (0, postgres_1.releaseDatabase)(db),
+        ownRun: async (db) => {
+            (0, runningState_1.invalidateRunningState)();
+            const instance = (await (0, runningState_1.getRunningInstances)())
+                .find(entry => entry.origin === 'managed' && entry.dbName === db && entry.debuggerName && entry.versionId);
+            if (!instance?.debuggerName || !instance.versionId) {
+                return undefined;
+            }
+            const session = (0, debugSessions_1.getSessionByName)(instance.debuggerName);
+            return { versionId: instance.versionId, debuggerName: instance.debuggerName, noDebug: session?.configuration?.noDebug === true };
+        },
+        stop: async (run) => {
+            const session = (0, debugSessions_1.getSessionByName)(run.debuggerName);
+            if (!session) {
+                return;
+            }
+            await vscode.debug.stopDebugging(session);
+            for (let i = 0; i < 120 && (0, debugSessions_1.getSessionByName)(run.debuggerName) === session; i++) {
+                await sleep(250);
+            }
+            if ((0, debugSessions_1.getSessionByName)(run.debuggerName) === session) {
+                throw new Error(`"${run.debuggerName}" did not stop within 30 seconds.`);
+            }
+        },
+        start: async (run) => {
+            const result = await (0, debugger_1.startServerForVersion)(run.versionId, { noDebug: run.noDebug, quiet: true });
+            if (!result.ok) {
+                throw new Error(result.message ?? `Could not start "${run.debuggerName}".`);
+            }
+        },
+        connections: async (db) => (0, connectionRelease_1.parseConnections)(await psqlWithDb(db, connectionRelease_1.CONNECTIONS_SQL, ['-F', '\x1f'])),
+        endOwnQueries: async (db) => { await psqlWithDb(db, END_OWN_SQL); },
+        end: async (db, pids) => { await psqlWithDb(db, END_PIDS_SQL, ['-v', `pids=${pids.join(',')}`]); },
+        sleep,
+        restartFailed: (run, error) => {
+            void (0, notifications_1.showWarning)(`The server for "${run.debuggerName}" did not restart: ${(0, logger_1.errorMessage)(error)}`);
+        }
+    };
+}
+/** `purpose` finishes "Stop it to …?": "take the checkpoint", "restore it", "copy it". */
+function dialogReleaseUi(purpose, restarts = true) {
+    return {
+        confirmStop: async (db) => (await (0, notifications_1.showModalWarning)(`"${db}" is running in this window. Stop it to ${purpose}?${restarts ? ' It restarts afterwards.' : ''}`, 'Stop and Continue')) === 'Stop and Continue',
+        confirmEnd: async (db, connections) => (await (0, notifications_1.showModalWarning)(`"${db}" has ${connections.length === 1 ? 'another connection' : `${connections.length} other connections`}: `
+            + `${connections.map(connectionRelease_1.describeConnection).join(', ')}. End ${connections.length === 1 ? 'it' : 'them'} to continue?`, 'End Them')) === 'End Them'
+    };
+}
+/** `<data dir>/filestore` for a version's server (the active version's when none is given). */
+function filestoreRootFor(versionId) {
+    const service = versionsService_1.VersionsService.getInstance();
+    const version = (versionId ? service.getVersion(versionId) : undefined) ?? service.getActiveVersion();
+    const settings = version?.settings;
+    // Not getWorkspacePath(): it toasts when no folder is open.
+    const workspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
+    const cwd = (0, debugger_1.runDirectory)(workspace);
+    const dataDir = (0, odooDataDir_1.resolveOdooDataDir)({
+        extraParams: settings?.extraParams ?? '',
+        env: process.env,
+        platform: process.platform,
+        home: os.homedir(),
+        cwd,
+        odooPath: path.resolve(cwd, settings?.odooPath ?? './odoo'),
+        readText: file => {
+            try {
+                return fs.readFileSync(file, 'utf8');
+            }
+            catch {
+                return undefined;
+            }
+        }
+    });
+    return (0, odooDataDir_1.filestoreRootOf)(dataDir);
+}
+/**
+ * Runs `work` with `db` released, then restarts what was stopped - even when
+ * `work` fails. `{ done: false }` means the user said no.
+ */
+async function withReleased(db, purpose, work, options = {}) {
+    const restart = options.restart ?? true;
+    const release = await (0, connectionRelease_1.releaseForCopy)(db, realReleaseHost(), dialogReleaseUi(purpose, restart));
+    if (!release) {
+        return { done: false };
+    }
+    let value;
+    try {
+        value = await work();
+    }
+    catch (error) {
+        // The work failed, so what it was to remove is still there: bring the server back.
+        await restartAfter(db, release.restart);
+        throw error;
+    }
+    if (restart) {
+        await restartAfter(db, release.restart);
+    }
+    else {
+        (0, runningState_1.invalidateRunningState)();
+    }
+    return { done: true, value };
+}
+async function restartAfter(db, restart) {
+    try {
+        await restart();
+    }
+    catch (error) {
+        void (0, notifications_1.showWarning)(`The server for "${db}" did not restart: ${(0, logger_1.errorMessage)(error)}`);
+    }
+    finally {
+        (0, runningState_1.invalidateRunningState)();
+    }
+}
+
+
+/***/ }),
+/* 84 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.dirExists = dirExists;
+exports.removeTree = removeTree;
+exports.renameDir = renameDir;
+exports.linkTree = linkTree;
+/**
+ * Odoo's filestore copied by hard links. Safe because Odoo never changes a
+ * filestore file in place: a file is named by the SHA-1 of its content,
+ * written once only when it does not exist yet (ir_attachment._file_write,
+ * 15.0-19.0), and the garbage collector only unlinks. So two folders can share
+ * the underlying files forever, and a checkpoint of a 5 GB filestore costs
+ * almost nothing.
+ */
+const fs = __importStar(__webpack_require__(20));
+const path = __importStar(__webpack_require__(3));
+const realOps = {
+    link: (src, dst) => fs.link(src, dst),
+    copyFile: (src, dst) => fs.copyFile(src, dst)
+};
+/** Errors that mean "links are not possible here", not "something broke". */
+const NO_LINKS = new Set(['EXDEV', 'EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'EMLINK', 'ENOSYS']);
+async function dirExists(dir) {
+    try {
+        return (await fs.stat(dir)).isDirectory();
+    }
+    catch {
+        return false;
+    }
+}
+async function removeTree(dir) {
+    await fs.rm(dir, { recursive: true, force: true });
+}
+async function renameDir(from, to) {
+    await fs.rename(from, to);
+}
+/** Recreates `src` at `dst`, linking every file. `dst` must not exist. */
+async function linkTree(src, dst, ops = realOps) {
+    if (await dirExists(dst) || await fs.lstat(dst).then(() => true, () => false)) {
+        throw new Error(`${dst} already exists.`);
+    }
+    const result = { files: 0, copied: 0 };
+    let linking = true;
+    async function walk(from, to) {
+        await fs.mkdir(to, { recursive: true });
+        for (const entry of await fs.readdir(from, { withFileTypes: true })) {
+            const source = path.join(from, entry.name);
+            const target = path.join(to, entry.name);
+            if (entry.isDirectory()) {
+                await walk(source, target);
+            }
+            else if (entry.isSymbolicLink()) {
+                await fs.symlink(await fs.readlink(source), target);
+            }
+            else if (entry.isFile()) {
+                result.files++;
+                if (linking) {
+                    try {
+                        await ops.link(source, target);
+                        continue;
+                    }
+                    catch (error) {
+                        if (!NO_LINKS.has(error.code ?? '')) {
+                            throw error;
+                        }
+                        linking = false;
+                    }
+                }
+                await ops.copyFile(source, target);
+                result.copied++;
+            }
+        }
+    }
+    await walk(src, dst);
+    return result;
+}
+
+
+/***/ }),
+/* 85 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.extraParamValue = extraParamValue;
+exports.readConfigDataDir = readConfigDataDir;
+exports.resolveOdooDataDir = resolveOdooDataDir;
+exports.filestoreRootOf = filestoreRootOf;
+/**
+ * Where Odoo keeps its data dir, found the way Odoo itself finds it
+ * (odoo/tools/config.py, 15.0-19.0): `--data-dir` on the command line, else
+ * `data_dir` in the config file, else the platform default from appdirs. The
+ * filestore of database `x` is `<data dir>/filestore/x`. Pure: the caller
+ * passes the environment and a file reader.
+ */
+const path = __importStar(__webpack_require__(3));
+function pathApi(platform) {
+    return platform === 'win32' ? path.win32 : path.posix;
+}
+/** The value of an option in comma-split extra params; the last one wins, as with optparse. */
+function extraParamValue(tokens, long, short) {
+    let value;
+    for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i];
+        if (token === long || token === short) {
+            if (i + 1 < tokens.length) {
+                value = tokens[++i];
+            }
+        }
+        else if (token.startsWith(`${long}=`) || token.startsWith(`${long} `)) {
+            value = token.slice(long.length + 1);
+        }
+        else if (token.startsWith(short) && !token.startsWith('--')) {
+            value = token.slice(short.length);
+        }
+    }
+    const trimmed = value?.trim();
+    return trimmed ? trimmed : undefined;
+}
+/** `data_dir` from an Odoo config file's [options] section. */
+function readConfigDataDir(text) {
+    let section = '';
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line || line.startsWith(';') || line.startsWith('#')) {
+            continue;
+        }
+        const header = /^\[(.+)\]$/.exec(line);
+        if (header) {
+            section = header[1].trim();
+            continue;
+        }
+        if (section !== 'options') {
+            continue;
+        }
+        const match = /^data_dir\s*[=:]\s*(.*)$/.exec(line);
+        if (match) {
+            const value = match[1].trim();
+            return value && value !== 'False' && value !== 'None' ? value : undefined;
+        }
+    }
+    return undefined;
+}
+/** `~`, `$VAR`, `${VAR}` and `%VAR%` expanded, then made absolute against `cwd`. */
+function expandPath(value, inputs) {
+    const p = pathApi(inputs.platform);
+    let expanded = value.replace(/^~(?=$|[\\/])/, inputs.home);
+    expanded = expanded.replace(/\$\{(\w+)\}|\$(\w+)|%(\w+)%/g, (whole, a, b, c) => {
+        const name = a ?? b ?? c;
+        if (name === 'HOME' && inputs.env.HOME === undefined) {
+            return inputs.home;
+        }
+        return inputs.env[name] ?? whole;
+    });
+    return p.resolve(inputs.cwd, expanded);
+}
+function defaultConfigFile(inputs) {
+    const p = pathApi(inputs.platform);
+    if (inputs.platform === 'win32') {
+        return p.join(inputs.odooPath, 'odoo.conf');
+    }
+    const current = p.join(inputs.home, '.odoorc');
+    const legacy = p.join(inputs.home, '.openerp_serverrc');
+    if (inputs.readText(current) === undefined && inputs.readText(legacy) !== undefined) {
+        return legacy;
+    }
+    return current;
+}
+function platformDefault(inputs) {
+    const p = pathApi(inputs.platform);
+    if (inputs.platform === 'win32') {
+        const local = inputs.env.LOCALAPPDATA || p.join(inputs.home, 'AppData', 'Local');
+        return p.join(local, 'OpenERP S.A.', 'Odoo');
+    }
+    if (inputs.platform === 'darwin') {
+        return p.join(inputs.home, 'Library', 'Application Support', 'Odoo');
+    }
+    return p.join(inputs.env.XDG_DATA_HOME || p.join(inputs.home, '.local', 'share'), 'Odoo');
+}
+function resolveOdooDataDir(inputs) {
+    const tokens = inputs.extraParams.split(',').map(token => token.trim()).filter(Boolean);
+    const fromArgs = extraParamValue(tokens, '--data-dir', '-D');
+    if (fromArgs) {
+        return expandPath(fromArgs, inputs);
+    }
+    const configArg = extraParamValue(tokens, '--config', '-c');
+    const configFile = configArg
+        ? expandPath(configArg, inputs)
+        : inputs.env.ODOO_RC || inputs.env.OPENERP_SERVER || defaultConfigFile(inputs);
+    const text = configFile ? inputs.readText(configFile) : undefined;
+    const fromConfig = text === undefined ? undefined : readConfigDataDir(text);
+    if (fromConfig) {
+        return expandPath(fromConfig, inputs);
+    }
+    return platformDefault(inputs);
+}
+function filestoreRootOf(dataDir, platform = process.platform) {
+    return pathApi(platform).join(dataDir, 'filestore');
+}
+
+
+/***/ }),
+/* 86 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CONNECTIONS_SQL = void 0;
+exports.parseConnections = parseConnections;
+exports.describeConnection = describeConnection;
+exports.releaseForCopy = releaseForCopy;
+/**
+ * Freeing a database for a copy, a rename or a drop: PostgreSQL refuses all
+ * three while anyone else is connected. Our own server is stopped (after
+ * asking) and restarted afterwards; our own backends are ended silently; and
+ * anything else is listed, ended only after the user says so. Pure over
+ * ReleaseHost and ReleaseUi; copyRuntime.ts provides the real ones.
+ */
+const database_1 = __webpack_require__(48);
+const viewWorkerArgs_1 = __webpack_require__(50);
+const POLL_MS = 250;
+/** A stopped Odoo closes its connections as it exits: up to 10 s. */
+const SERVER_EXIT_POLLS = 40;
+const ENDED_POLLS = 20;
+// psql reads it on stdin, so :'db' stays a variable, never spliced in.
+exports.CONNECTIONS_SQL = `SELECT pid, coalesce(application_name, ''), coalesce(host(client_addr), ''), coalesce(usename, '')
+FROM pg_stat_activity
+WHERE datname = :'db' AND pid <> pg_backend_pid() AND backend_type = 'client backend'
+  AND coalesce(application_name, '') NOT IN ('${database_1.OWN_QUERY_APP_NAME}', '${viewWorkerArgs_1.VIEW_WORKER_APP_NAME}');
+`;
+/** Rows separated by newlines, fields by the unit separator (psql -F '\x1f'). */
+function parseConnections(output) {
+    const rows = [];
+    for (const line of output.split('\n')) {
+        const [pid, application = '', client = '', user = ''] = line.split('\x1f');
+        const id = Number.parseInt(pid ?? '', 10);
+        if (Number.isSafeInteger(id) && id > 0) {
+            rows.push({ pid: id, application, client, user });
+        }
+    }
+    return rows;
+}
+function describeConnection(connection) {
+    const who = connection.application || 'an unnamed client';
+    return `${who} (${connection.client || 'local socket'})`;
+}
+async function pollUntilEmpty(host, db, polls) {
+    let current = await host.connections(db);
+    for (let i = 0; i < polls && current.length > 0; i++) {
+        await host.sleep(POLL_MS);
+        current = await host.connections(db);
+    }
+    return current;
+}
+async function releaseForCopy(db, host, ui) {
+    await host.letGo(db);
+    const run = await host.ownRun(db);
+    if (run) {
+        if (!await ui.confirmStop(db, run)) {
+            return undefined;
+        }
+        await host.stop(run);
+    }
+    const release = {
+        stopped: run,
+        restart: async () => {
+            if (run) {
+                await host.start(run);
+            }
+        }
+    };
+    // From here the server is down: whatever goes wrong, bring it back and
+    // report the original problem. A failed restart is reported, not thrown.
+    let restartedHere = false;
+    const restartQuietly = async () => {
+        if (!run || restartedHere) {
+            return;
+        }
+        restartedHere = true;
+        try {
+            await host.start(run);
+        }
+        catch (error) {
+            host.restartFailed?.(run, error);
+        }
+    };
+    try {
+        await host.endOwnQueries(db);
+        let others = run ? await pollUntilEmpty(host, db, SERVER_EXIT_POLLS) : await host.connections(db);
+        if (others.length === 0) {
+            return release;
+        }
+        if (!await ui.confirmEnd(db, others)) {
+            await restartQuietly();
+            return undefined;
+        }
+        await host.end(db, others.map(connection => connection.pid));
+        others = await pollUntilEmpty(host, db, ENDED_POLLS);
+        if (others.length > 0) {
+            throw new Error(`Could not end the connections to "${db}": ${others.map(describeConnection).join(', ')}.`);
+        }
+        return release;
+    }
+    catch (error) {
+        await restartQuietly();
+        throw error;
+    }
+}
+
+
+/***/ }),
+/* 87 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.mergeRunningInstances = mergeRunningInstances;
+exports.getRunningInstances = getRunningInstances;
+exports.runningDescriptionPart = runningDescriptionPart;
+exports.invalidateRunningState = invalidateRunningState;
+/**
+ * Which Odoo databases are live right now, from two merged signals: the
+ * extension's own debug sessions (authoritative for what it started) and a
+ * pg_stat_activity probe (catches servers started from a terminal or another
+ * window). Exists as a service, not tree-decoration logic, so later features -
+ * split-view comparison of two running instances - share one state source.
+ */
+const settingsStore_1 = __webpack_require__(6);
+const versionsService_1 = __webpack_require__(33);
+const database_1 = __webpack_require__(48);
+const debugSessions_1 = __webpack_require__(88);
+const versionIdentity_1 = __webpack_require__(36);
+const dbResolution_1 = __webpack_require__(61);
+const runtimeCache_1 = __webpack_require__(15);
+const logger_1 = __webpack_require__(12);
+/**
+ * One entry per database. A managed instance always wins: it knows the
+ * version and port, which the external probe cannot report.
+ */
+function mergeRunningInstances(managed, external) {
+    const byDb = new Map();
+    for (const instance of external) {
+        byDb.set(instance.dbName, instance);
+    }
+    for (const instance of managed) {
+        byDb.set(instance.dbName, instance);
+    }
+    return Array.from(byDb.values());
+}
+/** Sessions this extension started, resolved to the database each runs. */
+async function collectManaged() {
+    const names = new Set((0, debugSessions_1.runningDebuggerNames)());
+    if (names.size === 0) {
+        return [];
+    }
+    // Read without getSelectedProject(): this runs on every tree refresh and
+    // that helper toasts when no project is selected.
+    const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json').catch(() => undefined);
+    const project = data?.projects?.find(entry => entry.isSelected);
+    // One instance per running session, attributed to the version it
+    // started as: versions may share a debugger name (one launch entry that
+    // follows the active version), and only one of them is running.
+    const service = versionsService_1.VersionsService.getInstance();
+    const versions = service.getVersions();
+    const instances = [];
+    for (const debuggerName of names) {
+        const recorded = (0, debugSessions_1.versionIdOfSession)(debuggerName);
+        const version = (recorded ? service.getVersion(recorded) : undefined)
+            ?? (0, versionIdentity_1.sessionOwner)(versions, debuggerName, service.getActiveVersion()?.id);
+        if (!version) {
+            continue;
+        }
+        const db = (0, dbResolution_1.dbForVersion)(project, version.id);
+        if (!db) {
+            continue;
+        }
+        instances.push({
+            versionId: version.id,
+            debuggerName,
+            dbName: db.id,
+            port: Number(version.settings.portNumber) || undefined,
+            origin: 'managed'
+        });
+    }
+    return instances;
+}
+async function getRunningInstances() {
+    try {
+        const [managed, activeNames] = await Promise.all([collectManaged(), (0, database_1.getActiveDatabaseNames)()]);
+        const external = activeNames.map(dbName => ({ dbName, origin: 'external' }));
+        return mergeRunningInstances(managed, external);
+    }
+    catch (error) {
+        logger_1.logger.debug('Could not resolve running instances:', error);
+        return [];
+    }
+}
+/**
+ * The running marker for a database row, as plain text. TreeItem.description
+ * does not render codicons - unlike a QuickPickItem - so state is carried by
+ * words here, leaving the row's icon free to keep showing selection.
+ */
+function runningDescriptionPart(instance) {
+    if (!instance) {
+        return undefined;
+    }
+    if (instance.origin === 'external') {
+        return 'running (external)';
+    }
+    return instance.port ? `running :${instance.port}` : 'running';
+}
+/** Drops the cached PostgreSQL probe so the next read is fresh. */
+function invalidateRunningState() {
+    (0, runtimeCache_1.invalidateActiveDatabasesCache)();
+}
+
+
+/***/ }),
+/* 88 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.trackSession = trackSession;
+exports.untrackSession = untrackSession;
+exports.versionIdOfSession = versionIdOfSession;
+exports.getSessionByName = getSessionByName;
+exports.runningDebuggerNames = runningDebuggerNames;
+exports.anySessionRunning = anySessionRunning;
+exports.clearSessions = clearSessions;
+exports.resolveStopTarget = resolveStopTarget;
+const sessions = new Map();
+const sessionVersions = new Map();
+function nameOf(session) {
+    const name = session.configuration?.name;
+    return typeof name === 'string' && name.length > 0 ? name : undefined;
+}
+function trackSession(session, versionId) {
+    const name = nameOf(session);
+    if (name) {
+        sessions.set(name, session);
+        if (versionId) {
+            sessionVersions.set(name, versionId);
+        }
+        else {
+            sessionVersions.delete(name);
+        }
+    }
+}
+function untrackSession(session) {
+    const name = nameOf(session);
+    if (name) {
+        sessions.delete(name);
+        sessionVersions.delete(name);
+    }
+}
+/** The version a running session was started as, when it was recorded. */
+function versionIdOfSession(name) {
+    return sessions.has(name) ? sessionVersions.get(name) : undefined;
+}
+function getSessionByName(name) {
+    return sessions.get(name);
+}
+function runningDebuggerNames() {
+    return Array.from(sessions.keys());
+}
+function anySessionRunning() {
+    return sessions.size > 0;
+}
+/** Test seam: the registry is module state that outlives a single suite. */
+function clearSessions() {
+    sessions.clear();
+    sessionVersions.clear();
+}
+/**
+ * What "Stop Server" should act on. The active version's session wins
+ * outright; otherwise a lone session is unambiguous and anything else needs
+ * the user to choose.
+ */
+function resolveStopTarget(running, activeName) {
+    if (running.length === 0) {
+        return { kind: 'none' };
+    }
+    if (activeName && running.includes(activeName)) {
+        return { kind: 'single', name: activeName };
+    }
+    if (running.length === 1) {
+        return { kind: 'single', name: running[0] };
+    }
+    return { kind: 'prompt', names: [...running] };
+}
+
+
+/***/ }),
+/* 89 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.currentLaunchTarget = currentLaunchTarget;
+exports.runDirectory = runDirectory;
+exports.dropUnusedLaunchEntry = dropUnusedLaunchEntry;
+exports.setupDebugger = setupDebugger;
+exports.collectAddonsPaths = collectAddonsPaths;
+exports.buildOdooCommandLine = buildOdooCommandLine;
+exports.startDebugShell = startDebugShell;
+exports.stopDebugServer = stopDebugServer;
+exports.startServerForVersion = startServerForVersion;
+exports.startDebugServer = startDebugServer;
+/**
+ * Debugger integration: keeps the managed launch.json entry in sync with the
+ * active version/database/module selections, builds odoo-bin arguments
+ * (addons path, -i/-u, testing flags), and starts/stops the server and shell.
+ */
+const vscode = __importStar(__webpack_require__(1));
+const path = __importStar(__webpack_require__(3));
+const settings_1 = __webpack_require__(7);
+const utils_1 = __webpack_require__(8);
+const psaeInternal_1 = __webpack_require__(90);
+const settingsStore_1 = __webpack_require__(6);
+const versionsService_1 = __webpack_require__(33);
+const testing_1 = __webpack_require__(91);
+const database_1 = __webpack_require__(48);
+const logger_1 = __webpack_require__(12);
+const launchConfig_1 = __webpack_require__(19);
+const dataLocation_1 = __webpack_require__(17);
+const debugSessions_1 = __webpack_require__(88);
+const versionIdentity_1 = __webpack_require__(36);
+const dbResolution_1 = __webpack_require__(61);
+const versionRepos_1 = __webpack_require__(92);
+const provisioning_1 = __webpack_require__(67);
+const customWorktree_1 = __webpack_require__(57);
+const setupState_1 = __webpack_require__(71);
+const odooInstaller_1 = __webpack_require__(66);
+const server_1 = __webpack_require__(96);
+const gitExclude_1 = __webpack_require__(32);
+/** Why prepareArgs refuses: no database of that version is selected. */
+const NO_DATABASE = 'Select a database before running this action.';
+// Databases we already told the user about; prepareArgs re-runs on every
+// debounced sync, so without this the toast repeats until the DB is initialized.
+const baseInstallNotifiedDbs = new Set();
+async function selectPythonInterpreter(pythonPath) {
+    if (!pythonPath || pythonPath.trim().length === 0) {
+        return;
+    }
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+        return;
+    }
+    try {
+        const pythonExtension = vscode.extensions.getExtension('ms-python.python');
+        if (pythonExtension) {
+            const pythonApi = pythonExtension.isActive ? pythonExtension.exports : await pythonExtension.activate();
+            const updateActive = pythonApi?.environments?.updateActiveEnvironmentPath;
+            if (typeof updateActive === 'function') {
+                await updateActive(pythonPath);
+                return;
+            }
+        }
+        const config = vscode.workspace.getConfiguration('python', workspaceFolder.uri);
+        await Promise.all([
+            config.update('defaultInterpreterPath', pythonPath, vscode.ConfigurationTarget.Workspace),
+            config.update('pythonPath', pythonPath, vscode.ConfigurationTarget.Workspace)
+        ]);
+    }
+    catch (error) {
+        logger_1.logger.warn(`Failed to set Python interpreter to "${pythonPath}":`, error);
+    }
+}
+/** Where this window's launch configurations live (see launchTarget). */
+function currentLaunchTarget() {
+    return (0, launchConfig_1.launchTarget)(vscode.workspace.workspaceFile, (vscode.workspace.workspaceFolders ?? []).map(folder => folder.uri.fsPath));
+}
+/**
+ * The directory Odoo runs in: the workspace the data belongs to. In a folder
+ * window that is the folder; in a generated project workspace, whose first
+ * folder is a repository, it is the workspace the data came from.
+ */
+function runDirectory(workspacePath) {
+    return (0, dataLocation_1.currentDataLocation)()?.root ?? workspacePath;
+}
+/** Workspace files whose first folder has already been cleaned this session. */
+const cleanedFirstFolders = new Set();
+/**
+ * Takes our entries back out of a multi-root workspace's first folder, where
+ * earlier builds wrote them - usually the user's own repository.
+ */
+async function cleanUpFirstFolderLaunch(target, names) {
+    if (target.kind !== 'workspaceFile' || !target.firstFolderPath || cleanedFirstFolders.has(target.filePath)) {
+        return;
+    }
+    cleanedFirstFolders.add(target.filePath);
+    try {
+        const removed = await (0, launchConfig_1.removeManagedLaunchConfigs)(target.firstFolderPath, new Set(names));
+        if (removed > 0) {
+            logger_1.logger.info(`[debugger] moved ${removed} launch entr${removed === 1 ? 'y' : 'ies'} out of ${target.firstFolderPath} into ${target.filePath}`);
+        }
+    }
+    catch (error) {
+        logger_1.logger.warn(`[debugger] could not clean up ${target.firstFolderPath}/.vscode/launch.json:`, error);
+    }
+}
+/**
+ * Removes the launch entry named `name` once no version uses that name any
+ * more - after the user renames a version's debugger, so the Run and Debug
+ * dropdown does not keep offering the old entry.
+ */
+async function dropUnusedLaunchEntry(name) {
+    const target = currentLaunchTarget();
+    if (!name || !target || versionsService_1.VersionsService.getInstance().getVersions().some(version => version.settings.debuggerName === name)) {
+        return;
+    }
+    await (0, launchConfig_1.removeManagedLaunchConfigIn)(target, new Set([name])).catch(error => {
+        logger_1.logger.warn(`[debugger] could not remove the launch entry "${name}":`, error);
+    });
+}
+/** The versions that get a launch entry: every provisioned one, and the active one. */
+function launchCandidates(versionsService) {
+    const activeVersion = versionsService.getActiveVersion();
+    const candidates = versionsService.getVersions()
+        .filter(version => (0, provisioning_1.isVersionProvisioned)((0, utils_1.resolveOptionalPath)(version.settings.pythonPath)));
+    if (activeVersion && !candidates.some(version => version.id === activeVersion.id)) {
+        candidates.push(activeVersion);
+    }
+    return candidates;
+}
+async function setupDebugger() {
+    const workspacePath = (0, utils_1.getWorkspacePath)();
+    const target = currentLaunchTarget();
+    if (!workspacePath || !target) {
+        return undefined;
+    }
+    const cwd = runDirectory(workspacePath);
+    // Silent: this runs from every refresh, and an install with no projects
+    // yet must not be told to create one by a sync it did not request.
+    const result = await settingsStore_1.SettingsStore.peekSelectedProject();
+    if (!result) {
+        return undefined;
+    }
+    const { project } = result;
+    const versionsService = versionsService_1.VersionsService.getInstance();
+    await versionsService.initialize();
+    const activeVersion = versionsService.getActiveVersion();
+    const activeSettings = await versionsService.getActiveVersionSettings();
+    // One entry per provisioned version, each with its own name, ports and
+    // database: launch.json accumulates durable entries instead of one being
+    // renamed out from under the Run and Debug dropdown, and two versions can
+    // run at once. Unprovisioned versions have no interpreter to launch.
+    const provisioned = launchCandidates(versionsService);
+    // Versions the user gave the same debugger name share one entry, written
+    // for the active one among them (else the oldest): F5 then runs whatever
+    // is active. Writing each in turn would leave whichever came last.
+    const targets = provisioned.filter(version => (0, versionIdentity_1.sessionOwner)(provisioned, version.settings.debuggerName, activeVersion?.id)?.id === version.id);
+    // Worktrees are created once per sync rather than per launch entry: the
+    // same branch is often shared by several versions.
+    const setupRoot = (0, setupState_1.readSetupState)().provisioningRoot;
+    const worktreeProblems = new Set();
+    const worktreesNeedingResolution = new Set();
+    /** Versions whose entry is removed: no database of theirs is selected. */
+    const withoutDatabase = new Set();
+    let activeConfig;
+    for (const version of targets) {
+        const settings = version.settings;
+        const normalizedOdooPath = (0, utils_1.normalizePath)(settings.odooPath);
+        const normalizedPythonPath = (0, utils_1.normalizePath)(settings.pythonPath);
+        const versionDb = (0, dbResolution_1.dbForVersion)(project, version.id);
+        if (versionDb) {
+            // Non-interactive on purpose: this sync runs on a debounce after
+            // almost every command, so it creates the worktrees that need no
+            // arbitration and reports the rest instead of raising a modal.
+            const { problems, needsResolution } = await (0, customWorktree_1.ensureCustomWorktrees)(await (0, versionRepos_1.resolveReposForDatabase)(project, versionDb, { version, root: setupRoot }), undefined, { interactive: false });
+            problems.forEach(problem => worktreeProblems.add(problem));
+            needsResolution.forEach(name => worktreesNeedingResolution.add(name));
+        }
+        let args;
+        try {
+            args = await prepareArgs(project, settings, { versionId: version.id });
+        }
+        catch (error) {
+            // No database of this version: the entry an earlier sync wrote
+            // still names the old one, so F5 would still launch it there.
+            if (error instanceof Error && error.message === NO_DATABASE) {
+                withoutDatabase.add(settings.debuggerName);
+            }
+            // A version with no resolvable database is skipped rather than
+            // failing the sync for every other version. Only the active one is
+            // worth telling the user about - and not for a missing database:
+            // the status bar says "no … database", and Start Server and Copy
+            // Command ask for one. A toast from this unrequested sync doubled
+            // "… was deleted in another window" (eighteenth run).
+            if (version.id === activeVersion?.id) {
+                logger_1.logger.warn('Could not prepare debugger launch arguments:', error);
+                if (error instanceof Error && error.message === NO_DATABASE) {
+                    logger_1.logger.info('Select a database before configuring the debugger.');
+                }
+                else if (!(0, settingsStore_1.isStoreReadError)(error)) {
+                    void (0, utils_1.showError)(error instanceof Error ? error.message : 'Could not prepare debugger launch arguments.');
+                }
+            }
+            else {
+                logger_1.logger.debug(`Skipping launch entry for "${version.name}": ${(0, logger_1.errorMessage)(error)}`);
+            }
+            continue;
+        }
+        try {
+            // Only the extension's own entries in launch.json are rewritten;
+            // user comments and other configurations are preserved.
+            const config = await (0, launchConfig_1.updateManagedLaunchConfigIn)(target, {
+                name: settings.debuggerName,
+                type: 'debugpy',
+                request: 'launch',
+                cwd,
+                program: `${normalizedOdooPath}/odoo-bin`,
+                python: normalizedPythonPath,
+                console: 'integratedTerminal',
+                args
+            });
+            if (version.id === activeVersion?.id) {
+                activeConfig = config;
+            }
+        }
+        catch (error) {
+            void (0, utils_1.showError)(`Unable to update launch.json: ${(0, logger_1.errorMessage)(error)}`);
+            return undefined;
+        }
+    }
+    if (worktreeProblems.size > 0) {
+        const names = Array.from(worktreesNeedingResolution);
+        if (names.length > 0) {
+            // Offered, not forced: freeing the branch edits a checkout the
+            // user owns, so it happens inside a command they started.
+            void (0, utils_1.showWarning)(`${names.join(', ')} ${names.length === 1 ? 'is' : 'are'} using the source checkout: `
+                + 'the branch each needs is checked out there.', 'Resolve').then(choice => {
+                if (choice === 'Resolve') {
+                    void vscode.commands.executeCommand('odt.repo.resolveWorktrees');
+                }
+            });
+        }
+        else {
+            void (0, utils_1.showWarning)(`Some repositories fell back to their source checkout — ${Array.from(worktreeProblems).join('; ')}`);
+        }
+    }
+    if (withoutDatabase.size > 0) {
+        const removed = await (0, launchConfig_1.removeManagedLaunchConfigIn)(target, withoutDatabase).catch(error => {
+            logger_1.logger.warn('[debugger] could not remove launch entries of versions without a database:', error);
+            return 0;
+        });
+        if (removed > 0) {
+            logger_1.logger.info(`[debugger] removed the launch entries of ${Array.from(withoutDatabase).join(', ')}: no database of that version is selected`);
+        }
+    }
+    // A folder window that is itself a clone: keep launch.json out of git status.
+    if (target.kind === 'folder') {
+        await (0, gitExclude_1.excludeLaunchFromGit)(target.folderPath);
+    }
+    // Every version's name, not only the provisioned ones written above.
+    await cleanUpFirstFolderLaunch(target, versionsService.getVersions()
+        .map(version => version.settings.debuggerName)
+        .filter(name => !!name));
+    await selectPythonInterpreter(activeSettings.pythonPath);
+    return activeConfig;
+}
+/**
+ * The --addons-path a version runs `db` with: core, enterprise and themes,
+ * the project's repositories as this database's version sees them, the
+ * included psae-internal folders and the legacy submodule paths. Shared by the
+ * server launch and the View Doctor's shell, so both load the same code.
+ */
+async function collectAddonsPaths(project, settings, db, versionId) {
+    // Build addons path using settings paths
+    const addonsPaths = [];
+    const addonPathSet = new Set();
+    const addAddonPath = (rawPath) => {
+        if (!rawPath) {
+            return;
+        }
+        const normalized = (0, utils_1.normalizePath)(rawPath);
+        const resolved = path.resolve(normalized);
+        if (addonPathSet.has(resolved)) {
+            return;
+        }
+        addonPathSet.add(resolved);
+        addonsPaths.push(normalized);
+    };
+    // Add enterprise path if it exists
+    if (settings.enterprisePath) {
+        addAddonPath(settings.enterprisePath);
+    }
+    // Add design-themes path if it exists
+    if (settings.designThemesPath) {
+        addAddonPath(settings.designThemesPath);
+    }
+    // Add Odoo core addons paths
+    if (settings.odooPath) {
+        addAddonPath(`${settings.odooPath}/odoo/addons`);
+        addAddonPath(`${settings.odooPath}/addons`);
+    }
+    const projectModules = db.modules ?? [];
+    // psae-internal directories: resolved through the shared service so the
+    // Modules tree and the launch args always agree on what is included.
+    // Resolve every project repo to the directory this version runs from, so
+    // two versions on different branches never share one copy of the code.
+    const resolvedRepos = await (0, versionRepos_1.resolveReposForDatabase)(project, db, {
+        version: versionId ? versionsService_1.VersionsService.getInstance().getVersion(versionId) : undefined
+    });
+    const discovery = (0, psaeInternal_1.collectModuleDiscovery)(project, resolvedRepos);
+    const containerPathMap = new Map();
+    const recordContainerPath = (rawContainerPath) => {
+        const normalized = (0, utils_1.normalizePath)(rawContainerPath);
+        const resolved = path.resolve(normalized);
+        if (!containerPathMap.has(resolved)) {
+            containerPathMap.set(resolved, normalized);
+        }
+    };
+    for (const moduleInfo of discovery.modules) {
+        const resolvedModulePath = path.resolve(moduleInfo.path);
+        const resolvedRepoPath = path.resolve(moduleInfo.repoPath);
+        if (resolvedModulePath === resolvedRepoPath) {
+            recordContainerPath(moduleInfo.path);
+        }
+        else {
+            recordContainerPath(path.dirname(moduleInfo.path));
+        }
+    }
+    for (const containerPath of containerPathMap.values()) {
+        addAddonPath(containerPath);
+    }
+    const selectedModuleNames = new Set(projectModules
+        .filter(module => module.state === 'install' || module.state === 'upgrade')
+        .map(module => module.name));
+    let installedModuleNames = new Set();
+    try {
+        installedModuleNames = await (0, database_1.getInstalledModuleNames)(db.id);
+    }
+    catch (error) {
+        logger_1.logger.warn('Failed to get installed modules from database:', error);
+    }
+    const psaeStates = (0, psaeInternal_1.resolvePsaeDirectories)({
+        psaeDirectories: discovery.psaeDirectories,
+        includedPsaeInternalPaths: project.includedPsaeInternalPaths,
+        selectedModuleNames,
+        installedModuleNames
+    });
+    for (const psaeState of psaeStates) {
+        if (psaeState.isIncluded) {
+            addAddonPath(psaeState.path);
+        }
+    }
+    // Add global submodules paths from settings (for backward compatibility)
+    if (settings.subModulesPaths) {
+        const normalizedSubModulePaths = settings.subModulesPaths
+            .split(',')
+            .map(p => p.trim())
+            .filter(Boolean)
+            .map(p => (0, utils_1.normalizePath)(p));
+        for (const subModulePath of normalizedSubModulePaths) {
+            addAddonPath(subModulePath);
+        }
+    }
+    return addonsPaths;
+}
+async function prepareArgs(project, settings, options = {}) {
+    const isShell = options.isShell === true;
+    const db = (0, dbResolution_1.dbForVersion)(project, options.versionId);
+    if (!db) {
+        throw new Error(NO_DATABASE);
+    }
+    const projectModules = db.modules ?? [];
+    const addonsPaths = await collectAddonsPaths(project, settings, db, options.versionId);
+    let installs = projectModules
+        .filter(module => module.state === 'install')
+        .map(module => module.name);
+    const upgrades = projectModules
+        .filter(module => module.state === 'upgrade')
+        .map(module => module.name);
+    if (installs.length === 0) {
+        try {
+            const hasModuleTable = await (0, database_1.databaseHasModuleTable)(db.id);
+            if (!hasModuleTable) {
+                installs = ['base'];
+                if (!baseInstallNotifiedDbs.has(db.id)) {
+                    baseInstallNotifiedDbs.add(db.id);
+                    (0, utils_1.showAutoInfo)('Added "base" during initialization so the new database can install core tables.', 3000);
+                }
+            }
+        }
+        catch (error) {
+            logger_1.logger.warn('Failed to verify module table state:', error);
+        }
+    }
+    const args = [];
+    if (isShell) {
+        args.push('shell', '-p', settings.shellPortNumber.toString());
+    }
+    else {
+        args.push('-p', settings.portNumber.toString());
+    }
+    args.push('--addons-path', addonsPaths.join(','), '-d', db.id);
+    if (installs.length > 0 || settings.installApps) {
+        const installParts = [installs.join(','), settings.installApps]
+            .map(part => part?.trim())
+            .filter(part => part && part.length > 0);
+        if (installParts.length > 0) {
+            args.push('-i', installParts.join(','));
+        }
+    }
+    if (upgrades.length > 0 || settings.upgradeApps) {
+        const upgradeParts = [upgrades.join(','), settings.upgradeApps]
+            .map(part => part?.trim())
+            .filter(part => part && part.length > 0);
+        if (upgradeParts.length > 0) {
+            args.push('-u', upgradeParts.join(','));
+        }
+    }
+    args.push('--limit-time-real', settings.limitTimeReal.toString(), '--limit-time-cpu', settings.limitTimeCpu.toString(), '--max-cron-threads', settings.maxCronThreads.toString());
+    // Use new testing system from project configuration
+    if (project.testingConfig?.isEnabled) {
+        args.push('--test-enable');
+        // Ensure testingConfig is a proper TestingConfigModel instance
+        const testingConfig = (0, testing_1.ensureTestingConfigModel)(project.testingConfig);
+        if (testingConfig.testFile) {
+            args.push('--test-file', testingConfig.testFile);
+        }
+        const tagsString = testingConfig.getTestTagsString();
+        if (tagsString) {
+            args.push('--test-tags', tagsString);
+        }
+        if (testingConfig.stopAfterInit) {
+            args.push('--stop-after-init');
+        }
+        if (testingConfig.logLevel && testingConfig.logLevel !== 'disabled') {
+            args.push('--log-level', testingConfig.logLevel);
+        }
+    }
+    if (settings.extraParams) {
+        const extraArgs = settings.extraParams
+            .split(',')
+            .map(param => param.trim())
+            .filter(Boolean);
+        args.push(...extraArgs);
+    }
+    if (settings.devMode) {
+        args.push(settings.devMode);
+    }
+    return args;
+}
+/**
+ * Assembles the full `python odoo-bin …` command line for the selected
+ * project's active version, quoted for a POSIX shell — the same command
+ * the debugger runs (server) or the shell terminal sends (`isShell`).
+ * Returns undefined after surfacing the reason when prerequisites are
+ * missing.
+ */
+async function buildOdooCommandLine(isShell = false) {
+    const result = await settingsStore_1.SettingsStore.getSelectedProject();
+    if (!result) {
+        return undefined;
+    }
+    const { project } = result;
+    const versionsService = versionsService_1.VersionsService.getInstance();
+    const workspaceSettings = await versionsService.getActiveVersionSettings();
+    const normalizedOdooPath = (0, utils_1.normalizePath)(workspaceSettings.odooPath);
+    const normalizedPythonPath = (0, utils_1.normalizePath)(workspaceSettings.pythonPath);
+    let args;
+    try {
+        args = await prepareArgs(project, workspaceSettings, {
+            isShell,
+            versionId: versionsService.getActiveVersion()?.id
+        });
+    }
+    catch (error) {
+        if (error instanceof Error) {
+            if (error.message === NO_DATABASE) {
+                void (0, utils_1.showInfo)('Select a database first.');
+            }
+            else if (!(0, settingsStore_1.isStoreReadError)(error)) {
+                void (0, utils_1.showError)(error.message);
+            }
+        }
+        else {
+            void (0, utils_1.showError)('Could not prepare the Odoo command.');
+        }
+        return undefined;
+    }
+    const odooBinPath = `${normalizedOdooPath}/odoo-bin`;
+    return [
+        quoteShellArg(normalizedPythonPath),
+        quoteShellArg(odooBinPath),
+        ...args.map(quoteShellArg)
+    ].join(' ');
+}
+async function startDebugShell() {
+    const workspacePath = (0, utils_1.getWorkspacePath)();
+    if (!workspacePath) {
+        return undefined;
+    }
+    const fullCommand = await buildOdooCommandLine(true);
+    if (!fullCommand) {
+        return undefined;
+    }
+    const terminal = vscode.window.createTerminal({
+        name: 'Odoo Shell',
+        cwd: runDirectory(workspacePath),
+        isTransient: true
+    });
+    terminal.show();
+    terminal.sendText(fullCommand);
+}
+function quoteShellArg(value) {
+    if (/^[\w@%+=:,./-]+$/.test(value)) {
+        return value;
+    }
+    const escapedValue = value.replaceAll("'", String.raw `'\''`);
+    return `'${escapedValue}'`;
+}
+/** Stops one of the extension's running sessions, asking only when ambiguous. */
+async function stopDebugServer() {
+    const settings = await versionsService_1.VersionsService.getInstance().getActiveVersionSettings();
+    const target = (0, debugSessions_1.resolveStopTarget)((0, debugSessions_1.runningDebuggerNames)(), settings.debuggerName);
+    if (target.kind === 'none') {
+        void (0, utils_1.showInfo)('No Odoo debug session is currently running.');
+        return;
+    }
+    let name;
+    if (target.kind === 'single') {
+        name = target.name;
+    }
+    else {
+        const picked = await vscode.window.showQuickPick(target.names, {
+            title: 'Stop which Odoo server?',
+            placeHolder: 'Several versions are running'
+        });
+        if (!picked) {
+            return;
+        }
+        name = picked;
+    }
+    const session = (0, debugSessions_1.getSessionByName)(name);
+    if (!session) {
+        void (0, utils_1.showInfo)('No Odoo debug session is currently running.');
+        return;
+    }
+    await vscode.debug.stopDebugging(session);
+}
+/**
+ * Starts one named version's server.
+ *
+ * Separate from `startDebugServer` because "the active version" is the wrong
+ * answer whenever two servers run side by side: an upgrade starts both, and
+ * only one of them can be active. launch.json already carries an entry per
+ * provisioned version, so any of them can be started by name.
+ *
+ * `quiet` suppresses the prompts that only make sense for a command the user
+ * invoked directly; a batch reports its own failures.
+ */
+async function startServerForVersion(versionId, options = {}) {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+        if (!options.quiet) {
+            void (0, utils_1.showError)('Open a workspace to use this command.');
+        }
+        return { ok: false, message: 'No workspace is open.' };
+    }
+    const result = await settingsStore_1.SettingsStore.getSelectedProject();
+    if (!result) {
+        return { ok: false, message: 'No project is selected.' };
+    }
+    const versionsService = versionsService_1.VersionsService.getInstance();
+    await versionsService.initialize();
+    const version = versionId ? versionsService.getVersion(versionId) : versionsService.getActiveVersion();
+    if (!version) {
+        if (!options.quiet) {
+            void (0, utils_1.showError)('No version to run. Create or select one first.');
+        }
+        return { ok: false, message: 'No version to run.' };
+    }
+    const settings = new settings_1.SettingsModel(version.settings);
+    // Handing an unprovisioned version to vscode.debug produces its generic
+    // "configuration not found" error, which says nothing about the cause.
+    if (!(0, provisioning_1.isVersionProvisioned)((0, utils_1.resolveOptionalPath)(settings.pythonPath))) {
+        const message = `"${version.name}" has no environment to run.`;
+        if (options.quiet) {
+            return { ok: false, message };
+        }
+        const choice = await (0, utils_1.showError)(message, 'Provision');
+        if (choice === 'Provision') {
+            await (0, odooInstaller_1.provisionExistingVersion)(version.id);
+        }
+        return { ok: false, message };
+    }
+    const db = (0, dbResolution_1.dbForVersion)(result.project, version.id);
+    if (!db) {
+        const message = `No database is selected for "${version.name}".`;
+        if (options.quiet) {
+            return { ok: false, message };
+        }
+        const choice = await (0, utils_1.showError)(message, 'Select Database');
+        if (choice === 'Select Database') {
+            await vscode.commands.executeCommand('dbSelector.quickSearch', { versionId: version.id });
+            // Picked one: carry on with the start that asked for it, once,
+            // after writing its launch entry.
+            const picked = (0, dbResolution_1.dbForVersion)((await settingsStore_1.SettingsStore.peekSelectedProject())?.project, version.id);
+            if (picked && !options.afterPick) {
+                await setupDebugger();
+                return startServerForVersion(version.id, { ...options, afterPick: true });
+            }
+        }
+        return { ok: false, message };
+    }
+    const notWritten = () => {
+        const message = `Could not start "${settings.debuggerName}". Its launch entry may not be written yet.`;
+        if (!options.quiet) {
+            void (0, utils_1.showError)(message);
+        }
+        return { ok: false, message };
+    };
+    // A debugger name shared with the active version is that version's
+    // entry: starting it would run the active version instead of this one.
+    const owner = (0, versionIdentity_1.sessionOwner)(launchCandidates(versionsService), settings.debuggerName, versionsService.getActiveVersion()?.id);
+    if (owner && owner.id !== version.id) {
+        const message = `"${version.name}" shares the debugger name "${settings.debuggerName}" with "${owner.name}", `
+            + 'whose launch entry it is. Activate it, or give it its own debugger name.';
+        if (!options.quiet) {
+            void (0, utils_1.showError)(message);
+        }
+        return { ok: false, message };
+    }
+    // Found before anything is stopped: a start that cannot happen must not
+    // take the running server of this version down with it.
+    const target = currentLaunchTarget();
+    const entry = target ? await (0, launchConfig_1.readManagedLaunchConfig)(target, settings.debuggerName) : undefined;
+    if (!target || !entry) {
+        return notWritten();
+    }
+    // Restarting this version stops only this version's session; other
+    // versions running side by side must survive.
+    const existingSession = (0, debugSessions_1.getSessionByName)(settings.debuggerName);
+    // Something already on the port that is not this window's session is
+    // usually the same version started from another window. Odoo would only
+    // fail to bind; say what is going on instead.
+    const port = Number(settings.portNumber) || 0;
+    if (!existingSession && port && await (0, server_1.isPortOpen)(port)) {
+        // A port set by hand may be another version's, running in this window.
+        const holder = (0, debugSessions_1.runningDebuggerNames)()
+            .map(name => versionsService.getVersion((0, debugSessions_1.versionIdOfSession)(name) ?? ''))
+            .find(other => other && other.id !== version.id && Number(other.settings.portNumber) === port);
+        const message = holder
+            ? `Port ${port} is taken by "${holder.name}", which is running. Stop it first, or give "${version.name}" its own port.`
+            : `"${version.name}" is already running on port ${port}, probably in another window.`;
+        if (!options.quiet) {
+            void (0, utils_1.showWarning)(message, 'Open in Browser').then(choice => {
+                if (choice === 'Open in Browser') {
+                    void vscode.env.openExternal((0, server_1.buildServerUrl)(port, db.id));
+                }
+            });
+        }
+        return { ok: false, message };
+    }
+    if (existingSession) {
+        await vscode.debug.stopDebugging(existingSession);
+    }
+    // VS Code looks a configuration up by name only in a folder's
+    // launch.json, so an entry in a workspace file is passed as itself. Its
+    // name is the session's name either way, which Stop and Restart rely on.
+    const started = await vscode.debug.startDebugging(workspaceFolders[0], target.kind === 'workspaceFile' ? entry : settings.debuggerName, { noDebug: options.noDebug === true });
+    if (!started) {
+        return notWritten();
+    }
+    return { ok: true };
+}
+async function startDebugServer(options = {}) {
+    await startServerForVersion(undefined, options);
+}
+
+
+/***/ }),
+/* 90 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.PSAE_INTERNAL_REGEX = void 0;
+exports.collectModuleDiscovery = collectModuleDiscovery;
+exports.parsePsaeOverrides = parsePsaeOverrides;
+exports.resolvePsaeDirectories = resolvePsaeDirectories;
+exports.setPsaeDirectoryIncluded = setPsaeDirectoryIncluded;
+const utils_1 = __webpack_require__(8);
+const repoPaths_1 = __webpack_require__(56);
+/**
+ * Single source of truth for "psae-internal" module directories (Odoo PS
+ * convention: directories matching ps*-internal hold internal modules that
+ * are only added to the addons path when needed). Both the Modules tree and
+ * the debugger arg builder resolve inclusion through this module, and the
+ * project's `includedPsaeInternalPaths` override list ("path" to force
+ * include, "!path" to force exclude) is only interpreted here.
+ */
+exports.PSAE_INTERNAL_REGEX = /^ps[a-z]*-internal$/i;
+/** Runs module discovery for the project, honoring its manual includes. */
+function collectModuleDiscovery(project, resolved) {
+    const manualIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
+    // Resolved repos point at the active version's worktrees; without them
+    // discovery falls back to the source checkouts, which is correct for
+    // checkout-mode projects and for callers that have no version in hand.
+    const repos = resolved ? (0, repoPaths_1.toDiscoveryRepos)(resolved) : project.repos;
+    return (0, utils_1.discoverModulesInRepos)(repos, { manualIncludePaths: manualIncludes });
+}
+/** Splits the raw override list into normalized include/exclude path sets. */
+function parsePsaeOverrides(includedPsaeInternalPaths) {
+    const manualIncludes = new Set();
+    const manualExcludes = new Set();
+    for (const entry of includedPsaeInternalPaths ?? []) {
+        if (entry.startsWith('!')) {
+            manualExcludes.add((0, utils_1.normalizePath)(entry.substring(1)));
+        }
+        else {
+            manualIncludes.add((0, utils_1.normalizePath)(entry));
+        }
+    }
+    return { manualIncludes, manualExcludes };
+}
+/**
+ * Resolves the inclusion state of every discovered psae-internal directory.
+ * A directory is included when it is manually included, or when it contains
+ * selected or installed modules and is not manually excluded.
+ */
+function resolvePsaeDirectories(args) {
+    const { manualIncludes, manualExcludes } = parsePsaeOverrides(args.includedPsaeInternalPaths);
+    return args.psaeDirectories.map(dir => {
+        const normalized = (0, utils_1.normalizePath)(dir.path);
+        const isManuallyIncluded = manualIncludes.has(normalized);
+        const isManuallyExcluded = manualExcludes.has(normalized);
+        const hasSelectedModules = dir.moduleNames.some(name => args.selectedModuleNames.has(name));
+        const hasDbModules = dir.moduleNames.some(name => args.installedModuleNames.has(name));
+        return {
+            ...dir,
+            path: normalized,
+            isManuallyIncluded,
+            isManuallyExcluded,
+            hasSelectedModules,
+            hasDbModules,
+            isIncluded: isManuallyIncluded || (!isManuallyExcluded && (hasSelectedModules || hasDbModules))
+        };
+    });
+}
+/**
+ * Rewrites the project's override list so that `dir` resolves to `include`.
+ * Intent-based: clears any contradicting override first, then adds a manual
+ * include/exclude only when the automatic resolution would not already give
+ * the requested result. Returns the module names whose selections must be
+ * dropped (when excluding a directory that has selected modules).
+ */
+function setPsaeDirectoryIncluded(project, dir, include) {
+    const overrides = (project.includedPsaeInternalPaths ?? []).filter(entry => {
+        const normalized = (0, utils_1.normalizePath)(entry.startsWith('!') ? entry.substring(1) : entry);
+        return normalized !== dir.path;
+    });
+    let removedModuleNames = [];
+    if (include) {
+        // Auto-inclusion only triggers with selected/installed modules;
+        // otherwise pin the directory with a manual include.
+        if (!dir.hasSelectedModules && !dir.hasDbModules) {
+            overrides.push(dir.path);
+        }
+    }
+    else {
+        if (dir.hasSelectedModules || dir.hasDbModules) {
+            overrides.push(`!${dir.path}`);
+        }
+        if (dir.hasSelectedModules) {
+            removedModuleNames = [...dir.moduleNames];
+        }
+    }
+    project.includedPsaeInternalPaths = overrides;
+    return { removedModuleNames };
+}
+
+
+/***/ }),
+/* 91 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.TestingConfigModel = void 0;
+exports.ensureTestingConfigModel = ensureTestingConfigModel;
+/**
+ * Testing configuration model: test targets, file, log level and the
+ * stashed module states used while testing mode is on.
+ */
+const logger_1 = __webpack_require__(12);
+class TestingConfigModel {
+    isEnabled;
+    testTags;
+    testFile;
+    stopAfterInit;
+    logLevel;
+    savedModuleStates;
+    constructor(isEnabled = false, testTags = [], testFile, stopAfterInit = false, logLevel = 'disabled', savedModuleStates) {
+        this.isEnabled = isEnabled;
+        this.testTags = testTags;
+        this.testFile = testFile;
+        this.stopAfterInit = stopAfterInit;
+        this.logLevel = logLevel;
+        this.savedModuleStates = savedModuleStates;
+    }
+    /**
+     * Generates the test tags string for the --test-tags option
+     * Converts user-friendly format to proper Odoo syntax: [-][tag][/module][:class][.method]
+     */
+    getTestTagsString() {
+        const activeTags = this.testTags.filter(tag => tag.state !== 'disabled');
+        if (activeTags.length === 0) {
+            return '';
+        }
+        return activeTags
+            .map(tag => {
+            const prefix = tag.state === 'exclude' ? '-' : '';
+            let formattedValue = '';
+            switch (tag.type) {
+                case 'tag':
+                    // Simple tags remain as-is: "post_install"
+                    formattedValue = tag.value;
+                    break;
+                case 'module':
+                    // Module tests need "/" prefix: "/account"
+                    formattedValue = `/${tag.value}`;
+                    break;
+                case 'class':
+                    // Class tests: user enters "TestSalesAccessRights", we format as ":TestSalesAccessRights"
+                    formattedValue = `:${tag.value}`;
+                    break;
+                case 'method':
+                    // Method tests: user enters "test_workflow_invoice", we format as ".test_workflow_invoice"
+                    formattedValue = `.${tag.value}`;
+                    break;
+                default:
+                    formattedValue = tag.value;
+            }
+            return prefix + formattedValue;
+        })
+            .join(',');
+    }
+}
+exports.TestingConfigModel = TestingConfigModel;
+/**
+ * Normalizes stored testing configuration objects into TestingConfigModel instances.
+ */
+function ensureTestingConfigModel(testingConfig) {
+    if (!testingConfig) {
+        return new TestingConfigModel();
+    }
+    if (testingConfig instanceof TestingConfigModel) {
+        return testingConfig;
+    }
+    try {
+        return new TestingConfigModel(Boolean(testingConfig.isEnabled), Array.isArray(testingConfig.testTags) ? testingConfig.testTags : [], testingConfig.testFile, Boolean(testingConfig.stopAfterInit), testingConfig.logLevel ?? 'disabled', Array.isArray(testingConfig.savedModuleStates) ? testingConfig.savedModuleStates : undefined);
+    }
+    catch (error) {
+        logger_1.logger.warn('Error converting testing config, creating new instance:', error);
+        return new TestingConfigModel();
+    }
+}
+
+
+/***/ }),
+/* 92 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.extraRootsFor = extraRootsFor;
 exports.versionOfDatabase = versionOfDatabase;
 exports.reposSeenByDatabase = reposSeenByDatabase;
@@ -15632,11 +18274,11 @@ exports.resolveReposForDatabase = resolveReposForDatabase;
 const vscode = __importStar(__webpack_require__(1));
 const versionsService_1 = __webpack_require__(33);
 const environment_1 = __webpack_require__(51);
-const repoLocations_1 = __webpack_require__(81);
+const repoLocations_1 = __webpack_require__(93);
 const repoPaths_1 = __webpack_require__(56);
 const setupState_1 = __webpack_require__(71);
 const workspaceBinding_1 = __webpack_require__(63);
-const workspaceRegistry_1 = __webpack_require__(82);
+const workspaceRegistry_1 = __webpack_require__(94);
 /**
  * Where to look first for `version`'s checkouts (see locateRepoCheckouts):
  * this window's folders when it is bound to that version, and the folders of
@@ -15676,7 +18318,7 @@ async function resolveReposForDatabase(project, db, options = {}) {
 
 
 /***/ }),
-/* 81 */
+/* 93 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15861,7 +18503,7 @@ async function projectReposForVersion(repos, version, list, extraRoots = []) {
 
 
 /***/ }),
-/* 82 */
+/* 94 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -15917,7 +18559,7 @@ exports.otherWorkspacesFor = otherWorkspacesFor;
  */
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
-const node_url_1 = __webpack_require__(83);
+const node_url_1 = __webpack_require__(95);
 const node_crypto_1 = __webpack_require__(65);
 const vscode = __importStar(__webpack_require__(1));
 const jsonc_parser_1 = __webpack_require__(21);
@@ -16057,13 +18699,249 @@ function otherWorkspacesFor(versionId) {
 
 
 /***/ }),
-/* 83 */
+/* 95 */
 /***/ ((module) => {
 
 module.exports = require("node:url");
 
 /***/ }),
-/* 84 */
+/* 96 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getActiveServerPort = getActiveServerPort;
+exports.pickPortForDatabase = pickPortForDatabase;
+exports.buildServerUrl = buildServerUrl;
+exports.isPortOpen = isPortOpen;
+exports.waitForPort = waitForPort;
+exports.resolvePortForDatabase = resolvePortForDatabase;
+exports.openServerInBrowser = openServerInBrowser;
+exports.registerServerLifecycle = registerServerLifecycle;
+/**
+ * Server URL helpers: resolves the local Odoo URL from the active
+ * version's port setting and opens databases in the browser, optionally
+ * waiting for the HTTP port to accept connections first.
+ */
+const vscode = __importStar(__webpack_require__(1));
+const net = __importStar(__webpack_require__(37));
+const versionsService_1 = __webpack_require__(33);
+const logger_1 = __webpack_require__(12);
+const notifications_1 = __webpack_require__(16);
+const runningState_1 = __webpack_require__(87);
+const debugSessions_1 = __webpack_require__(88);
+const versionIdentity_1 = __webpack_require__(36);
+const DEFAULT_ODOO_PORT = 8069;
+/** Port the Odoo server listens on, from the active version's settings. */
+async function getActiveServerPort() {
+    try {
+        const settings = await versionsService_1.VersionsService.getInstance().getActiveVersionSettings();
+        const port = Number(settings.portNumber);
+        if (Number.isInteger(port) && port > 0 && port <= 65535) {
+            return port;
+        }
+    }
+    catch (error) {
+        logger_1.logger.debug('Could not read active version port, using default:', error);
+    }
+    return DEFAULT_ODOO_PORT;
+}
+/**
+ * Which port serves `dbId`. With several versions running, the active
+ * version's port is usually the wrong answer: a database belongs to the
+ * version that is actually serving it.
+ */
+function pickPortForDatabase(dbId, running, versions, dbVersionId, activePort) {
+    const byId = (id) => versions.find(version => version.id === id);
+    if (dbId) {
+        const live = running.find(instance => instance.dbName === dbId && !!instance.port);
+        if (live?.port) {
+            return { port: live.port, source: 'running', versionName: byId(live.versionId)?.name };
+        }
+    }
+    const owner = byId(dbVersionId);
+    if (owner?.portNumber) {
+        return { port: owner.portNumber, source: 'version', versionName: owner.name };
+    }
+    return { port: activePort, source: 'active' };
+}
+/** Local server URL, optionally routed straight into a database. */
+function buildServerUrl(port, dbName) {
+    const base = `http://localhost:${port}`;
+    if (!dbName) {
+        return vscode.Uri.parse(base);
+    }
+    return vscode.Uri.parse(`${base}/web?db=${encodeURIComponent(dbName)}`);
+}
+/** Whether something accepts a TCP connection on the port right now. */
+function isPortOpen(port) {
+    return new Promise(resolve => {
+        const socket = net.connect({ port, host: '127.0.0.1' });
+        const finish = (result) => {
+            socket.destroy();
+            resolve(result);
+        };
+        socket.setTimeout(1000, () => finish(false));
+        socket.once('connect', () => finish(true));
+        socket.once('error', () => finish(false));
+    });
+}
+/** Resolves true once the port accepts a TCP connection, false on timeout. */
+function waitForPort(port, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    const tryOnce = () => new Promise(resolve => {
+        const socket = net.connect({ port, host: '127.0.0.1' });
+        const finish = (result) => {
+            socket.destroy();
+            resolve(result);
+        };
+        socket.setTimeout(1000, () => finish(false));
+        socket.once('connect', () => finish(true));
+        socket.once('error', () => finish(false));
+    });
+    return (async () => {
+        while (Date.now() < deadline) {
+            if (await tryOnce()) {
+                return true;
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        return false;
+    })();
+}
+/** Resolves the port serving `dbId`, consulting live sessions first. */
+async function resolvePortForDatabase(dbId, dbVersionId) {
+    try {
+        const service = versionsService_1.VersionsService.getInstance();
+        await service.initialize();
+        const versions = service.getVersions().map(version => ({
+            id: version.id,
+            name: version.name,
+            portNumber: Number(version.settings.portNumber) || undefined
+        }));
+        return pickPortForDatabase(dbId, await (0, runningState_1.getRunningInstances)(), versions, dbVersionId, await getActiveServerPort());
+    }
+    catch (error) {
+        logger_1.logger.debug('Could not resolve the port for a database, using the active version:', error);
+        return { port: await getActiveServerPort(), source: 'active' };
+    }
+}
+/**
+ * Opens the Odoo web client for the given (or server-selected) database, on
+ * the port actually serving it. A dead port is reported rather than opened:
+ * a browser tab showing a connection error is worse than being told why.
+ */
+async function openServerInBrowser(dbName, dbVersionId) {
+    const resolved = await resolvePortForDatabase(dbName, dbVersionId);
+    const url = buildServerUrl(resolved.port, dbName);
+    if (await waitForPort(resolved.port, 400)) {
+        await vscode.env.openExternal(url);
+        return;
+    }
+    const target = resolved.versionName
+        ? `${resolved.versionName} (port ${resolved.port})`
+        : `port ${resolved.port}`;
+    const choice = await (0, notifications_1.showWarning)(`No Odoo server is answering on ${target}.`, 'Open Anyway');
+    if (choice === 'Open Anyway') {
+        await vscode.env.openExternal(url);
+    }
+}
+/**
+ * The version whose launch configuration this session was started from: for a
+ * name several versions share, the one its entry was written for (the active
+ * one, else the oldest - see sessionOwner).
+ */
+async function versionForSession(session) {
+    const name = session.configuration?.name;
+    if (typeof name !== 'string' || name.length === 0) {
+        return undefined;
+    }
+    try {
+        const service = versionsService_1.VersionsService.getInstance();
+        await service.initialize();
+        const version = (0, versionIdentity_1.sessionOwner)(service.getVersions(), name, service.getActiveVersion()?.id);
+        if (!version) {
+            return undefined;
+        }
+        const port = Number(version.settings.portNumber);
+        return { id: version.id, portNumber: Number.isInteger(port) && port > 0 && port <= 65535 ? port : DEFAULT_ODOO_PORT };
+    }
+    catch {
+        return undefined;
+    }
+}
+/**
+ * Tracks the extension's own debug session: maintains the
+ * 'odoo-debugger.server_running' context key and, when
+ * odooDebugger.server.openBrowserOnStart is enabled, opens the web
+ * client once the server port starts accepting connections.
+ */
+function registerServerLifecycle(context, hooks) {
+    context.subscriptions.push(vscode.debug.onDidStartDebugSession(async (session) => {
+        const version = await versionForSession(session);
+        if (!version) {
+            return;
+        }
+        (0, debugSessions_1.trackSession)(session, version.id);
+        hooks.onRunningChanged((0, debugSessions_1.anySessionRunning)());
+        const openBrowser = vscode.workspace
+            .getConfiguration('odooDebugger')
+            .get('server.openBrowserOnStart', false);
+        if (!openBrowser) {
+            return;
+        }
+        // The session's own port, not the active version's: another version
+        // may have been activated since this one was launched.
+        if (await waitForPort(version.portNumber, 60000)) {
+            const dbName = await hooks.getSelectedDbName();
+            await vscode.env.openExternal(buildServerUrl(version.portNumber, dbName));
+        }
+        else {
+            logger_1.logger.debug(`Server port ${version.portNumber} did not open within 60s; not opening browser.`);
+        }
+    }));
+    context.subscriptions.push(vscode.debug.onDidTerminateDebugSession(session => {
+        (0, debugSessions_1.untrackSession)(session);
+        hooks.onRunningChanged((0, debugSessions_1.anySessionRunning)());
+    }));
+}
+
+
+/***/ }),
+/* 97 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16107,17 +18985,17 @@ exports.registerBindingCommand = registerBindingCommand;
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
-const registerCommand_1 = __webpack_require__(85);
+const registerCommand_1 = __webpack_require__(98);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(33);
 const mainStore_1 = __webpack_require__(27);
 const branches_1 = __webpack_require__(52);
-const repoLocations_1 = __webpack_require__(81);
+const repoLocations_1 = __webpack_require__(93);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
 const utils_1 = __webpack_require__(8);
-const workspaceRegistry_1 = __webpack_require__(82);
-const args_1 = __webpack_require__(86);
+const workspaceRegistry_1 = __webpack_require__(94);
+const args_1 = __webpack_require__(99);
 const workspaceBinding_1 = __webpack_require__(63);
 /** This window's folders, with the branch and remote of those that are git checkouts. */
 async function folderFacts() {
@@ -16347,7 +19225,7 @@ function registerBindingCommand(deps) {
 
 
 /***/ }),
-/* 85 */
+/* 98 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16424,7 +19302,7 @@ function registerCommand(command, callback, thisArg) {
 
 
 /***/ }),
-/* 86 */
+/* 99 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -16517,190 +19395,7 @@ function extractUri(arg) {
 
 
 /***/ }),
-/* 87 */
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.mergeRunningInstances = mergeRunningInstances;
-exports.getRunningInstances = getRunningInstances;
-exports.runningDescriptionPart = runningDescriptionPart;
-exports.invalidateRunningState = invalidateRunningState;
-/**
- * Which Odoo databases are live right now, from two merged signals: the
- * extension's own debug sessions (authoritative for what it started) and a
- * pg_stat_activity probe (catches servers started from a terminal or another
- * window). Exists as a service, not tree-decoration logic, so later features -
- * split-view comparison of two running instances - share one state source.
- */
-const settingsStore_1 = __webpack_require__(6);
-const versionsService_1 = __webpack_require__(33);
-const database_1 = __webpack_require__(48);
-const debugSessions_1 = __webpack_require__(88);
-const versionIdentity_1 = __webpack_require__(36);
-const dbResolution_1 = __webpack_require__(61);
-const runtimeCache_1 = __webpack_require__(15);
-const logger_1 = __webpack_require__(12);
-/**
- * One entry per database. A managed instance always wins: it knows the
- * version and port, which the external probe cannot report.
- */
-function mergeRunningInstances(managed, external) {
-    const byDb = new Map();
-    for (const instance of external) {
-        byDb.set(instance.dbName, instance);
-    }
-    for (const instance of managed) {
-        byDb.set(instance.dbName, instance);
-    }
-    return Array.from(byDb.values());
-}
-/** Sessions this extension started, resolved to the database each runs. */
-async function collectManaged() {
-    const names = new Set((0, debugSessions_1.runningDebuggerNames)());
-    if (names.size === 0) {
-        return [];
-    }
-    // Read without getSelectedProject(): this runs on every tree refresh and
-    // that helper toasts when no project is selected.
-    const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json').catch(() => undefined);
-    const project = data?.projects?.find(entry => entry.isSelected);
-    // One instance per running session, attributed to the version it
-    // started as: versions may share a debugger name (one launch entry that
-    // follows the active version), and only one of them is running.
-    const service = versionsService_1.VersionsService.getInstance();
-    const versions = service.getVersions();
-    const instances = [];
-    for (const debuggerName of names) {
-        const recorded = (0, debugSessions_1.versionIdOfSession)(debuggerName);
-        const version = (recorded ? service.getVersion(recorded) : undefined)
-            ?? (0, versionIdentity_1.sessionOwner)(versions, debuggerName, service.getActiveVersion()?.id);
-        if (!version) {
-            continue;
-        }
-        const db = (0, dbResolution_1.dbForVersion)(project, version.id);
-        if (!db) {
-            continue;
-        }
-        instances.push({
-            versionId: version.id,
-            debuggerName,
-            dbName: db.id,
-            port: Number(version.settings.portNumber) || undefined,
-            origin: 'managed'
-        });
-    }
-    return instances;
-}
-async function getRunningInstances() {
-    try {
-        const [managed, activeNames] = await Promise.all([collectManaged(), (0, database_1.getActiveDatabaseNames)()]);
-        const external = activeNames.map(dbName => ({ dbName, origin: 'external' }));
-        return mergeRunningInstances(managed, external);
-    }
-    catch (error) {
-        logger_1.logger.debug('Could not resolve running instances:', error);
-        return [];
-    }
-}
-/**
- * The running marker for a database row, as plain text. TreeItem.description
- * does not render codicons - unlike a QuickPickItem - so state is carried by
- * words here, leaving the row's icon free to keep showing selection.
- */
-function runningDescriptionPart(instance) {
-    if (!instance) {
-        return undefined;
-    }
-    if (instance.origin === 'external') {
-        return 'running (external)';
-    }
-    return instance.port ? `running :${instance.port}` : 'running';
-}
-/** Drops the cached PostgreSQL probe so the next read is fresh. */
-function invalidateRunningState() {
-    (0, runtimeCache_1.invalidateActiveDatabasesCache)();
-}
-
-
-/***/ }),
-/* 88 */
-/***/ ((__unused_webpack_module, exports) => {
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.trackSession = trackSession;
-exports.untrackSession = untrackSession;
-exports.versionIdOfSession = versionIdOfSession;
-exports.getSessionByName = getSessionByName;
-exports.runningDebuggerNames = runningDebuggerNames;
-exports.anySessionRunning = anySessionRunning;
-exports.clearSessions = clearSessions;
-exports.resolveStopTarget = resolveStopTarget;
-const sessions = new Map();
-const sessionVersions = new Map();
-function nameOf(session) {
-    const name = session.configuration?.name;
-    return typeof name === 'string' && name.length > 0 ? name : undefined;
-}
-function trackSession(session, versionId) {
-    const name = nameOf(session);
-    if (name) {
-        sessions.set(name, session);
-        if (versionId) {
-            sessionVersions.set(name, versionId);
-        }
-        else {
-            sessionVersions.delete(name);
-        }
-    }
-}
-function untrackSession(session) {
-    const name = nameOf(session);
-    if (name) {
-        sessions.delete(name);
-        sessionVersions.delete(name);
-    }
-}
-/** The version a running session was started as, when it was recorded. */
-function versionIdOfSession(name) {
-    return sessions.has(name) ? sessionVersions.get(name) : undefined;
-}
-function getSessionByName(name) {
-    return sessions.get(name);
-}
-function runningDebuggerNames() {
-    return Array.from(sessions.keys());
-}
-function anySessionRunning() {
-    return sessions.size > 0;
-}
-/** Test seam: the registry is module state that outlives a single suite. */
-function clearSessions() {
-    sessions.clear();
-    sessionVersions.clear();
-}
-/**
- * What "Stop Server" should act on. The active version's session wins
- * outright; otherwise a lone session is unambiguous and anything else needs
- * the user to choose.
- */
-function resolveStopTarget(running, activeName) {
-    if (running.length === 0) {
-        return { kind: 'none' };
-    }
-    if (activeName && running.includes(activeName)) {
-        return { kind: 'single', name: activeName };
-    }
-    if (running.length === 1) {
-        return { kind: 'single', name: running[0] };
-    }
-    return { kind: 'prompt', names: [...running] };
-}
-
-
-/***/ }),
-/* 89 */
+/* 100 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17000,7 +19695,7 @@ async function migrateHookSettings() {
 
 
 /***/ }),
-/* 90 */
+/* 101 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -17057,8 +19752,8 @@ exports.quickProjectSearch = quickProjectSearch;
  * import/export, ticket management and quick project search.
  */
 const vscode = __importStar(__webpack_require__(1));
-const os = __importStar(__webpack_require__(91));
-const project_1 = __webpack_require__(92);
+const os = __importStar(__webpack_require__(102));
+const project_1 = __webpack_require__(103);
 const repo_1 = __webpack_require__(46);
 const utils_1 = __webpack_require__(8);
 const icons_1 = __webpack_require__(39);
@@ -17071,12 +19766,12 @@ const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
 const notifications_2 = __webpack_require__(16);
 const baseTreeProvider_1 = __webpack_require__(5);
-const customAddonsCommand_1 = __webpack_require__(94);
+const customAddonsCommand_1 = __webpack_require__(104);
 const wizard_1 = __webpack_require__(73);
 const branches_1 = __webpack_require__(52);
-const manifest_1 = __webpack_require__(95);
-const psaeInternal_1 = __webpack_require__(96);
-const versionRepos_1 = __webpack_require__(80);
+const manifest_1 = __webpack_require__(105);
+const psaeInternal_1 = __webpack_require__(90);
+const versionRepos_1 = __webpack_require__(92);
 let projectMetadataMigrationCompleted = false;
 function sanitizeProjectTickets(rawTickets) {
     if (!Array.isArray(rawTickets)) {
@@ -18099,19 +20794,19 @@ async function quickProjectSearch() {
 
 
 /***/ }),
-/* 91 */
+/* 102 */
 /***/ ((module) => {
 
 module.exports = require("os");
 
 /***/ }),
-/* 92 */
+/* 103 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProjectModel = void 0;
-const testing_1 = __webpack_require__(93);
+const testing_1 = __webpack_require__(91);
 const upgrade_1 = __webpack_require__(41);
 const crypto_1 = __webpack_require__(35);
 class ProjectModel {
@@ -18148,94 +20843,7 @@ exports.ProjectModel = ProjectModel;
 
 
 /***/ }),
-/* 93 */
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.TestingConfigModel = void 0;
-exports.ensureTestingConfigModel = ensureTestingConfigModel;
-/**
- * Testing configuration model: test targets, file, log level and the
- * stashed module states used while testing mode is on.
- */
-const logger_1 = __webpack_require__(12);
-class TestingConfigModel {
-    isEnabled;
-    testTags;
-    testFile;
-    stopAfterInit;
-    logLevel;
-    savedModuleStates;
-    constructor(isEnabled = false, testTags = [], testFile, stopAfterInit = false, logLevel = 'disabled', savedModuleStates) {
-        this.isEnabled = isEnabled;
-        this.testTags = testTags;
-        this.testFile = testFile;
-        this.stopAfterInit = stopAfterInit;
-        this.logLevel = logLevel;
-        this.savedModuleStates = savedModuleStates;
-    }
-    /**
-     * Generates the test tags string for the --test-tags option
-     * Converts user-friendly format to proper Odoo syntax: [-][tag][/module][:class][.method]
-     */
-    getTestTagsString() {
-        const activeTags = this.testTags.filter(tag => tag.state !== 'disabled');
-        if (activeTags.length === 0) {
-            return '';
-        }
-        return activeTags
-            .map(tag => {
-            const prefix = tag.state === 'exclude' ? '-' : '';
-            let formattedValue = '';
-            switch (tag.type) {
-                case 'tag':
-                    // Simple tags remain as-is: "post_install"
-                    formattedValue = tag.value;
-                    break;
-                case 'module':
-                    // Module tests need "/" prefix: "/account"
-                    formattedValue = `/${tag.value}`;
-                    break;
-                case 'class':
-                    // Class tests: user enters "TestSalesAccessRights", we format as ":TestSalesAccessRights"
-                    formattedValue = `:${tag.value}`;
-                    break;
-                case 'method':
-                    // Method tests: user enters "test_workflow_invoice", we format as ".test_workflow_invoice"
-                    formattedValue = `.${tag.value}`;
-                    break;
-                default:
-                    formattedValue = tag.value;
-            }
-            return prefix + formattedValue;
-        })
-            .join(',');
-    }
-}
-exports.TestingConfigModel = TestingConfigModel;
-/**
- * Normalizes stored testing configuration objects into TestingConfigModel instances.
- */
-function ensureTestingConfigModel(testingConfig) {
-    if (!testingConfig) {
-        return new TestingConfigModel();
-    }
-    if (testingConfig instanceof TestingConfigModel) {
-        return testingConfig;
-    }
-    try {
-        return new TestingConfigModel(Boolean(testingConfig.isEnabled), Array.isArray(testingConfig.testTags) ? testingConfig.testTags : [], testingConfig.testFile, Boolean(testingConfig.stopAfterInit), testingConfig.logLevel ?? 'disabled', Array.isArray(testingConfig.savedModuleStates) ? testingConfig.savedModuleStates : undefined);
-    }
-    catch (error) {
-        logger_1.logger.warn('Error converting testing config, creating new instance:', error);
-        return new TestingConfigModel();
-    }
-}
-
-
-/***/ }),
-/* 94 */
+/* 104 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -18292,7 +20900,7 @@ const vscode = __importStar(__webpack_require__(1));
 const versionsService_1 = __webpack_require__(33);
 const runtimeCache_1 = __webpack_require__(15);
 const notifications_1 = __webpack_require__(16);
-const registerCommand_1 = __webpack_require__(85);
+const registerCommand_1 = __webpack_require__(98);
 /**
  * Asks for the folder and records it. Returns the chosen path, or undefined
  * when the user cancels.
@@ -18336,7 +20944,7 @@ function registerCustomAddonsCommand(deps) {
 
 
 /***/ }),
-/* 95 */
+/* 105 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -18488,109 +21096,7 @@ function extractTicketIdsFromBranch(branchName) {
 
 
 /***/ }),
-/* 96 */
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.PSAE_INTERNAL_REGEX = void 0;
-exports.collectModuleDiscovery = collectModuleDiscovery;
-exports.parsePsaeOverrides = parsePsaeOverrides;
-exports.resolvePsaeDirectories = resolvePsaeDirectories;
-exports.setPsaeDirectoryIncluded = setPsaeDirectoryIncluded;
-const utils_1 = __webpack_require__(8);
-const repoPaths_1 = __webpack_require__(56);
-/**
- * Single source of truth for "psae-internal" module directories (Odoo PS
- * convention: directories matching ps*-internal hold internal modules that
- * are only added to the addons path when needed). Both the Modules tree and
- * the debugger arg builder resolve inclusion through this module, and the
- * project's `includedPsaeInternalPaths` override list ("path" to force
- * include, "!path" to force exclude) is only interpreted here.
- */
-exports.PSAE_INTERNAL_REGEX = /^ps[a-z]*-internal$/i;
-/** Runs module discovery for the project, honoring its manual includes. */
-function collectModuleDiscovery(project, resolved) {
-    const manualIncludes = (project.includedPsaeInternalPaths ?? []).filter(entry => !entry.startsWith('!'));
-    // Resolved repos point at the active version's worktrees; without them
-    // discovery falls back to the source checkouts, which is correct for
-    // checkout-mode projects and for callers that have no version in hand.
-    const repos = resolved ? (0, repoPaths_1.toDiscoveryRepos)(resolved) : project.repos;
-    return (0, utils_1.discoverModulesInRepos)(repos, { manualIncludePaths: manualIncludes });
-}
-/** Splits the raw override list into normalized include/exclude path sets. */
-function parsePsaeOverrides(includedPsaeInternalPaths) {
-    const manualIncludes = new Set();
-    const manualExcludes = new Set();
-    for (const entry of includedPsaeInternalPaths ?? []) {
-        if (entry.startsWith('!')) {
-            manualExcludes.add((0, utils_1.normalizePath)(entry.substring(1)));
-        }
-        else {
-            manualIncludes.add((0, utils_1.normalizePath)(entry));
-        }
-    }
-    return { manualIncludes, manualExcludes };
-}
-/**
- * Resolves the inclusion state of every discovered psae-internal directory.
- * A directory is included when it is manually included, or when it contains
- * selected or installed modules and is not manually excluded.
- */
-function resolvePsaeDirectories(args) {
-    const { manualIncludes, manualExcludes } = parsePsaeOverrides(args.includedPsaeInternalPaths);
-    return args.psaeDirectories.map(dir => {
-        const normalized = (0, utils_1.normalizePath)(dir.path);
-        const isManuallyIncluded = manualIncludes.has(normalized);
-        const isManuallyExcluded = manualExcludes.has(normalized);
-        const hasSelectedModules = dir.moduleNames.some(name => args.selectedModuleNames.has(name));
-        const hasDbModules = dir.moduleNames.some(name => args.installedModuleNames.has(name));
-        return {
-            ...dir,
-            path: normalized,
-            isManuallyIncluded,
-            isManuallyExcluded,
-            hasSelectedModules,
-            hasDbModules,
-            isIncluded: isManuallyIncluded || (!isManuallyExcluded && (hasSelectedModules || hasDbModules))
-        };
-    });
-}
-/**
- * Rewrites the project's override list so that `dir` resolves to `include`.
- * Intent-based: clears any contradicting override first, then adds a manual
- * include/exclude only when the automatic resolution would not already give
- * the requested result. Returns the module names whose selections must be
- * dropped (when excluding a directory that has selected modules).
- */
-function setPsaeDirectoryIncluded(project, dir, include) {
-    const overrides = (project.includedPsaeInternalPaths ?? []).filter(entry => {
-        const normalized = (0, utils_1.normalizePath)(entry.startsWith('!') ? entry.substring(1) : entry);
-        return normalized !== dir.path;
-    });
-    let removedModuleNames = [];
-    if (include) {
-        // Auto-inclusion only triggers with selected/installed modules;
-        // otherwise pin the directory with a manual include.
-        if (!dir.hasSelectedModules && !dir.hasDbModules) {
-            overrides.push(dir.path);
-        }
-    }
-    else {
-        if (dir.hasSelectedModules || dir.hasDbModules) {
-            overrides.push(`!${dir.path}`);
-        }
-        if (dir.hasSelectedModules) {
-            removedModuleNames = [...dir.moduleNames];
-        }
-    }
-    project.includedPsaeInternalPaths = overrides;
-    return { removedModuleNames };
-}
-
-
-/***/ }),
-/* 97 */
+/* 106 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -18647,8 +21153,8 @@ const branches_1 = __webpack_require__(52);
 const runtimeCache_1 = __webpack_require__(15);
 const baseTreeProvider_1 = __webpack_require__(5);
 const icons_1 = __webpack_require__(39);
-const repoLocations_1 = __webpack_require__(81);
-const versionRepos_1 = __webpack_require__(80);
+const repoLocations_1 = __webpack_require__(93);
+const versionRepos_1 = __webpack_require__(92);
 async function mapWithConcurrency(items, limit, worker) {
     if (items.length === 0) {
         return [];
@@ -18828,7 +21334,7 @@ async function selectRepo(event) {
 
 
 /***/ }),
-/* 98 */
+/* 107 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -18888,7 +21394,7 @@ exports.viewInstalledModules = viewInstalledModules;
 const module_1 = __webpack_require__(45);
 const vscode = __importStar(__webpack_require__(1));
 const utils_1 = __webpack_require__(8);
-const psaeInternal_1 = __webpack_require__(96);
+const psaeInternal_1 = __webpack_require__(90);
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const settingsStore_1 = __webpack_require__(6);
@@ -18899,9 +21405,9 @@ const notifications_1 = __webpack_require__(16);
 const baseTreeProvider_1 = __webpack_require__(5);
 const process_1 = __webpack_require__(13);
 const logger_1 = __webpack_require__(12);
-const manifest_1 = __webpack_require__(95);
-const versionRepos_1 = __webpack_require__(80);
-const moduleDependencies_1 = __webpack_require__(99);
+const manifest_1 = __webpack_require__(105);
+const versionRepos_1 = __webpack_require__(92);
+const moduleDependencies_1 = __webpack_require__(108);
 const upgradeSetup_1 = __webpack_require__(59);
 /**
  * Whether module selections may be edited right now. Both refusals were
@@ -19785,7 +22291,7 @@ async function viewInstalledModules() {
 
 
 /***/ }),
-/* 99 */
+/* 108 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -19896,7 +22402,7 @@ function dependencyExpansion(dependency, branch) {
 
 
 /***/ }),
-/* 100 */
+/* 109 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -19953,12 +22459,12 @@ exports.setSpecificLogLevel = setSpecificLogLevel;
  */
 const vscode = __importStar(__webpack_require__(1));
 const settingsStore_1 = __webpack_require__(6);
-const testing_1 = __webpack_require__(93);
+const testing_1 = __webpack_require__(91);
 const module_1 = __webpack_require__(45);
 const utils_1 = __webpack_require__(8);
 const context_1 = __webpack_require__(42);
 const upgrade_1 = __webpack_require__(40);
-const debugger_1 = __webpack_require__(101);
+const debugger_1 = __webpack_require__(89);
 const database_1 = __webpack_require__(48);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
@@ -20638,958 +23144,7 @@ async function setSpecificLogLevel() {
 
 
 /***/ }),
-/* 101 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.currentLaunchTarget = currentLaunchTarget;
-exports.runDirectory = runDirectory;
-exports.dropUnusedLaunchEntry = dropUnusedLaunchEntry;
-exports.setupDebugger = setupDebugger;
-exports.collectAddonsPaths = collectAddonsPaths;
-exports.buildOdooCommandLine = buildOdooCommandLine;
-exports.startDebugShell = startDebugShell;
-exports.stopDebugServer = stopDebugServer;
-exports.startServerForVersion = startServerForVersion;
-exports.startDebugServer = startDebugServer;
-/**
- * Debugger integration: keeps the managed launch.json entry in sync with the
- * active version/database/module selections, builds odoo-bin arguments
- * (addons path, -i/-u, testing flags), and starts/stops the server and shell.
- */
-const vscode = __importStar(__webpack_require__(1));
-const path = __importStar(__webpack_require__(3));
-const settings_1 = __webpack_require__(7);
-const utils_1 = __webpack_require__(8);
-const psaeInternal_1 = __webpack_require__(96);
-const settingsStore_1 = __webpack_require__(6);
-const versionsService_1 = __webpack_require__(33);
-const testing_1 = __webpack_require__(93);
-const database_1 = __webpack_require__(48);
-const logger_1 = __webpack_require__(12);
-const launchConfig_1 = __webpack_require__(19);
-const dataLocation_1 = __webpack_require__(17);
-const debugSessions_1 = __webpack_require__(88);
-const versionIdentity_1 = __webpack_require__(36);
-const dbResolution_1 = __webpack_require__(61);
-const versionRepos_1 = __webpack_require__(80);
-const provisioning_1 = __webpack_require__(67);
-const customWorktree_1 = __webpack_require__(57);
-const setupState_1 = __webpack_require__(71);
-const odooInstaller_1 = __webpack_require__(66);
-const server_1 = __webpack_require__(102);
-const gitExclude_1 = __webpack_require__(32);
-/** Why prepareArgs refuses: no database of that version is selected. */
-const NO_DATABASE = 'Select a database before running this action.';
-// Databases we already told the user about; prepareArgs re-runs on every
-// debounced sync, so without this the toast repeats until the DB is initialized.
-const baseInstallNotifiedDbs = new Set();
-async function selectPythonInterpreter(pythonPath) {
-    if (!pythonPath || pythonPath.trim().length === 0) {
-        return;
-    }
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) {
-        return;
-    }
-    try {
-        const pythonExtension = vscode.extensions.getExtension('ms-python.python');
-        if (pythonExtension) {
-            const pythonApi = pythonExtension.isActive ? pythonExtension.exports : await pythonExtension.activate();
-            const updateActive = pythonApi?.environments?.updateActiveEnvironmentPath;
-            if (typeof updateActive === 'function') {
-                await updateActive(pythonPath);
-                return;
-            }
-        }
-        const config = vscode.workspace.getConfiguration('python', workspaceFolder.uri);
-        await Promise.all([
-            config.update('defaultInterpreterPath', pythonPath, vscode.ConfigurationTarget.Workspace),
-            config.update('pythonPath', pythonPath, vscode.ConfigurationTarget.Workspace)
-        ]);
-    }
-    catch (error) {
-        logger_1.logger.warn(`Failed to set Python interpreter to "${pythonPath}":`, error);
-    }
-}
-/** Where this window's launch configurations live (see launchTarget). */
-function currentLaunchTarget() {
-    return (0, launchConfig_1.launchTarget)(vscode.workspace.workspaceFile, (vscode.workspace.workspaceFolders ?? []).map(folder => folder.uri.fsPath));
-}
-/**
- * The directory Odoo runs in: the workspace the data belongs to. In a folder
- * window that is the folder; in a generated project workspace, whose first
- * folder is a repository, it is the workspace the data came from.
- */
-function runDirectory(workspacePath) {
-    return (0, dataLocation_1.currentDataLocation)()?.root ?? workspacePath;
-}
-/** Workspace files whose first folder has already been cleaned this session. */
-const cleanedFirstFolders = new Set();
-/**
- * Takes our entries back out of a multi-root workspace's first folder, where
- * earlier builds wrote them - usually the user's own repository.
- */
-async function cleanUpFirstFolderLaunch(target, names) {
-    if (target.kind !== 'workspaceFile' || !target.firstFolderPath || cleanedFirstFolders.has(target.filePath)) {
-        return;
-    }
-    cleanedFirstFolders.add(target.filePath);
-    try {
-        const removed = await (0, launchConfig_1.removeManagedLaunchConfigs)(target.firstFolderPath, new Set(names));
-        if (removed > 0) {
-            logger_1.logger.info(`[debugger] moved ${removed} launch entr${removed === 1 ? 'y' : 'ies'} out of ${target.firstFolderPath} into ${target.filePath}`);
-        }
-    }
-    catch (error) {
-        logger_1.logger.warn(`[debugger] could not clean up ${target.firstFolderPath}/.vscode/launch.json:`, error);
-    }
-}
-/**
- * Removes the launch entry named `name` once no version uses that name any
- * more - after the user renames a version's debugger, so the Run and Debug
- * dropdown does not keep offering the old entry.
- */
-async function dropUnusedLaunchEntry(name) {
-    const target = currentLaunchTarget();
-    if (!name || !target || versionsService_1.VersionsService.getInstance().getVersions().some(version => version.settings.debuggerName === name)) {
-        return;
-    }
-    await (0, launchConfig_1.removeManagedLaunchConfigIn)(target, new Set([name])).catch(error => {
-        logger_1.logger.warn(`[debugger] could not remove the launch entry "${name}":`, error);
-    });
-}
-/** The versions that get a launch entry: every provisioned one, and the active one. */
-function launchCandidates(versionsService) {
-    const activeVersion = versionsService.getActiveVersion();
-    const candidates = versionsService.getVersions()
-        .filter(version => (0, provisioning_1.isVersionProvisioned)((0, utils_1.resolveOptionalPath)(version.settings.pythonPath)));
-    if (activeVersion && !candidates.some(version => version.id === activeVersion.id)) {
-        candidates.push(activeVersion);
-    }
-    return candidates;
-}
-async function setupDebugger() {
-    const workspacePath = (0, utils_1.getWorkspacePath)();
-    const target = currentLaunchTarget();
-    if (!workspacePath || !target) {
-        return undefined;
-    }
-    const cwd = runDirectory(workspacePath);
-    // Silent: this runs from every refresh, and an install with no projects
-    // yet must not be told to create one by a sync it did not request.
-    const result = await settingsStore_1.SettingsStore.peekSelectedProject();
-    if (!result) {
-        return undefined;
-    }
-    const { project } = result;
-    const versionsService = versionsService_1.VersionsService.getInstance();
-    await versionsService.initialize();
-    const activeVersion = versionsService.getActiveVersion();
-    const activeSettings = await versionsService.getActiveVersionSettings();
-    // One entry per provisioned version, each with its own name, ports and
-    // database: launch.json accumulates durable entries instead of one being
-    // renamed out from under the Run and Debug dropdown, and two versions can
-    // run at once. Unprovisioned versions have no interpreter to launch.
-    const provisioned = launchCandidates(versionsService);
-    // Versions the user gave the same debugger name share one entry, written
-    // for the active one among them (else the oldest): F5 then runs whatever
-    // is active. Writing each in turn would leave whichever came last.
-    const targets = provisioned.filter(version => (0, versionIdentity_1.sessionOwner)(provisioned, version.settings.debuggerName, activeVersion?.id)?.id === version.id);
-    // Worktrees are created once per sync rather than per launch entry: the
-    // same branch is often shared by several versions.
-    const setupRoot = (0, setupState_1.readSetupState)().provisioningRoot;
-    const worktreeProblems = new Set();
-    const worktreesNeedingResolution = new Set();
-    /** Versions whose entry is removed: no database of theirs is selected. */
-    const withoutDatabase = new Set();
-    let activeConfig;
-    for (const version of targets) {
-        const settings = version.settings;
-        const normalizedOdooPath = (0, utils_1.normalizePath)(settings.odooPath);
-        const normalizedPythonPath = (0, utils_1.normalizePath)(settings.pythonPath);
-        const versionDb = (0, dbResolution_1.dbForVersion)(project, version.id);
-        if (versionDb) {
-            // Non-interactive on purpose: this sync runs on a debounce after
-            // almost every command, so it creates the worktrees that need no
-            // arbitration and reports the rest instead of raising a modal.
-            const { problems, needsResolution } = await (0, customWorktree_1.ensureCustomWorktrees)(await (0, versionRepos_1.resolveReposForDatabase)(project, versionDb, { version, root: setupRoot }), undefined, { interactive: false });
-            problems.forEach(problem => worktreeProblems.add(problem));
-            needsResolution.forEach(name => worktreesNeedingResolution.add(name));
-        }
-        let args;
-        try {
-            args = await prepareArgs(project, settings, { versionId: version.id });
-        }
-        catch (error) {
-            // No database of this version: the entry an earlier sync wrote
-            // still names the old one, so F5 would still launch it there.
-            if (error instanceof Error && error.message === NO_DATABASE) {
-                withoutDatabase.add(settings.debuggerName);
-            }
-            // A version with no resolvable database is skipped rather than
-            // failing the sync for every other version. Only the active one is
-            // worth telling the user about - and not for a missing database:
-            // the status bar says "no … database", and Start Server and Copy
-            // Command ask for one. A toast from this unrequested sync doubled
-            // "… was deleted in another window" (eighteenth run).
-            if (version.id === activeVersion?.id) {
-                logger_1.logger.warn('Could not prepare debugger launch arguments:', error);
-                if (error instanceof Error && error.message === NO_DATABASE) {
-                    logger_1.logger.info('Select a database before configuring the debugger.');
-                }
-                else if (!(0, settingsStore_1.isStoreReadError)(error)) {
-                    void (0, utils_1.showError)(error instanceof Error ? error.message : 'Could not prepare debugger launch arguments.');
-                }
-            }
-            else {
-                logger_1.logger.debug(`Skipping launch entry for "${version.name}": ${(0, logger_1.errorMessage)(error)}`);
-            }
-            continue;
-        }
-        try {
-            // Only the extension's own entries in launch.json are rewritten;
-            // user comments and other configurations are preserved.
-            const config = await (0, launchConfig_1.updateManagedLaunchConfigIn)(target, {
-                name: settings.debuggerName,
-                type: 'debugpy',
-                request: 'launch',
-                cwd,
-                program: `${normalizedOdooPath}/odoo-bin`,
-                python: normalizedPythonPath,
-                console: 'integratedTerminal',
-                args
-            });
-            if (version.id === activeVersion?.id) {
-                activeConfig = config;
-            }
-        }
-        catch (error) {
-            void (0, utils_1.showError)(`Unable to update launch.json: ${(0, logger_1.errorMessage)(error)}`);
-            return undefined;
-        }
-    }
-    if (worktreeProblems.size > 0) {
-        const names = Array.from(worktreesNeedingResolution);
-        if (names.length > 0) {
-            // Offered, not forced: freeing the branch edits a checkout the
-            // user owns, so it happens inside a command they started.
-            void (0, utils_1.showWarning)(`${names.join(', ')} ${names.length === 1 ? 'is' : 'are'} using the source checkout: `
-                + 'the branch each needs is checked out there.', 'Resolve').then(choice => {
-                if (choice === 'Resolve') {
-                    void vscode.commands.executeCommand('odt.repo.resolveWorktrees');
-                }
-            });
-        }
-        else {
-            void (0, utils_1.showWarning)(`Some repositories fell back to their source checkout — ${Array.from(worktreeProblems).join('; ')}`);
-        }
-    }
-    if (withoutDatabase.size > 0) {
-        const removed = await (0, launchConfig_1.removeManagedLaunchConfigIn)(target, withoutDatabase).catch(error => {
-            logger_1.logger.warn('[debugger] could not remove launch entries of versions without a database:', error);
-            return 0;
-        });
-        if (removed > 0) {
-            logger_1.logger.info(`[debugger] removed the launch entries of ${Array.from(withoutDatabase).join(', ')}: no database of that version is selected`);
-        }
-    }
-    // A folder window that is itself a clone: keep launch.json out of git status.
-    if (target.kind === 'folder') {
-        await (0, gitExclude_1.excludeLaunchFromGit)(target.folderPath);
-    }
-    // Every version's name, not only the provisioned ones written above.
-    await cleanUpFirstFolderLaunch(target, versionsService.getVersions()
-        .map(version => version.settings.debuggerName)
-        .filter(name => !!name));
-    await selectPythonInterpreter(activeSettings.pythonPath);
-    return activeConfig;
-}
-/**
- * The --addons-path a version runs `db` with: core, enterprise and themes,
- * the project's repositories as this database's version sees them, the
- * included psae-internal folders and the legacy submodule paths. Shared by the
- * server launch and the View Doctor's shell, so both load the same code.
- */
-async function collectAddonsPaths(project, settings, db, versionId) {
-    // Build addons path using settings paths
-    const addonsPaths = [];
-    const addonPathSet = new Set();
-    const addAddonPath = (rawPath) => {
-        if (!rawPath) {
-            return;
-        }
-        const normalized = (0, utils_1.normalizePath)(rawPath);
-        const resolved = path.resolve(normalized);
-        if (addonPathSet.has(resolved)) {
-            return;
-        }
-        addonPathSet.add(resolved);
-        addonsPaths.push(normalized);
-    };
-    // Add enterprise path if it exists
-    if (settings.enterprisePath) {
-        addAddonPath(settings.enterprisePath);
-    }
-    // Add design-themes path if it exists
-    if (settings.designThemesPath) {
-        addAddonPath(settings.designThemesPath);
-    }
-    // Add Odoo core addons paths
-    if (settings.odooPath) {
-        addAddonPath(`${settings.odooPath}/odoo/addons`);
-        addAddonPath(`${settings.odooPath}/addons`);
-    }
-    const projectModules = db.modules ?? [];
-    // psae-internal directories: resolved through the shared service so the
-    // Modules tree and the launch args always agree on what is included.
-    // Resolve every project repo to the directory this version runs from, so
-    // two versions on different branches never share one copy of the code.
-    const resolvedRepos = await (0, versionRepos_1.resolveReposForDatabase)(project, db, {
-        version: versionId ? versionsService_1.VersionsService.getInstance().getVersion(versionId) : undefined
-    });
-    const discovery = (0, psaeInternal_1.collectModuleDiscovery)(project, resolvedRepos);
-    const containerPathMap = new Map();
-    const recordContainerPath = (rawContainerPath) => {
-        const normalized = (0, utils_1.normalizePath)(rawContainerPath);
-        const resolved = path.resolve(normalized);
-        if (!containerPathMap.has(resolved)) {
-            containerPathMap.set(resolved, normalized);
-        }
-    };
-    for (const moduleInfo of discovery.modules) {
-        const resolvedModulePath = path.resolve(moduleInfo.path);
-        const resolvedRepoPath = path.resolve(moduleInfo.repoPath);
-        if (resolvedModulePath === resolvedRepoPath) {
-            recordContainerPath(moduleInfo.path);
-        }
-        else {
-            recordContainerPath(path.dirname(moduleInfo.path));
-        }
-    }
-    for (const containerPath of containerPathMap.values()) {
-        addAddonPath(containerPath);
-    }
-    const selectedModuleNames = new Set(projectModules
-        .filter(module => module.state === 'install' || module.state === 'upgrade')
-        .map(module => module.name));
-    let installedModuleNames = new Set();
-    try {
-        installedModuleNames = await (0, database_1.getInstalledModuleNames)(db.id);
-    }
-    catch (error) {
-        logger_1.logger.warn('Failed to get installed modules from database:', error);
-    }
-    const psaeStates = (0, psaeInternal_1.resolvePsaeDirectories)({
-        psaeDirectories: discovery.psaeDirectories,
-        includedPsaeInternalPaths: project.includedPsaeInternalPaths,
-        selectedModuleNames,
-        installedModuleNames
-    });
-    for (const psaeState of psaeStates) {
-        if (psaeState.isIncluded) {
-            addAddonPath(psaeState.path);
-        }
-    }
-    // Add global submodules paths from settings (for backward compatibility)
-    if (settings.subModulesPaths) {
-        const normalizedSubModulePaths = settings.subModulesPaths
-            .split(',')
-            .map(p => p.trim())
-            .filter(Boolean)
-            .map(p => (0, utils_1.normalizePath)(p));
-        for (const subModulePath of normalizedSubModulePaths) {
-            addAddonPath(subModulePath);
-        }
-    }
-    return addonsPaths;
-}
-async function prepareArgs(project, settings, options = {}) {
-    const isShell = options.isShell === true;
-    const db = (0, dbResolution_1.dbForVersion)(project, options.versionId);
-    if (!db) {
-        throw new Error(NO_DATABASE);
-    }
-    const projectModules = db.modules ?? [];
-    const addonsPaths = await collectAddonsPaths(project, settings, db, options.versionId);
-    let installs = projectModules
-        .filter(module => module.state === 'install')
-        .map(module => module.name);
-    const upgrades = projectModules
-        .filter(module => module.state === 'upgrade')
-        .map(module => module.name);
-    if (installs.length === 0) {
-        try {
-            const hasModuleTable = await (0, database_1.databaseHasModuleTable)(db.id);
-            if (!hasModuleTable) {
-                installs = ['base'];
-                if (!baseInstallNotifiedDbs.has(db.id)) {
-                    baseInstallNotifiedDbs.add(db.id);
-                    (0, utils_1.showAutoInfo)('Added "base" during initialization so the new database can install core tables.', 3000);
-                }
-            }
-        }
-        catch (error) {
-            logger_1.logger.warn('Failed to verify module table state:', error);
-        }
-    }
-    const args = [];
-    if (isShell) {
-        args.push('shell', '-p', settings.shellPortNumber.toString());
-    }
-    else {
-        args.push('-p', settings.portNumber.toString());
-    }
-    args.push('--addons-path', addonsPaths.join(','), '-d', db.id);
-    if (installs.length > 0 || settings.installApps) {
-        const installParts = [installs.join(','), settings.installApps]
-            .map(part => part?.trim())
-            .filter(part => part && part.length > 0);
-        if (installParts.length > 0) {
-            args.push('-i', installParts.join(','));
-        }
-    }
-    if (upgrades.length > 0 || settings.upgradeApps) {
-        const upgradeParts = [upgrades.join(','), settings.upgradeApps]
-            .map(part => part?.trim())
-            .filter(part => part && part.length > 0);
-        if (upgradeParts.length > 0) {
-            args.push('-u', upgradeParts.join(','));
-        }
-    }
-    args.push('--limit-time-real', settings.limitTimeReal.toString(), '--limit-time-cpu', settings.limitTimeCpu.toString(), '--max-cron-threads', settings.maxCronThreads.toString());
-    // Use new testing system from project configuration
-    if (project.testingConfig?.isEnabled) {
-        args.push('--test-enable');
-        // Ensure testingConfig is a proper TestingConfigModel instance
-        const testingConfig = (0, testing_1.ensureTestingConfigModel)(project.testingConfig);
-        if (testingConfig.testFile) {
-            args.push('--test-file', testingConfig.testFile);
-        }
-        const tagsString = testingConfig.getTestTagsString();
-        if (tagsString) {
-            args.push('--test-tags', tagsString);
-        }
-        if (testingConfig.stopAfterInit) {
-            args.push('--stop-after-init');
-        }
-        if (testingConfig.logLevel && testingConfig.logLevel !== 'disabled') {
-            args.push('--log-level', testingConfig.logLevel);
-        }
-    }
-    if (settings.extraParams) {
-        const extraArgs = settings.extraParams
-            .split(',')
-            .map(param => param.trim())
-            .filter(Boolean);
-        args.push(...extraArgs);
-    }
-    if (settings.devMode) {
-        args.push(settings.devMode);
-    }
-    return args;
-}
-/**
- * Assembles the full `python odoo-bin …` command line for the selected
- * project's active version, quoted for a POSIX shell — the same command
- * the debugger runs (server) or the shell terminal sends (`isShell`).
- * Returns undefined after surfacing the reason when prerequisites are
- * missing.
- */
-async function buildOdooCommandLine(isShell = false) {
-    const result = await settingsStore_1.SettingsStore.getSelectedProject();
-    if (!result) {
-        return undefined;
-    }
-    const { project } = result;
-    const versionsService = versionsService_1.VersionsService.getInstance();
-    const workspaceSettings = await versionsService.getActiveVersionSettings();
-    const normalizedOdooPath = (0, utils_1.normalizePath)(workspaceSettings.odooPath);
-    const normalizedPythonPath = (0, utils_1.normalizePath)(workspaceSettings.pythonPath);
-    let args;
-    try {
-        args = await prepareArgs(project, workspaceSettings, {
-            isShell,
-            versionId: versionsService.getActiveVersion()?.id
-        });
-    }
-    catch (error) {
-        if (error instanceof Error) {
-            if (error.message === NO_DATABASE) {
-                void (0, utils_1.showInfo)('Select a database first.');
-            }
-            else if (!(0, settingsStore_1.isStoreReadError)(error)) {
-                void (0, utils_1.showError)(error.message);
-            }
-        }
-        else {
-            void (0, utils_1.showError)('Could not prepare the Odoo command.');
-        }
-        return undefined;
-    }
-    const odooBinPath = `${normalizedOdooPath}/odoo-bin`;
-    return [
-        quoteShellArg(normalizedPythonPath),
-        quoteShellArg(odooBinPath),
-        ...args.map(quoteShellArg)
-    ].join(' ');
-}
-async function startDebugShell() {
-    const workspacePath = (0, utils_1.getWorkspacePath)();
-    if (!workspacePath) {
-        return undefined;
-    }
-    const fullCommand = await buildOdooCommandLine(true);
-    if (!fullCommand) {
-        return undefined;
-    }
-    const terminal = vscode.window.createTerminal({
-        name: 'Odoo Shell',
-        cwd: runDirectory(workspacePath),
-        isTransient: true
-    });
-    terminal.show();
-    terminal.sendText(fullCommand);
-}
-function quoteShellArg(value) {
-    if (/^[\w@%+=:,./-]+$/.test(value)) {
-        return value;
-    }
-    const escapedValue = value.replaceAll("'", String.raw `'\''`);
-    return `'${escapedValue}'`;
-}
-/** Stops one of the extension's running sessions, asking only when ambiguous. */
-async function stopDebugServer() {
-    const settings = await versionsService_1.VersionsService.getInstance().getActiveVersionSettings();
-    const target = (0, debugSessions_1.resolveStopTarget)((0, debugSessions_1.runningDebuggerNames)(), settings.debuggerName);
-    if (target.kind === 'none') {
-        void (0, utils_1.showInfo)('No Odoo debug session is currently running.');
-        return;
-    }
-    let name;
-    if (target.kind === 'single') {
-        name = target.name;
-    }
-    else {
-        const picked = await vscode.window.showQuickPick(target.names, {
-            title: 'Stop which Odoo server?',
-            placeHolder: 'Several versions are running'
-        });
-        if (!picked) {
-            return;
-        }
-        name = picked;
-    }
-    const session = (0, debugSessions_1.getSessionByName)(name);
-    if (!session) {
-        void (0, utils_1.showInfo)('No Odoo debug session is currently running.');
-        return;
-    }
-    await vscode.debug.stopDebugging(session);
-}
-/**
- * Starts one named version's server.
- *
- * Separate from `startDebugServer` because "the active version" is the wrong
- * answer whenever two servers run side by side: an upgrade starts both, and
- * only one of them can be active. launch.json already carries an entry per
- * provisioned version, so any of them can be started by name.
- *
- * `quiet` suppresses the prompts that only make sense for a command the user
- * invoked directly; a batch reports its own failures.
- */
-async function startServerForVersion(versionId, options = {}) {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders || workspaceFolders.length === 0) {
-        if (!options.quiet) {
-            void (0, utils_1.showError)('Open a workspace to use this command.');
-        }
-        return { ok: false, message: 'No workspace is open.' };
-    }
-    const result = await settingsStore_1.SettingsStore.getSelectedProject();
-    if (!result) {
-        return { ok: false, message: 'No project is selected.' };
-    }
-    const versionsService = versionsService_1.VersionsService.getInstance();
-    await versionsService.initialize();
-    const version = versionId ? versionsService.getVersion(versionId) : versionsService.getActiveVersion();
-    if (!version) {
-        if (!options.quiet) {
-            void (0, utils_1.showError)('No version to run. Create or select one first.');
-        }
-        return { ok: false, message: 'No version to run.' };
-    }
-    const settings = new settings_1.SettingsModel(version.settings);
-    // Handing an unprovisioned version to vscode.debug produces its generic
-    // "configuration not found" error, which says nothing about the cause.
-    if (!(0, provisioning_1.isVersionProvisioned)((0, utils_1.resolveOptionalPath)(settings.pythonPath))) {
-        const message = `"${version.name}" has no environment to run.`;
-        if (options.quiet) {
-            return { ok: false, message };
-        }
-        const choice = await (0, utils_1.showError)(message, 'Provision');
-        if (choice === 'Provision') {
-            await (0, odooInstaller_1.provisionExistingVersion)(version.id);
-        }
-        return { ok: false, message };
-    }
-    const db = (0, dbResolution_1.dbForVersion)(result.project, version.id);
-    if (!db) {
-        const message = `No database is selected for "${version.name}".`;
-        if (options.quiet) {
-            return { ok: false, message };
-        }
-        const choice = await (0, utils_1.showError)(message, 'Select Database');
-        if (choice === 'Select Database') {
-            await vscode.commands.executeCommand('dbSelector.quickSearch', { versionId: version.id });
-            // Picked one: carry on with the start that asked for it, once,
-            // after writing its launch entry.
-            const picked = (0, dbResolution_1.dbForVersion)((await settingsStore_1.SettingsStore.peekSelectedProject())?.project, version.id);
-            if (picked && !options.afterPick) {
-                await setupDebugger();
-                return startServerForVersion(version.id, { ...options, afterPick: true });
-            }
-        }
-        return { ok: false, message };
-    }
-    const notWritten = () => {
-        const message = `Could not start "${settings.debuggerName}". Its launch entry may not be written yet.`;
-        if (!options.quiet) {
-            void (0, utils_1.showError)(message);
-        }
-        return { ok: false, message };
-    };
-    // A debugger name shared with the active version is that version's
-    // entry: starting it would run the active version instead of this one.
-    const owner = (0, versionIdentity_1.sessionOwner)(launchCandidates(versionsService), settings.debuggerName, versionsService.getActiveVersion()?.id);
-    if (owner && owner.id !== version.id) {
-        const message = `"${version.name}" shares the debugger name "${settings.debuggerName}" with "${owner.name}", `
-            + 'whose launch entry it is. Activate it, or give it its own debugger name.';
-        if (!options.quiet) {
-            void (0, utils_1.showError)(message);
-        }
-        return { ok: false, message };
-    }
-    // Found before anything is stopped: a start that cannot happen must not
-    // take the running server of this version down with it.
-    const target = currentLaunchTarget();
-    const entry = target ? await (0, launchConfig_1.readManagedLaunchConfig)(target, settings.debuggerName) : undefined;
-    if (!target || !entry) {
-        return notWritten();
-    }
-    // Restarting this version stops only this version's session; other
-    // versions running side by side must survive.
-    const existingSession = (0, debugSessions_1.getSessionByName)(settings.debuggerName);
-    // Something already on the port that is not this window's session is
-    // usually the same version started from another window. Odoo would only
-    // fail to bind; say what is going on instead.
-    const port = Number(settings.portNumber) || 0;
-    if (!existingSession && port && await (0, server_1.isPortOpen)(port)) {
-        // A port set by hand may be another version's, running in this window.
-        const holder = (0, debugSessions_1.runningDebuggerNames)()
-            .map(name => versionsService.getVersion((0, debugSessions_1.versionIdOfSession)(name) ?? ''))
-            .find(other => other && other.id !== version.id && Number(other.settings.portNumber) === port);
-        const message = holder
-            ? `Port ${port} is taken by "${holder.name}", which is running. Stop it first, or give "${version.name}" its own port.`
-            : `"${version.name}" is already running on port ${port}, probably in another window.`;
-        if (!options.quiet) {
-            void (0, utils_1.showWarning)(message, 'Open in Browser').then(choice => {
-                if (choice === 'Open in Browser') {
-                    void vscode.env.openExternal((0, server_1.buildServerUrl)(port, db.id));
-                }
-            });
-        }
-        return { ok: false, message };
-    }
-    if (existingSession) {
-        await vscode.debug.stopDebugging(existingSession);
-    }
-    // VS Code looks a configuration up by name only in a folder's
-    // launch.json, so an entry in a workspace file is passed as itself. Its
-    // name is the session's name either way, which Stop and Restart rely on.
-    const started = await vscode.debug.startDebugging(workspaceFolders[0], target.kind === 'workspaceFile' ? entry : settings.debuggerName, { noDebug: options.noDebug === true });
-    if (!started) {
-        return notWritten();
-    }
-    return { ok: true };
-}
-async function startDebugServer(options = {}) {
-    await startServerForVersion(undefined, options);
-}
-
-
-/***/ }),
-/* 102 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getActiveServerPort = getActiveServerPort;
-exports.pickPortForDatabase = pickPortForDatabase;
-exports.buildServerUrl = buildServerUrl;
-exports.isPortOpen = isPortOpen;
-exports.waitForPort = waitForPort;
-exports.resolvePortForDatabase = resolvePortForDatabase;
-exports.openServerInBrowser = openServerInBrowser;
-exports.registerServerLifecycle = registerServerLifecycle;
-/**
- * Server URL helpers: resolves the local Odoo URL from the active
- * version's port setting and opens databases in the browser, optionally
- * waiting for the HTTP port to accept connections first.
- */
-const vscode = __importStar(__webpack_require__(1));
-const net = __importStar(__webpack_require__(37));
-const versionsService_1 = __webpack_require__(33);
-const logger_1 = __webpack_require__(12);
-const notifications_1 = __webpack_require__(16);
-const runningState_1 = __webpack_require__(87);
-const debugSessions_1 = __webpack_require__(88);
-const versionIdentity_1 = __webpack_require__(36);
-const DEFAULT_ODOO_PORT = 8069;
-/** Port the Odoo server listens on, from the active version's settings. */
-async function getActiveServerPort() {
-    try {
-        const settings = await versionsService_1.VersionsService.getInstance().getActiveVersionSettings();
-        const port = Number(settings.portNumber);
-        if (Number.isInteger(port) && port > 0 && port <= 65535) {
-            return port;
-        }
-    }
-    catch (error) {
-        logger_1.logger.debug('Could not read active version port, using default:', error);
-    }
-    return DEFAULT_ODOO_PORT;
-}
-/**
- * Which port serves `dbId`. With several versions running, the active
- * version's port is usually the wrong answer: a database belongs to the
- * version that is actually serving it.
- */
-function pickPortForDatabase(dbId, running, versions, dbVersionId, activePort) {
-    const byId = (id) => versions.find(version => version.id === id);
-    if (dbId) {
-        const live = running.find(instance => instance.dbName === dbId && !!instance.port);
-        if (live?.port) {
-            return { port: live.port, source: 'running', versionName: byId(live.versionId)?.name };
-        }
-    }
-    const owner = byId(dbVersionId);
-    if (owner?.portNumber) {
-        return { port: owner.portNumber, source: 'version', versionName: owner.name };
-    }
-    return { port: activePort, source: 'active' };
-}
-/** Local server URL, optionally routed straight into a database. */
-function buildServerUrl(port, dbName) {
-    const base = `http://localhost:${port}`;
-    if (!dbName) {
-        return vscode.Uri.parse(base);
-    }
-    return vscode.Uri.parse(`${base}/web?db=${encodeURIComponent(dbName)}`);
-}
-/** Whether something accepts a TCP connection on the port right now. */
-function isPortOpen(port) {
-    return new Promise(resolve => {
-        const socket = net.connect({ port, host: '127.0.0.1' });
-        const finish = (result) => {
-            socket.destroy();
-            resolve(result);
-        };
-        socket.setTimeout(1000, () => finish(false));
-        socket.once('connect', () => finish(true));
-        socket.once('error', () => finish(false));
-    });
-}
-/** Resolves true once the port accepts a TCP connection, false on timeout. */
-function waitForPort(port, timeoutMs) {
-    const deadline = Date.now() + timeoutMs;
-    const tryOnce = () => new Promise(resolve => {
-        const socket = net.connect({ port, host: '127.0.0.1' });
-        const finish = (result) => {
-            socket.destroy();
-            resolve(result);
-        };
-        socket.setTimeout(1000, () => finish(false));
-        socket.once('connect', () => finish(true));
-        socket.once('error', () => finish(false));
-    });
-    return (async () => {
-        while (Date.now() < deadline) {
-            if (await tryOnce()) {
-                return true;
-            }
-            await new Promise(resolve => setTimeout(resolve, 500));
-        }
-        return false;
-    })();
-}
-/** Resolves the port serving `dbId`, consulting live sessions first. */
-async function resolvePortForDatabase(dbId, dbVersionId) {
-    try {
-        const service = versionsService_1.VersionsService.getInstance();
-        await service.initialize();
-        const versions = service.getVersions().map(version => ({
-            id: version.id,
-            name: version.name,
-            portNumber: Number(version.settings.portNumber) || undefined
-        }));
-        return pickPortForDatabase(dbId, await (0, runningState_1.getRunningInstances)(), versions, dbVersionId, await getActiveServerPort());
-    }
-    catch (error) {
-        logger_1.logger.debug('Could not resolve the port for a database, using the active version:', error);
-        return { port: await getActiveServerPort(), source: 'active' };
-    }
-}
-/**
- * Opens the Odoo web client for the given (or server-selected) database, on
- * the port actually serving it. A dead port is reported rather than opened:
- * a browser tab showing a connection error is worse than being told why.
- */
-async function openServerInBrowser(dbName, dbVersionId) {
-    const resolved = await resolvePortForDatabase(dbName, dbVersionId);
-    const url = buildServerUrl(resolved.port, dbName);
-    if (await waitForPort(resolved.port, 400)) {
-        await vscode.env.openExternal(url);
-        return;
-    }
-    const target = resolved.versionName
-        ? `${resolved.versionName} (port ${resolved.port})`
-        : `port ${resolved.port}`;
-    const choice = await (0, notifications_1.showWarning)(`No Odoo server is answering on ${target}.`, 'Open Anyway');
-    if (choice === 'Open Anyway') {
-        await vscode.env.openExternal(url);
-    }
-}
-/**
- * The version whose launch configuration this session was started from: for a
- * name several versions share, the one its entry was written for (the active
- * one, else the oldest - see sessionOwner).
- */
-async function versionForSession(session) {
-    const name = session.configuration?.name;
-    if (typeof name !== 'string' || name.length === 0) {
-        return undefined;
-    }
-    try {
-        const service = versionsService_1.VersionsService.getInstance();
-        await service.initialize();
-        const version = (0, versionIdentity_1.sessionOwner)(service.getVersions(), name, service.getActiveVersion()?.id);
-        if (!version) {
-            return undefined;
-        }
-        const port = Number(version.settings.portNumber);
-        return { id: version.id, portNumber: Number.isInteger(port) && port > 0 && port <= 65535 ? port : DEFAULT_ODOO_PORT };
-    }
-    catch {
-        return undefined;
-    }
-}
-/**
- * Tracks the extension's own debug session: maintains the
- * 'odoo-debugger.server_running' context key and, when
- * odooDebugger.server.openBrowserOnStart is enabled, opens the web
- * client once the server port starts accepting connections.
- */
-function registerServerLifecycle(context, hooks) {
-    context.subscriptions.push(vscode.debug.onDidStartDebugSession(async (session) => {
-        const version = await versionForSession(session);
-        if (!version) {
-            return;
-        }
-        (0, debugSessions_1.trackSession)(session, version.id);
-        hooks.onRunningChanged((0, debugSessions_1.anySessionRunning)());
-        const openBrowser = vscode.workspace
-            .getConfiguration('odooDebugger')
-            .get('server.openBrowserOnStart', false);
-        if (!openBrowser) {
-            return;
-        }
-        // The session's own port, not the active version's: another version
-        // may have been activated since this one was launched.
-        if (await waitForPort(version.portNumber, 60000)) {
-            const dbName = await hooks.getSelectedDbName();
-            await vscode.env.openExternal(buildServerUrl(version.portNumber, dbName));
-        }
-        else {
-            logger_1.logger.debug(`Server port ${version.portNumber} did not open within 60s; not opening browser.`);
-        }
-    }));
-    context.subscriptions.push(vscode.debug.onDidTerminateDebugSession(session => {
-        (0, debugSessions_1.untrackSession)(session);
-        hooks.onRunningChanged((0, debugSessions_1.anySessionRunning)());
-    }));
-}
-
-
-/***/ }),
-/* 103 */
+/* 110 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -21821,7 +23376,7 @@ async function offerStop(context, remaining) {
 
 
 /***/ }),
-/* 104 */
+/* 111 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -21874,9 +23429,9 @@ const logger_1 = __webpack_require__(12);
 const settingsStore_1 = __webpack_require__(6);
 const baseTreeProvider_1 = __webpack_require__(5);
 const versionIdentity_1 = __webpack_require__(36);
-const provisionQueue_1 = __webpack_require__(103);
+const provisionQueue_1 = __webpack_require__(110);
 const upgrade_1 = __webpack_require__(40);
-const workspaceRegistry_1 = __webpack_require__(82);
+const workspaceRegistry_1 = __webpack_require__(94);
 /** Provisioned state for the tree description, from the shared predicate. */
 function provisioningLabel(version) {
     // The queue owns the row while it is building: "not provisioned" during a
@@ -22137,7 +23692,7 @@ exports.VersionsTreeProvider = VersionsTreeProvider;
 
 
 /***/ }),
-/* 105 */
+/* 112 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -22160,7 +23715,7 @@ exports.SortPreferences = SortPreferences;
 
 
 /***/ }),
-/* 106 */
+/* 113 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22211,7 +23766,7 @@ const settingsStore_1 = __webpack_require__(6);
 const upgrade_1 = __webpack_require__(41);
 const logger_1 = __webpack_require__(12);
 const baseTreeProvider_1 = __webpack_require__(5);
-const viewPairing_1 = __webpack_require__(107);
+const viewPairing_1 = __webpack_require__(114);
 /** workspaceState: whether "Other inactive views" also lists those the original has off too. */
 exports.SHOW_ALSO_OFF_KEY = 'viewDoctor.showAlsoOff';
 function resolveViewDoctorTarget(project) {
@@ -22369,7 +23924,7 @@ exports.ViewDoctorTreeProvider = ViewDoctorTreeProvider;
 
 
 /***/ }),
-/* 107 */
+/* 114 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22423,9 +23978,9 @@ const vscode = __importStar(__webpack_require__(1));
 const upgrade_1 = __webpack_require__(41);
 const runningState_1 = __webpack_require__(87);
 const notifications_1 = __webpack_require__(16);
-const viewQueries_1 = __webpack_require__(108);
-const viewMatch_1 = __webpack_require__(109);
-const viewFileSystem_1 = __webpack_require__(110);
+const viewQueries_1 = __webpack_require__(81);
+const viewMatch_1 = __webpack_require__(115);
+const viewFileSystem_1 = __webpack_require__(116);
 function upgradePair(project) {
     if (!project) {
         return undefined;
@@ -22499,300 +24054,7 @@ function diffArguments(original, upgraded) {
 
 
 /***/ }),
-/* 108 */
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.VIEW_MODELS_SQL = void 0;
-exports.sqlIdList = sqlIdList;
-exports.sqlText = sqlText;
-exports.firstXmlidSql = firstXmlidSql;
-exports.viewRowsSql = viewRowsSql;
-exports.parseViewRows = parseViewRows;
-exports.parseReportMessages = parseReportMessages;
-exports.parseWriteDates = parseWriteDates;
-exports.listInactiveViews = listInactiveViews;
-exports.getViewRows = getViewRows;
-exports.getReportMessages = getReportMessages;
-exports.getWriteDates = getWriteDates;
-exports.viewByXmlidSql = viewByXmlidSql;
-exports.findViewByXmlid = findViewByXmlid;
-exports.viewsLikeSql = viewsLikeSql;
-exports.findViewsLike = findViewsLike;
-exports.fingerprintsSql = fingerprintsSql;
-exports.parseFingerprints = parseFingerprints;
-exports.getViewFingerprints = getViewFingerprints;
-exports.getDatabaseUuid = getDatabaseUuid;
-exports.parseViewModels = parseViewModels;
-exports.viewModels = viewModels;
-exports.viewsOfModelSql = viewsOfModelSql;
-exports.viewsOfModel = viewsOfModel;
-exports.descendantsSql = descendantsSql;
-exports.descendants = descendants;
-exports.inactiveViewIds = inactiveViewIds;
-/**
- * Read-only SQL for the View Doctor, through psql. Every query returns one
- * JSON value (json_agg / json_object_agg): view names and Discuss bodies are
- * free text with tabs and newlines, which the `|`-separated readers in
- * database.ts would split. Ported from odoo-manager's docker_manager.py
- * (list_disabled_views, _first_xmlid, the Discuss report query). Ids are
- * validated integers and text goes in hex-encoded (sqlText); nothing else is
- * ever interpolated.
- */
-const postgres_1 = __webpack_require__(47);
-/** Ids for embedding in SQL; throws on anything that is not a positive integer. */
-function sqlIdList(ids) {
-    for (const id of ids) {
-        if (!Number.isSafeInteger(id) || id <= 0) {
-            throw new Error(`Not a view id: ${id}`);
-        }
-    }
-    return ids.join(',');
-}
-/**
- * Text for embedding in SQL. Hex digits cannot close a literal, so no value
- * - a model, a view name, an external id - can change the query.
- */
-function sqlText(value) {
-    return `convert_from(decode('${Buffer.from(value, 'utf-8').toString('hex')}', 'hex'), 'UTF8')`;
-}
-/**
- * A column of the view `v`'s first external id. ir.ui.view.xml_id is
- * computed, with no column: Odoo takes the first ir_model_data row in that
- * model's order (module, name). Every query that names or classifies a view
- * by its external id goes through this, so a view with several is the same
- * view everywhere.
- */
-function firstXmlidSql(column) {
-    return `(SELECT ${column} FROM ir_model_data d WHERE d.model = 'ir.ui.view' AND d.res_id = v.id ORDER BY d.module, d.name LIMIT 1)`;
-}
-/**
- * The view rows matching `where`, an expression over ir_ui_view aliased `v`.
- * The root comes from a walk up inherit_id bounded at 50 steps, so a corrupt
- * cycle cannot hang the query. A root counts as a report when any of its
- * external ids is an ir.actions.report's report_name.
- */
-function viewRowsSql(where) {
-    return `
-WITH RECURSIVE chain AS (
-    SELECT v.id AS start_id, v.id AS cur_id, v.inherit_id, 0 AS depth
-    FROM ir_ui_view v WHERE ${where}
-    UNION ALL
-    SELECT c.start_id, p.id, p.inherit_id, c.depth + 1
-    FROM chain c JOIN ir_ui_view p ON p.id = c.inherit_id
-    WHERE c.depth < 50
-), roots AS (
-    SELECT DISTINCT ON (start_id) start_id, cur_id AS root_id
-    FROM chain ORDER BY start_id, depth DESC
-)
-SELECT coalesce(json_agg(json_build_object(
-    'id', v.id,
-    'name', coalesce(v.name, v.type),
-    'model', coalesce(v.model, ''),
-    'type', v.type,
-    'active', v.active,
-    'inherit_id', v.inherit_id,
-    'xmlid', ${firstXmlidSql("d.module || '.' || d.name")},
-    'root_id', r.root_id,
-    'is_report', EXISTS (
-        SELECT 1 FROM ir_model_data rd
-        JOIN ir_act_report_xml a ON a.report_name = rd.module || '.' || rd.name
-        WHERE rd.model = 'ir.ui.view' AND rd.res_id = r.root_id),
-    'write_date', floor(extract(epoch FROM v.write_date) * 1000)
-) ORDER BY v.model, v.id), '[]'::json)
-FROM ir_ui_view v JOIN roots r ON r.start_id = v.id;`.trim();
-}
-const REPORT_MESSAGES_SQL = `
-SELECT coalesce(json_agg(json_build_object('id', id, 'date', create_date, 'body', body) ORDER BY id), '[]'::json)
-FROM mail_message
-WHERE model IN ('discuss.channel', 'mail.channel') AND body LIKE '%Disabled views%';`.trim();
-function parseJson(output, fallback) {
-    return JSON.parse(output.trim() || fallback);
-}
-function parseViewRows(output) {
-    const raw = parseJson(output, '[]');
-    if (!Array.isArray(raw)) {
-        throw new Error('Unexpected output from the view query.');
-    }
-    return raw.map(entry => {
-        const row = entry;
-        const id = Number(row.id);
-        return {
-            id,
-            name: String(row.name ?? ''),
-            model: String(row.model ?? ''),
-            type: String(row.type ?? ''),
-            active: row.active === true,
-            inheritId: typeof row.inherit_id === 'number' ? row.inherit_id : null,
-            xmlid: typeof row.xmlid === 'string' ? row.xmlid : null,
-            rootId: typeof row.root_id === 'number' ? row.root_id : id,
-            isReport: row.is_report === true,
-            writeDate: typeof row.write_date === 'number' ? row.write_date : 0
-        };
-    });
-}
-function parseReportMessages(output) {
-    const raw = parseJson(output, '[]');
-    if (!Array.isArray(raw)) {
-        throw new Error('Unexpected output from the report query.');
-    }
-    return raw.map(entry => {
-        const message = entry;
-        return { id: Number(message.id), body: String(message.body ?? '') };
-    });
-}
-function parseWriteDates(output) {
-    const raw = parseJson(output, '{}');
-    return new Map(Object.entries(raw).map(([id, ms]) => [Number(id), typeof ms === 'number' ? ms : 0]));
-}
-/** Every view that is off right now, whatever turned it off. */
-async function listInactiveViews(dbName) {
-    return parseViewRows(await (0, postgres_1.runSql)(dbName, viewRowsSql('v.active = false')));
-}
-/** The rows for these ids; an id with no view is absent. */
-async function getViewRows(dbName, ids) {
-    if (ids.length === 0) {
-        return [];
-    }
-    return parseViewRows(await (0, postgres_1.runSql)(dbName, viewRowsSql(`v.id IN (${sqlIdList(ids)})`)));
-}
-/** upgrade-util's post-upgrade report messages; none on a database without Discuss. */
-async function getReportMessages(dbName) {
-    const hasTable = await (0, postgres_1.runSql)(dbName, "SELECT to_regclass('mail_message') IS NOT NULL;");
-    if (hasTable !== 't') {
-        return [];
-    }
-    return parseReportMessages(await (0, postgres_1.runSql)(dbName, REPORT_MESSAGES_SQL));
-}
-/** write_date of each view in epoch ms; an id with no view is absent. */
-async function getWriteDates(dbName, ids) {
-    if (ids.length === 0) {
-        return new Map();
-    }
-    const sql = 'SELECT coalesce(json_object_agg(id, floor(extract(epoch FROM write_date) * 1000)), \'{}\'::json) '
-        + `FROM ir_ui_view WHERE id IN (${sqlIdList(ids)});`;
-    return parseWriteDates(await (0, postgres_1.runSql)(dbName, sql));
-}
-/** The query for the view with this external id; undefined for a string that is not module.name. */
-function viewByXmlidSql(xmlid) {
-    const dot = xmlid.indexOf('.');
-    if (dot <= 0 || dot === xmlid.length - 1) {
-        return undefined;
-    }
-    return viewRowsSql(`v.id IN (SELECT d.res_id FROM ir_model_data d WHERE d.model = 'ir.ui.view'
-        AND d.module = ${sqlText(xmlid.slice(0, dot))} AND d.name = ${sqlText(xmlid.slice(dot + 1))})`);
-}
-/** The view with this external id, if the database has one. */
-async function findViewByXmlid(dbName, xmlid) {
-    const sql = viewByXmlidSql(xmlid);
-    return sql ? parseViewRows(await (0, postgres_1.runSql)(dbName, sql))[0] : undefined;
-}
-/** The query for the view with this id and every view of the same model and type. */
-function viewsLikeSql(view) {
-    // 18.0 renamed the list type from 'tree': an upgraded list view is 'list', its original 'tree'.
-    const type = view.type === 'tree' || view.type === 'list'
-        ? `v.type IN (${sqlText('tree')}, ${sqlText('list')})`
-        : `v.type = ${sqlText(view.type)}`;
-    return viewRowsSql(`(v.id = ${sqlIdList([view.id])} OR (v.model = ${sqlText(view.model)} AND ${type}))`);
-}
-/** What matching a view of another database picks from: the same id, and its model and type's views. */
-async function findViewsLike(dbName, view) {
-    return parseViewRows(await (0, postgres_1.runSql)(dbName, viewsLikeSql(view)));
-}
-/**
- * What tells whether views' arches were edited, for many at once (port of
- * odoo-manager's get_view_fingerprints). arch_md5 hashes the raw arch_db as
- * text, so one query covers the text column of 15 and the per-language jsonb
- * of 16+. written is write_date: any ORM write moves it, turning a view on
- * included, so it only ever proves a view untouched. arch_updated flips only
- * when the arch itself is written. module/noupdate tell a module's own view
- * from one that lives only in the database.
- */
-function fingerprintsSql(ids) {
-    const unique = [...new Set(ids)].sort((a, b) => a - b);
-    return `SELECT coalesce(json_object_agg(v.id, json_build_object(
-    'arch_md5', md5(v.arch_db::text),
-    'written', floor(extract(epoch FROM v.write_date) * 1000),
-    'arch_updated', v.arch_updated,
-    'module', ${firstXmlidSql('d.module')},
-    'noupdate', ${firstXmlidSql('d.noupdate')}
-)), '{}'::json)
-FROM ir_ui_view v WHERE v.id IN (${sqlIdList(unique)});`;
-}
-function parseFingerprints(output) {
-    const raw = parseJson(output, '{}');
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-        throw new Error('Unexpected output from the fingerprint query.');
-    }
-    return new Map(Object.entries(raw).map(([id, fp]) => [Number(id), {
-            archMd5: typeof fp?.arch_md5 === 'string' ? fp.arch_md5 : null,
-            written: typeof fp?.written === 'number' ? fp.written : null,
-            archUpdated: typeof fp?.arch_updated === 'boolean' ? fp.arch_updated : null,
-            module: typeof fp?.module === 'string' ? fp.module : null,
-            noupdate: typeof fp?.noupdate === 'boolean' ? fp.noupdate : null
-        }]));
-}
-/** Fingerprints of these views; an id with no view is absent. Throws when they cannot be read. */
-async function getViewFingerprints(dbName, ids) {
-    if (ids.length === 0) {
-        return new Map();
-    }
-    return parseFingerprints(await (0, postgres_1.runSql)(dbName, fingerprintsSql(ids)));
-}
-/** The database's database.uuid, which a database recreated under the same name does not share. */
-async function getDatabaseUuid(dbName) {
-    const raw = parseJson(await (0, postgres_1.runSql)(dbName, "SELECT coalesce(json_agg(value), '[]'::json) FROM ir_config_parameter WHERE key = 'database.uuid';"), '[]');
-    return Array.isArray(raw) && typeof raw[0] === 'string' && raw[0] ? raw[0] : undefined;
-}
-/** The models that have views, with how many; Find View offers them. */
-exports.VIEW_MODELS_SQL = `
-SELECT coalesce(json_agg(json_build_object('model', model, 'count', n) ORDER BY model), '[]'::json)
-FROM (SELECT model, count(*) AS n FROM ir_ui_view WHERE model IS NOT NULL AND model <> '' GROUP BY model) m;`.trim();
-function parseViewModels(output) {
-    const raw = parseJson(output, '[]');
-    if (!Array.isArray(raw)) {
-        throw new Error('Unexpected output from the model query.');
-    }
-    return raw.map(entry => {
-        const model = entry;
-        return { model: String(model.model ?? ''), count: Number(model.count ?? 0) };
-    });
-}
-async function viewModels(dbName) {
-    return parseViewModels(await (0, postgres_1.runSql)(dbName, exports.VIEW_MODELS_SQL));
-}
-/** Every view of a model, on or off. */
-function viewsOfModelSql(model) {
-    return viewRowsSql(`v.model = ${sqlText(model)}`);
-}
-async function viewsOfModel(dbName, model) {
-    return parseViewRows(await (0, postgres_1.runSql)(dbName, viewsOfModelSql(model)));
-}
-/** The view and every view inheriting from it, at any depth, on or off; bounded like the root walk. */
-function descendantsSql(viewId) {
-    return viewRowsSql(`v.id IN (
-    WITH RECURSIVE tree AS (
-        SELECT id, 0 AS depth FROM ir_ui_view WHERE id = ${sqlIdList([viewId])}
-        UNION ALL
-        SELECT c.id, t.depth + 1 FROM ir_ui_view c JOIN tree t ON c.inherit_id = t.id WHERE t.depth < 50
-    ) SELECT id FROM tree)`);
-}
-async function descendants(dbName, viewId) {
-    return parseViewRows(await (0, postgres_1.runSql)(dbName, descendantsSql(viewId)));
-}
-/** The ids of the views that are off: what "also off in the original" compares with. */
-async function inactiveViewIds(dbName) {
-    const raw = parseJson(await (0, postgres_1.runSql)(dbName, "SELECT coalesce(json_agg(id), '[]'::json) FROM ir_ui_view WHERE active = false;"), '[]');
-    if (!Array.isArray(raw)) {
-        throw new Error('Unexpected output from the inactive view query.');
-    }
-    return raw.filter((id) => Number.isSafeInteger(id));
-}
-
-
-/***/ }),
-/* 109 */
+/* 115 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -22825,7 +24087,7 @@ function matchView(source, found) {
 
 
 /***/ }),
-/* 110 */
+/* 116 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -22988,18 +24250,18 @@ exports.ViewFileSystemProvider = ViewFileSystemProvider;
 
 
 /***/ }),
-/* 111 */
+/* 117 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ViewService = void 0;
 exports.originalInactiveIds = originalInactiveIds;
-const viewQueries_1 = __webpack_require__(108);
-const disabledReport_1 = __webpack_require__(112);
+const viewQueries_1 = __webpack_require__(81);
+const disabledReport_1 = __webpack_require__(118);
 const logger_1 = __webpack_require__(12);
-const viewGroups_1 = __webpack_require__(113);
-const xpathReport_1 = __webpack_require__(114);
+const viewGroups_1 = __webpack_require__(119);
+const xpathReport_1 = __webpack_require__(120);
 /**
  * Which views the original database has off; undefined when there is no
  * original to ask, or it cannot be read - the tree then shows everything.
@@ -23095,7 +24357,7 @@ exports.ViewService = ViewService;
 
 
 /***/ }),
-/* 112 */
+/* 118 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -23221,7 +24483,7 @@ function mergeReports(reports) {
 
 
 /***/ }),
-/* 113 */
+/* 119 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -23265,7 +24527,7 @@ function groupViews(inactive, reported, reportedRows, edited = [], alsoOffInOrig
 
 
 /***/ }),
-/* 114 */
+/* 120 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -23359,7 +24621,7 @@ function checkResultText(report) {
 
 
 /***/ }),
-/* 115 */
+/* 121 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23752,13 +25014,13 @@ exports.ViewWorker = ViewWorker;
 
 
 /***/ }),
-/* 116 */
+/* 122 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ViewWorkerPool = void 0;
-const viewWorker_1 = __webpack_require__(115);
+const viewWorker_1 = __webpack_require__(121);
 const DEFAULT_IDLE_MS = 10 * 60_000;
 class ViewWorkerPool {
     factory;
@@ -23862,7 +25124,7 @@ exports.ViewWorkerPool = ViewWorkerPool;
 
 
 /***/ }),
-/* 117 */
+/* 123 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23876,12 +25138,12 @@ exports.resolveViewWorkerSpec = resolveViewWorkerSpec;
  */
 const settingsStore_1 = __webpack_require__(6);
 const settings_1 = __webpack_require__(7);
-const debugger_1 = __webpack_require__(101);
+const debugger_1 = __webpack_require__(89);
 const utils_1 = __webpack_require__(8);
 const provisioning_1 = __webpack_require__(67);
-const versionRepos_1 = __webpack_require__(80);
+const versionRepos_1 = __webpack_require__(92);
 const viewWorkerArgs_1 = __webpack_require__(50);
-const viewWorker_1 = __webpack_require__(115);
+const viewWorker_1 = __webpack_require__(121);
 /** Why no shell can be started for this database, or undefined when one can. */
 function viewWorkerUnavailableReason(input) {
     if (!input.inProject) {
@@ -23927,7 +25189,7 @@ async function resolveViewWorkerSpec(dbName, scriptPath) {
 
 
 /***/ }),
-/* 118 */
+/* 124 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -23981,14 +25243,14 @@ const settingsStore_1 = __webpack_require__(6);
 const repo_1 = __webpack_require__(46);
 const utils_1 = __webpack_require__(8);
 const runtimeCache_1 = __webpack_require__(15);
-const filesExclude_1 = __webpack_require__(119);
+const filesExclude_1 = __webpack_require__(125);
 const baseTreeProvider_1 = __webpack_require__(5);
 const sortOptions_1 = __webpack_require__(38);
 const branches_1 = __webpack_require__(52);
 const repoPaths_1 = __webpack_require__(56);
 const environment_1 = __webpack_require__(51);
 const setupState_1 = __webpack_require__(71);
-const versionRepos_1 = __webpack_require__(80);
+const versionRepos_1 = __webpack_require__(92);
 const dumpImport_1 = __webpack_require__(75);
 const upgrade_1 = __webpack_require__(41);
 /**
@@ -24353,7 +25615,7 @@ async function selectProjectForExplorer() {
 
 
 /***/ }),
-/* 119 */
+/* 125 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24499,7 +25761,7 @@ function createFilesExcludeMatcher(scopeUri) {
 
 
 /***/ }),
-/* 120 */
+/* 126 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24634,7 +25896,7 @@ function registerWrongCopyGuard(context) {
 
 
 /***/ }),
-/* 121 */
+/* 127 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24755,7 +26017,7 @@ function migratable(diagnoses) {
 
 
 /***/ }),
-/* 122 */
+/* 128 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -24807,10 +26069,10 @@ const node_crypto_1 = __webpack_require__(65);
 const fs = __importStar(__webpack_require__(2));
 const os = __importStar(__webpack_require__(18));
 const path = __importStar(__webpack_require__(3));
-const odooFrameProxy_1 = __webpack_require__(123);
-const reportPdf_1 = __webpack_require__(125);
-const renderSession_1 = __webpack_require__(126);
-const server_1 = __webpack_require__(102);
+const odooFrameProxy_1 = __webpack_require__(129);
+const reportPdf_1 = __webpack_require__(131);
+const renderSession_1 = __webpack_require__(132);
+const server_1 = __webpack_require__(96);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
 const PDF_HOOKS = {
@@ -25213,7 +26475,7 @@ exports.ViewRenderPanel = ViewRenderPanel;
 
 
 /***/ }),
-/* 123 */
+/* 129 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25273,7 +26535,7 @@ exports.filterHandshakeHead = filterHandshakeHead;
  * named after the proxy's port, because cookies ignore ports and the two
  * sides' proxies share 127.0.0.1.
  */
-const http = __importStar(__webpack_require__(124));
+const http = __importStar(__webpack_require__(130));
 const net = __importStar(__webpack_require__(37));
 const node_crypto_1 = __webpack_require__(65);
 exports.GATE_PATH = '/__odt/open';
@@ -25692,13 +26954,13 @@ exports.OdooFrameProxy = OdooFrameProxy;
 
 
 /***/ }),
-/* 124 */
+/* 130 */
 /***/ ((module) => {
 
 module.exports = require("node:http");
 
 /***/ }),
-/* 125 */
+/* 131 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -25746,7 +27008,7 @@ exports.fetchReportPdf = fetchReportPdf;
  * webview may use. VS Code webviews show no PDF, so the file is opened with
  * the system's viewer instead.
  */
-const http = __importStar(__webpack_require__(124));
+const http = __importStar(__webpack_require__(130));
 const MAX_PDF_BYTES = 200 * 1024 * 1024;
 /** Odoo answered something other than 200: a redirect to /web/login means it dropped the session. */
 class PdfRefusedError extends Error {
@@ -25808,7 +27070,7 @@ function fetchReportPdf(port, path, sid, timeoutMs = 120_000) {
 
 
 /***/ }),
-/* 126 */
+/* 132 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -25824,8 +27086,8 @@ exports.RenderSession = exports.RECENT_LIMIT = void 0;
  * own newest record.
  */
 const logger_1 = __webpack_require__(12);
-const renderPlan_1 = __webpack_require__(127);
-const reportPdf_1 = __webpack_require__(125);
+const renderPlan_1 = __webpack_require__(133);
+const reportPdf_1 = __webpack_require__(131);
 exports.RECENT_LIMIT = 200;
 /** The report types that /report/pdf renders; qweb-text makes plain text. */
 const PDF_REPORT_TYPES = new Set(['qweb-pdf', 'qweb-html']);
@@ -26021,7 +27283,7 @@ exports.RenderSession = RenderSession;
 
 
 /***/ }),
-/* 127 */
+/* 133 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -26072,7 +27334,7 @@ function reportPath(reportName, resId, debug = true) {
 
 
 /***/ }),
-/* 128 */
+/* 134 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -26150,7 +27412,7 @@ exports.ViewArchPoller = ViewArchPoller;
 
 
 /***/ }),
-/* 129 */
+/* 135 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26381,7 +27643,7 @@ exports.XpathDiagnostics = XpathDiagnostics;
 
 
 /***/ }),
-/* 130 */
+/* 136 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26432,8 +27694,8 @@ exports.createSaveHook = createSaveHook;
  * closed shows nothing.
  */
 const vscode = __importStar(__webpack_require__(1));
-const xpathReport_1 = __webpack_require__(114);
-const archErrors_1 = __webpack_require__(131);
+const xpathReport_1 = __webpack_require__(120);
+const archErrors_1 = __webpack_require__(137);
 const logger_1 = __webpack_require__(12);
 function saveMessage(result, report) {
     if (result.activationError) {
@@ -26483,7 +27745,7 @@ function createSaveHook(deps) {
 
 
 /***/ }),
-/* 131 */
+/* 137 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -26496,7 +27758,7 @@ exports.locateArchError = locateArchError;
  * failing locator or field in quotes, or (for XML syntax) a line; an error
  * that names neither lands on the first line.
  */
-const disabledReport_1 = __webpack_require__(112);
+const disabledReport_1 = __webpack_require__(118);
 /**
  * Odoo's message as plain text. It HTML-escapes the attributes of a locator
  * it cannot find - `@name=&#39;partner_id&#39;` - on every version from 15
@@ -26563,7 +27825,7 @@ function locateArchError(arch, rawMessage) {
 
 
 /***/ }),
-/* 132 */
+/* 138 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -26718,7 +27980,7 @@ exports.StatusBarIndicators = StatusBarIndicators;
 
 
 /***/ }),
-/* 133 */
+/* 139 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -26734,8 +27996,8 @@ exports.ViewNoteService = exports.psqlNoteQueries = void 0;
  * Bookkeeping never fails what triggered it.
  */
 const logger_1 = __webpack_require__(12);
-const viewQueries_1 = __webpack_require__(108);
-const viewNotes_1 = __webpack_require__(134);
+const viewQueries_1 = __webpack_require__(81);
+const viewNotes_1 = __webpack_require__(140);
 exports.psqlNoteQueries = {
     fingerprints: async (dbName, ids) => {
         try {
@@ -26825,7 +28087,7 @@ exports.ViewNoteService = ViewNoteService;
 
 
 /***/ }),
-/* 134 */
+/* 140 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27133,36 +28395,38 @@ exports.ViewNoteStore = ViewNoteStore;
 
 
 /***/ }),
-/* 135 */
+/* 141 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerAllCommands = registerAllCommands;
-const viewCommands_1 = __webpack_require__(136);
-const projectCommands_1 = __webpack_require__(138);
-const repoCommands_1 = __webpack_require__(144);
-const dbCommands_1 = __webpack_require__(145);
-const moduleCommands_1 = __webpack_require__(146);
-const testingCommands_1 = __webpack_require__(147);
-const versionCommands_1 = __webpack_require__(148);
-const debugCommands_1 = __webpack_require__(150);
-const reposExplorerCommands_1 = __webpack_require__(151);
-const editorCommands_1 = __webpack_require__(152);
-const helpCommands_1 = __webpack_require__(153);
-const upgradeCommand_1 = __webpack_require__(154);
-const customAddonsCommand_1 = __webpack_require__(94);
-const dataStoreCommands_1 = __webpack_require__(156);
-const repoLocationCommand_1 = __webpack_require__(158);
-const bindingCommand_1 = __webpack_require__(84);
-const upgradeSideCommands_1 = __webpack_require__(159);
-const viewDoctorCommands_1 = __webpack_require__(160);
+const viewCommands_1 = __webpack_require__(142);
+const projectCommands_1 = __webpack_require__(144);
+const repoCommands_1 = __webpack_require__(150);
+const dbCommands_1 = __webpack_require__(151);
+const checkpointCommands_1 = __webpack_require__(152);
+const moduleCommands_1 = __webpack_require__(153);
+const testingCommands_1 = __webpack_require__(154);
+const versionCommands_1 = __webpack_require__(155);
+const debugCommands_1 = __webpack_require__(157);
+const reposExplorerCommands_1 = __webpack_require__(158);
+const editorCommands_1 = __webpack_require__(159);
+const helpCommands_1 = __webpack_require__(160);
+const upgradeCommand_1 = __webpack_require__(161);
+const customAddonsCommand_1 = __webpack_require__(104);
+const dataStoreCommands_1 = __webpack_require__(163);
+const repoLocationCommand_1 = __webpack_require__(165);
+const bindingCommand_1 = __webpack_require__(97);
+const upgradeSideCommands_1 = __webpack_require__(166);
+const viewDoctorCommands_1 = __webpack_require__(167);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
     (0, projectCommands_1.registerProjectCommands)(deps);
     (0, repoCommands_1.registerRepoCommands)(deps);
     (0, dbCommands_1.registerDbCommands)(deps);
+    (0, checkpointCommands_1.registerCheckpointCommands)(deps);
     (0, moduleCommands_1.registerModuleCommands)(deps);
     (0, testingCommands_1.registerTestingCommands)(deps);
     (0, versionCommands_1.registerVersionCommands)(deps);
@@ -27181,7 +28445,7 @@ function registerAllCommands(deps) {
 
 
 /***/ }),
-/* 136 */
+/* 142 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27221,12 +28485,12 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewCommands = registerViewCommands;
 const vscode = __importStar(__webpack_require__(1));
-const quickSearch_1 = __webpack_require__(137);
+const quickSearch_1 = __webpack_require__(143);
 const versionsService_1 = __webpack_require__(33);
 const sortOptions_1 = __webpack_require__(38);
 const notifications_1 = __webpack_require__(16);
-const module_1 = __webpack_require__(98);
-const registerCommand_1 = __webpack_require__(85);
+const module_1 = __webpack_require__(107);
+const registerCommand_1 = __webpack_require__(98);
 /**
  * Generic per-view plumbing: refresh, sort, and quick-search commands.
  */
@@ -27369,7 +28633,7 @@ function registerViewCommands(deps) {
 
 
 /***/ }),
-/* 137 */
+/* 143 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27493,7 +28757,7 @@ async function quickSearchTreeItems(items, options) {
 
 
 /***/ }),
-/* 138 */
+/* 144 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27542,18 +28806,18 @@ const utils_1 = __webpack_require__(8);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const settingsStore_1 = __webpack_require__(6);
-const project_1 = __webpack_require__(90);
+const project_1 = __webpack_require__(101);
 const dbs_1 = __webpack_require__(64);
 const odooInstaller_1 = __webpack_require__(66);
-const projectWorkspace_1 = __webpack_require__(139);
-const setupFlow_1 = __webpack_require__(141);
+const projectWorkspace_1 = __webpack_require__(145);
+const setupFlow_1 = __webpack_require__(147);
 const setupState_1 = __webpack_require__(71);
 const context_1 = __webpack_require__(42);
 const versionProposal_1 = __webpack_require__(60);
-const versionPick_1 = __webpack_require__(143);
+const versionPick_1 = __webpack_require__(149);
 const gitService_1 = __webpack_require__(11);
-const provisionQueue_1 = __webpack_require__(103);
-const registerCommand_1 = __webpack_require__(85);
+const provisionQueue_1 = __webpack_require__(110);
+const registerCommand_1 = __webpack_require__(98);
 function registerProjectCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push((0, registerCommand_1.registerCommand)('projectSelector.create', async () => {
@@ -27717,7 +28981,7 @@ function registerProjectCommands(deps) {
 
 
 /***/ }),
-/* 139 */
+/* 145 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -27767,10 +29031,10 @@ const vscode = __importStar(__webpack_require__(1));
 const jsonc_parser_1 = __webpack_require__(21);
 const settingsStore_1 = __webpack_require__(6);
 const logger_1 = __webpack_require__(12);
-const versionRepos_1 = __webpack_require__(80);
+const versionRepos_1 = __webpack_require__(92);
 const utils_1 = __webpack_require__(8);
 const versionsService_1 = __webpack_require__(33);
-const workspaceFolders_1 = __webpack_require__(140);
+const workspaceFolders_1 = __webpack_require__(146);
 async function getActiveProjectOrPrompt() {
     const data = await settingsStore_1.SettingsStore.get('odoo-debugger-data.json');
     if (!data?.projects || data.projects.length === 0) {
@@ -27944,7 +29208,7 @@ async function quickSwitchProjectWorkspace(context) {
 
 
 /***/ }),
-/* 140 */
+/* 146 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -28004,7 +29268,7 @@ function repoFolderEntries(resolved, existingPaths) {
 
 
 /***/ }),
-/* 141 */
+/* 147 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28057,8 +29321,8 @@ const vscode = __importStar(__webpack_require__(1));
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const branches_1 = __webpack_require__(52);
-const customAddonsCommand_1 = __webpack_require__(94);
-const setupDetection_1 = __webpack_require__(142);
+const customAddonsCommand_1 = __webpack_require__(104);
+const setupDetection_1 = __webpack_require__(148);
 const setupState_1 = __webpack_require__(71);
 /** The per-version key that every repository-discovery site already reads. */
 const CUSTOM_ADDONS_KEY = 'defaultVersion.customAddonsPath';
@@ -28240,7 +29504,7 @@ async function runSetup(options) {
 
 
 /***/ }),
-/* 142 */
+/* 148 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28457,7 +29721,7 @@ function detectCustomAddonsRoot(roots) {
 
 
 /***/ }),
-/* 143 */
+/* 149 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28606,15 +29870,15 @@ async function collectRepoBranches() {
 
 
 /***/ }),
-/* 144 */
+/* 150 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerRepoCommands = registerRepoCommands;
-const repos_1 = __webpack_require__(97);
-const projectWorkspace_1 = __webpack_require__(139);
-const registerCommand_1 = __webpack_require__(85);
+const repos_1 = __webpack_require__(106);
+const projectWorkspace_1 = __webpack_require__(145);
+const registerCommand_1 = __webpack_require__(98);
 function registerRepoCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push((0, registerCommand_1.registerCommand)('repoSelector.selectRepo', async (event) => {
@@ -28626,7 +29890,7 @@ function registerRepoCommands(deps) {
 
 
 /***/ }),
-/* 145 */
+/* 151 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28674,9 +29938,9 @@ const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
 const dbs_1 = __webpack_require__(64);
 const notifications_2 = __webpack_require__(16);
-const server_1 = __webpack_require__(102);
+const server_1 = __webpack_require__(96);
 const utils_1 = __webpack_require__(8);
-const registerCommand_1 = __webpack_require__(85);
+const registerCommand_1 = __webpack_require__(98);
 function registerDbCommands(deps) {
     const { context, versionsService, providers, dbTreeView, refreshAll } = deps;
     context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.create', async () => {
@@ -28877,7 +30141,231 @@ function registerDbCommands(deps) {
 
 
 /***/ }),
-/* 146 */
+/* 152 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerCheckpointCommands = registerCheckpointCommands;
+/**
+ * Database checkpoints: protected copies of a database, kept as PostgreSQL
+ * databases and restored by swapping them back in (services/databaseCopy.ts).
+ */
+const vscode = __importStar(__webpack_require__(1));
+const registerCommand_1 = __webpack_require__(98);
+const settingsStore_1 = __webpack_require__(6);
+const dbs_1 = __webpack_require__(64);
+const dbsView_1 = __webpack_require__(4);
+const utils_1 = __webpack_require__(8);
+const postgres_1 = __webpack_require__(47);
+const database_1 = __webpack_require__(48);
+const runningState_1 = __webpack_require__(87);
+const checkpoints_1 = __webpack_require__(80);
+const databaseCopy_1 = __webpack_require__(82);
+const copyRuntime_1 = __webpack_require__(83);
+const notifications_1 = __webpack_require__(16);
+const logger_1 = __webpack_require__(12);
+const RESTORE = 'Restore';
+const CHECKPOINT_THEN_RESTORE = 'Checkpoint Current State, then Restore';
+/** Re-reads the store and applies `change` to the database's record, then saves. */
+async function updateCheckpoints(dbId, change) {
+    const result = await settingsStore_1.SettingsStore.getSelectedProject();
+    const target = result?.project.dbs?.find(entry => entry.id === dbId);
+    if (!result || !target) {
+        return false;
+    }
+    (0, checkpoints_1.setCheckpoints)(target, change((0, checkpoints_1.checkpointsOf)(target)));
+    await settingsStore_1.SettingsStore.saveWithoutComments((0, utils_1.stripSettings)(result.data));
+    return true;
+}
+async function takenNames() {
+    return new Set((await (0, postgres_1.listPostgresDatabases)()).map(name => name.toLowerCase()));
+}
+/** Copies `db` into a new protected checkpoint; the caller has released it. */
+async function takeCheckpoint(db, label, root) {
+    const now = new Date();
+    const id = (0, checkpoints_1.checkpointDbName)(db.id, now, await takenNames());
+    const copied = await (0, databaseCopy_1.copyDatabase)((0, copyRuntime_1.realCopyBackend)(), db.id, id, { filestoreRoot: root, protect: { comment: (0, checkpoints_1.checkpointComment)(db.id) } });
+    const checkpoint = { id, label, createdAt: now.toISOString(), filestore: copied.filestore };
+    let reason;
+    try {
+        if (!await updateCheckpoints(db.id, list => [...list, checkpoint])) {
+            reason = 'the database is no longer in the selected project';
+        }
+    }
+    catch (err) {
+        reason = (0, logger_1.errorMessage)(err);
+    }
+    if (reason !== undefined) {
+        // No screen would show the copy, and Reconcile only lists checkpoints whose source is gone.
+        await (0, databaseCopy_1.discardDatabase)((0, copyRuntime_1.realCopyBackend)(), id, root).catch(error => logger_1.logger.warn(`Could not drop the unrecorded checkpoint ${id}:`, error));
+        throw new Error(`The checkpoint of "${db.id}" could not be recorded, so it was not kept: ${reason}`);
+    }
+    return checkpoint;
+}
+async function selectedDatabase() {
+    const result = await settingsStore_1.SettingsStore.getSelectedProject();
+    return result?.project.dbs?.find(entry => entry.isSelected);
+}
+function registerCheckpointCommands(deps) {
+    const { context, refreshAll } = deps;
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.createCheckpoint', async (event) => {
+        try {
+            const db = (0, dbs_1.extractDatabaseFromEvent)(event) ?? await selectedDatabase();
+            if (!db) {
+                void (0, notifications_1.showError)('Select a database to checkpoint.');
+                return;
+            }
+            const entered = await vscode.window.showInputBox({
+                prompt: `Label for the checkpoint of "${(0, utils_1.getDatabaseLabel)(db)}"`,
+                value: (0, checkpoints_1.defaultCheckpointLabel)(new Date()),
+                ignoreFocusOut: true
+            });
+            if (entered === undefined) {
+                return;
+            }
+            const label = entered.trim() || (0, checkpoints_1.defaultCheckpointLabel)(new Date());
+            const root = (0, copyRuntime_1.filestoreRootFor)(db.versionId);
+            const outcome = await (0, copyRuntime_1.withReleased)(db.id, 'take the checkpoint', async () => vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: `Creating checkpoint "${label}" of ${db.id}`
+            }, () => takeCheckpoint(db, label, root)));
+            if (outcome.done) {
+                (0, notifications_1.showAutoInfo)(`Checkpoint "${label}" of "${(0, utils_1.getDatabaseLabel)(db)}" created.`, 3000);
+            }
+        }
+        catch (err) {
+            void (0, notifications_1.showError)(`Failed to create the checkpoint: ${(0, logger_1.errorMessage)(err)}`);
+            logger_1.logger.error('Error creating a checkpoint:', err);
+        }
+        await refreshAll({ reason: 'ui' });
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.restoreCheckpoint', async (event) => {
+        const picked = (0, dbsView_1.extractCheckpointFromEvent)(event);
+        if (!picked) {
+            void (0, notifications_1.showError)('Right-click a checkpoint to restore it.');
+            return;
+        }
+        const { database: db, checkpoint } = picked;
+        const dbLabel = (0, utils_1.getDatabaseLabel)(db);
+        const choice = await (0, notifications_1.showModalWarning)(`Restore "${dbLabel}" to "${checkpoint.label}"? Everything since is lost.`, RESTORE, CHECKPOINT_THEN_RESTORE);
+        if (choice !== RESTORE && choice !== CHECKPOINT_THEN_RESTORE) {
+            return;
+        }
+        const backend = (0, copyRuntime_1.realCopyBackend)();
+        const root = (0, copyRuntime_1.filestoreRootFor)(db.versionId);
+        let staged;
+        try {
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: `Restoring ${db.id} to "${checkpoint.label}"`
+            }, async (progress) => {
+                progress.report({ message: 'Copying the checkpoint...' });
+                staged = await (0, databaseCopy_1.stageRestore)(backend, db.id, checkpoint.id, root);
+                const outcome = await (0, copyRuntime_1.withReleased)(db.id, 'restore it', async () => {
+                    if (choice === CHECKPOINT_THEN_RESTORE) {
+                        progress.report({ message: 'Checkpointing the current state...' });
+                        await takeCheckpoint(db, `Before restoring ${checkpoint.label}`, root);
+                    }
+                    progress.report({ message: 'Swapping it in...' });
+                    await (0, databaseCopy_1.swapInRestored)(backend, db.id, staged, root);
+                });
+                if (outcome.done) {
+                    (0, notifications_1.showAutoInfo)(`"${dbLabel}" is back to "${checkpoint.label}".`, 3000);
+                }
+            });
+        }
+        catch (err) {
+            void (0, notifications_1.showError)(`Failed to restore the checkpoint: ${(0, logger_1.errorMessage)(err)}`);
+            logger_1.logger.error('Error restoring a checkpoint:', err);
+        }
+        finally {
+            // Gone after a successful swap: it was renamed to the database.
+            if (staged) {
+                await (0, databaseCopy_1.discardDatabase)(backend, staged, root).catch(error => logger_1.logger.warn(`Could not drop ${staged}:`, error));
+            }
+            (0, database_1.clearInstalledModuleCache)(db.id);
+            (0, runningState_1.invalidateRunningState)();
+        }
+        await refreshAll();
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.renameCheckpoint', async (event) => {
+        const picked = (0, dbsView_1.extractCheckpointFromEvent)(event);
+        if (!picked) {
+            return;
+        }
+        const entered = await vscode.window.showInputBox({
+            prompt: `New label for this checkpoint of "${(0, utils_1.getDatabaseLabel)(picked.database)}"`,
+            value: picked.checkpoint.label,
+            ignoreFocusOut: true,
+            validateInput: value => (value.trim() ? undefined : 'The label cannot be empty')
+        });
+        const label = entered?.trim();
+        if (!label || label === picked.checkpoint.label) {
+            return;
+        }
+        await updateCheckpoints(picked.database.id, list => list.map(cp => cp.id === picked.checkpoint.id ? { ...cp, label } : cp));
+        await refreshAll({ reason: 'ui' });
+    }));
+    context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.deleteCheckpoint', async (event) => {
+        const picked = (0, dbsView_1.extractCheckpointFromEvent)(event);
+        if (!picked) {
+            return;
+        }
+        const { database: db, checkpoint } = picked;
+        const confirm = await (0, notifications_1.showModalWarning)(`Delete the checkpoint "${checkpoint.label}" of "${(0, utils_1.getDatabaseLabel)(db)}"? This cannot be undone.`, 'Delete');
+        if (confirm !== 'Delete') {
+            return;
+        }
+        try {
+            await (0, databaseCopy_1.discardDatabase)((0, copyRuntime_1.realCopyBackend)(), checkpoint.id, (0, copyRuntime_1.filestoreRootFor)(db.versionId));
+            await updateCheckpoints(db.id, list => list.filter(cp => cp.id !== checkpoint.id));
+            (0, notifications_1.showAutoInfo)(`Checkpoint "${checkpoint.label}" deleted.`, 2500);
+        }
+        catch (err) {
+            void (0, notifications_1.showError)(`Failed to delete the checkpoint: ${(0, logger_1.errorMessage)(err)}`);
+            logger_1.logger.error('Error deleting a checkpoint:', err);
+        }
+        await refreshAll({ reason: 'ui' });
+    }));
+}
+
+
+/***/ }),
+/* 153 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -28921,8 +30409,8 @@ exports.registerModuleCommands = registerModuleCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const notifications_1 = __webpack_require__(16);
-const module_1 = __webpack_require__(98);
-const registerCommand_1 = __webpack_require__(85);
+const module_1 = __webpack_require__(107);
+const registerCommand_1 = __webpack_require__(98);
 /**
  * Tree context menus pass (clickedItem, selectedItems); with canSelectMany
  * enabled a bulk action applies to the whole selection when the clicked
@@ -29013,15 +30501,15 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 147 */
+/* 154 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerTestingCommands = registerTestingCommands;
 const settingsStore_1 = __webpack_require__(6);
-const testing_1 = __webpack_require__(100);
-const registerCommand_1 = __webpack_require__(85);
+const testing_1 = __webpack_require__(109);
+const registerCommand_1 = __webpack_require__(98);
 function registerTestingCommands(deps) {
     const { context, providers, refreshAll } = deps;
     context.subscriptions.push((0, registerCommand_1.registerCommand)('testingSelector.toggleTesting', async (event) => {
@@ -29070,7 +30558,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 148 */
+/* 155 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -29114,28 +30602,28 @@ exports.registerVersionCommands = registerVersionCommands;
  */
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
-const args_1 = __webpack_require__(86);
+const args_1 = __webpack_require__(99);
 const utils_1 = __webpack_require__(8);
 const versionIdentity_1 = __webpack_require__(36);
-const debugger_1 = __webpack_require__(101);
+const debugger_1 = __webpack_require__(89);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(149);
+const branchPick_1 = __webpack_require__(156);
 const runtimeCache_1 = __webpack_require__(15);
 const environment_1 = __webpack_require__(51);
 const odooInstaller_1 = __webpack_require__(66);
 const provisioning_1 = __webpack_require__(67);
 const wizard_1 = __webpack_require__(73);
 const worktree_1 = __webpack_require__(55);
-const server_1 = __webpack_require__(102);
+const server_1 = __webpack_require__(96);
 const dbResolution_1 = __webpack_require__(61);
 const settingsStore_1 = __webpack_require__(6);
 const setupState_1 = __webpack_require__(71);
-const versionMigration_1 = __webpack_require__(121);
+const versionMigration_1 = __webpack_require__(127);
 const upgrade_1 = __webpack_require__(40);
-const registerCommand_1 = __webpack_require__(85);
+const registerCommand_1 = __webpack_require__(98);
 const workspaceBinding_1 = __webpack_require__(63);
-const bindingCommand_1 = __webpack_require__(84);
+const bindingCommand_1 = __webpack_require__(97);
 function registerVersionCommands(deps) {
     const { context, versionsService, refreshAll } = deps;
     context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.checkVersions', async () => {
@@ -29811,7 +31299,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 149 */
+/* 156 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30026,7 +31514,7 @@ async function pickRepoBranch(repoPath, title, placeHolder, suggested, exclude, 
 
 
 /***/ }),
-/* 150 */
+/* 157 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30069,13 +31557,13 @@ exports.registerDebugCommands = registerDebugCommands;
  * Start/stop/restart server (with and without debugging) and shell commands.
  */
 const vscode = __importStar(__webpack_require__(1));
-const debugger_1 = __webpack_require__(101);
-const server_1 = __webpack_require__(102);
+const debugger_1 = __webpack_require__(89);
+const server_1 = __webpack_require__(96);
 const notifications_1 = __webpack_require__(16);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(33);
 const upgrade_1 = __webpack_require__(41);
-const registerCommand_1 = __webpack_require__(85);
+const registerCommand_1 = __webpack_require__(98);
 function registerDebugCommands(deps) {
     const { context } = deps;
     context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.startServer', async () => {
@@ -30180,7 +31668,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 151 */
+/* 158 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30228,14 +31716,14 @@ exports.registerReposExplorerCommands = registerReposExplorerCommands;
 const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
-const args_1 = __webpack_require__(86);
+const args_1 = __webpack_require__(99);
 const notifications_1 = __webpack_require__(16);
 const customWorktree_1 = __webpack_require__(57);
 const notifications_2 = __webpack_require__(16);
 const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const runtimeCache_1 = __webpack_require__(15);
-const projectReposExplorer_1 = __webpack_require__(118);
+const projectReposExplorer_1 = __webpack_require__(124);
 const utils_2 = __webpack_require__(8);
 const notifications_3 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
@@ -30247,7 +31735,7 @@ const sourceConflict_1 = __webpack_require__(58);
 const repo_1 = __webpack_require__(46);
 const environment_1 = __webpack_require__(51);
 const upgrade_1 = __webpack_require__(40);
-const registerCommand_1 = __webpack_require__(85);
+const registerCommand_1 = __webpack_require__(98);
 /** Registers the checkout/worktree mode toggle for a project repository. */
 function registerRepoBranchModeCommand(deps) {
     const { context, refreshAll } = deps;
@@ -30473,7 +31961,7 @@ function registerReposExplorerCommands(deps) {
 
 
 /***/ }),
-/* 152 */
+/* 159 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30518,12 +32006,12 @@ exports.registerEditorCommands = registerEditorCommands;
  * commands themselves stay callable from the palette.
  */
 const vscode = __importStar(__webpack_require__(1));
-const manifest_1 = __webpack_require__(95);
-const module_1 = __webpack_require__(98);
-const testing_1 = __webpack_require__(100);
-const debugger_1 = __webpack_require__(101);
+const manifest_1 = __webpack_require__(105);
+const module_1 = __webpack_require__(107);
+const testing_1 = __webpack_require__(109);
+const debugger_1 = __webpack_require__(89);
 const notifications_1 = __webpack_require__(16);
-const registerCommand_1 = __webpack_require__(85);
+const registerCommand_1 = __webpack_require__(98);
 async function moduleForActiveEditor() {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.uri.scheme !== 'file') {
@@ -30581,7 +32069,7 @@ function registerEditorCommands(deps) {
 
 
 /***/ }),
-/* 153 */
+/* 160 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30627,7 +32115,7 @@ exports.registerHelpCommands = registerHelpCommands;
  * Shortcuts editor for customization.
  */
 const vscode = __importStar(__webpack_require__(1));
-const registerCommand_1 = __webpack_require__(85);
+const registerCommand_1 = __webpack_require__(98);
 /** 'ctrl+alt+o s' → 'Ctrl+Alt+O S' */
 function formatKey(key) {
     return key
@@ -30669,7 +32157,7 @@ function registerHelpCommands(deps) {
 
 
 /***/ }),
-/* 154 */
+/* 161 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -30727,12 +32215,12 @@ const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(149);
-const upgradePlan_1 = __webpack_require__(155);
+const branchPick_1 = __webpack_require__(156);
+const upgradePlan_1 = __webpack_require__(162);
 const upgradeApply_1 = __webpack_require__(43);
 const upgradeSetup_1 = __webpack_require__(59);
 const branches_1 = __webpack_require__(52);
-const provisionQueue_1 = __webpack_require__(103);
+const provisionQueue_1 = __webpack_require__(110);
 const setupState_1 = __webpack_require__(71);
 const gitService_1 = __webpack_require__(11);
 const dbNaming_1 = __webpack_require__(74);
@@ -30741,11 +32229,11 @@ const upgrade_1 = __webpack_require__(40);
 const wizard_1 = __webpack_require__(73);
 const repo_1 = __webpack_require__(46);
 const versionsService_1 = __webpack_require__(33);
-const registerCommand_1 = __webpack_require__(85);
+const registerCommand_1 = __webpack_require__(98);
 const path = __importStar(__webpack_require__(3));
-const repoLocations_1 = __webpack_require__(81);
-const versionRepos_1 = __webpack_require__(80);
-const workspaceRegistry_1 = __webpack_require__(82);
+const repoLocations_1 = __webpack_require__(93);
+const versionRepos_1 = __webpack_require__(92);
+const workspaceRegistry_1 = __webpack_require__(94);
 /** How a database is described in the picker, without probing every one. */
 function describeDatabase(db, versionsService) {
     const version = db.versionId ? versionsService.getVersion(db.versionId) : undefined;
@@ -31329,7 +32817,7 @@ function registerUpgradeCommand(deps) {
 
 
 /***/ }),
-/* 155 */
+/* 162 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -31455,7 +32943,7 @@ function describeUpgradePlan(plan, input) {
 
 
 /***/ }),
-/* 156 */
+/* 163 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -31516,8 +33004,8 @@ const setupState_1 = __webpack_require__(71);
 const dataLocation_1 = __webpack_require__(17);
 const mainStore_1 = __webpack_require__(27);
 const workspaceSelection_1 = __webpack_require__(30);
-const dataImport_1 = __webpack_require__(157);
-const registerCommand_1 = __webpack_require__(85);
+const dataImport_1 = __webpack_require__(164);
+const registerCommand_1 = __webpack_require__(98);
 const gitExclude_1 = __webpack_require__(32);
 const SHARED_STORE_FILE = 'odoo-devtools.db';
 /** This window's data as the store holds it: no selection, absolute paths. */
@@ -31804,7 +33292,7 @@ function registerDataStoreCommands(deps) {
 
 
 /***/ }),
-/* 157 */
+/* 164 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -32061,7 +33549,7 @@ function buildExport(data, exportedAt = new Date()) {
 
 
 /***/ }),
-/* 158 */
+/* 165 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -32103,12 +33591,12 @@ exports.registerRepoLocationCommand = registerRepoLocationCommand;
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
-const args_1 = __webpack_require__(86);
-const registerCommand_1 = __webpack_require__(85);
+const args_1 = __webpack_require__(99);
+const registerCommand_1 = __webpack_require__(98);
 const settingsStore_1 = __webpack_require__(6);
 const notifications_1 = __webpack_require__(16);
-const repoLocations_1 = __webpack_require__(81);
-const versionRepos_1 = __webpack_require__(80);
+const repoLocations_1 = __webpack_require__(93);
+const versionRepos_1 = __webpack_require__(92);
 const utils_1 = __webpack_require__(8);
 const DESCRIBE_SOURCE = {
     override: 'set by hand',
@@ -32219,7 +33707,7 @@ function registerRepoLocationCommand(deps) {
 
 
 /***/ }),
-/* 159 */
+/* 166 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -32263,15 +33751,15 @@ exports.registerUpgradeSideCommands = registerUpgradeSideCommands;
  * its version is, and can open the window that runs the other.
  */
 const vscode = __importStar(__webpack_require__(1));
-const registerCommand_1 = __webpack_require__(85);
+const registerCommand_1 = __webpack_require__(98);
 const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(33);
-const debugger_1 = __webpack_require__(101);
+const debugger_1 = __webpack_require__(89);
 const debugSessions_1 = __webpack_require__(88);
 const upgrade_1 = __webpack_require__(41);
 const workspaceBinding_1 = __webpack_require__(63);
 const mainStore_1 = __webpack_require__(27);
-const workspaceRegistry_1 = __webpack_require__(82);
+const workspaceRegistry_1 = __webpack_require__(94);
 const notifications_1 = __webpack_require__(16);
 const upgradeSides_1 = __webpack_require__(62);
 async function currentUpgrade() {
@@ -32389,7 +33877,7 @@ function registerUpgradeSideCommands(deps) {
 
 
 /***/ }),
-/* 160 */
+/* 167 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -32429,20 +33917,20 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerViewDoctorCommands = registerViewDoctorCommands;
 const vscode = __importStar(__webpack_require__(1));
-const registerCommand_1 = __webpack_require__(85);
-const viewDoctorView_1 = __webpack_require__(106);
-const viewFileSystem_1 = __webpack_require__(110);
+const registerCommand_1 = __webpack_require__(98);
+const viewDoctorView_1 = __webpack_require__(113);
+const viewFileSystem_1 = __webpack_require__(116);
 const notifications_1 = __webpack_require__(16);
 const settingsStore_1 = __webpack_require__(6);
-const viewPairing_1 = __webpack_require__(107);
+const viewPairing_1 = __webpack_require__(114);
 const logger_1 = __webpack_require__(12);
-const renderPlan_1 = __webpack_require__(127);
-const upgradeScriptFlow_1 = __webpack_require__(161);
-const archErrors_1 = __webpack_require__(131);
-const xpathReport_1 = __webpack_require__(114);
-const viewQueries_1 = __webpack_require__(108);
-const findViewFlow_1 = __webpack_require__(166);
-const viewTarget_1 = __webpack_require__(168);
+const renderPlan_1 = __webpack_require__(133);
+const upgradeScriptFlow_1 = __webpack_require__(168);
+const archErrors_1 = __webpack_require__(137);
+const xpathReport_1 = __webpack_require__(120);
+const viewQueries_1 = __webpack_require__(81);
+const findViewFlow_1 = __webpack_require__(173);
+const viewTarget_1 = __webpack_require__(175);
 function viewItem(arg) {
     return arg instanceof viewDoctorView_1.ViewItem ? arg : undefined;
 }
@@ -32724,7 +34212,7 @@ function registerViewDoctorCommands(deps) {
 
 
 /***/ }),
-/* 161 */
+/* 168 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -32774,14 +34262,14 @@ const vscode = __importStar(__webpack_require__(1));
 const logger_1 = __webpack_require__(12);
 const utils_1 = __webpack_require__(8);
 const settingsStore_1 = __webpack_require__(6);
-const psaeInternal_1 = __webpack_require__(96);
-const versionRepos_1 = __webpack_require__(80);
+const psaeInternal_1 = __webpack_require__(90);
+const versionRepos_1 = __webpack_require__(92);
 const notifications_1 = __webpack_require__(16);
-const viewNoteService_1 = __webpack_require__(133);
-const scriptBuilder_1 = __webpack_require__(162);
-const upgradeScript_1 = __webpack_require__(163);
-const migrationsFolder_1 = __webpack_require__(164);
-const scriptDestination_1 = __webpack_require__(165);
+const viewNoteService_1 = __webpack_require__(139);
+const scriptBuilder_1 = __webpack_require__(169);
+const upgradeScript_1 = __webpack_require__(170);
+const migrationsFolder_1 = __webpack_require__(171);
+const scriptDestination_1 = __webpack_require__(172);
 async function scriptModules(project, dbName) {
     const db = project.dbs?.find(entry => entry.id === dbName);
     const { modules } = (0, psaeInternal_1.collectModuleDiscovery)(project, await (0, versionRepos_1.resolveReposForDatabase)(project, db));
@@ -32866,7 +34354,7 @@ async function createUpgradeScript(deps, dbName, viewId) {
 
 
 /***/ }),
-/* 162 */
+/* 169 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -32877,7 +34365,7 @@ exports.buildScriptViews = buildScriptViews;
 exports.leftOutText = leftOutText;
 exports.scriptSummary = scriptSummary;
 exports.nothingToScript = nothingToScript;
-const viewNotes_1 = __webpack_require__(134);
+const viewNotes_1 = __webpack_require__(140);
 /** Every view the note knows: noted first, then the journal's. */
 function scriptIds(note) {
     return [...new Set([...note.views.map(view => view.id), ...note.journal.map(entry => entry.id)])];
@@ -32956,7 +34444,7 @@ function nothingToScript(build, dbName) {
 
 
 /***/ }),
-/* 163 */
+/* 170 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -33271,7 +34759,7 @@ function parseScript(source) {
 
 
 /***/ }),
-/* 164 */
+/* 171 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -33334,7 +34822,7 @@ exports.writeScriptToFolder = writeScriptToFolder;
  */
 const fs = __importStar(__webpack_require__(20));
 const path = __importStar(__webpack_require__(3));
-const upgradeScript_1 = __webpack_require__(163);
+const upgradeScript_1 = __webpack_require__(170);
 exports.SCRIPT_NAME = 'end-update_views';
 const MAX_SIBLINGS = 100;
 /** A folder name Odoo will run and accept as a manifest version: <series>.x.y or <series>.x.y.z; without a known series, 2 to 5 numeric parts. */
@@ -33459,7 +34947,7 @@ async function writeScriptToFolder(dir, views) {
 
 
 /***/ }),
-/* 165 */
+/* 172 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -33513,8 +35001,8 @@ exports.pickDestination = pickDestination;
 const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
-const viewNotes_1 = __webpack_require__(134);
-const migrationsFolder_1 = __webpack_require__(164);
+const viewNotes_1 = __webpack_require__(140);
+const migrationsFolder_1 = __webpack_require__(171);
 const UNTITLED_LABEL = '$(new-file) Untitled Python Editor';
 function destinationKey(projectKey) {
     return `viewDoctor.scriptDestination:${projectKey}`;
@@ -33638,7 +35126,7 @@ async function pickDestination(options) {
 
 
 /***/ }),
-/* 166 */
+/* 173 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -33684,9 +35172,9 @@ exports.findView = findView;
  * opens its arch - the tree itself stays about what is off.
  */
 const vscode = __importStar(__webpack_require__(1));
-const viewQueries_1 = __webpack_require__(108);
+const viewQueries_1 = __webpack_require__(81);
 const notifications_1 = __webpack_require__(16);
-const viewPicker_1 = __webpack_require__(167);
+const viewPicker_1 = __webpack_require__(174);
 async function pickView(dbName, rows, title, open) {
     const picked = await vscode.window.showQuickPick((0, viewPicker_1.viewPickItems)((0, viewPicker_1.viewTree)(rows)), { title, matchOnDescription: true });
     if (picked) {
@@ -33750,7 +35238,7 @@ async function findView(dbName, open) {
 
 
 /***/ }),
-/* 167 */
+/* 174 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -33829,7 +35317,7 @@ function nothingMatches(dbName, value) {
 
 
 /***/ }),
-/* 168 */
+/* 175 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -33875,8 +35363,8 @@ exports.viewTarget = viewTarget;
  * three come out the same, so every command works from either place.
  */
 const vscode = __importStar(__webpack_require__(1));
-const viewDoctorView_1 = __webpack_require__(106);
-const viewFileSystem_1 = __webpack_require__(110);
+const viewDoctorView_1 = __webpack_require__(113);
+const viewFileSystem_1 = __webpack_require__(116);
 /** Undefined when the argument and the active editor are no view; throws when the URI's view is gone. */
 async function viewTarget(arg, readRows, activeUri = () => vscode.window.activeTextEditor?.document.uri) {
     if (arg instanceof viewDoctorView_1.ViewItem) {
@@ -33896,7 +35384,7 @@ async function viewTarget(arg, readRows, activeUri = () => vscode.window.activeT
 
 
 /***/ }),
-/* 169 */
+/* 176 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -33947,7 +35435,7 @@ function selectionFacts(project, version) {
 
 
 /***/ }),
-/* 170 */
+/* 177 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
