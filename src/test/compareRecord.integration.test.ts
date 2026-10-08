@@ -75,6 +75,19 @@ const enabled = Boolean(python && odoo);
         assert.strictEqual(await runSql('postgres', `SELECT datallowconn::text FROM pg_database WHERE datname = ${sqlText(cp)};`), 'false');
     });
 
+    test('a window action is read through its custom table', async () => {
+        const read = await text(a, { kind: 'xmlid', module: 'base', name: 'action_partner_form' });
+        assert.match(read, /^res_model: res\.partner$/m);
+        assert.match(read, /^view_mode: /m);
+    });
+
+    test('an attachment binary shows its size and hash', async () => {
+        await runSql(a, `INSERT INTO ir_attachment (name, res_model, res_field, res_id, type, file_size, checksum, store_fname)
+            SELECT 'res.partner image_1920', 'res.partner', 'image_1920', res_id, 'binary', 7, repeat('ab', 20), 'ab/abab'
+            FROM ir_model_data WHERE module = 'base' AND name = 'main_partner';`);
+        assert.match(await text(a, main), /^image_1920: 7 bytes, sha1 abababababab$/m);
+    });
+
     test('a model without a table is explained', async () => {
         assert.deepStrictEqual(await readRecord(a, { kind: 'id', model: 'ir.qweb', id: 1 }, runSql),
             { error: `ir.qweb has no table in ${a} (an abstract or transient model?).`, code: 'no-table' });

@@ -26,8 +26,36 @@ export function parseRecordRef(input: string): RecordRef | undefined {
     return xml ? { kind: 'xmlid', module: xml[1], name: xml[2] } : undefined;
 }
 
+/**
+ * The core models whose `_table` is not the model name with dots replaced (the same in Odoo 17 and 18).
+ * Any other custom `_table`, such as a custom module's, is not known and reports no table.
+ */
+const CORE_TABLES: Record<string, string> = {
+    'ir.actions.actions': 'ir_actions',
+    'ir.actions.act_window': 'ir_act_window',
+    'ir.actions.act_window.view': 'ir_act_window_view',
+    'ir.actions.act_window_close': 'ir_actions',
+    'ir.actions.act_url': 'ir_act_url',
+    'ir.actions.server': 'ir_act_server',
+    'ir.actions.report': 'ir_act_report_xml',
+    'ir.actions.client': 'ir_act_client'
+};
+
 export function tableOf(model: string): string {
-    return model.replace(/\./g, '_');
+    return CORE_TABLES[model] ?? model.replace(/\./g, '_');
+}
+
+/** How many stored fields the model has, whatever its table is called. */
+export function storedCountSql(model: string): string {
+    return `SELECT count(*) FROM ir_model_fields WHERE model = ${sqlText(model)} AND store;`;
+}
+
+/** `res_field|file_size|checksum` of the attachment-stored binaries of a record. */
+export function attachmentsSql(model: string, id: number): string {
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        throw new Error(`Not a record id: ${id}`);
+    }
+    return `SELECT res_field || '|' || coalesce(file_size, 0) || '|' || coalesce(checksum, '') FROM ir_attachment WHERE res_model = ${sqlText(model)} AND res_id = ${id} AND res_field IS NOT NULL ORDER BY res_field;`;
 }
 
 /** `model|res_id` of an external id; no row when it does not exist. */
@@ -57,6 +85,8 @@ function binaryBytes(value: string): Buffer {
     return Buffer.from(value, 'utf8');
 }
 
+const LANGUAGE_KEY = /^[a-z]{2,3}(_[A-Za-z0-9@]+)?$/;
+
 function renderValue(ttype: string, value: unknown): string {
     if (value === null || value === undefined) {
         return 'False';
@@ -71,25 +101,37 @@ function renderValue(ttype: string, value: unknown): string {
     let shown: string;
     if (typeof value === 'string') {
         shown = value;
-    } else if (typeof value === 'object' && !Array.isArray(value) && ['char', 'text', 'html'].includes(ttype)) {
-        // A translated field of Odoo 16 and later: jsonb keyed by language.
+    } else if (typeof value === 'object' && !Array.isArray(value) && ['char', 'text', 'html'].includes(ttype)
+        && Object.keys(value as object).length > 0 && Object.keys(value as object).every(key => LANGUAGE_KEY.test(key))) {
+        // A translated field of Odoo 16 and later: jsonb keyed by language. (Company-dependent fields of
+        // Odoo 18 are keyed by company id and fall through to the JSON below.)
         const map = value as Record<string, unknown>;
         const pick = 'en_US' in map ? map.en_US : map[Object.keys(map)[0]];
         shown = typeof pick === 'string' ? pick : stableJson(pick ?? false);
     } else {
         shown = typeof value === 'object' ? stableJson(value) : String(value);
     }
+    if (/\r?\n/.test(shown) && ['char', 'text', 'html'].includes(ttype)) {
+        // A long value (an arch, a body): an indented block, so the diff goes line by line.
+        return '\n' + shown.replace(/\r?\n$/, '').split(/\r?\n/).map(line => `    ${line}`.trimEnd()).join('\n');
+    }
     return shown.replace(/\r?\n/g, '\\n');
 }
 
 /** One `field: value` line per field, sorted by name; the note alone when the row is missing. */
-export function renderRecord(fields: Array<{ name: string; ttype: string }>, row: Record<string, unknown> | undefined, missingNote: string): string {
+export function renderRecord(
+    fields: Array<{ name: string; ttype: string }>, row: Record<string, unknown> | undefined, missingNote: string,
+    attachments: Array<{ name: string; size: number; checksum: string }> = []
+): string {
     if (!row) {
         return `${missingNote}\n`;
     }
-    return [...fields].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-        .filter(field => field.name in row)
-        .map(field => `${field.name}: ${renderValue(field.ttype, row[field.name])}`)
+    const lines = [
+        ...fields.filter(field => field.name in row).map(field => ({ name: field.name, text: renderValue(field.ttype, row[field.name]) })),
+        ...attachments.map(a => ({ name: a.name, text: `${a.size} bytes, sha1 ${a.checksum.slice(0, 12)}` }))
+    ];
+    return lines.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+        .map(line => `${line.name}:${line.text.startsWith('\n') ? '' : ' '}${line.text}`)
         .join('\n') + '\n';
 }
 
@@ -123,6 +165,12 @@ export function planSides(
     if (l?.code === 'no-table' && r?.code === 'no-table') {
         return { message: l.error };
     }
+    if (l && r) {
+        // The model is missing on one side and the record on the other: nothing to compare.
+        const noTable = l.code === 'no-table' ? leftLabel : rightLabel;
+        const noRecord = l.code === 'no-table' ? rightLabel : leftLabel;
+        return { message: `${what}: the model is not installed in ${noTable}, and the record does not exist in ${noRecord}.` };
+    }
     const show = (read: RecordRead, label: string) => 'error' in read
         ? renderRecord([], undefined, read.code === 'no-table' ? `(model not installed in ${label})` : `(no such record in ${label})`)
         : read.text;
@@ -152,11 +200,21 @@ export async function readRecord(
         return { name: line.slice(0, cut), ttype: line.slice(cut + 1) };
     });
     if (fields.length === 0) {
-        return { error: `${model} has no table in ${dbName} (an abstract or transient model?).`, code: 'no-table' };
+        const stored = Number((await sql(dbName, storedCountSql(model))).trim()) || 0;
+        return {
+            error: stored > 0
+                ? `${model} has stored fields in ${dbName}, but no table of the expected name (a custom _table?).`
+                : `${model} has no table in ${dbName} (an abstract or transient model?).`,
+            code: 'no-table'
+        };
     }
     const raw = (await sql(dbName, rowSql(model, id, fields.map(f => f.name)))).trim();
     if (!raw) {
         return { error: `${model},${id} does not exist in ${dbName}.`, code: 'missing' };
     }
-    return { model, id, text: renderRecord(fields, JSON.parse(raw) as Record<string, unknown>, '') };
+    const attachments = (await sql(dbName, attachmentsSql(model, id))).split('\n').filter(Boolean).map(line => {
+        const [name, size, checksum] = line.split('|');
+        return { name, size: Number(size) || 0, checksum: checksum ?? '' };
+    });
+    return { model, id, text: renderRecord(fields, JSON.parse(raw) as Record<string, unknown>, '', attachments) };
 }

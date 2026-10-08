@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import { createHash } from 'node:crypto';
 import { sqlText } from '../services/views/viewQueries';
-import { fieldsSql, parseRecordRef, planSides, readRecord, renderRecord, rowSql, xmlidSql } from '../services/compare/recordCompare';
+import { attachmentsSql, fieldsSql, tableOf, parseRecordRef, planSides, readRecord, renderRecord, rowSql, xmlidSql } from '../services/compare/recordCompare';
 
 suite('Compare a record', () => {
     test('parses an external id and model with id', () => {
@@ -63,6 +63,52 @@ suite('Compare a record', () => {
         const text = renderRecord([{ name: 'props', ttype: 'properties' }, { name: 'title', ttype: 'char' }],
             { props: { b: 1, a: { z: 2, y: [3] } }, title: { en_US: 'Hi', fr_FR: 'Salut' } }, '');
         assert.strictEqual(text, 'props: {"a":{"y":[3],"z":2},"b":1}\ntitle: Hi\n');
+    });
+
+    test('core action models map to their custom _table; others to the dotted name', () => {
+        assert.strictEqual(tableOf('ir.actions.act_window'), 'ir_act_window');
+        assert.strictEqual(tableOf('ir.actions.report'), 'ir_act_report_xml');
+        assert.strictEqual(tableOf('ir.actions.act_window_close'), 'ir_actions');
+        assert.strictEqual(tableOf('res.partner'), 'res_partner');
+        assert.ok(fieldsSql('ir.actions.server').includes(sqlText('ir_act_server')));
+        assert.ok(rowSql('ir.actions.act_window', 1, ['id']).includes('FROM "ir_act_window"'));
+    });
+
+    test('a model with stored fields but no table says so without guessing abstract', async () => {
+        const read = await readRecord('d', { kind: 'id', model: 'x.custom', id: 1 }, fake([[/count\(\*\) FROM ir_model_fields/, '4']]));
+        assert.deepStrictEqual(read, { error: 'x.custom has stored fields in d, but no table of the expected name (a custom _table?).', code: 'no-table' });
+    });
+
+    test('attachment binaries show size and sha1 beside the columns', async () => {
+        const sha = createHash('sha1').update(Buffer.from('img')).digest('hex');
+        const read = await readRecord('d', { kind: 'id', model: 'res.partner', id: 3 }, fake([
+            [/FROM ir_model_fields/, 'name|char'],
+            [/row_to_json/, '{"name":"Bob"}'],
+            [/FROM ir_attachment/, `image_1920|3|${sha}\nimage_128|3|${sha}`]
+        ]));
+        assert.deepStrictEqual(read, { model: 'res.partner', id: 3, text: `image_128: 3 bytes, sha1 ${sha.slice(0, 12)}\nimage_1920: 3 bytes, sha1 ${sha.slice(0, 12)}\nname: Bob\n` });
+        const sql = attachmentsSql("a.b'c", 3);
+        assert.ok(sql.includes(sqlText("a.b'c")) && sql.includes('res_id = 3') && !sql.includes("b'c'"), sql);
+        assert.throws(() => attachmentsSql('a.b', 0));
+    });
+
+    test('a company-dependent object shows every key; a translation only its language', () => {
+        const text = renderRecord([{ name: 'code', ttype: 'char' }], { code: { '1': '100', '2': '200' } }, '');
+        assert.strictEqual(text, 'code: {"1":"100","2":"200"}\n');
+    });
+
+    test('a long text value is an indented block, a short one stays on its line', () => {
+        const text = renderRecord([{ name: 'arch', ttype: 'html' }, { name: 'name', ttype: 'char' }], { arch: '<a>\n  <b/>\n</a>\n', name: 'x' }, '');
+        assert.strictEqual(text, 'arch:\n    <a>\n      <b/>\n    </a>\nname: x\n');
+    });
+
+    test('planSides gives a message when the model is missing on one side and the record on the other', () => {
+        const missing = { error: 'm.x,1 does not exist in A.', code: 'missing' as const };
+        const noTable = { error: 'm.x has no table in B.', code: 'no-table' as const };
+        assert.deepStrictEqual(planSides(missing, noTable, 'A', 'B', 'm.x,1'),
+            { message: 'm.x,1: the model is not installed in B, and the record does not exist in A.' });
+        assert.deepStrictEqual(planSides(noTable, missing, 'B', 'A', 'm.x,1'),
+            { message: 'm.x,1: the model is not installed in B, and the record does not exist in A.' });
     });
 
     test('planSides decides what a diff shows', () => {
