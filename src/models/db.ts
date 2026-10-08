@@ -21,6 +21,8 @@ export interface DatabaseOptions {
     projectRepoBranches?: ProjectRepoBranchAssignment[];
     testingModuleStates?: SavedModuleState[];
     checkpoints?: CheckpointModel[];
+    comparePartner?: { dbName: string; kind: 'database' | 'checkpoint' };
+    clonedFrom?: string;
 }
 
 /** A module's install/upgrade mark, as stashed while testing mode is on. */
@@ -62,6 +64,10 @@ export class DatabaseModel {
      * JSON, so this is undefined on every database saved before it existed.
      */
     checkpoints?: CheckpointModel[];
+    /** What this database is compared with; read through partnerOf(). */
+    comparePartner?: { dbName: string; kind: 'database' | 'checkpoint' };
+    /** The database this one was cloned from, recorded since 1.5. */
+    clonedFrom?: string;
 
     constructor(name: string, createdAt: Date, options: DatabaseOptions = {}) {
         this.displayName = options.displayName || name;
@@ -86,6 +92,14 @@ export class DatabaseModel {
             : [];
         this.testingModuleStates = Array.isArray(options.testingModuleStates) ? options.testingModuleStates : undefined;
         this.checkpoints = Array.isArray(options.checkpoints) ? options.checkpoints : undefined;
+        const partner = options.comparePartner;
+        if (partner && typeof partner.dbName === 'string' && partner.dbName.trim() !== ''
+            && (partner.kind === 'database' || partner.kind === 'checkpoint')) {
+            this.comparePartner = { dbName: partner.dbName, kind: partner.kind };
+        }
+        if (typeof options.clonedFrom === 'string' && options.clonedFrom !== '') {
+            this.clonedFrom = options.clonedFrom;
+        }
 
         if (options.internalName) {
             this.internalName = options.internalName;

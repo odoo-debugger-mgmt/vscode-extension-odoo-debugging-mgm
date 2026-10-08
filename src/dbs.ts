@@ -1211,7 +1211,8 @@ export async function cloneDatabaseFlow(event: unknown): Promise<void> {
         displayName: targetName,
         internalName: targetName,
         kind: 'template',
-        projectRepoBranches
+        projectRepoBranches,
+        clonedFrom: db.id
     });
     project.dbs.push(clone);
     await SettingsStore.saveWithoutComments(stripSettings(data));
