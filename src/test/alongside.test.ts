@@ -58,6 +58,19 @@ suite('Alongside helpers', () => {
         assert.ok(!alongsideArgs(['--longpolling-port=8072', '-d', 'x'], 8100).some(a => a.includes('8072')));
     });
 
+    test('port flags given as one token (space or equals) are stripped', () => {
+        assert.deepStrictEqual(
+            alongsideArgs(['-d', 'x', '--http-port 9000', '-p 9001', '-p9002', '-p=9003', '--gevent-port 8072'], 8100),
+            ['-p', '8100', '-d', 'x']
+        );
+    });
+
+    test('non-port flags with equals or spaces in the value are kept', () => {
+        const result = alongsideArgs(['--dev=all', '--db-filter=^x$', '-d', 'demo'], 8100);
+        assert.ok(result.some(a => a === '--dev=all'));
+        assert.ok(result.some(a => a === '--db-filter=^x$'));
+    });
+
     test('a single checkout on another branch is a conflict; a copy per branch is not', () => {
         const resolved = [
             { repo: { name: 'acme' }, path: '/r/acme', branch: '17.0-fix', mode: 'checkout', isWorktree: false },

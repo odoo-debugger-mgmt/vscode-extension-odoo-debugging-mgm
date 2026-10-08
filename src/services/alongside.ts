@@ -71,13 +71,35 @@ export function alongsideArgs(baseArgs: string[], port: number, realtime?: { fla
     const out: string[] = [];
     for (let i = 0; i < baseArgs.length; i++) {
         const arg = baseArgs[i];
+
+        // Skip exact flag matches (and their following value)
         if (PORT_FLAGS.includes(arg)) {
             i++;
             continue;
         }
+
+        // Skip --flag=value forms
         if (PORT_FLAGS.some(flag => flag.startsWith('--') && arg.startsWith(`${flag}=`))) {
             continue;
         }
+
+        // Skip tokens that are port flags with space embedded (e.g., '--http-port 9000')
+        let isPortFlagWithSpace = false;
+        for (const flag of PORT_FLAGS) {
+            if (flag.startsWith('--') && arg.startsWith(`${flag} `)) {
+                isPortFlagWithSpace = true;
+                break;
+            }
+        }
+        if (isPortFlagWithSpace) {
+            continue;
+        }
+
+        // Skip -p followed directly by digits (e.g., '-p9002'), by = (e.g., '-p=9003'), or by space (e.g., '-p 9001')
+        if (/^-p(\d+|=| )/.test(arg)) {
+            continue;
+        }
+
         out.push(arg);
     }
     const args = ['-p', String(port), ...out];
