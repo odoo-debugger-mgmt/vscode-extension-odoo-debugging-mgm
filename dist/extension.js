@@ -97,8 +97,8 @@ const projectWorkspace_1 = __webpack_require__(150);
 const workspaceBinding_1 = __webpack_require__(63);
 const workspaceRegistry_1 = __webpack_require__(65);
 const bindingCommand_1 = __webpack_require__(102);
-const goneElsewhere_1 = __webpack_require__(190);
-const storeSwitch_1 = __webpack_require__(191);
+const goneElsewhere_1 = __webpack_require__(191);
+const storeSwitch_1 = __webpack_require__(192);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -29558,20 +29558,20 @@ const checkpointCommands_1 = __webpack_require__(157);
 const alongsideCommands_1 = __webpack_require__(158);
 const partnerCommands_1 = __webpack_require__(159);
 const compareCommands_1 = __webpack_require__(160);
-const moduleCommands_1 = __webpack_require__(167);
-const testingCommands_1 = __webpack_require__(168);
-const versionCommands_1 = __webpack_require__(169);
-const debugCommands_1 = __webpack_require__(171);
-const reposExplorerCommands_1 = __webpack_require__(172);
-const editorCommands_1 = __webpack_require__(173);
-const helpCommands_1 = __webpack_require__(174);
-const upgradeCommand_1 = __webpack_require__(175);
+const moduleCommands_1 = __webpack_require__(168);
+const testingCommands_1 = __webpack_require__(169);
+const versionCommands_1 = __webpack_require__(170);
+const debugCommands_1 = __webpack_require__(172);
+const reposExplorerCommands_1 = __webpack_require__(173);
+const editorCommands_1 = __webpack_require__(174);
+const helpCommands_1 = __webpack_require__(175);
+const upgradeCommand_1 = __webpack_require__(176);
 const customAddonsCommand_1 = __webpack_require__(109);
-const dataStoreCommands_1 = __webpack_require__(177);
-const repoLocationCommand_1 = __webpack_require__(179);
+const dataStoreCommands_1 = __webpack_require__(178);
+const repoLocationCommand_1 = __webpack_require__(180);
 const bindingCommand_1 = __webpack_require__(102);
-const upgradeSideCommands_1 = __webpack_require__(180);
-const viewDoctorCommands_1 = __webpack_require__(181);
+const upgradeSideCommands_1 = __webpack_require__(181);
+const viewDoctorCommands_1 = __webpack_require__(182);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -31811,9 +31811,10 @@ const notifications_1 = __webpack_require__(16);
 const manifest_1 = __webpack_require__(110);
 const sides_1 = __webpack_require__(161);
 const counterpart_1 = __webpack_require__(162);
-const moduleDiff_1 = __webpack_require__(163);
-const pythonSymbols_1 = __webpack_require__(164);
-const xmlElements_1 = __webpack_require__(165);
+const locate_1 = __webpack_require__(163);
+const moduleDiff_1 = __webpack_require__(164);
+const pythonSymbols_1 = __webpack_require__(165);
+const xmlElements_1 = __webpack_require__(166);
 const compareDocuments_1 = __webpack_require__(129);
 const dbs_1 = __webpack_require__(79);
 const viewPairing_1 = __webpack_require__(76);
@@ -31821,7 +31822,7 @@ const viewDoctorView_1 = __webpack_require__(118);
 const comparisonPartner_1 = __webpack_require__(73);
 const checkpointReads_1 = __webpack_require__(119);
 const postgres_1 = __webpack_require__(47);
-const recordCompare_1 = __webpack_require__(166);
+const recordCompare_1 = __webpack_require__(167);
 /** Both sides, or undefined after saying why not (or when the prompt was dismissed). */
 async function sidesOrExplain(refresh) {
     const project = (await settingsStore_1.SettingsStore.getSelectedProject())?.project;
@@ -31853,14 +31854,11 @@ async function pickCounterpart(found, to, what) {
 }
 /** The counterpart of `file` (on `from`) in `to`, asking when several match; undefined after explaining. */
 async function counterpartOf(file, from, to, what) {
-    return pickCounterpart(await (0, counterpart_1.resolveCounterpart)(file, from, to, counterpart_1.realFsProbe), to, what);
+    return pickCounterpart(await withBusy(() => (0, counterpart_1.resolveCounterpart)(file, from, to, counterpart_1.realFsProbe)), to, what);
 }
-/** Which side a file is on; this side wins when both match (the same checkout). Exactly one is set. */
-function matchSide(file, sides) {
-    const left = (0, counterpart_1.rootOf)(file, sides.left);
-    const right = (0, counterpart_1.rootOf)(file, sides.right);
-    const pickLeft = left && (!right || sides.thisSide === 'left');
-    return { onLeft: pickLeft ? left : undefined, onRight: pickLeft ? undefined : right };
+/** Runs a slow file-system lookup under a progress notification. */
+function withBusy(work) {
+    return Promise.resolve(vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Looking for the counterpart…' }, work));
 }
 function fileOf(arg) {
     const uri = arg instanceof vscode.Uri ? arg : vscode.window.activeTextEditor?.document.uri;
@@ -31877,27 +31875,21 @@ async function moduleDirOf(arg) {
         }
         return (await (0, manifest_1.findModuleForFile)(path.join(arg.fsPath, '__manifest__.py')))?.path;
     }
-    return undefined;
+    // From the palette: the module of the active editor's file.
+    const active = fileOf(undefined);
+    return active ? (await (0, manifest_1.findModuleForFile)(active))?.path : undefined;
 }
 /** The qualified name of the class or function around `position`, from the language server; undefined without one. */
 async function qualifiedFromServer(uri, position) {
     const symbols = await Promise.resolve(vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', uri)).catch(() => undefined);
     const kinds = [vscode.SymbolKind.Class, vscode.SymbolKind.Function, vscode.SymbolKind.Method];
-    let best;
-    const walk = (list, parents) => {
-        for (const s of list) {
-            if (!s.range?.contains(position)) {
-                continue;
-            }
-            const chain = kinds.includes(s.kind) ? [...parents, s.name] : parents;
-            if (kinds.includes(s.kind) && (!best || chain.length >= best.length)) {
-                best = chain;
-            }
-            walk(s.children ?? [], chain);
-        }
-    };
-    walk(Array.isArray(symbols) ? symbols : [], []);
-    return best?.join('.');
+    const nodes = (list) => list.map(s => ({
+        name: s.name,
+        isScope: kinds.includes(s.kind),
+        contains: p => Boolean(s.range?.contains(p)),
+        children: nodes(s.children ?? [])
+    }));
+    return (0, locate_1.qualifiedAt)(nodes(Array.isArray(symbols) ? symbols : []), position);
 }
 async function readText(file) {
     return fs.promises.readFile(file, 'utf8');
@@ -31918,12 +31910,12 @@ function registerCompareCommands(deps) {
         if (!sides) {
             return;
         }
-        const { onLeft, onRight } = matchSide(file, sides);
-        if (!onLeft && !onRight) {
+        const order = (0, locate_1.orderSides)(file, sides);
+        if (!order) {
             void (0, notifications_1.showInfo)(`${path.basename(file)} is not part of ${sides.left.label}'s or ${sides.right.label}'s code.`);
             return;
         }
-        const [from, to] = onLeft ? [sides.left, sides.right] : [sides.right, sides.left];
+        const { from, to, fileOnLeft: onLeft } = order;
         const other = await counterpartOf(file, from, to, path.basename(file));
         if (!other) {
             return;
@@ -31932,7 +31924,7 @@ function registerCompareCommands(deps) {
             void (0, notifications_1.showInfo)(`${path.basename(file)} is the same file in ${sides.left.label} and ${sides.right.label}.`);
             return;
         }
-        const [leftFile, rightFile] = onLeft ? [file, other] : [other, file];
+        const [leftFile, rightFile] = (0, locate_1.leftRight)(onLeft, file, other);
         await vscode.commands.executeCommand('vscode.diff', vscode.Uri.file(leftFile), vscode.Uri.file(rightFile), `${path.basename(file)}: ${sides.left.label} ↔ ${sides.right.label}`);
     }));
     context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.compareModuleWithPartner', async (arg) => {
@@ -31947,22 +31939,24 @@ function registerCompareCommands(deps) {
             return;
         }
         const manifest = path.join(moduleDir, '__manifest__.py');
-        const { onLeft, onRight } = matchSide(manifest, sides);
-        if (!onLeft && !onRight) {
+        const order = (0, locate_1.orderSides)(manifest, sides);
+        if (!order) {
             void (0, notifications_1.showInfo)(`${name} is not part of ${sides.left.label}'s or ${sides.right.label}'s code.`);
             return;
         }
-        const [from, to] = onLeft ? [sides.left, sides.right] : [sides.right, sides.left];
-        const otherManifest = await counterpartOf(manifest, from, to, name);
-        if (!otherManifest) {
+        const { from, to, fileOnLeft: onLeft } = order;
+        // A module is found by its name only: a removed or renamed module has no counterpart, and no
+        // unrelated module is offered in its place.
+        const otherDir = await withBusy(() => (0, counterpart_1.counterpartModuleDir)(manifest, from, to, counterpart_1.realFsProbe));
+        if (!otherDir) {
+            void (0, notifications_1.showInfo)(`${name} has no counterpart in ${to.label}.`);
             return;
         }
-        const otherDir = path.dirname(otherManifest);
         if (path.resolve(otherDir) === path.resolve(moduleDir)) {
             void (0, notifications_1.showInfo)(`${name} is the same module in ${sides.left.label} and ${sides.right.label}.`);
             return;
         }
-        const [leftDir, rightDir] = onLeft ? [moduleDir, otherDir] : [otherDir, moduleDir];
+        const [leftDir, rightDir] = (0, locate_1.leftRight)(onLeft, moduleDir, otherDir);
         const diff = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Comparing ${name}…` }, () => (0, moduleDiff_1.diffTrees)(leftDir, rightDir));
         const { left, right } = sides;
         if (diff.changed.length + diff.added.length + diff.removed.length === 0) {
@@ -32005,64 +31999,27 @@ function registerCompareCommands(deps) {
         if (!sides) {
             return;
         }
-        const { onLeft, onRight } = matchSide(file, sides);
-        if (!onLeft && !onRight) {
+        const order = (0, locate_1.orderSides)(file, sides);
+        if (!order) {
             void (0, notifications_1.showInfo)(`${path.basename(file)} is not part of ${sides.left.label}'s or ${sides.right.label}'s code.`);
             return;
         }
-        const [from, to] = onLeft ? [sides.left, sides.right] : [sides.right, sides.left];
+        const { from, to, fileOnLeft: onLeft } = order;
         const text = here.document.getText();
         const position = here.selection.active;
         const show = async (what, thisText, otherText) => {
-            const [leftText, rightText] = onLeft ? [thisText, otherText] : [otherText, thisText];
+            const [leftText, rightText] = (0, locate_1.leftRight)(onLeft, thisText, otherText);
             await vscode.commands.executeCommand('vscode.diff', compareDocuments_1.compareDocuments.snapshotUri('left', `${what} · ${sides.left.label}${ext}`, leftText), compareDocuments_1.compareDocuments.snapshotUri('right', `${what} · ${sides.right.label}${ext}`, rightText), `${what}: ${sides.left.label} ↔ ${sides.right.label}`);
         };
-        const sameFile = (other) => path.resolve(other) === path.resolve(file);
-        /**
-         * Look for the symbol in the counterpart file and its module, then in the same-named module when no
-         * file matched, and only then ask which file is the counterpart. `search` returns the other side's
-         * text, or undefined; `what` names the symbol for the messages.
-         */
-        const locate = async (what, search) => {
-            const found = await (0, counterpart_1.resolveCounterpart)(file, from, to, counterpart_1.realFsProbe);
-            if (found.kind === 'found') {
-                if (sameFile(found.path)) {
-                    void (0, notifications_1.showInfo)(`${path.basename(file)} is the same file in ${sides.left.label} and ${sides.right.label}.`);
-                    return undefined;
-                }
-                const moduleDir = (await (0, manifest_1.findModuleForFile)(found.path))?.path;
-                const hit = await search([found.path], moduleDir);
-                if (hit === undefined) {
-                    void (0, notifications_1.showInfo)(`${what} has no counterpart in ${to.label}.`);
-                }
-                return hit;
-            }
-            const moduleDir = await (0, counterpart_1.counterpartModuleDir)(file, from, to, counterpart_1.realFsProbe);
-            if (moduleDir) {
-                const hit = await search([], moduleDir);
-                if (hit !== undefined) {
-                    return hit;
-                }
-            }
-            const picked = await pickCounterpart(found, to, what);
-            if (!picked) {
-                return undefined;
-            }
-            if (sameFile(picked)) {
-                void (0, notifications_1.showInfo)(`${path.basename(file)} is the same file in ${sides.left.label} and ${sides.right.label}.`);
-                return undefined;
-            }
-            const hit = await search([picked], (await (0, manifest_1.findModuleForFile)(picked))?.path);
-            if (hit === undefined) {
-                void (0, notifications_1.showInfo)(`${what} has no counterpart in ${to.label}.`);
-            }
-            return hit;
-        };
-        /** `first` files, then every file of `ext` in the module, never this file. */
-        const candidatesOf = async (first, moduleDir) => {
-            const rest = moduleDir ? await filesOf(moduleDir, ext) : [];
-            return [...new Set([...first, ...rest])].filter(f => !sameFile(f));
-        };
+        const locate = (what, search) => (0, locate_1.locateCounterpart)(file, from, to, sides, what, {
+            fs: counterpart_1.realFsProbe,
+            moduleOf: async (f) => (await (0, manifest_1.findModuleForFile)(f))?.path,
+            pick: (found, label) => pickCounterpart(found, to, label),
+            info: message => { void (0, notifications_1.showInfo)(message); },
+            busy: withBusy,
+            search
+        });
+        const candidates = async (first, moduleDir) => (0, locate_1.candidatesOf)(first, moduleDir ? await filesOf(moduleDir, ext) : [], file);
         if (ext === '.xml') {
             const el = (0, xmlElements_1.xmlElementAt)(text, here.document.offsetAt(position));
             if (!el) {
@@ -32071,7 +32028,7 @@ function registerCompareCommands(deps) {
             }
             const other = await locate(el.id, async (first, moduleDir) => {
                 const moduleName = moduleDir ? path.basename(moduleDir) : '';
-                for (const candidate of await candidatesOf(first, moduleDir)) {
+                for (const candidate of await candidates(first, moduleDir)) {
                     const otherText = await readText(candidate).catch(() => undefined);
                     const found = otherText === undefined ? undefined : (0, xmlElements_1.findXmlElementById)(otherText, el.id, moduleName);
                     if (found && otherText !== undefined) {
@@ -32097,7 +32054,7 @@ function registerCompareCommands(deps) {
         const owner = symbols.find(s => s.kind === 'class' && mine.qualified === `${s.qualified}.${mine.name}`);
         const other = await locate(mine.qualified, async (first, moduleDir) => {
             const sources = [];
-            for (const candidate of await candidatesOf(first, moduleDir)) {
+            for (const candidate of await candidates(first, moduleDir)) {
                 sources.push({ file: candidate, text: await readText(candidate).catch(() => '') });
             }
             for (const source of sources) {
@@ -32325,6 +32282,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.realFsProbe = void 0;
 exports.rootOf = rootOf;
 exports.addonsRoots = addonsRoots;
+exports.moduleOfRel = moduleOfRel;
 exports.resolveCounterpart = resolveCounterpart;
 exports.counterpartModuleDir = counterpartModuleDir;
 /**
@@ -32387,6 +32345,25 @@ function verdict(files) {
     }
     return files.length === 1 ? { kind: 'found', path: files[0] } : { kind: 'pick', candidates: files.slice(0, MAX_CANDIDATES) };
 }
+/**
+ * The module a file belongs to: the nearest folder with a `__manifest__.py`, walking up from the file to its
+ * root, so a module below a container folder (`addons/acme_sale`) is the module, not the container. Falls back
+ * to the first path segment when no manifest is found.
+ */
+async function moduleOfRel(rootPath, rel, fsProbe) {
+    const parts = rel.split('/');
+    for (let depth = parts.length - 1; depth >= 1; depth--) {
+        if (await fsProbe.exists(path.join(rootPath, ...parts.slice(0, depth), '__manifest__.py'))) {
+            return { dir: parts.slice(0, depth).join('/'), name: parts[depth - 1], inner: parts.slice(depth).join('/') };
+        }
+    }
+    const slash = rel.indexOf('/');
+    return slash < 0
+        ? { dir: rel, name: rel, inner: '' }
+        : { dir: rel.slice(0, slash), name: rel.slice(0, slash), inner: rel.slice(slash + 1) };
+}
+/** Files whose counterpart is never searched by name: every module has them, so a name match means nothing. */
+const MODULE_BOUND_FILES = new Set(['__manifest__.py', '__init__.py']);
 async function resolveCounterpart(file, from, to, fsProbe) {
     const hit = rootOf(file, from);
     if (!hit) {
@@ -32404,35 +32381,29 @@ async function resolveCounterpart(file, from, to, fsProbe) {
         return { kind: 'none' };
     }
     const name = path.basename(file);
-    {
-        const slash = hit.rel.indexOf('/');
-        const module = slash < 0 ? hit.rel : hit.rel.slice(0, slash);
-        const inner = slash < 0 ? '' : hit.rel.slice(slash + 1);
-        if (sameRole) {
-            const folder = path.join(sameRole.path, module);
-            if (await fsProbe.isDir(folder)) {
-                const files = await collect(folder, name, fsProbe, MAX_CANDIDATES);
-                if (files.length > 0) {
-                    return verdict(files);
-                }
-            }
+    const module = await moduleOfRel(hit.root.path, hit.rel, fsProbe);
+    const ordered = [...(sameRole ? [sameRole] : []), ...addonsRoots(to).filter(root => root !== sameRole)];
+    for (const root of ordered) {
+        const sameRoot = root === sameRole;
+        // The same module path in the same root, else the module's name in the other roots.
+        const folder = path.join(root.path, sameRoot ? module.dir : module.name);
+        if (!(await fsProbe.isDir(folder))) {
+            continue;
         }
-        for (const root of addonsRoots(to)) {
-            if (root === sameRole) {
-                continue;
-            }
-            const folder = path.join(root.path, module);
-            if (!(await fsProbe.isDir(folder))) {
-                continue;
-            }
-            if (inner && await fsProbe.exists(path.join(folder, inner))) {
-                return { kind: 'found', path: path.join(folder, inner) };
-            }
-            const files = await collect(folder, name, fsProbe, MAX_CANDIDATES);
-            if (files.length > 0) {
-                return verdict(files);
-            }
+        if (!sameRoot && module.inner && await fsProbe.exists(path.join(folder, module.inner))) {
+            return { kind: 'found', path: path.join(folder, module.inner) };
         }
+        if (MODULE_BOUND_FILES.has(name)) {
+            continue;
+        }
+        // The same file name elsewhere in the module is a different folder: offer it, never open it unasked.
+        const files = await collect(folder, name, fsProbe, MAX_CANDIDATES);
+        if (files.length > 0) {
+            return { kind: 'pick', candidates: files };
+        }
+    }
+    if (MODULE_BOUND_FILES.has(name)) {
+        return { kind: 'none' };
     }
     const all = [];
     for (const root of addonsRoots(to)) {
@@ -32446,17 +32417,19 @@ async function resolveCounterpart(file, from, to, fsProbe) {
  */
 async function counterpartModuleDir(file, from, to, fsProbe) {
     const hit = rootOf(file, from);
-    if (!hit || hit.root.role === 'odoo') {
+    if (!hit || hit.root.role === 'odoo' || !hit.rel.includes('/')) {
         return undefined;
     }
-    const module = hit.rel.split('/')[0];
-    if (!module || !hit.rel.includes('/')) {
-        return undefined;
-    }
+    const module = await moduleOfRel(hit.root.path, hit.rel, fsProbe);
     const sameRole = to.roots.find(root => root.role === hit.root.role);
-    const ordered = [...(sameRole ? [sameRole] : []), ...addonsRoots(to).filter(root => root !== sameRole)];
-    for (const root of ordered) {
-        const folder = path.join(root.path, module);
+    if (sameRole) {
+        const folder = path.join(sameRole.path, module.dir);
+        if (await fsProbe.isDir(folder)) {
+            return folder;
+        }
+    }
+    for (const root of addonsRoots(to).filter(r => r !== sameRole)) {
+        const folder = path.join(root.path, module.name);
         if (await fsProbe.isDir(folder)) {
             return folder;
         }
@@ -32467,6 +32440,141 @@ async function counterpartModuleDir(file, from, to, fsProbe) {
 
 /***/ }),
 /* 163 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.matchSide = matchSide;
+exports.orderSides = orderSides;
+exports.leftRight = leftRight;
+exports.candidatesOf = candidatesOf;
+exports.locateCounterpart = locateCounterpart;
+exports.qualifiedAt = qualifiedAt;
+/**
+ * The decisions behind Compare This and the file commands, without vscode: which side a file is on,
+ * where to look for a symbol's counterpart, and the qualified name a symbol provider reports.
+ */
+const path = __importStar(__webpack_require__(3));
+const counterpart_1 = __webpack_require__(162);
+/** Which side a file is on; this side wins when both match (the same checkout). At most one is set. */
+function matchSide(file, sides) {
+    const left = (0, counterpart_1.rootOf)(file, sides.left);
+    const right = (0, counterpart_1.rootOf)(file, sides.right);
+    const pickLeft = left && (!right || sides.thisSide === 'left');
+    return { onLeft: pickLeft ? left : undefined, onRight: pickLeft ? undefined : right };
+}
+/** The (from, to) sides of a file, and whether it is on the left; undefined when on neither. */
+function orderSides(file, sides) {
+    const { onLeft, onRight } = matchSide(file, sides);
+    if (!onLeft && !onRight) {
+        return undefined;
+    }
+    return onLeft ? { from: sides.left, to: sides.right, fileOnLeft: true } : { from: sides.right, to: sides.left, fileOnLeft: false };
+}
+/** [left, right] of this side's value and the other's. */
+function leftRight(fileOnLeft, mine, other) {
+    return fileOnLeft ? [mine, other] : [other, mine];
+}
+/** `first` files, then `rest` (every file of the module), deduplicated and never `self`. */
+function candidatesOf(first, rest, self) {
+    return [...new Set([...first, ...rest])].filter(f => path.resolve(f) !== path.resolve(self));
+}
+/**
+ * Look for the symbol in the counterpart file and its module, then in the same-named module when no file
+ * matched, and only then ask which file is the counterpart. Returns the other side's text, or undefined
+ * after explaining why not.
+ */
+async function locateCounterpart(file, from, to, sides, what, deps) {
+    const same = () => deps.info(`${path.basename(file)} is the same file in ${sides.left.label} and ${sides.right.label}.`);
+    const isSelf = (other) => path.resolve(other) === path.resolve(file);
+    const found = await deps.busy(() => (0, counterpart_1.resolveCounterpart)(file, from, to, deps.fs));
+    if (found.kind === 'found') {
+        if (isSelf(found.path)) {
+            same();
+            return undefined;
+        }
+        const hit = await deps.search([found.path], await deps.moduleOf(found.path));
+        if (hit === undefined) {
+            deps.info(`${what} has no counterpart in ${to.label}.`);
+        }
+        return hit;
+    }
+    const moduleDir = await deps.busy(() => (0, counterpart_1.counterpartModuleDir)(file, from, to, deps.fs));
+    if (moduleDir) {
+        const hit = await deps.search([], moduleDir);
+        if (hit !== undefined) {
+            return hit;
+        }
+    }
+    const picked = await deps.pick(found, what);
+    if (!picked) {
+        return undefined;
+    }
+    if (isSelf(picked)) {
+        same();
+        return undefined;
+    }
+    const hit = await deps.search([picked], await deps.moduleOf(picked));
+    if (hit === undefined) {
+        deps.info(`${what} has no counterpart in ${to.label}.`);
+    }
+    return hit;
+}
+/** The dotted name of the innermost class or function around `position`, from a symbol provider's tree. */
+function qualifiedAt(symbols, position) {
+    let best;
+    const walk = (list, parents) => {
+        for (const s of list) {
+            if (!s.contains(position)) {
+                continue;
+            }
+            const chain = s.isScope ? [...parents, s.name] : parents;
+            if (s.isScope && (!best || chain.length >= best.length)) {
+                best = chain;
+            }
+            walk(s.children ?? [], chain);
+        }
+    };
+    walk(symbols, []);
+    return best?.join('.');
+}
+
+
+/***/ }),
+/* 164 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -32574,7 +32682,7 @@ async function diffTrees(left, right, hash = sha1OfFile) {
 
 
 /***/ }),
-/* 164 */
+/* 165 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -32783,7 +32891,7 @@ function findMethodInSources(sources, key, method) {
 
 
 /***/ }),
-/* 165 */
+/* 166 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -32854,13 +32962,15 @@ function findXmlElementById(text, id, module) {
 
 
 /***/ }),
-/* 166 */
+/* 167 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.parseRecordRef = parseRecordRef;
 exports.tableOf = tableOf;
+exports.storedCountSql = storedCountSql;
+exports.attachmentsSql = attachmentsSql;
 exports.xmlidSql = xmlidSql;
 exports.fieldsSql = fieldsSql;
 exports.rowSql = rowSql;
@@ -32888,8 +32998,33 @@ function parseRecordRef(input) {
     const xml = XMLID.exec(text);
     return xml ? { kind: 'xmlid', module: xml[1], name: xml[2] } : undefined;
 }
+/**
+ * The core models whose `_table` is not the model name with dots replaced (the same in Odoo 17 and 18).
+ * Any other custom `_table`, such as a custom module's, is not known and reports no table.
+ */
+const CORE_TABLES = {
+    'ir.actions.actions': 'ir_actions',
+    'ir.actions.act_window': 'ir_act_window',
+    'ir.actions.act_window.view': 'ir_act_window_view',
+    'ir.actions.act_window_close': 'ir_actions',
+    'ir.actions.act_url': 'ir_act_url',
+    'ir.actions.server': 'ir_act_server',
+    'ir.actions.report': 'ir_act_report_xml',
+    'ir.actions.client': 'ir_act_client'
+};
 function tableOf(model) {
-    return model.replace(/\./g, '_');
+    return CORE_TABLES[model] ?? model.replace(/\./g, '_');
+}
+/** How many stored fields the model has, whatever its table is called. */
+function storedCountSql(model) {
+    return `SELECT count(*) FROM ir_model_fields WHERE model = ${(0, viewQueries_1.sqlText)(model)} AND store;`;
+}
+/** `res_field|file_size|checksum` of the attachment-stored binaries of a record. */
+function attachmentsSql(model, id) {
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        throw new Error(`Not a record id: ${id}`);
+    }
+    return `SELECT res_field || '|' || coalesce(file_size, 0) || '|' || coalesce(checksum, '') FROM ir_attachment WHERE res_model = ${(0, viewQueries_1.sqlText)(model)} AND res_id = ${id} AND res_field IS NOT NULL ORDER BY res_field;`;
 }
 /** `model|res_id` of an external id; no row when it does not exist. */
 function xmlidSql(ref) {
@@ -32914,6 +33049,7 @@ function binaryBytes(value) {
     }
     return Buffer.from(value, 'utf8');
 }
+const LANGUAGE_KEY = /^[a-z]{2,3}(_[A-Za-z0-9@]+)?$/;
 function renderValue(ttype, value) {
     if (value === null || value === undefined) {
         return 'False';
@@ -32929,8 +33065,10 @@ function renderValue(ttype, value) {
     if (typeof value === 'string') {
         shown = value;
     }
-    else if (typeof value === 'object' && !Array.isArray(value) && ['char', 'text', 'html'].includes(ttype)) {
-        // A translated field of Odoo 16 and later: jsonb keyed by language.
+    else if (typeof value === 'object' && !Array.isArray(value) && ['char', 'text', 'html'].includes(ttype)
+        && Object.keys(value).length > 0 && Object.keys(value).every(key => LANGUAGE_KEY.test(key))) {
+        // A translated field of Odoo 16 and later: jsonb keyed by language. (Company-dependent fields of
+        // Odoo 18 are keyed by company id and fall through to the JSON below.)
         const map = value;
         const pick = 'en_US' in map ? map.en_US : map[Object.keys(map)[0]];
         shown = typeof pick === 'string' ? pick : stableJson(pick ?? false);
@@ -32938,16 +33076,23 @@ function renderValue(ttype, value) {
     else {
         shown = typeof value === 'object' ? stableJson(value) : String(value);
     }
+    if (/\r?\n/.test(shown) && ['char', 'text', 'html'].includes(ttype)) {
+        // A long value (an arch, a body): an indented block, so the diff goes line by line.
+        return '\n' + shown.replace(/\r?\n$/, '').split(/\r?\n/).map(line => `    ${line}`.trimEnd()).join('\n');
+    }
     return shown.replace(/\r?\n/g, '\\n');
 }
 /** One `field: value` line per field, sorted by name; the note alone when the row is missing. */
-function renderRecord(fields, row, missingNote) {
+function renderRecord(fields, row, missingNote, attachments = []) {
     if (!row) {
         return `${missingNote}\n`;
     }
-    return [...fields].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-        .filter(field => field.name in row)
-        .map(field => `${field.name}: ${renderValue(field.ttype, row[field.name])}`)
+    const lines = [
+        ...fields.filter(field => field.name in row).map(field => ({ name: field.name, text: renderValue(field.ttype, row[field.name]) })),
+        ...attachments.map(a => ({ name: a.name, text: `${a.size} bytes, sha1 ${a.checksum.slice(0, 12)}` }))
+    ];
+    return lines.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+        .map(line => `${line.name}:${line.text.startsWith('\n') ? '' : ' '}${line.text}`)
         .join('\n') + '\n';
 }
 /** JSON with sorted keys at every level, so equal values print equal. */
@@ -32975,6 +33120,12 @@ function planSides(left, right, leftLabel, rightLabel, what) {
     if (l?.code === 'no-table' && r?.code === 'no-table') {
         return { message: l.error };
     }
+    if (l && r) {
+        // The model is missing on one side and the record on the other: nothing to compare.
+        const noTable = l.code === 'no-table' ? leftLabel : rightLabel;
+        const noRecord = l.code === 'no-table' ? rightLabel : leftLabel;
+        return { message: `${what}: the model is not installed in ${noTable}, and the record does not exist in ${noRecord}.` };
+    }
     const show = (read, label) => 'error' in read
         ? renderRecord([], undefined, read.code === 'no-table' ? `(model not installed in ${label})` : `(no such record in ${label})`)
         : read.text;
@@ -33000,18 +33151,28 @@ async function readRecord(dbName, ref, sql) {
         return { name: line.slice(0, cut), ttype: line.slice(cut + 1) };
     });
     if (fields.length === 0) {
-        return { error: `${model} has no table in ${dbName} (an abstract or transient model?).`, code: 'no-table' };
+        const stored = Number((await sql(dbName, storedCountSql(model))).trim()) || 0;
+        return {
+            error: stored > 0
+                ? `${model} has stored fields in ${dbName}, but no table of the expected name (a custom _table?).`
+                : `${model} has no table in ${dbName} (an abstract or transient model?).`,
+            code: 'no-table'
+        };
     }
     const raw = (await sql(dbName, rowSql(model, id, fields.map(f => f.name)))).trim();
     if (!raw) {
         return { error: `${model},${id} does not exist in ${dbName}.`, code: 'missing' };
     }
-    return { model, id, text: renderRecord(fields, JSON.parse(raw), '') };
+    const attachments = (await sql(dbName, attachmentsSql(model, id))).split('\n').filter(Boolean).map(line => {
+        const [name, size, checksum] = line.split('|');
+        return { name, size: Number(size) || 0, checksum: checksum ?? '' };
+    });
+    return { model, id, text: renderRecord(fields, JSON.parse(raw), '', attachments) };
 }
 
 
 /***/ }),
-/* 167 */
+/* 168 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -33147,7 +33308,7 @@ function registerModuleCommands(deps) {
 
 
 /***/ }),
-/* 168 */
+/* 169 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -33204,7 +33365,7 @@ function registerTestingCommands(deps) {
 
 
 /***/ }),
-/* 169 */
+/* 170 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -33254,7 +33415,7 @@ const versionIdentity_1 = __webpack_require__(36);
 const debugger_1 = __webpack_require__(97);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(170);
+const branchPick_1 = __webpack_require__(171);
 const runtimeCache_1 = __webpack_require__(15);
 const environment_1 = __webpack_require__(51);
 const odooInstaller_1 = __webpack_require__(80);
@@ -33945,7 +34106,7 @@ function registerVersionCommands(deps) {
 
 
 /***/ }),
-/* 170 */
+/* 171 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -34160,7 +34321,7 @@ async function pickRepoBranch(repoPath, title, placeHolder, suggested, exclude, 
 
 
 /***/ }),
-/* 171 */
+/* 172 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -34314,7 +34475,7 @@ function registerDebugCommands(deps) {
 
 
 /***/ }),
-/* 172 */
+/* 173 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -34607,7 +34768,7 @@ function registerReposExplorerCommands(deps) {
 
 
 /***/ }),
-/* 173 */
+/* 174 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -34715,7 +34876,7 @@ function registerEditorCommands(deps) {
 
 
 /***/ }),
-/* 174 */
+/* 175 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -34803,7 +34964,7 @@ function registerHelpCommands(deps) {
 
 
 /***/ }),
-/* 175 */
+/* 176 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -34861,8 +35022,8 @@ const settingsStore_1 = __webpack_require__(6);
 const utils_1 = __webpack_require__(8);
 const notifications_1 = __webpack_require__(16);
 const logger_1 = __webpack_require__(12);
-const branchPick_1 = __webpack_require__(170);
-const upgradePlan_1 = __webpack_require__(176);
+const branchPick_1 = __webpack_require__(171);
+const upgradePlan_1 = __webpack_require__(177);
 const upgradeApply_1 = __webpack_require__(43);
 const upgradeSetup_1 = __webpack_require__(70);
 const branches_1 = __webpack_require__(52);
@@ -35463,7 +35624,7 @@ function registerUpgradeCommand(deps) {
 
 
 /***/ }),
-/* 176 */
+/* 177 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -35589,7 +35750,7 @@ function describeUpgradePlan(plan, input) {
 
 
 /***/ }),
-/* 177 */
+/* 178 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -35650,7 +35811,7 @@ const setupState_1 = __webpack_require__(62);
 const dataLocation_1 = __webpack_require__(17);
 const mainStore_1 = __webpack_require__(27);
 const workspaceSelection_1 = __webpack_require__(30);
-const dataImport_1 = __webpack_require__(178);
+const dataImport_1 = __webpack_require__(179);
 const registerCommand_1 = __webpack_require__(103);
 const gitExclude_1 = __webpack_require__(32);
 const SHARED_STORE_FILE = 'odoo-devtools.db';
@@ -35938,7 +36099,7 @@ function registerDataStoreCommands(deps) {
 
 
 /***/ }),
-/* 178 */
+/* 179 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -36195,7 +36356,7 @@ function buildExport(data, exportedAt = new Date()) {
 
 
 /***/ }),
-/* 179 */
+/* 180 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -36353,7 +36514,7 @@ function registerRepoLocationCommand(deps) {
 
 
 /***/ }),
-/* 180 */
+/* 181 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -36530,7 +36691,7 @@ function registerUpgradeSideCommands(deps) {
 
 
 /***/ }),
-/* 181 */
+/* 182 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -36581,12 +36742,12 @@ const checkpointReads_1 = __webpack_require__(119);
 const compareDocuments_1 = __webpack_require__(129);
 const logger_1 = __webpack_require__(12);
 const renderPlan_1 = __webpack_require__(137);
-const upgradeScriptFlow_1 = __webpack_require__(182);
+const upgradeScriptFlow_1 = __webpack_require__(183);
 const archErrors_1 = __webpack_require__(142);
 const xpathReport_1 = __webpack_require__(123);
 const viewQueries_1 = __webpack_require__(75);
-const findViewFlow_1 = __webpack_require__(187);
-const viewTarget_1 = __webpack_require__(189);
+const findViewFlow_1 = __webpack_require__(188);
+const viewTarget_1 = __webpack_require__(190);
 function viewItem(arg) {
     return arg instanceof viewDoctorView_1.ViewItem ? arg : undefined;
 }
@@ -36918,7 +37079,7 @@ function registerViewDoctorCommands(deps) {
 
 
 /***/ }),
-/* 182 */
+/* 183 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -36972,10 +37133,10 @@ const psaeInternal_1 = __webpack_require__(98);
 const versionRepos_1 = __webpack_require__(59);
 const notifications_1 = __webpack_require__(16);
 const viewNoteService_1 = __webpack_require__(144);
-const scriptBuilder_1 = __webpack_require__(183);
-const upgradeScript_1 = __webpack_require__(184);
-const migrationsFolder_1 = __webpack_require__(185);
-const scriptDestination_1 = __webpack_require__(186);
+const scriptBuilder_1 = __webpack_require__(184);
+const upgradeScript_1 = __webpack_require__(185);
+const migrationsFolder_1 = __webpack_require__(186);
+const scriptDestination_1 = __webpack_require__(187);
 async function scriptModules(project, dbName) {
     const db = project.dbs?.find(entry => entry.id === dbName);
     const { modules } = (0, psaeInternal_1.collectModuleDiscovery)(project, await (0, versionRepos_1.resolveReposForDatabase)(project, db));
@@ -37060,7 +37221,7 @@ async function createUpgradeScript(deps, dbName, viewId) {
 
 
 /***/ }),
-/* 183 */
+/* 184 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -37150,7 +37311,7 @@ function nothingToScript(build, dbName) {
 
 
 /***/ }),
-/* 184 */
+/* 185 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -37465,7 +37626,7 @@ function parseScript(source) {
 
 
 /***/ }),
-/* 185 */
+/* 186 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -37528,7 +37689,7 @@ exports.writeScriptToFolder = writeScriptToFolder;
  */
 const fs = __importStar(__webpack_require__(20));
 const path = __importStar(__webpack_require__(3));
-const upgradeScript_1 = __webpack_require__(184);
+const upgradeScript_1 = __webpack_require__(185);
 exports.SCRIPT_NAME = 'end-update_views';
 const MAX_SIBLINGS = 100;
 /** A folder name Odoo will run and accept as a manifest version: <series>.x.y or <series>.x.y.z; without a known series, 2 to 5 numeric parts. */
@@ -37653,7 +37814,7 @@ async function writeScriptToFolder(dir, views) {
 
 
 /***/ }),
-/* 186 */
+/* 187 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -37708,7 +37869,7 @@ const fs = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const vscode = __importStar(__webpack_require__(1));
 const viewNotes_1 = __webpack_require__(145);
-const migrationsFolder_1 = __webpack_require__(185);
+const migrationsFolder_1 = __webpack_require__(186);
 const UNTITLED_LABEL = '$(new-file) Untitled Python Editor';
 function destinationKey(projectKey) {
     return `viewDoctor.scriptDestination:${projectKey}`;
@@ -37832,7 +37993,7 @@ async function pickDestination(options) {
 
 
 /***/ }),
-/* 187 */
+/* 188 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -37880,7 +38041,7 @@ exports.findView = findView;
 const vscode = __importStar(__webpack_require__(1));
 const viewQueries_1 = __webpack_require__(75);
 const notifications_1 = __webpack_require__(16);
-const viewPicker_1 = __webpack_require__(188);
+const viewPicker_1 = __webpack_require__(189);
 async function pickView(dbName, rows, title, open) {
     const picked = await vscode.window.showQuickPick((0, viewPicker_1.viewPickItems)((0, viewPicker_1.viewTree)(rows)), { title, matchOnDescription: true });
     if (picked) {
@@ -37944,7 +38105,7 @@ async function findView(dbName, open) {
 
 
 /***/ }),
-/* 188 */
+/* 189 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -38023,7 +38184,7 @@ function nothingMatches(dbName, value) {
 
 
 /***/ }),
-/* 189 */
+/* 190 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 
@@ -38090,7 +38251,7 @@ async function viewTarget(arg, readRows, activeUri = () => vscode.window.activeT
 
 
 /***/ }),
-/* 190 */
+/* 191 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -38141,7 +38302,7 @@ function selectionFacts(project, version) {
 
 
 /***/ }),
-/* 191 */
+/* 192 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
