@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { withCheckpointOpen, CheckpointOpener } from '../services/checkpointReads';
+import { withCheckpointOpen, closeOpenCheckpointsWith, CheckpointOpener } from '../services/checkpointReads';
 
 function opener() {
     const calls: string[] = [];
@@ -10,7 +10,13 @@ function opener() {
     return { o, calls };
 }
 
-const tick = () => new Promise(resolve => setTimeout(resolve, 5));
+function deferred() {
+    let resolve!: () => void;
+    let reject!: (e: Error) => void;
+    const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
+    return { promise, resolve, reject };
+}
+const flush = async () => { for (let i = 0; i < 20; i++) { await Promise.resolve(); } };
 
 suite('Reading a checkpoint', () => {
     test('opens for the read and closes after', async () => {
@@ -22,14 +28,14 @@ suite('Reading a checkpoint', () => {
 
     test('two reads at once share one opening, and the last closes it', async () => {
         const { o, calls } = opener();
-        let release!: () => void;
-        const slow = new Promise<void>(resolve => { release = resolve; });
-        const a = withCheckpointOpen('cp', async () => { calls.push('a start'); await slow; calls.push('a end'); }, o);
-        await tick();
+        const gate = deferred();
+        const started = deferred();
+        const a = withCheckpointOpen('cp', async () => { calls.push('a start'); started.resolve(); await gate.promise; calls.push('a end'); }, o);
+        await started.promise;
         const b = withCheckpointOpen('cp', async () => { calls.push('b'); }, o);
         await b;
         assert.ok(!calls.includes('close cp'), 'b must not close it under a');
-        release();
+        gate.resolve();
         await a;
         assert.deepStrictEqual(calls.filter(c => c.startsWith('open') || c.startsWith('close')), ['open cp', 'close cp']);
     });
@@ -54,5 +60,113 @@ suite('Reading a checkpoint', () => {
         const { o, calls } = opener();
         await Promise.all([withCheckpointOpen('a', async () => 1, o), withCheckpointOpen('b', async () => 2, o)]);
         assert.deepStrictEqual(calls.sort(), ['close a', 'close b', 'open a', 'open b']);
+    });
+
+    test('a read arriving while the last one is closing opens only after the close finished', async () => {
+        const calls: string[] = [];
+        const closeGate = deferred();
+        const o: CheckpointOpener = {
+            open: async db => { calls.push(`open ${db}`); },
+            close: async db => { calls.push(`close ${db}`); await closeGate.promise; calls.push(`closed ${db}`); }
+        };
+        const a = withCheckpointOpen('cp', async () => 1, o);
+        await flush();
+        assert.deepStrictEqual(calls, ['open cp', 'close cp']);
+        const b = withCheckpointOpen('cp', async () => 2, o);
+        await flush();
+        assert.deepStrictEqual(calls, ['open cp', 'close cp'], 'the second open waits for the close');
+        closeGate.resolve();
+        assert.strictEqual(await a, 1);
+        assert.strictEqual(await b, 2);
+        assert.deepStrictEqual(calls, ['open cp', 'close cp', 'closed cp', 'open cp', 'close cp', 'closed cp']);
+    });
+
+    test('an open that fails rejects every read waiting on it, and a later read opens again', async () => {
+        const calls: string[] = [];
+        const gate = deferred();
+        let fail = true;
+        const o: CheckpointOpener = {
+            open: async db => { calls.push(`open ${db}`); if (fail) { await gate.promise; throw new Error('denied'); } },
+            close: async db => { calls.push(`close ${db}`); }
+        };
+        const a = withCheckpointOpen('cp', async () => 1, o);
+        const b = withCheckpointOpen('cp', async () => 2, o);
+        const checks = Promise.all([assert.rejects(a, /denied/), assert.rejects(b, /denied/)]);
+        gate.reject(new Error('denied'));
+        await checks.catch(() => undefined);
+        fail = false;
+        assert.strictEqual(await withCheckpointOpen('cp', async () => 3, o), 3);
+        assert.deepStrictEqual(calls, ['open cp', 'open cp', 'close cp']);
+    });
+
+    test('a close that fails does not fail the read, and the next read opens and closes normally', async () => {
+        const calls: string[] = [];
+        let failClose = true;
+        const o: CheckpointOpener = {
+            open: async db => { calls.push(`open ${db}`); },
+            close: async db => { calls.push(`close ${db}`); if (failClose) { throw new Error('nope'); } }
+        };
+        assert.strictEqual(await withCheckpointOpen('cp', async () => 7, o), 7);
+        failClose = false;
+        assert.strictEqual(await withCheckpointOpen('cp', async () => 8, o), 8);
+        assert.deepStrictEqual(calls, ['open cp', 'close cp', 'open cp', 'close cp']);
+    });
+});
+
+suite('Sweeping open checkpoints', () => {
+    function deps(over: { open?: string[]; connected?: string[] } = {}) {
+        const calls: string[] = [];
+        const opener: CheckpointOpener = { open: async db => { calls.push(`open ${db}`); }, close: async db => { calls.push(`close ${db}`); } };
+        return {
+            calls,
+            d: {
+                recorded: async () => ['cp'],
+                openNow: async () => over.open ?? ['cp'],
+                connected: async (name: string) => (over.connected ?? []).includes(name),
+                opener
+            }
+        };
+    }
+
+    test('a free open checkpoint is closed', async () => {
+        const { d, calls } = deps();
+        assert.deepStrictEqual(await closeOpenCheckpointsWith(d), ['cp']);
+        assert.deepStrictEqual(calls, ['close cp']);
+    });
+
+    test('one with a live connection is skipped', async () => {
+        const { d, calls } = deps({ connected: ['cp'] });
+        assert.deepStrictEqual(await closeOpenCheckpointsWith(d), []);
+        assert.deepStrictEqual(calls, []);
+    });
+
+    test('one being read in this process is skipped', async () => {
+        const { d, calls } = deps();
+        const gate = deferred();
+        const started = deferred();
+        const read = withCheckpointOpen('cp', async () => { started.resolve(); await gate.promise; }, d.opener);
+        await started.promise;
+        assert.deepStrictEqual(await closeOpenCheckpointsWith(d), []);
+        gate.resolve();
+        await read;
+        assert.deepStrictEqual(calls, ['open cp', 'close cp']);
+    });
+
+    test('a read started during the sweep close opens only after it', async () => {
+        const calls: string[] = [];
+        const closeGate = deferred();
+        const opener: CheckpointOpener = {
+            open: async db => { calls.push(`open ${db}`); },
+            close: async db => { calls.push(`close ${db}`); await closeGate.promise; calls.push(`closed ${db}`); }
+        };
+        const sweep = closeOpenCheckpointsWith({ recorded: async () => ['cp'], openNow: async () => ['cp'], connected: async () => false, opener });
+        await flush();
+        const read = withCheckpointOpen('cp', async () => 1, opener);
+        await flush();
+        assert.deepStrictEqual(calls, ['close cp']);
+        closeGate.resolve();
+        await sweep;
+        await read;
+        assert.deepStrictEqual(calls, ['close cp', 'closed cp', 'open cp', 'close cp', 'closed cp']);
     });
 });
