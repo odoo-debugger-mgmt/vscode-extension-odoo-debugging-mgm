@@ -3,7 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { sideRolesFor } from '../services/compare/sides';
-import { resolveCounterpart, rootOf, realFsProbe, SideRoots } from '../services/compare/counterpart';
+import { counterpartModuleDir, resolveCounterpart, rootOf, realFsProbe, SideRoots } from '../services/compare/counterpart';
 
 async function touch(file: string, text = 'x') {
     await fs.mkdir(path.dirname(file), { recursive: true });
@@ -129,5 +129,21 @@ suite('Compare: counterpart files', () => {
             { role: 'core:odoo/addons', path: path.join('/w/odoo', 'addons') },
             { role: 'repo:acme', path: '/w/acme' }
         ]);
+    });
+
+    test('counterpartModuleDir: the same module, the same root first, then the other roots', async () => {
+        assert.strictEqual(await counterpartModuleDir(path.join(tmp, '17/acme/acme_sale/views/sale.xml'), s17, s18, realFsProbe),
+            path.join(tmp, '18/acme/acme_sale'));
+        assert.strictEqual(await counterpartModuleDir(path.join(tmp, '17/enterprise/web_studio_lite/models/a.py'), s17, s18, realFsProbe),
+            path.join(tmp, '18/odoo/addons/web_studio_lite'));
+        await touch(path.join(tmp, '18/enterprise/sale/models/x.py'));
+        assert.strictEqual(await counterpartModuleDir(path.join(tmp, '17/odoo/addons/sale/models/sale_order.py'), s17, s18, realFsProbe),
+            path.join(tmp, '18/odoo/addons/sale'), 'the same root wins');
+    });
+
+    test('counterpartModuleDir: none for a renamed module, a framework file or a file outside the roots', async () => {
+        assert.strictEqual(await counterpartModuleDir(path.join(tmp, '17/odoo/addons/account_edi/models/edi_format.py'), s17, s18, realFsProbe), undefined);
+        assert.strictEqual(await counterpartModuleDir(path.join(tmp, '17/odoo/odoo/models.py'), s17, s18, realFsProbe), undefined);
+        assert.strictEqual(await counterpartModuleDir(path.join(tmp, 'elsewhere/m/a.py'), s17, s18, realFsProbe), undefined);
     });
 });

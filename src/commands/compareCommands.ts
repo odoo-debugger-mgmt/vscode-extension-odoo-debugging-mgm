@@ -11,7 +11,7 @@ import { SettingsStore } from '../settingsStore';
 import { showInfo } from '../services/notifications';
 import { findModuleForFile } from '../services/manifest';
 import { codeSides, type CodeSides } from '../services/compare/sides';
-import { realFsProbe, resolveCounterpart, rootOf, type SideRoots } from '../services/compare/counterpart';
+import { counterpartModuleDir, realFsProbe, resolveCounterpart, rootOf, type Counterpart, type SideRoots } from '../services/compare/counterpart';
 import { diffTrees, listTree } from '../services/compare/moduleDiff';
 import { enclosingSymbol, findMethodInSources, modelKeyOf, scanPythonSymbols, symbolText, type PySymbol } from '../services/compare/pythonSymbols';
 import { findXmlElementById, xmlElementAt } from '../services/compare/xmlElements';
@@ -33,9 +33,8 @@ async function sidesOrExplain(refresh: () => void): Promise<CodeSides | undefine
     return sides;
 }
 
-/** The counterpart of `file` (on `from`) in `to`, asking when several match; undefined after explaining. */
-async function counterpartOf(file: string, from: SideRoots, to: SideRoots, what: string): Promise<string | undefined> {
-    const found = await resolveCounterpart(file, from, to, realFsProbe);
+/** The file of a resolution, asking when several match; undefined after explaining. */
+async function pickCounterpart(found: Counterpart, to: SideRoots, what: string): Promise<string | undefined> {
     if (found.kind === 'found') {
         return found.path;
     }
@@ -49,6 +48,11 @@ async function counterpartOf(file: string, from: SideRoots, to: SideRoots, what:
         candidate
     })), { title: `${what} in ${to.label}`, placeHolder: 'Which file is the counterpart?' });
     return picked?.candidate;
+}
+
+/** The counterpart of `file` (on `from`) in `to`, asking when several match; undefined after explaining. */
+async function counterpartOf(file: string, from: SideRoots, to: SideRoots, what: string): Promise<string | undefined> {
+    return pickCounterpart(await resolveCounterpart(file, from, to, realFsProbe), to, what);
 }
 
 /** Which side a file is on; this side wins when both match (the same checkout). Exactly one is set. */
@@ -231,9 +235,56 @@ export function registerCompareCommands(deps: CommandDeps): void {
         const show = async (what: string, thisText: string, otherText: string): Promise<void> => {
             const [leftText, rightText] = onLeft ? [thisText, otherText] : [otherText, thisText];
             await vscode.commands.executeCommand('vscode.diff',
-                compareDocuments.snapshotUri('left', `${what} · ${sides.left.label}`, leftText),
-                compareDocuments.snapshotUri('right', `${what} · ${sides.right.label}`, rightText),
+                compareDocuments.snapshotUri('left', `${what} · ${sides.left.label}${ext}`, leftText),
+                compareDocuments.snapshotUri('right', `${what} · ${sides.right.label}${ext}`, rightText),
                 `${what}: ${sides.left.label} ↔ ${sides.right.label}`);
+        };
+        const sameFile = (other: string) => path.resolve(other) === path.resolve(file);
+
+        /**
+         * Look for the symbol in the counterpart file and its module, then in the same-named module when no
+         * file matched, and only then ask which file is the counterpart. `search` returns the other side's
+         * text, or undefined; `what` names the symbol for the messages.
+         */
+        const locate = async (what: string, search: (files: string[], moduleDir: string | undefined) => Promise<string | undefined>): Promise<string | undefined> => {
+            const found = await resolveCounterpart(file, from, to, realFsProbe);
+            if (found.kind === 'found') {
+                if (sameFile(found.path)) {
+                    void showInfo(`${path.basename(file)} is the same file in ${sides.left.label} and ${sides.right.label}.`);
+                    return undefined;
+                }
+                const moduleDir = (await findModuleForFile(found.path))?.path;
+                const hit = await search([found.path], moduleDir);
+                if (hit === undefined) {
+                    void showInfo(`${what} has no counterpart in ${to.label}.`);
+                }
+                return hit;
+            }
+            const moduleDir = await counterpartModuleDir(file, from, to, realFsProbe);
+            if (moduleDir) {
+                const hit = await search([], moduleDir);
+                if (hit !== undefined) {
+                    return hit;
+                }
+            }
+            const picked = await pickCounterpart(found, to, what);
+            if (!picked) {
+                return undefined;
+            }
+            if (sameFile(picked)) {
+                void showInfo(`${path.basename(file)} is the same file in ${sides.left.label} and ${sides.right.label}.`);
+                return undefined;
+            }
+            const hit = await search([picked], (await findModuleForFile(picked))?.path);
+            if (hit === undefined) {
+                void showInfo(`${what} has no counterpart in ${to.label}.`);
+            }
+            return hit;
+        };
+        /** `first` files, then every file of `ext` in the module, never this file. */
+        const candidatesOf = async (first: string[], moduleDir: string | undefined): Promise<string[]> => {
+            const rest = moduleDir ? await filesOf(moduleDir, ext) : [];
+            return [...new Set([...first, ...rest])].filter(f => !sameFile(f));
         };
 
         if (ext === '.xml') {
@@ -242,67 +293,54 @@ export function registerCompareCommands(deps: CommandDeps): void {
                 void showInfo('Put the cursor inside a <record>, <template> or <menuitem>.');
                 return;
             }
-            const otherFile = await counterpartOf(file, from, to, path.basename(file));
-            if (!otherFile) {
-                return;
-            }
-            if (path.resolve(otherFile) === path.resolve(file)) {
-                void showInfo(`${path.basename(file)} is the same file in ${sides.left.label} and ${sides.right.label}.`);
-                return;
-            }
-            const moduleDir = (await findModuleForFile(otherFile))?.path;
-            const moduleName = moduleDir ? path.basename(moduleDir) : '';
-            const candidates = [otherFile, ...(moduleDir ? (await filesOf(moduleDir, '.xml')).filter(f => f !== otherFile) : [])];
-            for (const candidate of candidates) {
-                const otherText = await readText(candidate).catch(() => undefined);
-                const found = otherText === undefined ? undefined : findXmlElementById(otherText, el.id, moduleName);
-                if (found && otherText !== undefined) {
-                    await show(el.id, text.slice(el.start, el.end), otherText.slice(found.start, found.end));
-                    return;
+            const other = await locate(el.id, async (first, moduleDir) => {
+                const moduleName = moduleDir ? path.basename(moduleDir) : '';
+                for (const candidate of await candidatesOf(first, moduleDir)) {
+                    const otherText = await readText(candidate).catch(() => undefined);
+                    const found = otherText === undefined ? undefined : findXmlElementById(otherText, el.id, moduleName);
+                    if (found && otherText !== undefined) {
+                        return otherText.slice(found.start, found.end);
+                    }
                 }
+                return undefined;
+            });
+            if (other !== undefined) {
+                await show(el.id, text.slice(el.start, el.end), other);
             }
-            void showInfo(`${el.id} has no counterpart in ${to.label}.`);
             return;
         }
 
         const symbols = scanPythonSymbols(text);
         const serverName = await qualifiedFromServer(here.document.uri, position);
-        const mine: PySymbol | undefined = (serverName ? symbols.find(s => s.qualified === serverName) : undefined)
+        const named = serverName ? symbols.filter(s => s.qualified === serverName) : [];
+        const mine: PySymbol | undefined = named.find(s => s.start <= position.line && position.line < s.end) ?? named[0]
             ?? enclosingSymbol(symbols, position.line);
         if (!mine) {
             void showInfo('Put the cursor inside a class or a method.');
             return;
         }
-        const otherFile = await counterpartOf(file, from, to, mine.qualified);
-        if (!otherFile) {
-            return;
-        }
-        if (path.resolve(otherFile) === path.resolve(file)) {
-            void showInfo(`${path.basename(file)} is the same file in ${sides.left.label} and ${sides.right.label}.`);
-            return;
-        }
-        const otherText = await readText(otherFile).catch(() => '');
-        let theirs = scanPythonSymbols(otherText).find(s => s.qualified === mine.qualified);
-        let theirsText = theirs ? symbolText(otherText, theirs) : undefined;
-        if (!theirs && mine.qualified.includes('.')) {
-            const owner = symbols.find(s => s.kind === 'class' && mine.qualified.startsWith(`${s.qualified}.`));
-            const moduleDir = (await findModuleForFile(otherFile))?.path;
-            if (owner && moduleDir) {
-                const sources: Array<{ file: string; text: string }> = [];
-                for (const f of await filesOf(moduleDir, '.py')) {
-                    sources.push({ file: f, text: await readText(f).catch(() => '') });
-                }
-                const hit = findMethodInSources(sources, modelKeyOf(symbolText(text, owner)), mine.name);
-                if (hit) {
-                    theirsText = symbolText(sources.find(s => s.file === hit.file)!.text, hit.symbol);
-                    theirs = hit.symbol;
+        const owner = symbols.find(s => s.kind === 'class' && mine.qualified === `${s.qualified}.${mine.name}`);
+        const other = await locate(mine.qualified, async (first, moduleDir) => {
+            const sources: Array<{ file: string; text: string }> = [];
+            for (const candidate of await candidatesOf(first, moduleDir)) {
+                sources.push({ file: candidate, text: await readText(candidate).catch(() => '') });
+            }
+            for (const source of sources) {
+                const theirs = scanPythonSymbols(source.text).find(s => s.qualified === mine.qualified);
+                if (theirs) {
+                    return symbolText(source.text, theirs);
                 }
             }
+            if (owner) {
+                const hit = findMethodInSources(sources, modelKeyOf(symbolText(text, owner)), mine.name);
+                if (hit) {
+                    return symbolText(sources.find(s => s.file === hit.file)!.text, hit.symbol);
+                }
+            }
+            return undefined;
+        });
+        if (other !== undefined) {
+            await show(mine.qualified, symbolText(text, mine), other);
         }
-        if (!theirs || theirsText === undefined) {
-            void showInfo(`${mine.qualified} has no counterpart in ${to.label}.`);
-            return;
-        }
-        await show(mine.qualified, symbolText(text, mine), theirsText);
     }));
 }

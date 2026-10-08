@@ -55,4 +55,47 @@ suite('Compare: Python symbols', () => {
         assert.strictEqual(hit?.symbol.name, '_compute_amounts');
         assert.strictEqual(findMethodInSources([{ file: 'b.py', text: other }], { inherit: ['sale.order'] }, 'nope'), undefined);
     });
+
+    const bounds = (src: string) => scanPythonSymbols(src).map(x => [x.qualified, x.start, x.end]);
+
+    test('a docstring-only body, and a method returning a triple-quoted string, keep their lines', () => {
+        assert.deepStrictEqual(bounds('class A:\n    """Doc\n    more\n"""\nx = 1\n'), [['A', 0, 4]]);
+        assert.deepStrictEqual(bounds('class A:\n    def f(self):\n        return """\nSELECT 1\n"""\n\n    def g(self):\n        pass\n'),
+            [['A', 0, 8], ['A.f', 1, 5], ['A.g', 6, 8]]);
+    });
+
+    test('a multi-line signature with `):` at the def indent does not end the body', () => {
+        assert.deepStrictEqual(bounds('class A:\n    def f(\n        self,\n        x,\n    ):\n        return 1\n\n    def g(self):\n        pass\n'),
+            [['A', 0, 9], ['A.f', 1, 6], ['A.g', 7, 9]]);
+        assert.deepStrictEqual(bounds('class X(\n    models.Model\n):\n    _name = "x"\n\ny = 1\n'), [['X', 0, 4]]);
+    });
+
+    test('a multi-line decorator belongs to the method', () => {
+        const src = 'class A:\n    @api.depends(\n        "a",\n        "b",\n    )\n    @api.model\n    def f(self):\n        pass\n';
+        assert.deepStrictEqual(bounds(src), [['A', 0, 8], ['A.f', 1, 8]]);
+        assert.deepStrictEqual(bounds('x = foo(\n    1,\n)\ndef f():\n    pass\n'), [['f', 3, 5]]);
+    });
+
+    test('triple quotes in a comment do not open a string', () => {
+        assert.deepStrictEqual(bounds('class A:\n    def f(self):\n        # a """ quote\n        return 1\n\n    def g(self):\n        pass\n'),
+            [['A', 0, 7], ['A.f', 1, 4], ['A.g', 5, 7]]);
+    });
+
+    test('modelKeyOf reads class-level assignments only', () => {
+        assert.deepStrictEqual(modelKeyOf("class A:\n    _inherit = 'a'\n\n    def f(self):\n        _name = 'local'\n\n    class B:\n        _name = 'nested'\n"), { inherit: ['a'] });
+        assert.deepStrictEqual(modelKeyOf("class A:\n    _inherit = [\n        'a',\n        'b',\n    ]\n"), { inherit: ['a', 'b'] });
+    });
+
+    test('an exact _name wins over an _inherit-only match; a class with another _name does not match by _inherit', () => {
+        const inh = { file: 'a.py', text: "class A:\n    _inherit = 'x.y'\n    def m(self):\n        pass\n" };
+        const own = { file: 'b.py', text: "class B:\n    _name = 'x.y'\n    def m(self):\n        pass\n" };
+        assert.strictEqual(findMethodInSources([inh, own], { name: 'x.y' }, 'm')?.file, 'b.py');
+        const other = { file: 'c.py', text: "class C:\n    _name = 'foo'\n    _inherit = ['mail.thread']\n    def m(self):\n        pass\n" };
+        assert.strictEqual(findMethodInSources([other], { inherit: ['mail.thread'] }, 'm'), undefined);
+    });
+
+    test('a nested function is not a method of the model', () => {
+        const src = { file: 'a.py', text: "class A:\n    _inherit = 'x'\n    def f(self):\n        def helper():\n            pass\n" };
+        assert.strictEqual(findMethodInSources([src], { inherit: ['x'] }, 'helper'), undefined);
+    });
 });

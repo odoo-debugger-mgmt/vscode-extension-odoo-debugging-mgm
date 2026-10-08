@@ -132,3 +132,27 @@ export async function resolveCounterpart(file: string, from: SideRoots, to: Side
     }
     return verdict([...new Set(all)]);
 }
+
+/**
+ * The same-named module's folder on the other side (C1 step 3): the same root first, then the other
+ * addons roots. Undefined for framework files and when no such module exists.
+ */
+export async function counterpartModuleDir(file: string, from: SideRoots, to: SideRoots, fsProbe: FsProbe): Promise<string | undefined> {
+    const hit = rootOf(file, from);
+    if (!hit || hit.root.role === 'odoo') {
+        return undefined;
+    }
+    const module = hit.rel.split('/')[0];
+    if (!module || !hit.rel.includes('/')) {
+        return undefined;
+    }
+    const sameRole = to.roots.find(root => root.role === hit.root.role);
+    const ordered = [...(sameRole ? [sameRole] : []), ...addonsRoots(to).filter(root => root !== sameRole)];
+    for (const root of ordered) {
+        const folder = path.join(root.path, module);
+        if (await fsProbe.isDir(folder)) {
+            return folder;
+        }
+    }
+    return undefined;
+}
