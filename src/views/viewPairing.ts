@@ -12,7 +12,7 @@ import { matchView } from '../services/views/viewMatch';
 import { viewUri } from './viewFileSystem';
 import { SettingsStore } from '../settingsStore';
 import { stripSettings } from '../utils';
-import { partnerChoices, resolveStoredPartner, setPartner, type PartnerModel, type PartnerProject, type ResolvedPartner } from '../services/comparisonPartner';
+import { isCopyPartner, partnerChoices, resolveStoredPartner, setPartner, type PartnerModel, type PartnerProject, type ResolvedPartner } from '../services/comparisonPartner';
 
 /** The project as SettingsStore returns it: plain JSON, not hydrated models. */
 export interface PairProject {
@@ -76,15 +76,6 @@ export async function pickOtherDatabase(project: PairProject | undefined, curren
         { title: `Compare with ${current}`, placeHolder: 'The database to show on the left' }
     );
     return picked?.choice;
-}
-
-/** The left side of a comparison with this tree row: the upgrade's original, or a database the user picks. */
-export async function compareTargets(project: PairProject | undefined, item: { dbName: string }): Promise<string | undefined> {
-    const pair = upgradePair(project);
-    if (pair && pair.upgraded.dbName === item.dbName) {
-        return pair.original.dbName;
-    }
-    return (await pickOtherDatabase(project, item.dbName))?.dbName;
 }
 
 /**
@@ -158,4 +149,21 @@ export async function storePartner(dbId: string, partner: PartnerModel | undefin
     }
     setPartner(db, partner);
     await SettingsStore.saveWithoutComments(stripSettings(result.data));
+}
+
+/**
+ * Whose inactive views the Views tree leaves out as "also off": the partner,
+ * only when it is a copy of this database (the upgrade's original, a
+ * checkpoint, a clone either way). Never asks. The upgrade's original side has
+ * none: it is the one compared against.
+ */
+export function alsoOffSource(project: PairProject | undefined, dbId: string, pair: UpgradePair | undefined): { dbName: string; checkpoint: boolean } | undefined {
+    if (pair?.original.dbName === dbId) {
+        return undefined;
+    }
+    const partner = resolveStoredPartner(project as PartnerProject | undefined, dbId, pair);
+    if (!partner || !isCopyPartner(project as PartnerProject | undefined, dbId, partner)) {
+        return undefined;
+    }
+    return { dbName: partner.dbName, checkpoint: partner.kind === 'checkpoint' };
 }

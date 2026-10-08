@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { diffArguments, isReadOnlyOriginal, otherDatabaseChoices, upgradePair } from '../views/viewPairing';
+import { alsoOffSource, diffArguments, isReadOnlyOriginal, otherDatabaseChoices, upgradePair } from '../views/viewPairing';
 
 const upgrading = {
     dbs: [{ id: 'shop-17', versionId: 'v17' }, { id: 'shop-18', versionId: 'v18', isSelected: true }],
@@ -48,5 +48,33 @@ suite('Comparing across databases', () => {
         assert.strictEqual(left.toString(), 'odoo-view:/shop-17/40/acme.partner_custom.xml');
         assert.strictEqual(right.toString(), 'odoo-view:/shop-18/41/view-41.xml');
         assert.strictEqual(title, 'partner.custom: shop-17 ↔ shop-18');
+    });
+});
+
+suite('Also off in the partner', () => {
+    const cp = { id: 'shop__cp_1', label: 'before', createdAt: '2026-10-01T00:00:00Z' };
+
+    test('the upgraded side reads the original; the original has no "also off"', () => {
+        assert.deepStrictEqual(alsoOffSource(upgrading, 'shop-18', upgradePair(upgrading)), { dbName: 'shop-17', checkpoint: false });
+        assert.strictEqual(alsoOffSource(upgrading, 'shop-17', upgradePair(upgrading)), undefined);
+    });
+
+    test('a stored checkpoint or clone partner is a copy; any other partner is not', () => {
+        const project = {
+            dbs: [
+                { id: 'shop', comparePartner: { dbName: 'shop__cp_1', kind: 'checkpoint' }, checkpoints: [cp] },
+                { id: 'shop-clone', clonedFrom: 'shop', comparePartner: { dbName: 'shop', kind: 'database' } },
+                { id: 'base', comparePartner: { dbName: 'shop-copy', kind: 'database' } },
+                { id: 'shop-copy', clonedFrom: 'base' },
+                { id: 'other', comparePartner: { dbName: 'base', kind: 'database' } },
+                { id: 'alone' }
+            ]
+        };
+        assert.deepStrictEqual(alsoOffSource(project, 'shop', undefined), { dbName: 'shop__cp_1', checkpoint: true });
+        assert.deepStrictEqual(alsoOffSource(project, 'shop-clone', undefined), { dbName: 'shop', checkpoint: false });
+        assert.deepStrictEqual(alsoOffSource(project, 'base', undefined), { dbName: 'shop-copy', checkpoint: false });
+        assert.strictEqual(alsoOffSource(project, 'other', undefined), undefined);
+        assert.strictEqual(alsoOffSource(project, 'alone', undefined), undefined);
+        assert.strictEqual(alsoOffSource(undefined, 'shop', undefined), undefined);
     });
 });

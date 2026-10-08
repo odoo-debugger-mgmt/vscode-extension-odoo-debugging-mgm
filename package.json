@@ -113,7 +113,7 @@
       { "command": "viewDoctor.findView", "title": "Find View…", "category": "Odoo DevTools", "icon": "$(search)" },
       { "command": "viewDoctor.showAlsoOff", "title": "Show Views Also Off in the Original", "category": "Odoo DevTools", "icon": "$(eye)" },
       { "command": "viewDoctor.hideAlsoOff", "title": "Hide Views Also Off in the Original", "category": "Odoo DevTools", "icon": "$(eye-closed)" },
-      { "command": "viewDoctor.compare", "title": "Compare with Original", "category": "Odoo DevTools", "icon": "$(diff)" },
+      { "command": "viewDoctor.compare", "title": "Compare with Partner", "category": "Odoo DevTools", "icon": "$(diff)" },
       { "command": "viewDoctor.render", "title": "Render", "category": "Odoo DevTools", "icon": "$(preview)" },
       { "command": "viewDoctor.checkXpaths", "title": "Check XPaths", "category": "Odoo DevTools", "icon": "$(check-all)" },
       { "command": "viewDoctor.activate", "title": "Turn On", "category": "Odoo DevTools" },

@@ -5,14 +5,17 @@ import { SHOW_ALSO_OFF_KEY, ViewItem, resolveViewDoctorTarget } from '../views/v
 import { VIEW_SCHEME, clearViewDiagnostics, parseViewUri, viewUri } from '../views/viewFileSystem';
 import { showBriefStatus, showError, showInfo, showModalWarning, showWarning } from '../services/notifications';
 import { SettingsStore } from '../settingsStore';
-import { compareTargets, diffArguments, findCounterpart, upgradePair, type PairProject } from '../views/viewPairing';
+import { findCounterpart, partnerFor, upgradePair, type PairProject } from '../views/viewPairing';
+import { comparisonSides } from '../services/comparisonPartner';
+import { withCheckpointOpen } from '../services/checkpointReads';
+import { compareDocuments } from '../views/compareDocuments';
 import { errorMessage } from '../services/logger';
 import { QWEB_FRAGMENT_MESSAGE } from '../services/views/renderPlan';
 import type { RenderTarget } from '../services/views/renderSession';
 import { createUpgradeScript } from '../views/upgradeScriptFlow';
 import { readableArchError } from '../services/views/archErrors';
 import { checkResultText } from '../services/views/xpathReport';
-import { descendants, type ViewRow } from '../services/views/viewQueries';
+import { descendants, readStoredArch, type ViewRow } from '../services/views/viewQueries';
 import { findView, pickView } from '../views/findViewFlow';
 import { viewTarget, type ViewTarget } from '../views/viewTarget';
 
@@ -99,20 +102,31 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
         }
         try {
             const project = (await SettingsStore.peekSelectedProject().catch(() => null))?.project as PairProject | undefined;
-            const originalDb = await compareTargets(project, item);
-            if (!originalDb) {
+            const partner = await partnerFor(project, item.dbName, { ask: true });
+            if (!partner) {
                 return;
             }
-            const counterpart = await findCounterpart(item.view, originalDb);
+            const checkpoint = partner.kind === 'checkpoint';
+            const counterpart = checkpoint
+                ? await withCheckpointOpen(partner.dbName, () => findCounterpart(item.view, partner.dbName))
+                : await findCounterpart(item.view, partner.dbName);
             if (counterpart === 'none') {
-                void showInfo(`${originalDb} has no ${item.view.type} view of ${item.view.model || 'this model'} to compare with.`);
+                void showInfo(`${partner.label} has no ${item.view.type} view of ${item.view.model || 'this model'} to compare with.`);
                 return;
             }
             if (!counterpart) {
                 return;
             }
-            await vscode.commands.executeCommand('vscode.diff',
-                ...diffArguments({ dbName: originalDb, view: counterpart }, { dbName: item.dbName, view: item.view }));
+            const { left } = comparisonSides(item.dbName, partner, upgradePair(project));
+            const own = viewUri(item.dbName, item.view.id, item.view.xmlid ?? `view-${item.view.id}`);
+            const other = checkpoint
+                ? compareDocuments.snapshotUri('left', `${partner.label} · ${counterpart.xmlid ?? counterpart.id}.xml`,
+                    await withCheckpointOpen(partner.dbName, () => readStoredArch(partner.dbName, counterpart.id)))
+                : viewUri(partner.dbName, counterpart.id, counterpart.xmlid ?? `view-${counterpart.id}`);
+            const ownOnLeft = left === item.dbName;
+            const [leftUri, rightUri] = ownOnLeft ? [own, other] : [other, own];
+            const [leftLabel, rightLabel] = ownOnLeft ? [item.dbName, partner.label] : [partner.label, item.dbName];
+            await vscode.commands.executeCommand('vscode.diff', leftUri, rightUri, `${item.view.name}: ${leftLabel} ↔ ${rightLabel}`);
         } catch (error) {
             void showError(`Could not compare ${item.view.name}: ${errorMessage(error)}`);
         }
@@ -132,31 +146,63 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
         try {
             const project = (await SettingsStore.peekSelectedProject().catch(() => null))?.project as PairProject | undefined;
             const pair = upgradePair(project);
-            if (pair && pair.upgraded.dbName === item.dbName) {
-                const counterpart = await findCounterpart(item.view, pair.original.dbName);
+            const upgradeSide = pair && (pair.upgraded.dbName === item.dbName ? 'upgraded' : pair.original.dbName === item.dbName ? 'original' : undefined);
+            if (pair && upgradeSide) {
+                // Either side of the upgrade: the original first, Start Both Servers, as Upgrade mode always did.
+                const otherSide = upgradeSide === 'upgraded' ? pair.original : pair.upgraded;
+                const counterpart = await findCounterpart(item.view, otherSide.dbName);
                 if (counterpart === undefined) {
                     return;
                 }
+                const ids = upgradeSide === 'upgraded'
+                    ? { original: counterpart === 'none' ? undefined : counterpart.id, upgraded: item.view.id }
+                    : { original: item.view.id, upgraded: counterpart === 'none' ? undefined : counterpart.id };
                 const targets: RenderTarget[] = [];
-                if (counterpart !== 'none') {
-                    targets.push({ dbName: pair.original.dbName, versionId: pair.original.versionId, viewId: counterpart.id, title: `Original · ${pair.original.dbName}`, kind });
+                if (ids.original !== undefined) {
+                    targets.push({ dbName: pair.original.dbName, versionId: pair.original.versionId, viewId: ids.original, title: `Original · ${pair.original.dbName}`, kind });
                 }
-                targets.push({ dbName: item.dbName, versionId: pair.upgraded.versionId, viewId: item.view.id, title: `Upgraded · ${item.dbName}`, kind });
+                if (ids.upgraded !== undefined) {
+                    targets.push({ dbName: pair.upgraded.dbName, versionId: pair.upgraded.versionId, viewId: ids.upgraded, title: `Upgraded · ${pair.upgraded.dbName}`, kind });
+                }
                 await viewRender.show({
                     title: item.view.name,
                     targets,
                     startCommand: 'odoo.startBothServers',
                     startLabel: 'Start Both Servers',
-                    notice: counterpart === 'none' ? `${pair.original.dbName} has no matching view; showing the upgraded side only.` : undefined
+                    notice: counterpart === 'none'
+                        ? `${otherSide.dbName} has no matching view; showing the ${upgradeSide} side only.`
+                        : undefined
                 });
                 return;
             }
             const db = project?.dbs?.find(entry => entry.id === item.dbName);
+            const own: RenderTarget = { dbName: item.dbName, versionId: db?.versionId, viewId: item.view.id, title: item.dbName, kind };
+            const partner = await partnerFor(project, item.dbName, { ask: true });
+            if (!partner || partner.kind === 'checkpoint') {
+                await viewRender.show({
+                    title: item.view.name,
+                    targets: [own],
+                    startCommand: 'odoo.startServer',
+                    startLabel: 'Start Server',
+                    notice: partner ? 'A checkpoint cannot be rendered: restore it, or clone it, to run it.' : undefined
+                });
+                return;
+            }
+            const counterpart = await findCounterpart(item.view, partner.dbName);
+            if (counterpart === undefined) {
+                return;
+            }
+            const { left, right } = comparisonSides(item.dbName, partner, pair);
+            const other: RenderTarget | undefined = counterpart === 'none' ? undefined
+                : { dbName: partner.dbName, versionId: partner.versionId, viewId: counterpart.id, title: partner.dbName, kind };
+            const targets = (left === item.dbName ? [own, other] : [other, own]).filter((t): t is RenderTarget => !!t);
             await viewRender.show({
                 title: item.view.name,
-                targets: [{ dbName: item.dbName, versionId: db?.versionId, viewId: item.view.id, title: item.dbName, kind }],
-                startCommand: 'odoo.startServer',
-                startLabel: 'Start Server'
+                targets,
+                startCommand: 'dbSelector.runPairAlongside',
+                startArgs: [left, right],
+                startLabel: 'Run Both',
+                notice: counterpart === 'none' ? `${partner.dbName} has no matching view; showing ${item.dbName} only.` : undefined
             });
         } catch (error) {
             void showError(`Could not render ${item.view.name}: ${errorMessage(error)}`);

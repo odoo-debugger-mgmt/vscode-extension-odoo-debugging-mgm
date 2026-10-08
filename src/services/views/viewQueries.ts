@@ -314,3 +314,42 @@ export async function inactiveViewIds(dbName: string): Promise<number[]> {
     }
     return raw.filter((id): id is number => Number.isSafeInteger(id));
 }
+
+/**
+ * A view's stored arch as JSON: to_jsonb makes the text column of 15 a JSON
+ * string and keeps the per-language jsonb of 16+ an object, so one query
+ * reads both without a shell.
+ */
+export function storedArchSql(viewId: number): string {
+    return `SELECT to_jsonb(v.arch_db) FROM ir_ui_view v WHERE v.id = ${sqlIdList([viewId])};`;
+}
+
+/** The en_US source (as the shell reads it), else the first language; undefined when there is no row. */
+export function parseStoredArch(output: string): string | undefined {
+    if (output.trim() === '') {
+        return undefined;
+    }
+    const raw = JSON.parse(output) as unknown;
+    if (typeof raw === 'string') {
+        return raw;
+    }
+    if (raw && typeof raw === 'object') {
+        const byLang = raw as Record<string, unknown>;
+        const text = byLang.en_US ?? Object.values(byLang)[0];
+        return typeof text === 'string' ? text : '';
+    }
+    return '';
+}
+
+/**
+ * The arch as stored, read with psql rather than the view's Odoo shell: a
+ * checkpoint is no project database, so no shell can start on it, and a
+ * one-shot read leaves no connection behind once it is closed again.
+ */
+export async function readStoredArch(dbName: string, viewId: number): Promise<string> {
+    const arch = parseStoredArch(await runSql(dbName, storedArchSql(viewId)));
+    if (arch === undefined) {
+        throw new Error(`View ${viewId} no longer exists in ${dbName}.`);
+    }
+    return arch;
+}

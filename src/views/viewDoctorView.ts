@@ -11,13 +11,14 @@ import type { ViewService } from '../services/views/viewService';
 import type { ViewGroups } from '../services/views/viewGroups';
 import type { ViewRow } from '../services/views/viewQueries';
 import { BaseTreeProvider } from './baseTreeProvider';
-import { upgradePair, type PairProject } from './viewPairing';
+import { alsoOffSource, upgradePair, type PairProject } from './viewPairing';
+import { withCheckpointOpen } from '../services/checkpointReads';
 
 /** workspaceState: whether "Other inactive views" also lists those the original has off too. */
 export const SHOW_ALSO_OFF_KEY = 'viewDoctor.showAlsoOff';
 
 export interface DoctorRowOptions {
-    /** The upgrade's original database, when the tree shows the upgraded one. */
+    /** The partner the "also off" views are read from (the upgrade's original, a checkpoint or a clone). */
     originalDb?: string;
     showAlsoOff?: boolean;
 }
@@ -184,16 +185,30 @@ export class ViewDoctorTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         const project = result?.project as PairProject | undefined;
         const target = resolveViewDoctorTarget(project as Parameters<typeof resolveViewDoctorTarget>[0]);
         this.describe?.(target?.dbName);
-        const originalDb = target?.side === 'to' ? upgradePair(project)?.original.dbName : undefined;
-        const comparing = !!target && !!originalDb && originalDb !== target.dbName;
+        // Upgrade mode tree shows the To side, so its source is the original; else the stored partner, if a copy.
+        const source = target ? alsoOffSource(project, target.dbName, upgradePair(project)) : undefined;
+        let comparing = !!target && !!source && source.dbName !== target.dbName;
         this.options.onComparing?.(comparing);
         if (!target) {
             return [];
         }
         try {
-            const groups = await this.service.doctorGroups(target.dbName, comparing ? originalDb : undefined);
+            let groups: ViewGroups;
+            if (comparing && source?.checkpoint) {
+                try {
+                    groups = await withCheckpointOpen(source.dbName, () => this.service.doctorGroups(target.dbName, source.dbName));
+                } catch (error) {
+                    // The checkpoint could not be opened (or read): show every inactive view, as for an unreadable original.
+                    logger.warn(`Could not read which views are off in ${source.dbName}; showing every inactive view:`, error);
+                    comparing = false;
+                    this.options.onComparing?.(false);
+                    groups = await this.service.doctorGroups(target.dbName);
+                }
+            } else {
+                groups = await this.service.doctorGroups(target.dbName, comparing ? source?.dbName : undefined);
+            }
             return buildDoctorRows(target.dbName, groups, {
-                originalDb: comparing ? originalDb : undefined,
+                originalDb: comparing ? source?.dbName : undefined,
                 showAlsoOff: this.options.showAlsoOff?.() ?? false
             });
         } catch (error) {

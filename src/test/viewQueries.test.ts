@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { parseReportMessages, parseViewRows, parseWriteDates, sqlIdList, viewRowsSql, sqlText, viewByXmlidSql, viewsLikeSql, firstXmlidSql, fingerprintsSql, parseFingerprints, viewsOfModelSql, descendantsSql, parseViewModels } from '../services/views/viewQueries';
+import { parseReportMessages, parseViewRows, parseWriteDates, sqlIdList, viewRowsSql, sqlText, viewByXmlidSql, viewsLikeSql, firstXmlidSql, fingerprintsSql, parseFingerprints, viewsOfModelSql, descendantsSql, parseViewModels, storedArchSql, parseStoredArch } from '../services/views/viewQueries';
 import { runSql } from '../services/postgres';
 
 suite('View queries', () => {
@@ -134,5 +134,17 @@ suite('View queries for finding views', () => {
         assert.deepStrictEqual(parseViewModels('[{"model":"res.partner","count":3}]'), [{ model: 'res.partner', count: 3 }]);
         assert.deepStrictEqual(parseViewModels(''), []);
         assert.throws(() => parseViewModels('{}'));
+    });
+});
+
+suite('Stored arch', () => {
+    test('reads arch_db as JSON, the text of 15 and the per-language jsonb of 16+', () => {
+        assert.strictEqual(storedArchSql(42), 'SELECT to_jsonb(v.arch_db) FROM ir_ui_view v WHERE v.id = 42;');
+        assert.throws(() => storedArchSql(0));
+        assert.strictEqual(parseStoredArch('"<form/>\\n"'), '<form/>\n');
+        assert.strictEqual(parseStoredArch('{"fr_FR": "<form string=\\"Fiche\\"/>", "en_US": "<form/>"}'), '<form/>');
+        assert.strictEqual(parseStoredArch('{"fr_FR": "<form/>"}'), '<form/>');
+        assert.strictEqual(parseStoredArch('null'), '');
+        assert.strictEqual(parseStoredArch(''), undefined);
     });
 });
