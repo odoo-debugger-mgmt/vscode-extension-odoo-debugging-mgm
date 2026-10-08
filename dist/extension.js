@@ -13467,6 +13467,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.upgradePair = upgradePair;
 exports.isReadOnlyOriginal = isReadOnlyOriginal;
 exports.findCounterpart = findCounterpart;
+exports.counterpartRows = counterpartRows;
+exports.pickCounterpart = pickCounterpart;
 exports.diffArguments = diffArguments;
 exports.partnerFor = partnerFor;
 exports.storePartner = storePartner;
@@ -13507,11 +13509,19 @@ function isReadOnlyOriginal(project, dbName, allowEditOriginal) {
  * of its model and type; undefined when the user dismissed the pick.
  */
 async function findCounterpart(view, dbName) {
+    return pickCounterpart(view, dbName, await counterpartRows(view, dbName));
+}
+/** The rows a counterpart is chosen from: the reads only, so a checkpoint is open just for them. */
+async function counterpartRows(view, dbName) {
     const [byXmlid, rows] = await Promise.all([
         view.xmlid ? (0, viewQueries_1.findViewByXmlid)(dbName, view.xmlid) : Promise.resolve(undefined),
         (0, viewQueries_1.findViewsLike)(dbName, view)
     ]);
-    const match = (0, viewMatch_1.matchView)(view, { byXmlid, rows });
+    return { byXmlid, rows };
+}
+/** The counterpart among those rows, asking the user when none is certainly it. */
+async function pickCounterpart(view, dbName, found) {
+    const match = (0, viewMatch_1.matchView)(view, found);
     if (match.kind === 'none') {
         return 'none';
     }
@@ -13539,7 +13549,9 @@ const realPartnerForDeps = {
  * the stored one while it exists, else - when the caller may ask - one the user
  * picks, which is then remembered.
  */
-async function partnerFor(project, dbId, options, deps = realPartnerForDeps) {
+async function partnerFor(project, dbId, 
+/** onStored: the user picked a partner and it was remembered (the trees show it, so refresh them). */
+options, deps = realPartnerForDeps) {
     const resolved = (0, comparisonPartner_1.resolveStoredPartner)(project, dbId, upgradePair(project));
     if (resolved || !options.ask) {
         return resolved;
@@ -13562,6 +13574,7 @@ async function partnerFor(project, dbId, options, deps = realPartnerForDeps) {
     }
     const stored = { dbName: picked.choice.dbName, kind: picked.choice.kind };
     await storePartner(dbId, stored);
+    options.onStored?.();
     return (0, comparisonPartner_1.resolveStoredPartner)({ ...project, dbs: (project?.dbs ?? []).map(db => db.id === dbId ? { ...db, comparePartner: stored } : db) }, dbId, undefined);
 }
 /** Saves (or, with undefined, clears) a database's stored partner. */
@@ -24436,6 +24449,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VersionsTreeProvider = exports.VersionSettingTreeItem = exports.VersionTreeItem = void 0;
+exports.versionStateParts = versionStateParts;
 /**
  * Versions view: version profiles with their settings as editable children.
  */
@@ -24465,6 +24479,17 @@ function provisioningLabel(version) {
         ? 'provisioned'
         : 'not provisioned';
 }
+/**
+ * The row's port and state. A version running only alongside (runningByVersion
+ * keeps the primary run when there is one) shows the run's own port: nothing
+ * answers on the version's.
+ */
+function versionStateParts(versionPort, running, idle) {
+    if (running?.kind === 'alongside') {
+        return [running.port ? `alongside on :${running.port}` : 'alongside'];
+    }
+    return [...(versionPort ? [`:${versionPort}`] : []), running ? 'running' : idle()];
+}
 class VersionTreeItem extends vscode.TreeItem {
     version;
     collapsibleState;
@@ -24484,11 +24509,7 @@ class VersionTreeItem extends vscode.TreeItem {
         this.tooltip = VersionTreeItem.buildTooltip(version, running, workspaces);
         // The port is always visible: with several versions runnable at once,
         // knowing which localhost to open is the first thing you need.
-        const parts = [version.odooVersion];
-        if (version.settings.portNumber) {
-            parts.push(`:${version.settings.portNumber}`);
-        }
-        parts.push(running ? 'running' : provisioningLabel(version));
+        const parts = [version.odooVersion, ...versionStateParts(version.settings.portNumber, running, () => provisioningLabel(version))];
         if (upgradeSide) {
             parts.push(upgradeSide === 'from' ? 'upgrading from' : 'upgrading to');
         }
@@ -24529,7 +24550,10 @@ class VersionTreeItem extends vscode.TreeItem {
         }
         const settings = version.settings ?? {};
         if (running) {
-            lines.push(`**Status:** running${running.dbName ? ` on \`${running.dbName}\`` : ''}`);
+            const where = running.kind === 'alongside'
+                ? `${running.dbName ? ` \`${running.dbName}\`` : ''} alongside${running.port ? ` on port ${running.port}` : ''}`
+                : (running.dbName ? ` on \`${running.dbName}\`` : '');
+            lines.push(`**Status:** running${where}`);
         }
         if (settings.portNumber) {
             lines.push(`**Port:** ${settings.portNumber} \u2014 http://localhost:${settings.portNumber}`);
@@ -24974,7 +24998,8 @@ exports.closeOpenCheckpoints = closeOpenCheckpoints;
  * Reading a checkpoint. A checkpoint refuses connections so that it cannot
  * change (checkpoints spec §3.1); a comparison still has to read it. Each read
  * opens it, and the last of any reads running at once closes it again, in a
- * finally.
+ * finally. A read refused because another window closed it meanwhile opens it
+ * again and is retried, once.
  */
 const postgres_1 = __webpack_require__(47);
 const settingsStore_1 = __webpack_require__(6);
@@ -24999,8 +25024,30 @@ async function closeChained(db, opener) {
         closing.delete(db);
     }
 }
+/** psql's words when a database refuses new connections (datallowconn false). */
+const REFUSED = /is not currently accepting connections/;
 async function withCheckpointOpen(db, read, opener = exports.realCheckpointOpener) {
+    try {
+        return await readWhileOpen(db, read, opener, false);
+    }
+    catch (error) {
+        if (!REFUSED.test((0, logger_1.errorMessage)(error))) {
+            throw error;
+        }
+        // Another window's close landed between this open and the read's
+        // connection. This read's count is released already; open it again, once.
+        logger_1.logger.debug(`Checkpoint ${db} was closed under a read; opening it again.`);
+        return readWhileOpen(db, read, opener, true);
+    }
+}
+/**
+ * One read under the shared opening. `reopen`: the retry of a refused read,
+ * which opens the checkpoint again even when it joins an opening already
+ * made - a read here that still holds it does not mean it is still open.
+ */
+async function readWhileOpen(db, read, opener, reopen) {
     let entry = openings.get(db);
+    const joined = !!entry;
     if (!entry) {
         const ready = (closing.get(db) ?? Promise.resolve()).then(() => opener.open(db));
         entry = { count: 0, ready };
@@ -25021,6 +25068,10 @@ async function withCheckpointOpen(db, read, opener = exports.realCheckpointOpene
         throw error;
     }
     try {
+        if (reopen && joined) {
+            // Held by this read's count, so no close of this window runs meanwhile.
+            await opener.open(db);
+        }
         return await read();
     }
     finally {
@@ -26959,6 +27010,7 @@ const odooFrameProxy_1 = __webpack_require__(133);
 const reportPdf_1 = __webpack_require__(135);
 const renderSession_1 = __webpack_require__(136);
 const server_1 = __webpack_require__(101);
+const runningState_1 = __webpack_require__(77);
 const logger_1 = __webpack_require__(12);
 const notifications_1 = __webpack_require__(16);
 const PDF_HOOKS = {
@@ -27089,7 +27141,8 @@ class ViewRenderPanel {
             externalOrigin: async (origin) => {
                 const uri = await vscode.env.asExternalUri(vscode.Uri.parse(origin));
                 return `${uri.scheme}://${uri.authority}`;
-            }
+            },
+            waitForPort: server_1.waitForPort
         };
     }
     get isOpen() {
@@ -27100,12 +27153,9 @@ class ViewRenderPanel {
     }
     async show(request) {
         const generation = ++this.generation;
-        const session = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Preparing the render of ${request.title}…` }, () => renderSession_1.RenderSession.prepare(request.targets, this.backend, this.host));
-        if (generation !== this.generation) {
+        if (!await this.prepare(request, generation)) {
             return;
         }
-        this.session = session;
-        this.request = request;
         const panel = this.ensurePanel();
         panel.title = `Render: ${request.title}`;
         await this.update();
@@ -27126,7 +27176,29 @@ class ViewRenderPanel {
      * says so and offers to start it, and one that came back shows again.
      */
     async reload() {
+        const session = this.session;
+        const request = this.request;
+        // A side whose database is now served on another port (Run Both started
+        // it alongside, or its run stopped) is prepared again, for the new port.
+        if (session && request && await session.portsMoved()) {
+            await this.prepare(request, this.generation, session);
+        }
         await this.update();
+    }
+    /**
+     * Prepares the request's sides and makes them the tab's. Undefined, and
+     * nothing changed, when it went stale meanwhile: a later show() or a close
+     * (the generation moved), or - preparing again - another session took the
+     * place of the one this replaces.
+     */
+    async prepare(request, generation, replacing) {
+        const session = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Preparing the render of ${request.title}…` }, () => renderSession_1.RenderSession.prepare(request.targets, this.backend, this.host));
+        if (generation !== this.generation || (replacing && this.session !== replacing)) {
+            return undefined;
+        }
+        this.session = session;
+        this.request = request;
+        return session;
     }
     dispose() {
         const panel = this.panel;
@@ -27312,22 +27384,32 @@ class ViewRenderPanel {
         void folder?.then(dir => fs.promises.rm(dir, { recursive: true, force: true })).catch(() => undefined);
     }
     async startServers(session) {
-        if (!this.request || this.starting) {
+        const request = this.request;
+        if (!request || this.starting) {
             return;
         }
         this.starting = true;
         try {
-            await vscode.commands.executeCommand(this.request.startCommand, ...(this.request.startArgs ?? []));
-            const ports = session.ports();
+            await vscode.commands.executeCommand(request.startCommand, ...(request.startArgs ?? []));
+            // The start may serve a side on another port than it was prepared
+            // with (Run Both starts them alongside, on 8100 and up): prepare the
+            // sides again, so the wait and the frames use the ports now serving them.
+            (0, runningState_1.invalidateRunningState)();
+            const fresh = await this.prepare(request, this.generation, session);
+            if (!fresh) {
+                return;
+            }
+            const ports = fresh.ports();
+            const wait = this.host.waitForPort ?? server_1.waitForPort;
             const answered = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Waiting for the Odoo servers…', cancellable: true }, (_progress, token) => new Promise(resolve => {
                 token.onCancellationRequested(() => resolve(ports.map(() => true)));
-                void Promise.all(ports.map(port => (0, server_1.waitForPort)(port, 120_000))).then(resolve);
+                void Promise.all(ports.map(port => wait(port, 120_000))).then(resolve);
             }));
             const silent = ports.filter((_port, index) => !answered[index]);
             if (silent.length > 0) {
                 void (0, notifications_1.showWarning)(`No Odoo server is answering on port ${silent.join(', ')} yet.`);
             }
-            if (this.session === session) {
+            if (this.session === fresh) {
                 await this.update();
             }
         }
@@ -28134,6 +28216,21 @@ class RenderSession {
     /** The server ports the sides point at, for waiting on a start. */
     ports() {
         return this.sides.flatMap(side => side.port === undefined ? [] : [side.port]);
+    }
+    /**
+     * Whether a side's database is now served on another port than the one it
+     * was prepared with: a run started (alongside, on 8100 and up) or stopped
+     * since. Such a side needs preparing again; its frame points at the old port.
+     */
+    async portsMoved() {
+        const moved = await Promise.all(this.sides.map(async (side) => {
+            if (side.port === undefined) {
+                return false;
+            }
+            const now = await this.host.portFor(side.target.dbName, side.target.versionId).catch(() => side.port);
+            return now !== side.port;
+        }));
+        return moved.some(Boolean);
     }
     async sideState(side, resId, debug) {
         const base = { key: side.target.dbName, title: side.target.title };
@@ -31583,6 +31680,11 @@ const viewPairing_1 = __webpack_require__(76);
 async function currentProject() {
     return (await settingsStore_1.SettingsStore.getSelectedProject())?.project;
 }
+/** Whether Upgrade mode pairs this database with the other side, whatever it stores. */
+function isUpgradeMember(project, dbId) {
+    const pair = (0, viewPairing_1.upgradePair)(project);
+    return !!pair && (pair.original.dbName === dbId || pair.upgraded.dbName === dbId);
+}
 function registerPartnerCommands(deps) {
     const { context, refreshAll } = deps;
     context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.setComparisonPartner', async (event) => {
@@ -31606,8 +31708,7 @@ function registerPartnerCommands(deps) {
             return;
         }
         await (0, viewPairing_1.storePartner)(db.id, { dbName: picked.choice.dbName, kind: picked.choice.kind });
-        const pair = (0, viewPairing_1.upgradePair)(project);
-        if (pair && (pair.original.dbName === db.id || pair.upgraded.dbName === db.id)) {
+        if (isUpgradeMember(project, db.id)) {
             void (0, notifications_1.showInfo)(`In Upgrade mode, ${db.id}'s partner is the other side of the upgrade.`);
         }
         await refreshAll({ reason: 'ui' });
@@ -31618,7 +31719,9 @@ function registerPartnerCommands(deps) {
             return;
         }
         await (0, viewPairing_1.storePartner)(db.id, undefined);
-        void (0, notifications_1.showInfo)(`${db.id} no longer has a comparison partner.`);
+        void (0, notifications_1.showInfo)(isUpgradeMember(await currentProject(), db.id)
+            ? `${db.id} keeps the other side of the upgrade as its partner while Upgrade mode is on; the stored partner is cleared.`
+            : `${db.id} no longer has a comparison partner.`);
         await refreshAll({ reason: 'ui' });
     }));
     context.subscriptions.push((0, registerCommand_1.registerCommand)('dbSelector.runPartnerAlongside', async (event) => {
@@ -31626,7 +31729,7 @@ function registerPartnerCommands(deps) {
         if (!db) {
             return;
         }
-        const partner = await (0, viewPairing_1.partnerFor)(await currentProject(), db.id, { ask: true });
+        const partner = await (0, viewPairing_1.partnerFor)(await currentProject(), db.id, { ask: true, onStored: () => { void refreshAll({ reason: 'ui' }); } });
         if (!partner) {
             return;
         }
@@ -35248,7 +35351,9 @@ async function archDocument(dbName, view) {
     return (await vscode.window.showTextDocument(open?.uri ?? (0, viewFileSystem_1.viewUri)(dbName, view.id, view.xmlid ?? `view-${view.id}`), { preview: true })).document;
 }
 function registerViewDoctorCommands(deps) {
-    const { context, providers, viewService, viewNotes, viewDiagnostics, xpathDiagnostics, viewRender } = deps;
+    const { context, providers, viewService, viewNotes, viewDiagnostics, xpathDiagnostics, viewRender, refreshAll } = deps;
+    /** A partner picked here is remembered: the trees that show it refresh. */
+    const partnerStored = () => { void refreshAll({ reason: 'ui' }); };
     /** The view a command acts on (a row, an arch editor, or the active editor); the error is shown when it is gone. */
     const target = async (arg) => {
         try {
@@ -35304,13 +35409,15 @@ function registerViewDoctorCommands(deps) {
         }
         try {
             const project = (await settingsStore_1.SettingsStore.peekSelectedProject().catch(() => null))?.project;
-            const partner = await (0, viewPairing_1.partnerFor)(project, item.dbName, { ask: true });
+            const partner = await (0, viewPairing_1.partnerFor)(project, item.dbName, { ask: true, onStored: partnerStored });
             if (!partner) {
                 return;
             }
             const checkpoint = partner.kind === 'checkpoint';
+            // A checkpoint is open only for the row reads: the pick, which waits
+            // on the user, runs after it closed; the chosen arch is a second read.
             const counterpart = checkpoint
-                ? await (0, checkpointReads_1.withCheckpointOpen)(partner.dbName, () => (0, viewPairing_1.findCounterpart)(item.view, partner.dbName))
+                ? await (0, viewPairing_1.pickCounterpart)(item.view, partner.label, await (0, checkpointReads_1.withCheckpointOpen)(partner.dbName, () => (0, viewPairing_1.counterpartRows)(item.view, partner.dbName)))
                 : await (0, viewPairing_1.findCounterpart)(item.view, partner.dbName);
             if (counterpart === 'none') {
                 void (0, notifications_1.showInfo)(`${partner.label} has no ${item.view.type} view of ${item.view.model || 'this model'} to compare with.`);
@@ -35380,7 +35487,7 @@ function registerViewDoctorCommands(deps) {
             const db = project?.dbs?.find(entry => entry.id === item.dbName);
             const own = { dbName: item.dbName, versionId: db?.versionId, viewId: item.view.id, title: item.dbName, kind };
             // Quiet: a project with nothing to pair with renders the view alone, without a message each time.
-            const partner = await (0, viewPairing_1.partnerFor)(project, item.dbName, { ask: true, quiet: true });
+            const partner = await (0, viewPairing_1.partnerFor)(project, item.dbName, { ask: true, quiet: true, onStored: partnerStored });
             if (!partner || partner.kind === 'checkpoint') {
                 await viewRender.show({
                     title: item.view.name,
@@ -35395,7 +35502,7 @@ function registerViewDoctorCommands(deps) {
             if (counterpart === undefined) {
                 return;
             }
-            const { left, right } = (0, comparisonPartner_1.comparisonSides)(item.dbName, partner, pair);
+            const { left } = (0, comparisonPartner_1.comparisonSides)(item.dbName, partner, pair);
             const other = counterpart === 'none' ? undefined
                 : { dbName: partner.dbName, versionId: partner.versionId, viewId: counterpart.id, title: partner.dbName, kind };
             const targets = (left === item.dbName ? [own, other] : [other, own]).filter((t) => !!t);
@@ -35403,8 +35510,9 @@ function registerViewDoctorCommands(deps) {
                 title: item.view.name,
                 targets,
                 startCommand: 'dbSelector.runPairAlongside',
-                startArgs: [left, right],
-                startLabel: 'Run Both',
+                // Only the databases shown: a partner without the view is not started.
+                startArgs: targets.map(entry => entry.dbName),
+                startLabel: targets.length > 1 ? 'Run Both' : 'Run Alongside',
                 notice: counterpart === 'none' ? `${partner.dbName} has no matching view; showing ${item.dbName} only.` : undefined
             });
         }
