@@ -12150,6 +12150,11 @@ async function resolveVersionForNewDatabase(dbName, method) {
     // which is the only thing that can report this database's version.
     return { versionId: undefined, odooVersion: series };
 }
+const POSTGRES_NAME_TAKEN = 'A database with this name already exists in PostgreSQL.';
+/** Every database in PostgreSQL, lower-cased, linked or not. */
+async function postgresDatabaseNames() {
+    return new Set((await (0, postgres_1.listPostgresDatabases)()).map(name => name.toLowerCase()));
+}
 async function createDb(projectName, repos, dumpFolderPath, _settings, options = {}) {
     // Steps 1-4 are one backable wizard. Everything that could invalidate the
     // work is asked before any of it starts, so Back is always free here: no
@@ -12243,11 +12248,13 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
                 dbName = existingDbName;
                 return 'next';
             }
+            // A template copy never replaces a database, linked here or not.
+            const inPostgres = creationMethod === 'template' ? await postgresDatabaseNames() : new Set();
             const suggestion = dbName || (0, dbNaming_1.generateDatabaseIdentifiers)({
                 projectName,
                 kind: creationMethod,
                 timestamp: creationTimestamp,
-                existingInternalNames: existingIdentifiers
+                existingInternalNames: new Set([...existingIdentifiers, ...inPostgres])
             }).internalName;
             const nameInput = await (0, wizard_1.inputStep)({
                 title: 'Database Name',
@@ -12267,6 +12274,9 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
                     }
                     if (existingIdentifiers.has(trimmed.toLowerCase())) {
                         return 'A database with this name is already linked to a project.';
+                    }
+                    if (inPostgres.has(trimmed.toLowerCase())) {
+                        return POSTGRES_NAME_TAKEN;
                     }
                     return undefined;
                 }
@@ -12320,8 +12330,9 @@ async function createDb(projectName, repos, dumpFolderPath, _settings, options =
 }
 /**
  * Copies `templateDbName` into `targetDbName` - the database and its
- * filestore - replacing any existing database of that name. Returns false
- * when the user declined to free the source.
+ * filestore. Never replaces a database: the copy refuses a name that exists,
+ * and the name prompts refuse it first. Returns false when the user declined
+ * to free the source.
  */
 async function cloneDatabaseFromTemplate(targetDbName, templateDbName, versionId, explicitRoot) {
     const backend = (0, copyRuntime_1.realCopyBackend)();
@@ -12331,11 +12342,7 @@ async function cloneDatabaseFromTemplate(targetDbName, templateDbName, versionId
         title: `Setting up database ${targetDbName}`,
         cancellable: false
     }, async (progress) => {
-        if (await (0, databaseCopy_1.databaseExistsVia)(backend, targetDbName)) {
-            progress.report({ message: 'Dropping existing database...', increment: 20 });
-            await (0, databaseCopy_1.discardDatabase)(backend, targetDbName, root);
-        }
-        progress.report({ message: `Copying "${templateDbName}"...`, increment: 50 });
+        progress.report({ message: `Copying "${templateDbName}"...`, increment: 70 });
         await (0, databaseCopy_1.copyDatabase)(backend, templateDbName, targetDbName, { filestoreRoot: root });
         (0, database_1.clearInstalledModuleCache)(targetDbName);
         progress.report({ message: 'Complete!', increment: 30 });
@@ -12569,9 +12576,21 @@ async function deleteDb(event) {
         return;
     }
     if (confirm === withAll) {
+        const refused = [];
         for (const checkpoint of checkpoints) {
-            await (0, databaseCopy_1.discardDatabase)(backend, checkpoint.id, root)
+            try {
+                await (0, databaseCopy_1.verifyCheckpoint)(backend, checkpoint.id, db.id, { mustExist: false });
+            }
+            catch (error) {
+                logger_1.logger.warn((0, logger_1.errorMessage)(error));
+                refused.push((0, logger_1.errorMessage)(error));
+                continue;
+            }
+            await (0, databaseCopy_1.discardDatabase)(backend, checkpoint.id, checkpoint.filestoreRoot ?? root)
                 .catch(error => logger_1.logger.warn(`Could not delete checkpoint ${checkpoint.id}:`, error));
+        }
+        if (refused.length > 0) {
+            void (0, notifications_1.showWarning)(refused.join(' '));
         }
     }
     // Remove from project data
@@ -12608,8 +12627,9 @@ async function cloneDatabaseFlow(event) {
     }
     const { data, project } = result;
     const existingIdentifiers = await collectExistingDatabaseIdentifiers();
+    const inPostgres = await postgresDatabaseNames();
     let suggestion = `${db.id}-copy`;
-    for (let i = 2; existingIdentifiers.has(suggestion.toLowerCase()); i++) {
+    for (let i = 2; existingIdentifiers.has(suggestion.toLowerCase()) || inPostgres.has(suggestion.toLowerCase()); i++) {
         suggestion = `${db.id}-copy${i}`;
     }
     const nameInput = await vscode.window.showInputBox({
@@ -12629,6 +12649,9 @@ async function cloneDatabaseFlow(event) {
             }
             if (existingIdentifiers.has(trimmed.toLowerCase())) {
                 return 'A database with this name is already linked to a project.';
+            }
+            if (inPostgres.has(trimmed.toLowerCase())) {
+                return POSTGRES_NAME_TAKEN;
             }
             return null;
         }
@@ -13193,11 +13216,30 @@ async function manageSingleTemplate(data, templates, selectedTemplate) {
         if (newTemplateDbName.toLowerCase() === selectedTemplate.templateDbName.toLowerCase()) {
             return templates;
         }
-        await (0, postgres_1.renameDatabase)(selectedTemplate.templateDbName, newTemplateDbName);
         const root = selectedTemplate.filestoreRoot ?? (0, copyRuntime_1.filestoreRootFor)();
         const oldFolder = path.join(root, selectedTemplate.templateDbName);
+        const newFolder = path.join(root, newTemplateDbName);
+        // Renaming onto it would make someone else's folder the template's filestore.
+        if (await (0, filestore_1.dirExists)(newFolder)) {
+            void (0, notifications_1.showError)(`A filestore folder "${newFolder}" already exists, so the template was not renamed.`);
+            return templates;
+        }
+        await (0, postgres_1.renameDatabase)(selectedTemplate.templateDbName, newTemplateDbName);
         if (await (0, filestore_1.dirExists)(oldFolder)) {
-            await (0, filestore_1.renameDir)(oldFolder, path.join(root, newTemplateDbName));
+            try {
+                await (0, filestore_1.renameDir)(oldFolder, newFolder);
+            }
+            catch (error) {
+                // The database and its folder keep one name: put the database back.
+                try {
+                    await (0, postgres_1.renameDatabase)(newTemplateDbName, selectedTemplate.templateDbName);
+                }
+                catch (undoError) {
+                    throw new Error(`Could not move the filestore of "${selectedTemplate.templateDbName}" (${(0, logger_1.errorMessage)(error)}), `
+                        + `and could not rename the database back from "${newTemplateDbName}" (${(0, logger_1.errorMessage)(undoError)}).`);
+                }
+                throw error;
+            }
         }
         const now = new Date().toISOString();
         const updated = await (0, templates_1.persistDatabaseTemplates)(data, templates.map(template => template.templateDbName.toLowerCase() === selectedTemplate.templateDbName.toLowerCase()
@@ -15862,14 +15904,18 @@ function checkpointsOf(db) {
             continue;
         }
         const id = raw.id.trim();
-        list.push({
+        const checkpoint = {
             id,
             label: typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : id,
             createdAt: typeof raw.createdAt === 'string' && !Number.isNaN(Date.parse(raw.createdAt))
                 ? raw.createdAt
                 : new Date().toISOString(),
             filestore: raw.filestore === true
-        });
+        };
+        if (typeof raw.filestoreRoot === 'string' && raw.filestoreRoot !== '') {
+            checkpoint.filestoreRoot = raw.filestoreRoot;
+        }
+        list.push(checkpoint);
     }
     return list;
 }
@@ -16332,6 +16378,7 @@ exports.databaseExistsVia = databaseExistsVia;
 exports.retryWhileBusy = retryWhileBusy;
 exports.copyDatabase = copyDatabase;
 exports.discardDatabase = discardDatabase;
+exports.verifyCheckpoint = verifyCheckpoint;
 exports.stageRestore = stageRestore;
 exports.swapInRestored = swapInRestored;
 /**
@@ -16455,7 +16502,13 @@ async function discardDatabase(backend, name, filestoreRoot) {
     }
     const folder = path.join(filestoreRoot, name);
     if (existed) {
-        await backend.files.remove(folder);
+        // The database is gone either way; a leftover folder is only litter.
+        try {
+            await backend.files.remove(folder);
+        }
+        catch (error) {
+            backend.log(`Dropped "${name}", but could not remove its filestore folder ${folder}: ${error}`);
+        }
     }
     else if (await backend.files.exists(folder)) {
         const orphan = `${folder}.orphan-${Date.now().toString(36)}`;
@@ -16463,12 +16516,34 @@ async function discardDatabase(backend, name, filestoreRoot) {
         backend.log(`No database "${name}" exists, so its filestore folder was moved to ${orphan} instead of deleted.`);
     }
 }
+/**
+ * Refuses unless PostgreSQL says `id` is a protected checkpoint of
+ * `sourceDb`: the stored id is editable JSON, and a destructive step must not
+ * act on a database it names. A missing database is fine when there is
+ * nothing to drop (`mustExist: false`).
+ */
+async function verifyCheckpoint(backend, id, sourceDb, options) {
+    const found = await backend.sql(`SELECT datistemplate::text || '|' || coalesce(shobj_description(oid,'pg_database'),'') FROM pg_database WHERE datname = ${(0, viewQueries_1.sqlText)(id)};`);
+    if (found === '' && !options.mustExist) {
+        return;
+    }
+    if (found !== `true|${(0, checkpoints_1.checkpointComment)(sourceDb)}`) {
+        throw new Error(`"${id}" is not a checkpoint of "${sourceDb}", so it was left alone.`);
+    }
+}
 const rename = (from, to) => `ALTER DATABASE ${(0, postgres_1.quotePgIdentifier)(from)} RENAME TO ${(0, postgres_1.quotePgIdentifier)(to)};`;
 /**
  * Restore, part one: the checkpoint copied to `<db>__restoring`, unprotected,
- * while the database and its server are still untouched.
+ * while the database and its server are still untouched. `expectFilestore`:
+ * the checkpoint was taken with a filestore, so its folder must be there.
  */
-async function stageRestore(backend, db, checkpointDb, filestoreRoot) {
+async function stageRestore(backend, db, checkpointDb, filestoreRoot, options = {}) {
+    if (options.expectFilestore && filestoreRoot) {
+        const folder = path.join(filestoreRoot, checkpointDb);
+        if (!await backend.files.exists(folder)) {
+            throw new Error(`The filestore of this checkpoint (${folder}) is missing, so restoring it would lose the attachments.`);
+        }
+    }
     const replaced = (0, checkpoints_1.derivedDbName)(db, '__replaced');
     if (await databaseExistsVia(backend, replaced)) {
         throw new Error(`"${replaced}" is left over from an interrupted restore and may hold the data of "${db}". Rename or drop it in psql first.`);
@@ -16483,6 +16558,17 @@ async function stageRestore(backend, db, checkpointDb, filestoreRoot) {
     // A leftover staging copy is only ever a copy of a checkpoint.
     await discardDatabase(backend, staged, filestoreRoot);
     await copyDatabase(backend, checkpointDb, staged, { filestoreRoot });
+    // The copy belongs to whoever ran it; once swapped in it should still
+    // belong to the role that owned the database.
+    try {
+        const owner = await backend.sql(`SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = ${(0, viewQueries_1.sqlText)(db)};`);
+        if (owner) {
+            await backend.sql(`DO $$ BEGIN EXECUTE format('ALTER DATABASE %I OWNER TO %I', ${(0, viewQueries_1.sqlText)(staged)}, ${(0, viewQueries_1.sqlText)(owner)}); END $$;`);
+        }
+    }
+    catch (error) {
+        backend.log(`Could not give "${staged}" the owner of "${db}": ${error}`);
+    }
     return staged;
 }
 /**
@@ -16500,9 +16586,9 @@ async function swapInRestored(backend, db, staged, filestoreRoot) {
             throw new Error(`"${path.join(filestoreRoot, replaced)}" is left over from an interrupted restore and may hold the filestore of "${db}". Move or delete it first.`);
         }
         await retryWhileBusy(backend, db, () => backend.sql(rename(db, replaced)));
-        undo.push({ kind: 'db', run: () => backend.sql(rename(replaced, db)) });
+        undo.push({ kind: 'db', run: () => retryWhileBusy(backend, replaced, () => backend.sql(rename(replaced, db))) });
         await backend.sql(rename(staged, db));
-        undo.push({ kind: 'db', run: () => backend.sql(rename(db, staged)) });
+        undo.push({ kind: 'db', run: () => retryWhileBusy(backend, db, () => backend.sql(rename(db, staged))) });
         if (filestoreRoot) {
             const live = path.join(filestoreRoot, db);
             const old = path.join(filestoreRoot, replaced);
@@ -16602,6 +16688,7 @@ const vscode = __importStar(__webpack_require__(1));
 const fs = __importStar(__webpack_require__(2));
 const os = __importStar(__webpack_require__(18));
 const path = __importStar(__webpack_require__(3));
+const databaseCopy_1 = __webpack_require__(82);
 const filestore_1 = __webpack_require__(84);
 const odooDataDir_1 = __webpack_require__(85);
 const postgres_1 = __webpack_require__(47);
@@ -16611,6 +16698,8 @@ const viewWorkerArgs_1 = __webpack_require__(50);
 const connectionRelease_1 = __webpack_require__(86);
 const runningState_1 = __webpack_require__(87);
 const debugSessions_1 = __webpack_require__(88);
+const dbResolution_1 = __webpack_require__(61);
+const settingsStore_1 = __webpack_require__(6);
 const versionsService_1 = __webpack_require__(33);
 const debugger_1 = __webpack_require__(89);
 const logger_1 = __webpack_require__(12);
@@ -16639,18 +16728,31 @@ function realCopyBackend() {
         sleep
     };
 }
+/** The value after `-d` in the session's launch arguments (debugger.ts prepareArgs). */
+function sessionDatabase(session) {
+    const args = session.configuration?.args;
+    if (!Array.isArray(args)) {
+        return undefined;
+    }
+    const at = args.indexOf('-d');
+    const value = at >= 0 ? args[at + 1] : undefined;
+    return typeof value === 'string' ? value : undefined;
+}
 function realReleaseHost() {
     return {
         letGo: db => (0, postgres_1.releaseDatabase)(db),
+        // By the database the session was launched on, not the one its
+        // version selects now: selecting another must not make this one ours.
         ownRun: async (db) => {
-            (0, runningState_1.invalidateRunningState)();
-            const instance = (await (0, runningState_1.getRunningInstances)())
-                .find(entry => entry.origin === 'managed' && entry.dbName === db && entry.debuggerName && entry.versionId);
-            if (!instance?.debuggerName || !instance.versionId) {
-                return undefined;
+            for (const name of (0, debugSessions_1.runningDebuggerNames)()) {
+                const versionId = (0, debugSessions_1.versionIdOfSession)(name);
+                const session = (0, debugSessions_1.getSessionByName)(name);
+                if (!versionId || !session || sessionDatabase(session) !== db) {
+                    continue;
+                }
+                return { versionId, debuggerName: name, noDebug: session.configuration?.noDebug === true, dbName: db };
             }
-            const session = (0, debugSessions_1.getSessionByName)(instance.debuggerName);
-            return { versionId: instance.versionId, debuggerName: instance.debuggerName, noDebug: session?.configuration?.noDebug === true };
+            return undefined;
         },
         stop: async (run) => {
             const session = (0, debugSessions_1.getSessionByName)(run.debuggerName);
@@ -16666,6 +16768,11 @@ function realReleaseHost() {
             }
         },
         start: async (run) => {
+            // The version starts whatever it selects now; that may not be the database it was stopped on.
+            const now = (0, dbResolution_1.dbForVersion)((await settingsStore_1.SettingsStore.peekSelectedProject())?.project, run.versionId)?.id;
+            if (now !== run.dbName) {
+                throw new Error(`"${run.debuggerName}" was not restarted: its version now runs "${now ?? 'no database'}".`);
+            }
             const result = await (0, debugger_1.startServerForVersion)(run.versionId, { noDebug: run.noDebug, quiet: true });
             if (!result.ok) {
                 throw new Error(result.message ?? `Could not start "${run.debuggerName}".`);
@@ -16729,8 +16836,14 @@ async function withReleased(db, purpose, work, options = {}) {
         value = await work();
     }
     catch (error) {
-        // The work failed, so what it was to remove is still there: bring the server back.
-        await restartAfter(db, release.restart);
+        // The work failed: bring the server back - unless the database it ran
+        // on is gone after all, or that cannot even be told.
+        if (restart || await (0, databaseCopy_1.databaseExistsVia)(realCopyBackend(), db).catch(() => false)) {
+            await restartAfter(db, release.restart);
+        }
+        else {
+            (0, runningState_1.invalidateRunningState)();
+        }
         throw error;
     }
     if (restart) {
@@ -30219,7 +30332,7 @@ async function takeCheckpoint(db, label, root) {
     const now = new Date();
     const id = (0, checkpoints_1.checkpointDbName)(db.id, now, await takenNames());
     const copied = await (0, databaseCopy_1.copyDatabase)((0, copyRuntime_1.realCopyBackend)(), db.id, id, { filestoreRoot: root, protect: { comment: (0, checkpoints_1.checkpointComment)(db.id) } });
-    const checkpoint = { id, label, createdAt: now.toISOString(), filestore: copied.filestore };
+    const checkpoint = { id, label, createdAt: now.toISOString(), filestore: copied.filestore, filestoreRoot: root };
     let reason;
     try {
         if (!await updateCheckpoints(db.id, list => [...list, checkpoint])) {
@@ -30286,7 +30399,8 @@ function registerCheckpointCommands(deps) {
             return;
         }
         const backend = (0, copyRuntime_1.realCopyBackend)();
-        const root = (0, copyRuntime_1.filestoreRootFor)(db.versionId);
+        // Where it was taken; the live database's folder is swapped under the same root.
+        const root = checkpoint.filestoreRoot ?? (0, copyRuntime_1.filestoreRootFor)(db.versionId);
         let staged;
         try {
             await vscode.window.withProgress({
@@ -30294,7 +30408,8 @@ function registerCheckpointCommands(deps) {
                 title: `Restoring ${db.id} to "${checkpoint.label}"`
             }, async (progress) => {
                 progress.report({ message: 'Copying the checkpoint...' });
-                staged = await (0, databaseCopy_1.stageRestore)(backend, db.id, checkpoint.id, root);
+                await (0, databaseCopy_1.verifyCheckpoint)(backend, checkpoint.id, db.id, { mustExist: true });
+                staged = await (0, databaseCopy_1.stageRestore)(backend, db.id, checkpoint.id, root, { expectFilestore: checkpoint.filestore });
                 const outcome = await (0, copyRuntime_1.withReleased)(db.id, 'restore it', async () => {
                     if (choice === CHECKPOINT_THEN_RESTORE) {
                         progress.report({ message: 'Checkpointing the current state...' });
@@ -30304,6 +30419,8 @@ function registerCheckpointCommands(deps) {
                     await (0, databaseCopy_1.swapInRestored)(backend, db.id, staged, root);
                 });
                 if (outcome.done) {
+                    // The View Doctor still holds what it read from the replaced database.
+                    await (0, postgres_1.releaseDatabase)(db.id);
                     (0, notifications_1.showAutoInfo)(`"${dbLabel}" is back to "${checkpoint.label}".`, 3000);
                 }
             });
@@ -30351,7 +30468,9 @@ function registerCheckpointCommands(deps) {
             return;
         }
         try {
-            await (0, databaseCopy_1.discardDatabase)((0, copyRuntime_1.realCopyBackend)(), checkpoint.id, (0, copyRuntime_1.filestoreRootFor)(db.versionId));
+            const backend = (0, copyRuntime_1.realCopyBackend)();
+            await (0, databaseCopy_1.verifyCheckpoint)(backend, checkpoint.id, db.id, { mustExist: false });
+            await (0, databaseCopy_1.discardDatabase)(backend, checkpoint.id, checkpoint.filestoreRoot ?? (0, copyRuntime_1.filestoreRootFor)(db.versionId));
             await updateCheckpoints(db.id, list => list.filter(cp => cp.id !== checkpoint.id));
             (0, notifications_1.showAutoInfo)(`Checkpoint "${checkpoint.label}" deleted.`, 2500);
         }
