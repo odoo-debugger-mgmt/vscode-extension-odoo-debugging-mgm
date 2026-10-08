@@ -49,6 +49,14 @@ async function counterpartOf(file: string, from: SideRoots, to: SideRoots, what:
     return picked?.candidate;
 }
 
+/** Which side a file is on; this side wins when both match (the same checkout). Exactly one is set. */
+function matchSide(file: string, sides: CodeSides) {
+    const left = rootOf(file, sides.left);
+    const right = rootOf(file, sides.right);
+    const pickLeft = left && (!right || sides.thisSide === 'left');
+    return { onLeft: pickLeft ? left : undefined, onRight: pickLeft ? undefined : right };
+}
+
 function fileOf(arg: unknown): string | undefined {
     const uri = arg instanceof vscode.Uri ? arg : vscode.window.activeTextEditor?.document.uri;
     return uri?.scheme === 'file' ? uri.fsPath : undefined;
@@ -82,8 +90,7 @@ export function registerCompareCommands(deps: CommandDeps): void {
         if (!sides) {
             return;
         }
-        const onLeft = rootOf(file, sides.left);
-        const onRight = onLeft ? undefined : rootOf(file, sides.right);
+        const { onLeft, onRight } = matchSide(file, sides);
         if (!onLeft && !onRight) {
             void showInfo(`${path.basename(file)} is not part of ${sides.left.label}'s or ${sides.right.label}'s code.`);
             return;
@@ -114,8 +121,7 @@ export function registerCompareCommands(deps: CommandDeps): void {
             return;
         }
         const manifest = path.join(moduleDir, '__manifest__.py');
-        const onLeft = rootOf(manifest, sides.left);
-        const onRight = onLeft ? undefined : rootOf(manifest, sides.right);
+        const { onLeft, onRight } = matchSide(manifest, sides);
         if (!onLeft && !onRight) {
             void showInfo(`${name} is not part of ${sides.left.label}'s or ${sides.right.label}'s code.`);
             return;
@@ -127,7 +133,7 @@ export function registerCompareCommands(deps: CommandDeps): void {
         }
         const otherDir = path.dirname(otherManifest);
         if (path.resolve(otherDir) === path.resolve(moduleDir)) {
-            void showInfo(`${name} is the same file in ${sides.left.label} and ${sides.right.label}.`);
+            void showInfo(`${name} is the same module in ${sides.left.label} and ${sides.right.label}.`);
             return;
         }
         const [leftDir, rightDir] = onLeft ? [moduleDir, otherDir] : [otherDir, moduleDir];
