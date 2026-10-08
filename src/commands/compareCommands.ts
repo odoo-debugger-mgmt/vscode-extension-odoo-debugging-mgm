@@ -12,6 +12,7 @@ import { showInfo } from '../services/notifications';
 import { findModuleForFile } from '../services/manifest';
 import { codeSides, type CodeSides } from '../services/compare/sides';
 import { counterpartModuleDir, realFsProbe, resolveCounterpart, rootOf, type Counterpart, type SideRoots } from '../services/compare/counterpart';
+import { candidatesOf, leftRight, locateCounterpart, orderSides, qualifiedAt, type SymbolNode } from '../services/compare/locate';
 import { diffTrees, listTree } from '../services/compare/moduleDiff';
 import { enclosingSymbol, findMethodInSources, modelKeyOf, scanPythonSymbols, symbolText, type PySymbol } from '../services/compare/pythonSymbols';
 import { findXmlElementById, xmlElementAt } from '../services/compare/xmlElements';
@@ -59,15 +60,12 @@ async function pickCounterpart(found: Counterpart, to: SideRoots, what: string):
 
 /** The counterpart of `file` (on `from`) in `to`, asking when several match; undefined after explaining. */
 async function counterpartOf(file: string, from: SideRoots, to: SideRoots, what: string): Promise<string | undefined> {
-    return pickCounterpart(await resolveCounterpart(file, from, to, realFsProbe), to, what);
+    return pickCounterpart(await withBusy(() => resolveCounterpart(file, from, to, realFsProbe)), to, what);
 }
 
-/** Which side a file is on; this side wins when both match (the same checkout). Exactly one is set. */
-function matchSide(file: string, sides: CodeSides) {
-    const left = rootOf(file, sides.left);
-    const right = rootOf(file, sides.right);
-    const pickLeft = left && (!right || sides.thisSide === 'left');
-    return { onLeft: pickLeft ? left : undefined, onRight: pickLeft ? undefined : right };
+/** Runs a slow file-system lookup under a progress notification. */
+function withBusy<T>(work: () => Promise<T>): Promise<T> {
+    return Promise.resolve(vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Looking for the counterpart…' }, work));
 }
 
 function fileOf(arg: unknown): string | undefined {
@@ -86,7 +84,9 @@ async function moduleDirOf(arg: unknown): Promise<string | undefined> {
         }
         return (await findModuleForFile(path.join(arg.fsPath, '__manifest__.py')))?.path;
     }
-    return undefined;
+    // From the palette: the module of the active editor's file.
+    const active = fileOf(undefined);
+    return active ? (await findModuleForFile(active))?.path : undefined;
 }
 
 /** The qualified name of the class or function around `position`, from the language server; undefined without one. */
@@ -95,21 +95,13 @@ async function qualifiedFromServer(uri: vscode.Uri, position: vscode.Position): 
         vscode.commands.executeCommand<vscode.DocumentSymbol[]>('vscode.executeDocumentSymbolProvider', uri)
     ).catch(() => undefined);
     const kinds = [vscode.SymbolKind.Class, vscode.SymbolKind.Function, vscode.SymbolKind.Method];
-    let best: string[] | undefined;
-    const walk = (list: vscode.DocumentSymbol[], parents: string[]): void => {
-        for (const s of list) {
-            if (!s.range?.contains(position)) {
-                continue;
-            }
-            const chain = kinds.includes(s.kind) ? [...parents, s.name] : parents;
-            if (kinds.includes(s.kind) && (!best || chain.length >= best.length)) {
-                best = chain;
-            }
-            walk(s.children ?? [], chain);
-        }
-    };
-    walk(Array.isArray(symbols) ? symbols : [], []);
-    return best?.join('.');
+    const nodes = (list: vscode.DocumentSymbol[]): SymbolNode<vscode.Position>[] => list.map(s => ({
+        name: s.name,
+        isScope: kinds.includes(s.kind),
+        contains: p => Boolean(s.range?.contains(p)),
+        children: nodes(s.children ?? [])
+    }));
+    return qualifiedAt(nodes(Array.isArray(symbols) ? symbols : []), position);
 }
 
 async function readText(file: string): Promise<string> {
@@ -134,12 +126,12 @@ export function registerCompareCommands(deps: CommandDeps): void {
         if (!sides) {
             return;
         }
-        const { onLeft, onRight } = matchSide(file, sides);
-        if (!onLeft && !onRight) {
+        const order = orderSides(file, sides);
+        if (!order) {
             void showInfo(`${path.basename(file)} is not part of ${sides.left.label}'s or ${sides.right.label}'s code.`);
             return;
         }
-        const [from, to] = onLeft ? [sides.left, sides.right] : [sides.right, sides.left];
+        const { from, to, fileOnLeft: onLeft } = order;
         const other = await counterpartOf(file, from, to, path.basename(file));
         if (!other) {
             return;
@@ -148,7 +140,7 @@ export function registerCompareCommands(deps: CommandDeps): void {
             void showInfo(`${path.basename(file)} is the same file in ${sides.left.label} and ${sides.right.label}.`);
             return;
         }
-        const [leftFile, rightFile] = onLeft ? [file, other] : [other, file];
+        const [leftFile, rightFile] = leftRight(onLeft, file, other);
         await vscode.commands.executeCommand('vscode.diff', vscode.Uri.file(leftFile), vscode.Uri.file(rightFile),
             `${path.basename(file)}: ${sides.left.label} ↔ ${sides.right.label}`);
     }));
@@ -165,22 +157,24 @@ export function registerCompareCommands(deps: CommandDeps): void {
             return;
         }
         const manifest = path.join(moduleDir, '__manifest__.py');
-        const { onLeft, onRight } = matchSide(manifest, sides);
-        if (!onLeft && !onRight) {
+        const order = orderSides(manifest, sides);
+        if (!order) {
             void showInfo(`${name} is not part of ${sides.left.label}'s or ${sides.right.label}'s code.`);
             return;
         }
-        const [from, to] = onLeft ? [sides.left, sides.right] : [sides.right, sides.left];
-        const otherManifest = await counterpartOf(manifest, from, to, name);
-        if (!otherManifest) {
+        const { from, to, fileOnLeft: onLeft } = order;
+        // A module is found by its name only: a removed or renamed module has no counterpart, and no
+        // unrelated module is offered in its place.
+        const otherDir = await withBusy(() => counterpartModuleDir(manifest, from, to, realFsProbe));
+        if (!otherDir) {
+            void showInfo(`${name} has no counterpart in ${to.label}.`);
             return;
         }
-        const otherDir = path.dirname(otherManifest);
         if (path.resolve(otherDir) === path.resolve(moduleDir)) {
             void showInfo(`${name} is the same module in ${sides.left.label} and ${sides.right.label}.`);
             return;
         }
-        const [leftDir, rightDir] = onLeft ? [moduleDir, otherDir] : [otherDir, moduleDir];
+        const [leftDir, rightDir] = leftRight(onLeft, moduleDir, otherDir);
         const diff = await vscode.window.withProgress(
             { location: vscode.ProgressLocation.Notification, title: `Comparing ${name}…` },
             () => diffTrees(leftDir, rightDir)
@@ -231,68 +225,32 @@ export function registerCompareCommands(deps: CommandDeps): void {
         if (!sides) {
             return;
         }
-        const { onLeft, onRight } = matchSide(file, sides);
-        if (!onLeft && !onRight) {
+        const order = orderSides(file, sides);
+        if (!order) {
             void showInfo(`${path.basename(file)} is not part of ${sides.left.label}'s or ${sides.right.label}'s code.`);
             return;
         }
-        const [from, to] = onLeft ? [sides.left, sides.right] : [sides.right, sides.left];
+        const { from, to, fileOnLeft: onLeft } = order;
         const text = here.document.getText();
         const position = here.selection.active;
         const show = async (what: string, thisText: string, otherText: string): Promise<void> => {
-            const [leftText, rightText] = onLeft ? [thisText, otherText] : [otherText, thisText];
+            const [leftText, rightText] = leftRight(onLeft, thisText, otherText);
             await vscode.commands.executeCommand('vscode.diff',
                 compareDocuments.snapshotUri('left', `${what} · ${sides.left.label}${ext}`, leftText),
                 compareDocuments.snapshotUri('right', `${what} · ${sides.right.label}${ext}`, rightText),
                 `${what}: ${sides.left.label} ↔ ${sides.right.label}`);
         };
-        const sameFile = (other: string) => path.resolve(other) === path.resolve(file);
-
-        /**
-         * Look for the symbol in the counterpart file and its module, then in the same-named module when no
-         * file matched, and only then ask which file is the counterpart. `search` returns the other side's
-         * text, or undefined; `what` names the symbol for the messages.
-         */
-        const locate = async (what: string, search: (files: string[], moduleDir: string | undefined) => Promise<string | undefined>): Promise<string | undefined> => {
-            const found = await resolveCounterpart(file, from, to, realFsProbe);
-            if (found.kind === 'found') {
-                if (sameFile(found.path)) {
-                    void showInfo(`${path.basename(file)} is the same file in ${sides.left.label} and ${sides.right.label}.`);
-                    return undefined;
-                }
-                const moduleDir = (await findModuleForFile(found.path))?.path;
-                const hit = await search([found.path], moduleDir);
-                if (hit === undefined) {
-                    void showInfo(`${what} has no counterpart in ${to.label}.`);
-                }
-                return hit;
-            }
-            const moduleDir = await counterpartModuleDir(file, from, to, realFsProbe);
-            if (moduleDir) {
-                const hit = await search([], moduleDir);
-                if (hit !== undefined) {
-                    return hit;
-                }
-            }
-            const picked = await pickCounterpart(found, to, what);
-            if (!picked) {
-                return undefined;
-            }
-            if (sameFile(picked)) {
-                void showInfo(`${path.basename(file)} is the same file in ${sides.left.label} and ${sides.right.label}.`);
-                return undefined;
-            }
-            const hit = await search([picked], (await findModuleForFile(picked))?.path);
-            if (hit === undefined) {
-                void showInfo(`${what} has no counterpart in ${to.label}.`);
-            }
-            return hit;
-        };
-        /** `first` files, then every file of `ext` in the module, never this file. */
-        const candidatesOf = async (first: string[], moduleDir: string | undefined): Promise<string[]> => {
-            const rest = moduleDir ? await filesOf(moduleDir, ext) : [];
-            return [...new Set([...first, ...rest])].filter(f => !sameFile(f));
-        };
+        const locate = (what: string, search: (files: string[], moduleDir: string | undefined) => Promise<string | undefined>) =>
+            locateCounterpart(file, from, to, sides, what, {
+                fs: realFsProbe,
+                moduleOf: async f => (await findModuleForFile(f))?.path,
+                pick: (found, label) => pickCounterpart(found, to, label),
+                info: message => { void showInfo(message); },
+                busy: withBusy,
+                search
+            });
+        const candidates = async (first: string[], moduleDir: string | undefined): Promise<string[]> =>
+            candidatesOf(first, moduleDir ? await filesOf(moduleDir, ext) : [], file);
 
         if (ext === '.xml') {
             const el = xmlElementAt(text, here.document.offsetAt(position));
@@ -302,7 +260,7 @@ export function registerCompareCommands(deps: CommandDeps): void {
             }
             const other = await locate(el.id, async (first, moduleDir) => {
                 const moduleName = moduleDir ? path.basename(moduleDir) : '';
-                for (const candidate of await candidatesOf(first, moduleDir)) {
+                for (const candidate of await candidates(first, moduleDir)) {
                     const otherText = await readText(candidate).catch(() => undefined);
                     const found = otherText === undefined ? undefined : findXmlElementById(otherText, el.id, moduleName);
                     if (found && otherText !== undefined) {
@@ -329,7 +287,7 @@ export function registerCompareCommands(deps: CommandDeps): void {
         const owner = symbols.find(s => s.kind === 'class' && mine.qualified === `${s.qualified}.${mine.name}`);
         const other = await locate(mine.qualified, async (first, moduleDir) => {
             const sources: Array<{ file: string; text: string }> = [];
-            for (const candidate of await candidatesOf(first, moduleDir)) {
+            for (const candidate of await candidates(first, moduleDir)) {
                 sources.push({ file: candidate, text: await readText(candidate).catch(() => '') });
             }
             for (const source of sources) {

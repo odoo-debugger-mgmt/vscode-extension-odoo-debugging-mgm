@@ -911,12 +911,12 @@
       "editor/context": [
         {
           "command": "odoo.compareFileWithPartner",
-          "when": "odoo-debugger.is_active && resourceScheme == file",
+          "when": "odoo-debugger.is_active && config.odooDebugger.editorActions.enabled && resourceScheme == file",
           "group": "odoo@4"
         },
         {
           "command": "odoo.compareThisWithPartner",
-          "when": "odoo-debugger.is_active && resourceScheme == file && resourceExtname =~ /^\\.(py|xml)$/",
+          "when": "odoo-debugger.is_active && config.odooDebugger.editorActions.enabled && resourceScheme == file && resourceExtname =~ /^\\.(py|xml)$/",
           "group": "odoo@5"
         },
         {
@@ -2263,7 +2263,7 @@
         "odooDebugger.editorActions.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Show Odoo actions (Run Tests for Current File, Upgrade Current Module, Reveal Module) in the editor right-click menu."
+          "description": "Show Odoo actions (Run Tests for Current File, Upgrade Current Module, Reveal Module, Compare with Partner, Compare This with Partner) in the editor right-click menu."
         }
       }
     },

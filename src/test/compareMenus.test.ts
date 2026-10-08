@@ -24,6 +24,12 @@ suite('Compare menus', () => {
         assert.strictEqual(entries[0].group, 'odoo@5');
     });
 
+    test('the editor right-click entries honour editorActions.enabled', () => {
+        for (const id of ['odoo.compareFileWithPartner', 'odoo.compareThisWithPartner']) {
+            assert.ok((menu('editor/context', id)[0].when ?? '').includes('config.odooDebugger.editorActions.enabled'), id);
+        }
+    });
+
     test('file compare: editor title (not inline), editor context, explorer files', () => {
         const title = menu('editor/title', 'odoo.compareFileWithPartner');
         assert.strictEqual(title.length, 1);
