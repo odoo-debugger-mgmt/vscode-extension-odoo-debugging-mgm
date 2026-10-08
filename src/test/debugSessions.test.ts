@@ -8,7 +8,9 @@ import {
     anySessionRunning,
     clearSessions,
     resolveStopTarget,
-    versionIdOfSession
+    versionIdOfSession,
+    runForDatabase,
+    runRecords
 } from '../services/debugSessions';
 
 function fakeSession(name: string): vscode.DebugSession {
@@ -46,11 +48,22 @@ suite('Debug session registry', () => {
 
     test('remembers the version a session started as, until it ends', () => {
         const shared = fakeSession('Odoo');
-        trackSession(shared, 'v17');
+        trackSession(shared, { versionId: 'v17', kind: 'primary' });
         assert.strictEqual(versionIdOfSession('Odoo'), 'v17');
 
         untrackSession(shared);
         assert.strictEqual(versionIdOfSession('Odoo'), undefined);
+    });
+
+    test('records are kept per session and found by database', () => {
+        clearSessions();
+        trackSession(fakeSession('odoo:17.0'), { versionId: 'v17', dbId: 'shop', port: 8017, kind: 'primary' });
+        trackSession(fakeSession('odoo:17.0 · demo'), { versionId: 'v17', dbId: 'demo', port: 8100, kind: 'alongside' });
+        assert.strictEqual(runForDatabase('demo')?.name, 'odoo:17.0 · demo');
+        assert.strictEqual(runRecords().length, 2);
+        untrackSession(fakeSession('odoo:17.0 · demo'));
+        assert.strictEqual(runForDatabase('demo'), undefined);
+        assert.strictEqual(versionIdOfSession('odoo:17.0'), 'v17');
     });
 
     test('ignores sessions with no configuration name', () => {

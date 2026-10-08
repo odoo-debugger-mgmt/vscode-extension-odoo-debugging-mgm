@@ -1,16 +1,14 @@
 /**
  * Which Odoo databases are live right now, from two merged signals: the
- * extension's own debug sessions (authoritative for what it started) and a
+ * extension's own debug sessions (authoritative for what it started, each
+ * read for the database and port it was launched with) and a
  * pg_stat_activity probe (catches servers started from a terminal or another
  * window). Exists as a service, not tree-decoration logic, so later features -
  * split-view comparison of two running instances - share one state source.
  */
-import { SettingsStore } from '../settingsStore';
-import { VersionsService } from '../versionsService';
 import { getActiveDatabaseNames } from './database';
-import { runningDebuggerNames, versionIdOfSession } from './debugSessions';
-import { sessionOwner } from './versionIdentity';
-import { dbForVersion } from './dbResolution';
+import { runRecords } from './debugSessions';
+import type { RunRecord } from './runRecords';
 import { invalidateActiveDatabasesCache } from './runtimeCache';
 import { logger } from './logger';
 
@@ -20,6 +18,7 @@ export interface RunningInstance {
     dbName: string;
     port?: number;
     origin: 'managed' | 'external';
+    kind?: 'primary' | 'alongside';
 }
 
 /**
@@ -39,45 +38,23 @@ export function mergeRunningInstances(managed: RunningInstance[], external: Runn
     return Array.from(byDb.values());
 }
 
-/** Sessions this extension started, resolved to the database each runs. */
+/** One instance per recorded run that names its database. */
+export function instancesFromRuns(records: RunRecord[]): RunningInstance[] {
+    return records
+        .filter(record => !!record.dbId)
+        .map(record => ({
+            versionId: record.versionId,
+            debuggerName: record.name,
+            dbName: record.dbId as string,
+            port: record.port,
+            origin: 'managed' as const,
+            kind: record.kind
+        }));
+}
+
+/** Sessions this extension started, as the databases they run. */
 async function collectManaged(): Promise<RunningInstance[]> {
-    const names = new Set(runningDebuggerNames());
-    if (names.size === 0) {
-        return [];
-    }
-
-    // Read without getSelectedProject(): this runs on every tree refresh and
-    // that helper toasts when no project is selected.
-    const data = await SettingsStore.get('odoo-debugger-data.json').catch(() => undefined);
-    const project = data?.projects?.find(entry => entry.isSelected);
-
-    // One instance per running session, attributed to the version it
-    // started as: versions may share a debugger name (one launch entry that
-    // follows the active version), and only one of them is running.
-    const service = VersionsService.getInstance();
-    const versions = service.getVersions();
-    const instances: RunningInstance[] = [];
-    for (const debuggerName of names) {
-        const recorded = versionIdOfSession(debuggerName);
-        const version = (recorded ? service.getVersion(recorded) : undefined)
-            ?? sessionOwner(versions, debuggerName, service.getActiveVersion()?.id);
-        if (!version) {
-            continue;
-        }
-        const db = dbForVersion(project, version.id);
-        if (!db) {
-            continue;
-        }
-        instances.push({
-            versionId: version.id,
-            debuggerName,
-            dbName: db.id,
-            port: Number(version.settings.portNumber) || undefined,
-            origin: 'managed'
-        });
-    }
-
-    return instances;
+    return instancesFromRuns(runRecords());
 }
 
 export async function getRunningInstances(): Promise<RunningInstance[]> {

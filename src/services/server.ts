@@ -10,7 +10,7 @@ import { logger } from './logger';
 import { showWarning } from './notifications';
 import { getRunningInstances, RunningInstance } from './runningState';
 import { trackSession, untrackSession, anySessionRunning } from './debugSessions';
-import { sessionOwner } from './versionIdentity';
+import { describeSession, RunDetails } from './runRecords';
 
 const DEFAULT_ODOO_PORT = 8069;
 
@@ -169,30 +169,6 @@ export async function openServerInBrowser(dbName?: string, dbVersionId?: string)
 }
 
 /**
- * The version whose launch configuration this session was started from: for a
- * name several versions share, the one its entry was written for (the active
- * one, else the oldest - see sessionOwner).
- */
-async function versionForSession(session: vscode.DebugSession): Promise<{ id: string; portNumber: number } | undefined> {
-    const name = session.configuration?.name;
-    if (typeof name !== 'string' || name.length === 0) {
-        return undefined;
-    }
-    try {
-        const service = VersionsService.getInstance();
-        await service.initialize();
-        const version = sessionOwner(service.getVersions(), name, service.getActiveVersion()?.id);
-        if (!version) {
-            return undefined;
-        }
-        const port = Number(version.settings.portNumber);
-        return { id: version.id, portNumber: Number.isInteger(port) && port > 0 && port <= 65535 ? port : DEFAULT_ODOO_PORT };
-    } catch {
-        return undefined;
-    }
-}
-
-/**
  * Tracks the extension's own debug session: maintains the
  * 'odoo-debugger.server_running' context key and, when
  * odooDebugger.server.openBrowserOnStart is enabled, opens the web
@@ -206,11 +182,18 @@ export function registerServerLifecycle(
     }
 ): void {
     context.subscriptions.push(vscode.debug.onDidStartDebugSession(async session => {
-        const version = await versionForSession(session);
-        if (!version) {
+        let details: RunDetails | undefined;
+        try {
+            const service = VersionsService.getInstance();
+            await service.initialize();
+            details = describeSession(session.configuration, service.getVersions(), service.getActiveVersion()?.id);
+        } catch {
             return;
         }
-        trackSession(session, version.id);
+        if (!details) {
+            return;
+        }
+        trackSession(session, details);
         hooks.onRunningChanged(anySessionRunning());
 
         const openBrowser = vscode.workspace
@@ -221,11 +204,12 @@ export function registerServerLifecycle(
         }
         // The session's own port, not the active version's: another version
         // may have been activated since this one was launched.
-        if (await waitForPort(version.portNumber, 60000)) {
-            const dbName = await hooks.getSelectedDbName();
-            await vscode.env.openExternal(buildServerUrl(version.portNumber, dbName));
+        const port = details.port ?? DEFAULT_ODOO_PORT;
+        if (await waitForPort(port, 60000)) {
+            const dbName = details.dbId ?? await hooks.getSelectedDbName();
+            await vscode.env.openExternal(buildServerUrl(port, dbName));
         } else {
-            logger.debug(`Server port ${version.portNumber} did not open within 60s; not opening browser.`);
+            logger.debug(`Server port ${port} did not open within 60s; not opening browser.`);
         }
     }));
 
