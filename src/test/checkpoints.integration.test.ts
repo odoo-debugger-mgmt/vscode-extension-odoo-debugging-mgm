@@ -14,6 +14,7 @@ import { createDatabase, databaseExists, runSql } from '../services/postgres';
 import { copyDatabase, discardDatabase, stageRestore, swapInRestored } from '../services/databaseCopy';
 import { releaseForCopy, ReleaseUi, DbConnection } from '../services/connectionRelease';
 import { realCopyBackend, realReleaseHost } from '../services/copyRuntime';
+import { sqlText } from '../services/views/viewQueries';
 import { checkpointComment, checkpointSizeSql, parseCheckpointComments, parseSizes } from '../services/checkpoints';
 
 const enabled = process.env.ODT_PG_TEST === '1';
@@ -51,7 +52,8 @@ function listDbsQueries(): string[] {
 
     suiteTeardown(async () => {
         holder?.kill();
-        const names = (await runSql('postgres', "SELECT datname FROM pg_database WHERE datname LIKE 'odt\\_cp\\_%';")).split('\n').filter(Boolean);
+        const mine = db.replace(/[\\_%]/g, '\\$&') + '%';
+        const names = (await runSql('postgres', `SELECT datname FROM pg_database WHERE datname LIKE ${sqlText(mine)};`)).split('\n').filter(Boolean);
         for (const name of names) {
             await discardDatabase(backend, name).catch(() => undefined);
         }
