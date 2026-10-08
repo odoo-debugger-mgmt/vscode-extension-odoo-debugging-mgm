@@ -46,8 +46,18 @@ async function takeCheckpoint(db: DatabaseModel, label: string, root: string): P
     const id = checkpointDbName(db.id, now, await takenNames());
     const copied = await copyDatabase(realCopyBackend(), db.id, id, { filestoreRoot: root, protect: { comment: checkpointComment(db.id) } });
     const checkpoint: CheckpointModel = { id, label, createdAt: now.toISOString(), filestore: copied.filestore };
-    if (!await updateCheckpoints(db.id, list => [...list, checkpoint])) {
-        logger.warn(`Checkpoint ${id} was created, but "${db.id}" is no longer in the project; Reconcile Databases will list it.`);
+    let reason: string | undefined;
+    try {
+        if (!await updateCheckpoints(db.id, list => [...list, checkpoint])) {
+            reason = 'the database is no longer in the selected project';
+        }
+    } catch (err) {
+        reason = errorMessage(err);
+    }
+    if (reason !== undefined) {
+        // No screen would show the copy, and Reconcile only lists checkpoints whose source is gone.
+        await discardDatabase(realCopyBackend(), id, root).catch(error => logger.warn(`Could not drop the unrecorded checkpoint ${id}:`, error));
+        throw new Error(`The checkpoint of "${db.id}" could not be recorded, so it was not kept: ${reason}`);
     }
     return checkpoint;
 }
