@@ -1,0 +1,115 @@
+import * as assert from 'assert';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { sideRolesFor } from '../services/compare/sides';
+import { resolveCounterpart, rootOf, realFsProbe, SideRoots } from '../services/compare/counterpart';
+
+async function touch(file: string, text = 'x') {
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, text);
+}
+
+suite('Compare: counterpart files', () => {
+    let tmp: string;
+    let s17: SideRoots;
+    let s18: SideRoots;
+
+    setup(async () => {
+        tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'odt-cmp-'));
+        const side = (v: string): SideRoots => ({
+            label: `odoo${v}`,
+            roots: [
+                { role: 'odoo', path: path.join(tmp, v, 'odoo') },
+                { role: 'core:odoo/odoo/addons', path: path.join(tmp, v, 'odoo', 'odoo', 'addons') },
+                { role: 'core:odoo/addons', path: path.join(tmp, v, 'odoo', 'addons') },
+                { role: 'core:enterprise', path: path.join(tmp, v, 'enterprise') },
+                { role: 'repo:acme', path: path.join(tmp, v, 'acme') }
+            ]
+        });
+        s17 = side('17');
+        s18 = side('18');
+        await touch(path.join(tmp, '17/odoo/addons/sale/models/sale_order.py'));
+        await touch(path.join(tmp, '18/odoo/addons/sale/models/sale_order.py'));
+        await touch(path.join(tmp, '17/odoo/odoo/models.py'));
+        await touch(path.join(tmp, '18/odoo/odoo/models.py'));
+        await touch(path.join(tmp, '17/acme/acme_sale/views/sale.xml'));
+        await touch(path.join(tmp, '18/acme/acme_sale/views/sale_views.xml'));
+        // moved between files inside the module
+        await touch(path.join(tmp, '17/odoo/addons/stock/models/stock_move_line.py'));
+        await touch(path.join(tmp, '18/odoo/addons/stock/models/stock_move_line.py'));
+        // a module moved from enterprise to community
+        await touch(path.join(tmp, '17/enterprise/web_studio_lite/models/a.py'));
+        await touch(path.join(tmp, '18/odoo/addons/web_studio_lite/models/a.py'));
+        // renamed module: the same file name exists in two other modules
+        await touch(path.join(tmp, '17/odoo/addons/account_edi/models/edi_format.py'));
+        await touch(path.join(tmp, '18/odoo/addons/account_edi_ubl/models/edi_format.py'));
+        await touch(path.join(tmp, '18/enterprise/account_edi_x/models/edi_format.py'));
+    });
+
+    teardown(async () => { await fs.rm(tmp, { recursive: true, force: true }); });
+
+    test('the longest matching root wins', () => {
+        const hit = rootOf(path.join(tmp, '17/odoo/addons/sale/models/sale_order.py'), s17);
+        assert.strictEqual(hit?.root.role, 'core:odoo/addons');
+        assert.strictEqual(hit?.rel, 'sale/models/sale_order.py');
+        assert.strictEqual(rootOf(path.join(tmp, '17/odoo/odoo/models.py'), s17)?.root.role, 'odoo');
+        assert.strictEqual(rootOf('/elsewhere/x.py', s17), undefined);
+    });
+
+    test('same root, same path', async () => {
+        const r = await resolveCounterpart(path.join(tmp, '17/odoo/addons/sale/models/sale_order.py'), s17, s18, realFsProbe);
+        assert.deepStrictEqual(r, { kind: 'found', path: path.join(tmp, '18/odoo/addons/sale/models/sale_order.py') });
+        const core = await resolveCounterpart(path.join(tmp, '17/odoo/odoo/models.py'), s17, s18, realFsProbe);
+        assert.deepStrictEqual(core, { kind: 'found', path: path.join(tmp, '18/odoo/odoo/models.py') });
+    });
+
+    test('the same file name inside the counterpart module', async () => {
+        await touch(path.join(tmp, '18/acme/acme_sale/data/sale.xml'));
+        const r = await resolveCounterpart(path.join(tmp, '17/acme/acme_sale/views/sale.xml'), s17, s18, realFsProbe);
+        assert.deepStrictEqual(r, { kind: 'found', path: path.join(tmp, '18/acme/acme_sale/data/sale.xml') });
+    });
+
+    test('a module moved to another root keeps its path inside', async () => {
+        const r = await resolveCounterpart(path.join(tmp, '17/enterprise/web_studio_lite/models/a.py'), s17, s18, realFsProbe);
+        assert.deepStrictEqual(r, { kind: 'found', path: path.join(tmp, '18/odoo/addons/web_studio_lite/models/a.py') });
+    });
+
+    test('a renamed module: same-name files are offered', async () => {
+        const r = await resolveCounterpart(path.join(tmp, '17/odoo/addons/account_edi/models/edi_format.py'), s17, s18, realFsProbe);
+        assert.strictEqual(r.kind, 'pick');
+        assert.deepStrictEqual((r as { candidates: string[] }).candidates.sort(), [
+            path.join(tmp, '18/enterprise/account_edi_x/models/edi_format.py'),
+            path.join(tmp, '18/odoo/addons/account_edi_ubl/models/edi_format.py')
+        ].sort());
+    });
+
+    test('a file outside both sides has no counterpart', async () => {
+        assert.deepStrictEqual(await resolveCounterpart('/nowhere/x.py', s17, s18, realFsProbe), { kind: 'none' });
+    });
+
+    test('the pick list stops at 50', async () => {
+        for (let i = 0; i < 60; i++) {
+            await touch(path.join(tmp, `18/acme/m${i}/hooks.py`));
+        }
+        await touch(path.join(tmp, '17/acme/gone/hooks.py'));
+        const r = await resolveCounterpart(path.join(tmp, '17/acme/gone/hooks.py'), s17, s18, realFsProbe);
+        assert.strictEqual(r.kind, 'pick');
+        assert.strictEqual((r as { candidates: string[] }).candidates.length, 50);
+    });
+
+    test('sideRolesFor maps roots by position and adds repos', () => {
+        const roots = sideRolesFor(
+            { odooPath: '/w/odoo', enterprisePath: '/w/enterprise', designThemesPath: '/w/themes' },
+            [{ repo: { name: 'acme' }, path: '/w/acme' }]
+        );
+        assert.deepStrictEqual(roots, [
+            { role: 'odoo', path: '/w/odoo' },
+            { role: 'core:enterprise', path: '/w/enterprise' },
+            { role: 'core:themes', path: '/w/themes' },
+            { role: 'core:odoo/odoo/addons', path: path.join('/w/odoo', 'odoo', 'addons') },
+            { role: 'core:odoo/addons', path: path.join('/w/odoo', 'addons') },
+            { role: 'repo:acme', path: '/w/acme' }
+        ]);
+    });
+});
