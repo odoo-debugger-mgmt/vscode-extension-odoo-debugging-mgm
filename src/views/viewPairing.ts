@@ -1,7 +1,7 @@
 /**
  * Which two databases a view is compared or rendered across: in Upgrade
  * mode the original (From) and the upgraded (To) database, otherwise the
- * tree's database and one the user picks.
+ * tree's database and its comparison partner.
  */
 import * as vscode from 'vscode';
 import { ensureUpgradeConfigModel } from '../models/upgrade';
@@ -9,7 +9,6 @@ import { getRunningInstances } from '../services/runningState';
 import { showInfo } from '../services/notifications';
 import { findViewByXmlid, findViewsLike, type ViewRow } from '../services/views/viewQueries';
 import { matchView } from '../services/views/viewMatch';
-import { viewUri } from './viewFileSystem';
 import { SettingsStore } from '../settingsStore';
 import { stripSettings } from '../utils';
 import { isCopyPartner, partnerChoices, resolveStoredPartner, setPartner, type PartnerModel, type PartnerProject, type ResolvedPartner } from '../services/comparisonPartner';
@@ -50,34 +49,6 @@ export function isReadOnlyOriginal(project: PairProject | undefined, dbName: str
     return !allowEditOriginal && upgradePair(project)?.original.dbName === dbName;
 }
 
-export interface DatabaseChoice {
-    dbName: string;
-    versionId?: string;
-    running: boolean;
-}
-
-/** The project's other databases, running ones first, so the default pick is one a server has open. */
-export function otherDatabaseChoices(project: PairProject | undefined, current: string, running: ReadonlySet<string>): DatabaseChoice[] {
-    return (project?.dbs ?? [])
-        .filter(db => db.id !== current)
-        .map(db => ({ dbName: db.id, versionId: db.versionId, running: running.has(db.id) }))
-        .sort((a, b) => Number(b.running) - Number(a.running));
-}
-
-export async function pickOtherDatabase(project: PairProject | undefined, current: string): Promise<DatabaseChoice | undefined> {
-    const running = new Set((await getRunningInstances()).map(instance => instance.dbName));
-    const choices = otherDatabaseChoices(project, current, running);
-    if (choices.length === 0) {
-        void showInfo(`The project has no other database to compare ${current} with.`);
-        return undefined;
-    }
-    const picked = await vscode.window.showQuickPick(
-        choices.map(choice => ({ label: choice.dbName, description: choice.running ? 'running' : undefined, choice })),
-        { title: `Compare with ${current}`, placeHolder: 'The database to show on the left' }
-    );
-    return picked?.choice;
-}
-
 /**
  * The same view in another database. 'none' when that database has no view
  * of its model and type; undefined when the user dismissed the pick.
@@ -103,28 +74,47 @@ export async function findCounterpart(view: ViewRow, dbName: string): Promise<Vi
     return picked?.candidate;
 }
 
+/** vscode.diff's arguments: the left and right documents, titled `<view>: <left> ↔ <right>`. */
 export function diffArguments(
-    original: { dbName: string; view: ViewRow },
-    upgraded: { dbName: string; view: ViewRow }
+    left: { uri: vscode.Uri; label: string },
+    right: { uri: vscode.Uri; label: string },
+    viewName: string
 ): [vscode.Uri, vscode.Uri, string] {
-    const uriOf = (side: { dbName: string; view: ViewRow }) => viewUri(side.dbName, side.view.id, side.view.xmlid ?? `view-${side.view.id}`);
-    return [uriOf(original), uriOf(upgraded), `${upgraded.view.name}: ${original.dbName} ↔ ${upgraded.dbName}`];
+    return [left.uri, right.uri, `${viewName}: ${left.label} ↔ ${right.label}`];
 }
+
+/** What partnerFor asks the world; tests replace it. */
+export interface PartnerForDeps {
+    running(): Promise<ReadonlySet<string>>;
+    info(message: string): void;
+}
+
+const realPartnerForDeps: PartnerForDeps = {
+    running: async () => new Set((await getRunningInstances()).map(instance => instance.dbName)),
+    info: message => { void showInfo(message); }
+};
 
 /**
  * The database's comparison partner (Part B): the upgrade's other side, else
  * the stored one while it exists, else - when the caller may ask - one the user
  * picks, which is then remembered.
  */
-export async function partnerFor(project: PairProject | undefined, dbId: string, options: { ask: boolean }): Promise<ResolvedPartner | undefined> {
+export async function partnerFor(
+    project: PairProject | undefined,
+    dbId: string,
+    options: { ask: boolean; quiet?: boolean },
+    deps: PartnerForDeps = realPartnerForDeps
+): Promise<ResolvedPartner | undefined> {
     const resolved = resolveStoredPartner(project as PartnerProject | undefined, dbId, upgradePair(project));
     if (resolved || !options.ask) {
         return resolved;
     }
-    const running = new Set((await getRunningInstances()).map(instance => instance.dbName));
-    const choices = partnerChoices(project as PartnerProject | undefined, dbId, running);
+    const choices = partnerChoices(project as PartnerProject | undefined, dbId, await deps.running());
     if (choices.length === 0) {
-        void showInfo(`The project has no other database or checkpoint to compare ${dbId} with.`);
+        // Quiet: the caller goes on without a partner (Render shows the view alone).
+        if (!options.quiet) {
+            deps.info(`The project has no other database or checkpoint to compare ${dbId} with.`);
+        }
         return undefined;
     }
     const picked = await vscode.window.showQuickPick(choices.map(choice => ({
@@ -157,7 +147,11 @@ export async function storePartner(dbId: string, partner: PartnerModel | undefin
  * checkpoint, a clone either way). Never asks. The upgrade's original side has
  * none: it is the one compared against.
  */
-export function alsoOffSource(project: PairProject | undefined, dbId: string, pair: UpgradePair | undefined): { dbName: string; checkpoint: boolean } | undefined {
+export function alsoOffSource(
+    project: PairProject | undefined,
+    dbId: string,
+    pair: UpgradePair | undefined
+): { dbName: string; checkpoint: boolean; label: string } | undefined {
     if (pair?.original.dbName === dbId) {
         return undefined;
     }
@@ -165,5 +159,5 @@ export function alsoOffSource(project: PairProject | undefined, dbId: string, pa
     if (!partner || !isCopyPartner(project as PartnerProject | undefined, dbId, partner)) {
         return undefined;
     }
-    return { dbName: partner.dbName, checkpoint: partner.kind === 'checkpoint' };
+    return { dbName: partner.dbName, checkpoint: partner.kind === 'checkpoint', label: partner.label };
 }

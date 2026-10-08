@@ -14,18 +14,18 @@ import { BaseTreeProvider } from './baseTreeProvider';
 import { alsoOffSource, upgradePair, type PairProject } from './viewPairing';
 import { withCheckpointOpen } from '../services/checkpointReads';
 
-/** workspaceState: whether "Other inactive views" also lists those the original has off too. */
+/** workspaceState: whether "Other inactive views" also lists those the partner has off too. */
 export const SHOW_ALSO_OFF_KEY = 'viewDoctor.showAlsoOff';
 
 export interface DoctorRowOptions {
-    /** The partner the "also off" views are read from (the upgrade's original, a checkpoint or a clone). */
-    originalDb?: string;
+    /** The partner the "also off" views are read from (the upgrade's original, a checkpoint or a clone), by its label. */
+    partnerLabel?: string;
     showAlsoOff?: boolean;
 }
 
 export interface ViewDoctorOptions {
     showAlsoOff?(): boolean;
-    /** Told on every load whether the tree compares with an original database. */
+    /** Told on every load whether the tree compares with a partner that is a copy of its database. */
     onComparing?(comparing: boolean): void;
 }
 
@@ -120,22 +120,22 @@ export function buildDoctorRows(dbName: string, groups: ViewGroups, options: Doc
 
     const alsoOff = groups.alsoOffInOriginal ?? [];
     if (groups.otherInactive.length > 0 || alsoOff.length > 0) {
-        const original = options.originalDb ?? 'the original';
+        const partner = options.partnerLabel ?? 'the partner';
         const shown = options.showAlsoOff
             ? [...groups.otherInactive, ...alsoOff].sort((a, b) => a.model.localeCompare(b.model) || a.id - b.id)
             : groups.otherInactive;
         const alsoOffIds = new Set(alsoOff.map(view => view.id));
         const children: vscode.TreeItem[] = shown.map(view =>
-            new ViewItem(dbName, view, 'other', [], alsoOffIds.has(view.id) ? original : undefined));
+            new ViewItem(dbName, view, 'other', [], alsoOffIds.has(view.id) ? partner : undefined));
         if (shown.length === 0) {
-            children.push(messageItem(`All ${alsoOff.length} are off in ${original} too.`, 'eye-closed'));
+            children.push(messageItem(`All ${alsoOff.length} are off in ${partner} too.`, 'eye-closed'));
         }
         rows.push(new ViewGroupItem(
             'Other inactive views',
             `${dbName}:group:other`,
             children,
             false,
-            alsoOff.length > 0 ? `${shown.length} · ${alsoOff.length} also off in ${original}` : String(shown.length)
+            alsoOff.length > 0 ? `${shown.length} · ${alsoOff.length} also off in ${partner}` : String(shown.length)
         ));
     }
 
@@ -208,7 +208,7 @@ export class ViewDoctorTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
                 groups = await this.service.doctorGroups(target.dbName, comparing ? source?.dbName : undefined);
             }
             return buildDoctorRows(target.dbName, groups, {
-                originalDb: comparing ? source?.dbName : undefined,
+                partnerLabel: comparing ? source?.label : undefined,
                 showAlsoOff: this.options.showAlsoOff?.() ?? false
             });
         } catch (error) {

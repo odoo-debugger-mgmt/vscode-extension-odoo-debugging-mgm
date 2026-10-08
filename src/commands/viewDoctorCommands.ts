@@ -5,7 +5,7 @@ import { SHOW_ALSO_OFF_KEY, ViewItem, resolveViewDoctorTarget } from '../views/v
 import { VIEW_SCHEME, clearViewDiagnostics, parseViewUri, viewUri } from '../views/viewFileSystem';
 import { showBriefStatus, showError, showInfo, showModalWarning, showWarning } from '../services/notifications';
 import { SettingsStore } from '../settingsStore';
-import { findCounterpart, partnerFor, upgradePair, type PairProject } from '../views/viewPairing';
+import { diffArguments, findCounterpart, partnerFor, upgradePair, type PairProject } from '../views/viewPairing';
 import { comparisonSides } from '../services/comparisonPartner';
 import { withCheckpointOpen } from '../services/checkpointReads';
 import { compareDocuments } from '../views/compareDocuments';
@@ -123,10 +123,11 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
                 ? compareDocuments.snapshotUri('left', `${partner.label} · ${counterpart.xmlid ?? counterpart.id}.xml`,
                     await withCheckpointOpen(partner.dbName, () => readStoredArch(partner.dbName, counterpart.id)))
                 : viewUri(partner.dbName, counterpart.id, counterpart.xmlid ?? `view-${counterpart.id}`);
-            const ownOnLeft = left === item.dbName;
-            const [leftUri, rightUri] = ownOnLeft ? [own, other] : [other, own];
-            const [leftLabel, rightLabel] = ownOnLeft ? [item.dbName, partner.label] : [partner.label, item.dbName];
-            await vscode.commands.executeCommand('vscode.diff', leftUri, rightUri, `${item.view.name}: ${leftLabel} ↔ ${rightLabel}`);
+            const ownSide = { uri: own, label: item.dbName };
+            const partnerSide = { uri: other, label: partner.label };
+            await vscode.commands.executeCommand('vscode.diff', ...(left === item.dbName
+                ? diffArguments(ownSide, partnerSide, item.view.name)
+                : diffArguments(partnerSide, ownSide, item.view.name)));
         } catch (error) {
             void showError(`Could not compare ${item.view.name}: ${errorMessage(error)}`);
         }
@@ -177,7 +178,8 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
             }
             const db = project?.dbs?.find(entry => entry.id === item.dbName);
             const own: RenderTarget = { dbName: item.dbName, versionId: db?.versionId, viewId: item.view.id, title: item.dbName, kind };
-            const partner = await partnerFor(project, item.dbName, { ask: true });
+            // Quiet: a project with nothing to pair with renders the view alone, without a message each time.
+            const partner = await partnerFor(project, item.dbName, { ask: true, quiet: true });
             if (!partner || partner.kind === 'checkpoint') {
                 await viewRender.show({
                     title: item.view.name,

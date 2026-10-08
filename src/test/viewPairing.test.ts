@@ -1,5 +1,7 @@
 import * as assert from 'assert';
-import { alsoOffSource, diffArguments, isReadOnlyOriginal, otherDatabaseChoices, upgradePair } from '../views/viewPairing';
+import * as vscode from 'vscode';
+import { alsoOffSource, diffArguments, isReadOnlyOriginal, partnerFor, upgradePair } from '../views/viewPairing';
+import { viewUri } from '../views/viewFileSystem';
 
 const upgrading = {
     dbs: [{ id: 'shop-17', versionId: 'v17' }, { id: 'shop-18', versionId: 'v18', isSelected: true }],
@@ -26,28 +28,37 @@ suite('View pairing', () => {
 });
 
 suite('Comparing across databases', () => {
-    const view = (id: number, name: string, xmlid: string | null) => ({
-        id, name, model: 'res.partner', type: 'form', active: true, inheritId: 1, xmlid, rootId: 1, isReport: false, writeDate: 0
+    test('the diff is left, then right, titled after the view and both labels', () => {
+        const left = { uri: vscode.Uri.parse('odoo-compare:/left/before%20%C2%B7%20acme.partner_custom.xml?n=1'), label: 'before' };
+        const right = { uri: viewUri('shop-18', 41, 'view-41'), label: 'shop-18' };
+        const [leftUri, rightUri, title] = diffArguments(left, right, 'partner.custom');
+        assert.strictEqual(leftUri, left.uri);
+        assert.strictEqual(rightUri.toString(), 'odoo-view:/shop-18/41/view-41.xml');
+        assert.strictEqual(title, 'partner.custom: before ↔ shop-18');
+    });
+});
+
+suite('Asking for a partner', () => {
+    const lonely = { dbs: [{ id: 'shop' }] };
+    const deps = () => {
+        const told: string[] = [];
+        return { told, deps: { running: async () => new Set<string>(), info: (message: string) => { told.push(message); } } };
+    };
+
+    test('with nothing to pick, it says so, unless asked to stay quiet', async () => {
+        const loud = deps();
+        assert.strictEqual(await partnerFor(lonely, 'shop', { ask: true }, loud.deps), undefined);
+        assert.deepStrictEqual(loud.told, ['The project has no other database or checkpoint to compare shop with.']);
+        const quiet = deps();
+        assert.strictEqual(await partnerFor(lonely, 'shop', { ask: true, quiet: true }, quiet.deps), undefined);
+        assert.deepStrictEqual(quiet.told, []);
     });
 
-    test('offers the project\'s other databases, running ones first', () => {
-        const project = { dbs: [{ id: 'a' }, { id: 'b', versionId: 'v' }, { id: 'c' }, { id: 'd' }] };
-        assert.deepStrictEqual(otherDatabaseChoices(project, 'a', new Set(['d'])), [
-            { dbName: 'd', versionId: undefined, running: true },
-            { dbName: 'b', versionId: 'v', running: false },
-            { dbName: 'c', versionId: undefined, running: false }
-        ]);
-        assert.deepStrictEqual(otherDatabaseChoices({ dbs: [{ id: 'a' }] }, 'a', new Set()), []);
-        assert.deepStrictEqual(otherDatabaseChoices(undefined, 'a', new Set()), []);
-    });
-
-    test('the diff puts the original left and the upgraded right, named after both', () => {
-        const [left, right, title] = diffArguments(
-            { dbName: 'shop-17', view: view(40, 'partner.custom', 'acme.partner_custom') },
-            { dbName: 'shop-18', view: view(41, 'partner.custom', null) });
-        assert.strictEqual(left.toString(), 'odoo-view:/shop-17/40/acme.partner_custom.xml');
-        assert.strictEqual(right.toString(), 'odoo-view:/shop-18/41/view-41.xml');
-        assert.strictEqual(title, 'partner.custom: shop-17 ↔ shop-18');
+    test('a stored or upgrade partner is used without asking', async () => {
+        const silent = deps();
+        silent.deps.running = async () => { throw new Error('asked'); };
+        assert.strictEqual((await partnerFor(upgrading, 'shop-18', { ask: true }, silent.deps))?.dbName, 'shop-17');
+        assert.deepStrictEqual(silent.told, []);
     });
 });
 
@@ -55,7 +66,7 @@ suite('Also off in the partner', () => {
     const cp = { id: 'shop__cp_1', label: 'before', createdAt: '2026-10-01T00:00:00Z' };
 
     test('the upgraded side reads the original; the original has no "also off"', () => {
-        assert.deepStrictEqual(alsoOffSource(upgrading, 'shop-18', upgradePair(upgrading)), { dbName: 'shop-17', checkpoint: false });
+        assert.deepStrictEqual(alsoOffSource(upgrading, 'shop-18', upgradePair(upgrading)), { dbName: 'shop-17', checkpoint: false, label: 'shop-17' });
         assert.strictEqual(alsoOffSource(upgrading, 'shop-17', upgradePair(upgrading)), undefined);
     });
 
@@ -70,9 +81,9 @@ suite('Also off in the partner', () => {
                 { id: 'alone' }
             ]
         };
-        assert.deepStrictEqual(alsoOffSource(project, 'shop', undefined), { dbName: 'shop__cp_1', checkpoint: true });
-        assert.deepStrictEqual(alsoOffSource(project, 'shop-clone', undefined), { dbName: 'shop', checkpoint: false });
-        assert.deepStrictEqual(alsoOffSource(project, 'base', undefined), { dbName: 'shop-copy', checkpoint: false });
+        assert.deepStrictEqual(alsoOffSource(project, 'shop', undefined), { dbName: 'shop__cp_1', checkpoint: true, label: 'before' });
+        assert.deepStrictEqual(alsoOffSource(project, 'shop-clone', undefined), { dbName: 'shop', checkpoint: false, label: 'shop' });
+        assert.deepStrictEqual(alsoOffSource(project, 'base', undefined), { dbName: 'shop-copy', checkpoint: false, label: 'shop-copy' });
         assert.strictEqual(alsoOffSource(project, 'other', undefined), undefined);
         assert.strictEqual(alsoOffSource(project, 'alone', undefined), undefined);
         assert.strictEqual(alsoOffSource(undefined, 'shop', undefined), undefined);
