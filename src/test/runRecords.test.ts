@@ -41,6 +41,29 @@ suite('Run records', () => {
         assert.deepStrictEqual(details, { versionId: 'v17', dbId: 'demo', port: 8100, kind: 'alongside' });
     });
 
+    test('an alongside run with workers records its realtime port; a bad one is dropped', () => {
+        const config = (realtimePort: unknown) => ({
+            name: 'odoo:17.0 · demo',
+            args: ['-p', '8100', '-d', 'demo', '--gevent-port', '8101'],
+            [ALONGSIDE_MARKER]: { versionId: 'v17', dbId: 'demo', port: 8100, realtimePort, kind: 'alongside' }
+        });
+        assert.deepStrictEqual(describeSession(config(8101), versions, undefined),
+            { versionId: 'v17', dbId: 'demo', port: 8100, realtimePort: 8101, kind: 'alongside' });
+        assert.deepStrictEqual(describeSession(config(70000), versions, undefined),
+            { versionId: 'v17', dbId: 'demo', port: 8100, kind: 'alongside' });
+        assert.deepStrictEqual(describeSession(config('x'), versions, undefined),
+            { versionId: 'v17', dbId: 'demo', port: 8100, kind: 'alongside' });
+    });
+
+    test('a primary entry with a realtime port in its args records it', () => {
+        assert.strictEqual(describeSession(
+            { name: 'odoo:17.0', args: ['-p', '8017', '-d', 'shop', '--gevent-port', '8072'] }, versions, undefined
+        )?.realtimePort, 8072);
+        assert.strictEqual(describeSession(
+            { name: 'odoo:17.0', args: ['-d', 'shop', '--longpolling-port', '8073'] }, versions, undefined
+        )?.realtimePort, 8073);
+    });
+
     test('an unknown name or a malformed config is not ours', () => {
         assert.strictEqual(describeSession({ name: 'Python: Current File' }, versions, 'v17'), undefined);
         assert.strictEqual(describeSession(undefined, versions, 'v17'), undefined);

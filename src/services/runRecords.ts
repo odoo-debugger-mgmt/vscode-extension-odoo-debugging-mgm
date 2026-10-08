@@ -14,6 +14,8 @@ export interface RunDetails {
     versionId: string;
     dbId?: string;
     port?: number;
+    /** --gevent-port / --longpolling-port, when the run has its own. */
+    realtimePort?: number;
     kind: 'primary' | 'alongside';
 }
 
@@ -45,10 +47,12 @@ export function describeSession(
         if (typeof m.versionId !== 'string' || !m.versionId) {
             return undefined;
         }
+        const realtimePort = validPort(m.realtimePort);
         return {
             versionId: m.versionId,
             dbId: typeof m.dbId === 'string' && m.dbId ? m.dbId : undefined,
             port: validPort(m.port),
+            ...(realtimePort ? { realtimePort } : {}),
             kind: 'alongside'
         };
     }
@@ -60,10 +64,12 @@ export function describeSession(
         return undefined;
     }
     const args = Array.isArray(config.args) ? config.args.filter((arg): arg is string => typeof arg === 'string') : [];
+    const realtimePort = validPort(argValue(args, '--gevent-port') ?? argValue(args, '--longpolling-port'));
     return {
         versionId: owner.id,
         dbId: argValue(args, '-d'),
         port: validPort(argValue(args, '-p')) ?? validPort(owner.settings.portNumber),
+        ...(realtimePort ? { realtimePort } : {}),
         kind: 'primary'
     };
 }

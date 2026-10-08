@@ -906,7 +906,7 @@ async function startAlongside(
         picked = await withPortPickLock(async () => {
             const taken = new Set<number>([
                 ...versionsService.getVersions().flatMap(v => [Number(v.settings.portNumber), Number(v.settings.shellPortNumber)]),
-                ...runRecords().map(record => record.port ?? 0),
+                ...runRecords().flatMap(record => [record.port ?? 0, record.realtimePort ?? 0]),
                 ...reservedPorts()
             ].filter(port => port > 0));
             const port = await pickFreePort(isPortOpen, taken);
@@ -923,7 +923,12 @@ async function startAlongside(
     const release = () => releases.forEach(done => done());
 
     const name = alongsideName(settings.debuggerName, db.id);
+    // Built from the version's own entry, so the fields the user added there
+    // (env, envFile, justMyCode, gevent, subProcess, …) run alongside too.
+    const target = currentLaunchTarget();
+    const entry = target ? await readManagedLaunchConfig(target, settings.debuggerName) : undefined;
     const config: vscode.DebugConfiguration = {
+        ...entry,
         name,
         type: 'debugpy',
         request: 'launch',
@@ -932,7 +937,13 @@ async function startAlongside(
         python: normalizePath(settings.pythonPath),
         console: 'integratedTerminal',
         args: alongsideArgs(baseArgs, port, realtime),
-        [ALONGSIDE_MARKER]: { versionId: version.id, dbId: db.id, port, kind: 'alongside' } satisfies RunDetails
+        [ALONGSIDE_MARKER]: {
+            versionId: version.id,
+            dbId: db.id,
+            port,
+            ...(realtime ? { realtimePort: realtime.port } : {}),
+            kind: 'alongside'
+        } satisfies RunDetails
     };
     let started: boolean;
     try {

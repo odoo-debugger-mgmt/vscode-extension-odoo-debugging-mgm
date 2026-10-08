@@ -10,7 +10,8 @@ import {
     resolveStopTarget,
     versionIdOfSession,
     runForDatabase,
-    runRecords
+    runRecords,
+    alongsideRunOf
 } from '../services/debugSessions';
 
 function fakeSession(name: string): vscode.DebugSession {
@@ -64,6 +65,18 @@ suite('Debug session registry', () => {
         untrackSession(fakeSession('odoo:17.0 · demo'));
         assert.strictEqual(runForDatabase('demo'), undefined);
         assert.strictEqual(versionIdOfSession('odoo:17.0'), 'v17');
+    });
+
+    test('a database run both ways for a moment is found as its primary run', () => {
+        // F5 from Run and Debug starts the primary before the alongside run
+        // of the same database has stopped.
+        trackSession(fakeSession('odoo:17.0 · shop'), { versionId: 'v17', dbId: 'shop', port: 8100, kind: 'alongside' });
+        trackSession(fakeSession('odoo:17.0'), { versionId: 'v17', dbId: 'shop', port: 8017, kind: 'primary' });
+        assert.strictEqual(runForDatabase('shop')?.name, 'odoo:17.0');
+        assert.strictEqual(alongsideRunOf('shop')?.name, 'odoo:17.0 · shop');
+        untrackSession(fakeSession('odoo:17.0 · shop'));
+        assert.strictEqual(runForDatabase('shop')?.name, 'odoo:17.0');
+        assert.strictEqual(alongsideRunOf('shop'), undefined);
     });
 
     test('ignores sessions with no configuration name', () => {

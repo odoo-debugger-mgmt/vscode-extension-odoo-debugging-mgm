@@ -49,8 +49,18 @@ export function runRecords(): RunRecord[] {
     return [...runs.values()].filter(record => sessions.has(record.name));
 }
 
+/**
+ * The run serving `dbId`. Its primary wins: when F5 starts a database that
+ * runs alongside, both are recorded until the alongside run has stopped.
+ */
 export function runForDatabase(dbId: string): RunRecord | undefined {
-    return runRecords().find(record => record.dbId === dbId);
+    const matches = runRecords().filter(record => record.dbId === dbId);
+    return matches.find(record => record.kind === 'primary') ?? matches[0];
+}
+
+/** The alongside run of `dbId` in this window, if there is one. */
+export function alongsideRunOf(dbId: string): RunRecord | undefined {
+    return runRecords().find(record => record.dbId === dbId && record.kind === 'alongside');
 }
 
 export function getSessionByName(name: string): vscode.DebugSession | undefined {

@@ -9,7 +9,7 @@ import { VersionsService } from '../versionsService';
 import { logger } from './logger';
 import { showWarning } from './notifications';
 import { getRunningInstances, RunningInstance } from './runningState';
-import { trackSession, untrackSession, anySessionRunning } from './debugSessions';
+import { trackSession, untrackSession, anySessionRunning, alongsideRunOf, getSessionByName } from './debugSessions';
 import { describeSession, RunDetails } from './runRecords';
 
 const DEFAULT_ODOO_PORT = 8069;
@@ -194,6 +194,21 @@ export function registerServerLifecycle(
             return;
         }
         trackSession(session, details);
+        // However the primary was started - Start Server, or VS Code's own F5
+        // and Run and Debug, which launch the entry directly - its database
+        // must not also be served alongside: two servers on one database.
+        if (details.kind === 'primary' && details.dbId) {
+            const alongside = alongsideRunOf(details.dbId);
+            const alongsideSession = alongside ? getSessionByName(alongside.name) : undefined;
+            if (alongside && alongsideSession) {
+                logger.info(`[server] "${details.dbId}" started as "${session.configuration.name}"; stopping its alongside run "${alongside.name}".`);
+                try {
+                    await vscode.debug.stopDebugging(alongsideSession);
+                } catch (error) {
+                    logger.warn(`[server] could not stop the alongside run "${alongside.name}":`, error);
+                }
+            }
+        }
         hooks.onRunningChanged(anySessionRunning());
 
         const openBrowser = vscode.workspace
