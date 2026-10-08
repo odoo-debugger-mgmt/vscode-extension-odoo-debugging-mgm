@@ -633,6 +633,27 @@
         "icon": "$(checklist)"
       },
       {
+        "command": "dbSelector.createCheckpoint",
+        "title": "Create Checkpoint",
+        "category": "Odoo DevTools",
+        "icon": "$(bookmark)"
+      },
+      {
+        "command": "dbSelector.restoreCheckpoint",
+        "title": "Restore Checkpoint",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "dbSelector.renameCheckpoint",
+        "title": "Rename Checkpoint",
+        "category": "Odoo DevTools"
+      },
+      {
+        "command": "dbSelector.deleteCheckpoint",
+        "title": "Delete Checkpoint",
+        "category": "Odoo DevTools"
+      },
+      {
         "command": "odooDebugger.relocateRepo",
         "title": "Relocate Repository…",
         "category": "Odoo DevTools"
@@ -1392,6 +1413,31 @@
           "group": "1_database@3"
         },
         {
+          "command": "dbSelector.createCheckpoint",
+          "when": "view == dbSelector && viewItem == database",
+          "group": "inline@1"
+        },
+        {
+          "command": "dbSelector.createCheckpoint",
+          "when": "view == dbSelector && viewItem == database",
+          "group": "1_database@5"
+        },
+        {
+          "command": "dbSelector.restoreCheckpoint",
+          "when": "view == dbSelector && viewItem == checkpoint",
+          "group": "1_checkpoint@1"
+        },
+        {
+          "command": "dbSelector.renameCheckpoint",
+          "when": "view == dbSelector && viewItem == checkpoint",
+          "group": "1_checkpoint@2"
+        },
+        {
+          "command": "dbSelector.deleteCheckpoint",
+          "when": "view == dbSelector && viewItem == checkpoint",
+          "group": "9_danger@1"
+        },
+        {
           "command": "dbSelector.openInBrowser",
           "when": "view == dbSelector && viewItem == database",
           "group": "2_open@1"
@@ -1654,6 +1700,18 @@
         },
         {
           "command": "dbSelector.clone",
+          "when": "false"
+        },
+        {
+          "command": "dbSelector.restoreCheckpoint",
+          "when": "false"
+        },
+        {
+          "command": "dbSelector.renameCheckpoint",
+          "when": "false"
+        },
+        {
+          "command": "dbSelector.deleteCheckpoint",
           "when": "false"
         },
         {

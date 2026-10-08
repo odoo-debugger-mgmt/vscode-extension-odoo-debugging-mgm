@@ -33,6 +33,8 @@ const MUST_BE_HIDDEN = [
 const MUST_STAY = [
     'dbSelector.copyName',
     'dbSelector.clone',
+    'dbSelector.createCheckpoint',
+    'dbSelector.restoreCheckpoint',
     'dbSelector.openInBrowser',
     'dbSelector.openPsqlShell',
     'odoo.openVersionInBrowser',
@@ -85,7 +87,8 @@ suite('What upgrade mode hides', () => {
         assert.ok(dbMenus.length > 0);
         for (const entry of dbMenus) {
             assert.ok(
-                (entry.when ?? '').includes('viewItem == database'),
+                // Checkpoint rows are the database rows' children, with their own menu.
+                /viewItem == (database|checkpoint)\b/.test(entry.when ?? ''),
                 `a database menu is keyed to something else: ${entry.when}`
             );
         }
