@@ -106,9 +106,13 @@ export async function copyDatabase(backend: CopyBackend, source: string, target:
         let copiedFiles = 0;
         if (root && await backend.files.exists(path.join(root, source))) {
             const to = path.join(root, target);
-            // No database owns a folder under a name that has no database.
+            // No database owns a folder under a name that has no database, but
+            // it may belong to another cluster sharing the data dir: move it
+            // aside, never delete it.
             if (await backend.files.exists(to)) {
-                await backend.files.remove(to);
+                const orphan = `${to}.orphan-${Date.now().toString(36)}`;
+                await backend.files.rename(to, orphan);
+                backend.log(`A filestore folder already existed for ${target}; moved it to ${orphan}.`);
             }
             createdFiles = true;
             const linked = await backend.files.linkTree(path.join(root, source), to);
@@ -120,7 +124,8 @@ export async function copyDatabase(backend: CopyBackend, source: string, target:
         }
 
         if (options.protect) {
-            await backend.sql(`COMMENT ON DATABASE ${quotePgIdentifier(target)} IS ${sqlText(options.protect.comment)};`);
+            // COMMENT takes only a string literal, so it is built server-side.
+            await backend.sql(`DO $$ BEGIN EXECUTE format('COMMENT ON DATABASE %I IS %L', ${sqlText(target)}, ${sqlText(options.protect.comment)}); END $$;`);
             await backend.sql(`ALTER DATABASE ${quotePgIdentifier(target)} WITH ALLOW_CONNECTIONS false IS_TEMPLATE true;`);
         }
         return { filestore, copiedFiles };
@@ -157,6 +162,12 @@ export async function stageRestore(backend: CopyBackend, db: string, checkpointD
     if (await databaseExistsVia(backend, replaced)) {
         throw new Error(`"${replaced}" is left over from an interrupted restore and may hold the data of "${db}". Rename or drop it in psql first.`);
     }
+    if (filestoreRoot) {
+        const folder = path.join(filestoreRoot, replaced);
+        if (await backend.files.exists(folder)) {
+            throw new Error(`"${folder}" is left over from an interrupted restore and may hold the filestore of "${db}". Move or delete it first.`);
+        }
+    }
     const staged = derivedDbName(db, '__restoring');
     // A leftover staging copy is only ever a copy of a checkpoint.
     await discardDatabase(backend, staged, filestoreRoot);
@@ -172,41 +183,49 @@ export async function stageRestore(backend: CopyBackend, db: string, checkpointD
  */
 export async function swapInRestored(backend: CopyBackend, db: string, staged: string, filestoreRoot?: string): Promise<void> {
     const replaced = derivedDbName(db, '__replaced');
-    const undo: Array<() => Promise<unknown>> = [];
+    const undo: Array<{ kind: 'db' | 'files'; run: () => Promise<unknown> }> = [];
     try {
+        // A leftover folder may be the only copy of the live filestore.
+        if (filestoreRoot && await backend.files.exists(path.join(filestoreRoot, replaced))) {
+            throw new Error(`"${path.join(filestoreRoot, replaced)}" is left over from an interrupted restore and may hold the filestore of "${db}". Move or delete it first.`);
+        }
         await retryWhileBusy(backend, db, () => backend.sql(rename(db, replaced)));
-        undo.push(() => backend.sql(rename(replaced, db)));
+        undo.push({ kind: 'db', run: () => backend.sql(rename(replaced, db)) });
         await backend.sql(rename(staged, db));
-        undo.push(() => backend.sql(rename(db, staged)));
+        undo.push({ kind: 'db', run: () => backend.sql(rename(db, staged)) });
 
         if (filestoreRoot) {
             const live = path.join(filestoreRoot, db);
             const old = path.join(filestoreRoot, replaced);
             const next = path.join(filestoreRoot, staged);
-            if (await backend.files.exists(old)) {
-                await backend.files.remove(old);
-            }
             if (await backend.files.exists(live)) {
                 await backend.files.rename(live, old);
-                undo.push(() => backend.files.rename(old, live));
+                undo.push({ kind: 'files', run: () => backend.files.rename(old, live) });
             }
             if (await backend.files.exists(next)) {
                 await backend.files.rename(next, live);
-                undo.push(() => backend.files.rename(live, next));
+                undo.push({ kind: 'files', run: () => backend.files.rename(live, next) });
             }
         }
     } catch (error) {
-        let undone = true;
+        const failed = new Set<'db' | 'files'>();
         for (const step of undo.reverse()) {
             try {
-                await step();
+                await step.run();
             } catch (undoError) {
-                undone = false;
+                failed.add(step.kind);
                 backend.log(`Could not undo a restore step: ${undoError}`);
             }
         }
-        if (!undone) {
-            throw new Error(`Restoring "${db}" failed and could not be undone: its previous state is in "${replaced}". ${(error as Error)?.message ?? error}`);
+        if (failed.size > 0) {
+            const where: string[] = [];
+            if (failed.has('db')) {
+                where.push(`its database's previous state is in database "${replaced}"`);
+            }
+            if (failed.has('files') && filestoreRoot) {
+                where.push(`its filestore is in folder "${path.join(filestoreRoot, replaced)}"`);
+            }
+            throw new Error(`Restoring "${db}" failed and could not be undone: ${where.join(', and ')}. ${(error as Error)?.message ?? error}`);
         }
         throw error;
     }

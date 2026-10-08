@@ -31,6 +31,9 @@ function fake(dbs: string[], dirs: string[] = [], versionNum = 170006): Fake {
             if (statement === 'SHOW server_version_num;') {
                 return String(versionNum);
             }
+            if (/^COMMENT ON DATABASE .* IS (?!')/.test(statement)) {
+                throw new Error('syntax error: COMMENT takes a string literal');
+            }
             let m = /^CREATE DATABASE "([^"]+)" TEMPLATE "([^"]+)"/.exec(statement);
             if (m) {
                 if (f.busyTimes > 0) {
@@ -100,7 +103,7 @@ suite('Database copy', () => {
         const calls = sqlCalls(f);
         assert.strictEqual(calls[0], 'CREATE DATABASE "shop__cp_1" TEMPLATE "shop" STRATEGY FILE_COPY;');
         assert.strictEqual(calls[1], 'link shop -> shop__cp_1');
-        assert.ok(calls[2].startsWith('COMMENT ON DATABASE "shop__cp_1" IS convert_from('));
+        assert.ok(calls[2].startsWith(`DO $$ BEGIN EXECUTE format('COMMENT ON DATABASE %I IS %L', convert_from(`));
         assert.strictEqual(calls[3], 'ALTER DATABASE "shop__cp_1" WITH ALLOW_CONNECTIONS false IS_TEMPLATE true;');
     });
 
@@ -111,11 +114,12 @@ suite('Database copy', () => {
         assert.ok(!f.calls.some(call => call.startsWith('link')));
     });
 
-    test('a stray filestore folder under the target name is replaced', async () => {
+    test('a stray filestore folder under the target name is moved aside', async () => {
         const f = fake(['shop'], ['shop', 'copy']);
         await copyDatabase(f, 'shop', 'copy', { filestoreRoot: ROOT });
-        const rm = f.calls.indexOf('rm copy');
-        assert.ok(rm >= 0 && rm < f.calls.indexOf('link shop -> copy'));
+        const mv = f.calls.findIndex(call => call.startsWith('mv copy -> copy.orphan-'));
+        assert.ok(mv >= 0 && mv < f.calls.indexOf('link shop -> copy'));
+        assert.ok(!f.calls.includes('rm copy'));
     });
 
     test('refuses a target that already exists', async () => {
@@ -221,6 +225,18 @@ suite('Database copy', () => {
         f.failOn = call => call === 'ALTER DATABASE "shop__restoring" RENAME TO "shop";'
             || call === 'ALTER DATABASE "shop__replaced" RENAME TO "shop";';
         await assert.rejects(swapInRestored(f, 'shop', 'shop__restoring', ROOT), /shop__replaced/);
+    });
+
+    test('when the folder undo fails, the error names the folder', async () => {
+        const f = fake(['shop', 'shop__restoring'], ['shop', 'shop__restoring']);
+        f.failOn = call => call === 'mv shop__restoring -> shop' || call === 'mv shop__replaced -> shop';
+        await assert.rejects(swapInRestored(f, 'shop', 'shop__restoring', ROOT), /folder ".*shop__replaced"/);
+    });
+
+    test('stageRestore refuses when a shop__replaced folder was left behind', async () => {
+        const f = fake(['shop', 'shop__cp_1'], ['shop__replaced']);
+        await assert.rejects(stageRestore(f, 'shop', 'shop__cp_1', ROOT), /shop__replaced/);
+        assert.ok(!f.calls.some(call => call.startsWith('CREATE') || call.startsWith('DROP')));
     });
 
     test('failing to drop the old state is logged, not a failed restore', async () => {
