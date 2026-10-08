@@ -108,6 +108,7 @@
     "commands": [
       { "command": "odoo.compareFileWithPartner", "title": "Compare with Partner", "category": "Odoo DevTools", "icon": "$(diff)" },
       { "command": "odoo.compareModuleWithPartner", "title": "Compare Module with Partner", "category": "Odoo DevTools" },
+      { "command": "odoo.compareThisWithPartner", "title": "Compare This with Partner", "category": "Odoo DevTools" },
       { "command": "viewDoctor.openArch", "title": "Open Arch", "category": "Odoo DevTools", "icon": "$(go-to-file)" },
       { "command": "viewDoctor.openParent", "title": "Open Parent View", "category": "Odoo DevTools" },
       { "command": "viewDoctor.openRoot", "title": "Open Root View", "category": "Odoo DevTools" },
@@ -911,6 +912,11 @@
           "command": "odoo.compareFileWithPartner",
           "when": "odoo-debugger.is_active && resourceScheme == file",
           "group": "odoo@4"
+        },
+        {
+          "command": "odoo.compareThisWithPartner",
+          "when": "odoo-debugger.is_active && resourceScheme == file && resourceExtname =~ /^\\.(py|xml)$/",
+          "group": "odoo@5"
         },
         {
           "command": "odoo.runTestsForCurrentFile",

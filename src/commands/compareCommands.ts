@@ -12,7 +12,9 @@ import { showInfo } from '../services/notifications';
 import { findModuleForFile } from '../services/manifest';
 import { codeSides, type CodeSides } from '../services/compare/sides';
 import { realFsProbe, resolveCounterpart, rootOf, type SideRoots } from '../services/compare/counterpart';
-import { diffTrees } from '../services/compare/moduleDiff';
+import { diffTrees, listTree } from '../services/compare/moduleDiff';
+import { enclosingSymbol, findMethodInSources, modelKeyOf, scanPythonSymbols, symbolText, type PySymbol } from '../services/compare/pythonSymbols';
+import { findXmlElementById, xmlElementAt } from '../services/compare/xmlElements';
 import { compareDocuments } from '../views/compareDocuments';
 
 type Project = Parameters<typeof codeSides>[0];
@@ -74,6 +76,37 @@ async function moduleDirOf(arg: unknown): Promise<string | undefined> {
         return (await findModuleForFile(path.join(arg.fsPath, '__manifest__.py')))?.path;
     }
     return undefined;
+}
+
+/** The qualified name of the class or function around `position`, from the language server; undefined without one. */
+async function qualifiedFromServer(uri: vscode.Uri, position: vscode.Position): Promise<string | undefined> {
+    const symbols = await Promise.resolve(
+        vscode.commands.executeCommand<vscode.DocumentSymbol[]>('vscode.executeDocumentSymbolProvider', uri)
+    ).catch(() => undefined);
+    const kinds = [vscode.SymbolKind.Class, vscode.SymbolKind.Function, vscode.SymbolKind.Method];
+    let best: string[] | undefined;
+    const walk = (list: vscode.DocumentSymbol[], parents: string[]): void => {
+        for (const s of list) {
+            if (!s.range?.contains(position)) {
+                continue;
+            }
+            const chain = kinds.includes(s.kind) ? [...parents, s.name] : parents;
+            if (kinds.includes(s.kind) && (!best || chain.length >= best.length)) {
+                best = chain;
+            }
+            walk(s.children ?? [], chain);
+        }
+    };
+    walk(Array.isArray(symbols) ? symbols : [], []);
+    return best?.join('.');
+}
+
+async function readText(file: string): Promise<string> {
+    return fs.promises.readFile(file, 'utf8');
+}
+
+async function filesOf(dir: string, ext: string): Promise<string[]> {
+    return [...(await listTree(dir)).keys()].filter(rel => rel.endsWith(ext)).map(rel => path.join(dir, rel));
 }
 
 export function registerCompareCommands(deps: CommandDeps): void {
@@ -168,5 +201,108 @@ export function registerCompareCommands(deps: CommandDeps): void {
             ? compareDocuments.snapshotUri('right', `(not in ${right.label})`, '')
             : vscode.Uri.file(path.join(rightDir, picked.rel));
         await vscode.commands.executeCommand('vscode.diff', leftUri, rightUri, title);
+    }));
+
+    context.subscriptions.push(registerCommand('odoo.compareThisWithPartner', async (arg?: unknown) => {
+        const file = fileOf(arg);
+        const ext = file ? path.extname(file) : '';
+        if (!file || (ext !== '.py' && ext !== '.xml')) {
+            void showInfo('Open a Python or XML file to compare a class, method or record with the partner.');
+            return;
+        }
+        const editor = vscode.window.activeTextEditor;
+        const here = editor && path.resolve(editor.document.uri.fsPath) === path.resolve(file) ? editor : undefined;
+        if (!here) {
+            void showInfo('Put the cursor in the file to compare a class, method or record.');
+            return;
+        }
+        const sides = await sidesOrExplain(refresh);
+        if (!sides) {
+            return;
+        }
+        const { onLeft, onRight } = matchSide(file, sides);
+        if (!onLeft && !onRight) {
+            void showInfo(`${path.basename(file)} is not part of ${sides.left.label}'s or ${sides.right.label}'s code.`);
+            return;
+        }
+        const [from, to] = onLeft ? [sides.left, sides.right] : [sides.right, sides.left];
+        const text = here.document.getText();
+        const position = here.selection.active;
+        const show = async (what: string, thisText: string, otherText: string): Promise<void> => {
+            const [leftText, rightText] = onLeft ? [thisText, otherText] : [otherText, thisText];
+            await vscode.commands.executeCommand('vscode.diff',
+                compareDocuments.snapshotUri('left', `${what} · ${sides.left.label}`, leftText),
+                compareDocuments.snapshotUri('right', `${what} · ${sides.right.label}`, rightText),
+                `${what}: ${sides.left.label} ↔ ${sides.right.label}`);
+        };
+
+        if (ext === '.xml') {
+            const el = xmlElementAt(text, here.document.offsetAt(position));
+            if (!el) {
+                void showInfo('Put the cursor inside a <record>, <template> or <menuitem>.');
+                return;
+            }
+            const otherFile = await counterpartOf(file, from, to, path.basename(file));
+            if (!otherFile) {
+                return;
+            }
+            if (path.resolve(otherFile) === path.resolve(file)) {
+                void showInfo(`${path.basename(file)} is the same file in ${sides.left.label} and ${sides.right.label}.`);
+                return;
+            }
+            const moduleDir = (await findModuleForFile(otherFile))?.path;
+            const moduleName = moduleDir ? path.basename(moduleDir) : '';
+            const candidates = [otherFile, ...(moduleDir ? (await filesOf(moduleDir, '.xml')).filter(f => f !== otherFile) : [])];
+            for (const candidate of candidates) {
+                const otherText = await readText(candidate).catch(() => undefined);
+                const found = otherText === undefined ? undefined : findXmlElementById(otherText, el.id, moduleName);
+                if (found && otherText !== undefined) {
+                    await show(el.id, text.slice(el.start, el.end), otherText.slice(found.start, found.end));
+                    return;
+                }
+            }
+            void showInfo(`${el.id} has no counterpart in ${to.label}.`);
+            return;
+        }
+
+        const symbols = scanPythonSymbols(text);
+        const serverName = await qualifiedFromServer(here.document.uri, position);
+        const mine: PySymbol | undefined = (serverName ? symbols.find(s => s.qualified === serverName) : undefined)
+            ?? enclosingSymbol(symbols, position.line);
+        if (!mine) {
+            void showInfo('Put the cursor inside a class or a method.');
+            return;
+        }
+        const otherFile = await counterpartOf(file, from, to, mine.qualified);
+        if (!otherFile) {
+            return;
+        }
+        if (path.resolve(otherFile) === path.resolve(file)) {
+            void showInfo(`${path.basename(file)} is the same file in ${sides.left.label} and ${sides.right.label}.`);
+            return;
+        }
+        const otherText = await readText(otherFile).catch(() => '');
+        let theirs = scanPythonSymbols(otherText).find(s => s.qualified === mine.qualified);
+        let theirsText = theirs ? symbolText(otherText, theirs) : undefined;
+        if (!theirs && mine.qualified.includes('.')) {
+            const owner = symbols.find(s => s.kind === 'class' && mine.qualified.startsWith(`${s.qualified}.`));
+            const moduleDir = (await findModuleForFile(otherFile))?.path;
+            if (owner && moduleDir) {
+                const sources: Array<{ file: string; text: string }> = [];
+                for (const f of await filesOf(moduleDir, '.py')) {
+                    sources.push({ file: f, text: await readText(f).catch(() => '') });
+                }
+                const hit = findMethodInSources(sources, modelKeyOf(symbolText(text, owner)), mine.name);
+                if (hit) {
+                    theirsText = symbolText(sources.find(s => s.file === hit.file)!.text, hit.symbol);
+                    theirs = hit.symbol;
+                }
+            }
+        }
+        if (!theirs || theirsText === undefined) {
+            void showInfo(`${mine.qualified} has no counterpart in ${to.label}.`);
+            return;
+        }
+        await show(mine.qualified, symbolText(text, mine), theirsText);
     }));
 }

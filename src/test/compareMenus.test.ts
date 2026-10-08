@@ -12,6 +12,16 @@ suite('Compare menus', () => {
     test('the titles', () => {
         assert.strictEqual(titles.get('odoo.compareFileWithPartner'), 'Compare with Partner');
         assert.strictEqual(titles.get('odoo.compareModuleWithPartner'), 'Compare Module with Partner');
+        assert.strictEqual(titles.get('odoo.compareThisWithPartner'), 'Compare This with Partner');
+    });
+
+    test('compare this: editor context for .py and .xml, not hidden in upgrade mode', () => {
+        const entries = menu('editor/context', 'odoo.compareThisWithPartner');
+        assert.strictEqual(entries.length, 1);
+        assert.ok((entries[0].when ?? '').includes('odoo-debugger.is_active'));
+        assert.ok((entries[0].when ?? '').includes('resourceExtname =~ /^\\.(py|xml)$/'), entries[0].when);
+        assert.ok(!(entries[0].when ?? '').includes('upgrade_enabled'));
+        assert.strictEqual(entries[0].group, 'odoo@5');
     });
 
     test('file compare: editor title (not inline), editor context, explorer files', () => {
