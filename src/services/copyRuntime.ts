@@ -16,11 +16,11 @@ import { ownQueryEnv, OWN_QUERY_APP_NAME } from './database';
 import { VIEW_WORKER_APP_NAME } from './views/viewWorkerArgs';
 import { CONNECTIONS_SQL, DbConnection, describeConnection, parseConnections, releaseForCopy, ReleaseHost, ReleaseUi } from './connectionRelease';
 import { invalidateRunningState } from './runningState';
-import { getSessionByName, runningDebuggerNames, versionIdOfSession } from './debugSessions';
+import { getSessionByName, runForDatabase } from './debugSessions';
 import { dbForVersion } from './dbResolution';
 import { SettingsStore } from '../settingsStore';
 import { VersionsService } from '../versionsService';
-import { runDirectory, startServerForVersion } from '../debugger';
+import { runAlongside, runDirectory, startServerForVersion } from '../debugger';
 import { logger, errorMessage } from './logger';
 import { showModalWarning, showWarning } from './notifications';
 
@@ -53,32 +53,25 @@ export function realCopyBackend(): CopyBackend {
     };
 }
 
-/** The value after `-d` in the session's launch arguments (debugger.ts prepareArgs). */
-function sessionDatabase(session: vscode.DebugSession): string | undefined {
-    const args: unknown = session.configuration?.args;
-    if (!Array.isArray(args)) {
-        return undefined;
-    }
-    const at = args.indexOf('-d');
-    const value: unknown = at >= 0 ? args[at + 1] : undefined;
-    return typeof value === 'string' ? value : undefined;
-}
-
 export function realReleaseHost(): ReleaseHost {
     return {
         letGo: db => releaseDatabase(db),
-        // By the database the session was launched on, not the one its
-        // version selects now: selecting another must not make this one ours.
+        // By the database the session was launched on (its run record), not
+        // the one its version selects now: selecting another must not make
+        // this one ours.
         ownRun: async db => {
-            for (const name of runningDebuggerNames()) {
-                const versionId = versionIdOfSession(name);
-                const session = getSessionByName(name);
-                if (!versionId || !session || sessionDatabase(session) !== db) {
-                    continue;
-                }
-                return { versionId, debuggerName: name, noDebug: session.configuration?.noDebug === true, dbName: db };
+            const record = runForDatabase(db);
+            if (!record) {
+                return undefined;
             }
-            return undefined;
+            const session = getSessionByName(record.name);
+            return {
+                versionId: record.versionId,
+                debuggerName: record.name,
+                noDebug: session?.configuration?.noDebug === true,
+                dbName: db,
+                kind: record.kind
+            };
         },
         stop: async run => {
             const session = getSessionByName(run.debuggerName);
@@ -94,6 +87,15 @@ export function realReleaseHost(): ReleaseHost {
             }
         },
         start: async run => {
+            // An alongside run comes back alongside, on a fresh port: never
+            // as its version's primary, whatever that version selects now.
+            if (run.kind === 'alongside') {
+                const alongside = await runAlongside(run.dbName, { noDebug: run.noDebug, quiet: true });
+                if (!alongside.ok) {
+                    throw new Error(alongside.message ?? `Could not start "${run.debuggerName}".`);
+                }
+                return;
+            }
             // The version starts whatever it selects now; that may not be the database it was stopped on.
             const now = dbForVersion((await SettingsStore.peekSelectedProject())?.project, run.versionId)?.id;
             if (now !== run.dbName) {

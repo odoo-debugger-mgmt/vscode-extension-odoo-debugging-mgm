@@ -25,7 +25,19 @@ import {
     type LaunchTarget
 } from './services/launchConfig';
 import { currentDataLocation } from './services/dataLocation';
-import { getSessionByName, runningDebuggerNames, resolveStopTarget, versionIdOfSession } from './services/debugSessions';
+import { getSessionByName, runForDatabase, runRecords, runningDebuggerNames, resolveStopTarget, versionIdOfSession } from './services/debugSessions';
+import { ALONGSIDE_MARKER, type RunDetails } from './services/runRecords';
+import {
+    alongsideArgs,
+    alongsideName,
+    checkoutConflicts,
+    pickFreePort,
+    realtimePortFlag,
+    reservedPorts,
+    reservePort,
+    workersOf
+} from './services/alongside';
+import { getRepoBranch } from './services/branches';
 import { sessionOwner } from './services/versionIdentity';
 import { dbForVersion } from './services/dbResolution';
 import { resolveReposForDatabase } from './services/versionRepos';
@@ -414,11 +426,11 @@ export async function collectAddonsPaths(
 async function prepareArgs(
     project: ProjectModel,
     settings: SettingsModel,
-    options: { isShell?: boolean; versionId?: string } = {}
+    options: { isShell?: boolean; versionId?: string; db?: DatabaseModel } = {}
 ): Promise<string[]> {
     const isShell = options.isShell === true;
 
-    const db = dbForVersion(project, options.versionId);
+    const db = options.db ?? dbForVersion(project, options.versionId);
     if (!db) {
         throw new Error(NO_DATABASE);
     }
@@ -748,6 +760,16 @@ export async function startServerForVersion(
         }
         return { ok: false, message };
     }
+    // F5 runs the current database. An alongside run of it in this window
+    // would otherwise share its database with the primary. Stopped only
+    // here, past every refusal above, for the same reason as existingSession.
+    const alongside = runForDatabase(db.id);
+    if (alongside?.kind === 'alongside') {
+        const alongsideSession = getSessionByName(alongside.name);
+        if (alongsideSession) {
+            await vscode.debug.stopDebugging(alongsideSession);
+        }
+    }
     if (existingSession) {
         await vscode.debug.stopDebugging(existingSession);
     }
@@ -763,6 +785,194 @@ export async function startServerForVersion(
         return notWritten();
     }
     return { ok: true };
+}
+
+/**
+ * Serializes "compute the taken ports, pick, reserve" across Run Alongside
+ * calls: pickFreePort awaits its probes, so two calls interleaving there
+ * would both find the same port free before either reserved it.
+ */
+let portPickChain: Promise<unknown> = Promise.resolve();
+function withPortPickLock<T>(work: () => Promise<T>): Promise<T> {
+    const next = portPickChain.then(work, work);
+    portPickChain = next.catch(() => undefined);
+    return next;
+}
+
+/** Databases whose Run Alongside is between its checks and its session being recorded. */
+const alongsideStarting = new Set<string>();
+
+/**
+ * Runs `dbId` next to whatever already runs: its own version's code, on the
+ * first free port from 8100, never written to launch.json (alongside.ts). A
+ * database already running in this window is not started twice.
+ */
+export async function runAlongside(
+    dbId: string,
+    options: { noDebug?: boolean; quiet?: boolean } = {}
+): Promise<{ ok: boolean; message?: string; port?: number }> {
+    const fail = (message: string, ...actions: string[]): { ok: false; message: string } => {
+        if (!options.quiet) {
+            void showError(message, ...actions).then(choice => handleAlongsideAction(choice, dbId));
+        }
+        return { ok: false, message };
+    };
+
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    const workspacePath = workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceFolders || !workspacePath) {
+        return fail('Open a workspace to use this command.');
+    }
+    const result = await SettingsStore.getSelectedProject();
+    const db = (result?.project.dbs as DatabaseModel[] | undefined)?.find(entry => entry.id === dbId);
+    if (!result || !db) {
+        return fail(`"${dbId}" is not a database of the selected project.`);
+    }
+    const project = result.project;
+
+    const existing = runForDatabase(db.id);
+    if (existing || alongsideStarting.has(db.id)) {
+        const where = existing?.port ? ` on port ${existing.port}` : '';
+        const message = existing
+            ? `"${db.id}" is already running in this window${where}.`
+            : `"${db.id}" is already starting in this window.`;
+        if (!options.quiet) {
+            const actions = existing?.port ? ['Open in Browser'] : [];
+            void showInfo(message, ...actions).then(choice => {
+                if (choice === 'Open in Browser' && existing?.port) {
+                    void vscode.env.openExternal(buildServerUrl(existing.port, db.id));
+                }
+            });
+        }
+        return { ok: true, message, port: existing?.port };
+    }
+
+    alongsideStarting.add(db.id);
+    try {
+        return await startAlongside(project, db, workspaceFolders[0], workspacePath, options, fail);
+    } finally {
+        alongsideStarting.delete(db.id);
+    }
+}
+
+async function startAlongside(
+    project: ProjectModel,
+    db: DatabaseModel,
+    folder: vscode.WorkspaceFolder,
+    workspacePath: string,
+    options: { noDebug?: boolean },
+    fail: (message: string, ...actions: string[]) => { ok: false; message: string }
+): Promise<{ ok: boolean; message?: string; port?: number }> {
+    const versionsService = VersionsService.getInstance();
+    await versionsService.initialize();
+    const version = db.versionId ? versionsService.getVersion(db.versionId) : undefined;
+    if (!version) {
+        return fail(`"${db.id}" has no version to run it with.`, 'Change Version');
+    }
+    const settings = new SettingsModel(version.settings);
+    if (!isVersionProvisioned(resolveOptionalPath(settings.pythonPath))) {
+        return fail(`"${version.name}" has no environment to run.`, 'Provision');
+    }
+
+    // The database's own branches, in their own copies where there are any.
+    const setupRoot = readSetupState().provisioningRoot;
+    const resolved = await resolveReposForDatabase(project, db, { version, root: setupRoot });
+    await ensureCustomWorktrees(resolved, undefined, { interactive: false });
+    const after = await resolveReposForDatabase(project, db, { version, root: setupRoot });
+    const current = new Map<string, string | null>();
+    for (const entry of after) {
+        current.set(entry.path, await getRepoBranch(entry.path));
+    }
+    const conflicts = checkoutConflicts(after, current);
+    if (conflicts.length > 0) {
+        const first = conflicts[0];
+        const list = conflicts.map(c => `"${c.repo}" is on ${c.current}, and "${db.id}" needs ${c.needed}`).join('; ');
+        pendingConflictRepo.set(db.id, first.path);
+        return fail(
+            `Cannot run "${db.id}" alongside: ${list}. Running servers share that checkout, so it is not switched.`,
+            first.mode === 'checkout' ? 'Use One Copy Per Branch' : 'Resolve'
+        );
+    }
+
+    let baseArgs: string[];
+    try {
+        baseArgs = await prepareArgs(project, settings, { versionId: version.id, db });
+    } catch (error) {
+        return fail(`Could not prepare "${db.id}": ${errorMessage(error)}`);
+    }
+
+    let picked: { port: number; realtime?: { flag: string; port: number }; releases: Array<() => void> };
+    try {
+        picked = await withPortPickLock(async () => {
+            const taken = new Set<number>([
+                ...versionsService.getVersions().flatMap(v => [Number(v.settings.portNumber), Number(v.settings.shellPortNumber)]),
+                ...runRecords().map(record => record.port ?? 0),
+                ...reservedPorts()
+            ].filter(port => port > 0));
+            const port = await pickFreePort(isPortOpen, taken);
+            const realtime = workersOf(settings.extraParams) > 0
+                ? { flag: realtimePortFlag(version.odooVersion), port: await pickFreePort(isPortOpen, new Set([...taken, port])) }
+                : undefined;
+            const releases = [reservePort(port), ...(realtime ? [reservePort(realtime.port)] : [])];
+            return { port, realtime, releases };
+        });
+    } catch (error) {
+        return fail(errorMessage(error));
+    }
+    const { port, realtime, releases } = picked;
+    const release = () => releases.forEach(done => done());
+
+    const name = alongsideName(settings.debuggerName, db.id);
+    const config: vscode.DebugConfiguration = {
+        name,
+        type: 'debugpy',
+        request: 'launch',
+        cwd: runDirectory(workspacePath),
+        program: `${normalizePath(settings.odooPath)}/odoo-bin`,
+        python: normalizePath(settings.pythonPath),
+        console: 'integratedTerminal',
+        args: alongsideArgs(baseArgs, port, realtime),
+        [ALONGSIDE_MARKER]: { versionId: version.id, dbId: db.id, port, kind: 'alongside' } satisfies RunDetails
+    };
+    let started: boolean;
+    try {
+        started = await vscode.debug.startDebugging(folder, config, { noDebug: options.noDebug === true });
+    } catch (error) {
+        release();
+        return fail(`Could not start "${name}": ${errorMessage(error)}`);
+    }
+    if (!started) {
+        release();
+        return fail(`Could not start "${name}".`);
+    }
+    // The session is recorded on start (server.ts), and the record's port is
+    // taken from then on. Until it is, the reservation holds (30 s at most).
+    if (runRecords().some(record => record.name === name)) {
+        release();
+    }
+    return { ok: true, port };
+}
+
+/** The repository a refused Run Alongside named, for its button. */
+const pendingConflictRepo = new Map<string, string>();
+
+async function handleAlongsideAction(choice: string | undefined, dbId: string): Promise<void> {
+    if (choice === 'Use One Copy Per Branch') {
+        const repoPath = pendingConflictRepo.get(dbId);
+        if (repoPath) {
+            await vscode.commands.executeCommand('odt.repo.toggleBranchMode', vscode.Uri.file(repoPath));
+        }
+    } else if (choice === 'Resolve') {
+        await vscode.commands.executeCommand('odt.repo.resolveWorktrees');
+    } else if (choice === 'Provision' || choice === 'Change Version') {
+        const result = await SettingsStore.getSelectedProject();
+        const db = (result?.project.dbs as DatabaseModel[] | undefined)?.find(entry => entry.id === dbId);
+        if (choice === 'Provision' && db?.versionId) {
+            await provisionExistingVersion(db.versionId);
+        } else if (choice === 'Change Version' && db) {
+            await vscode.commands.executeCommand('dbSelector.changeVersion', db);
+        }
+    }
 }
 
 export async function startDebugServer(options: { noDebug?: boolean } = {}): Promise<void> {

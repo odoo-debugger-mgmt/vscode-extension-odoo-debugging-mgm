@@ -22,6 +22,8 @@ export interface ManagedRun {
     noDebug: boolean;
     /** The database it was started on (its `-d`), whatever its version selects now. */
     dbName: string;
+    /** A version's primary entry, or a run alongside it: each restarts as what it was. */
+    kind: 'primary' | 'alongside';
 }
 
 export interface ReleaseHost {
