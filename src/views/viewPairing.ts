@@ -8,7 +8,7 @@ import { ensureUpgradeConfigModel } from '../models/upgrade';
 import { getRunningInstances } from '../services/runningState';
 import { showInfo } from '../services/notifications';
 import { findViewByXmlid, findViewsLike, type ViewRow } from '../services/views/viewQueries';
-import { matchView } from '../services/views/viewMatch';
+import { matchView, type CounterpartRows } from '../services/views/viewMatch';
 import { SettingsStore } from '../settingsStore';
 import { stripSettings } from '../utils';
 import { isCopyPartner, partnerChoices, resolveStoredPartner, setPartner, type PartnerModel, type PartnerProject, type ResolvedPartner } from '../services/comparisonPartner';
@@ -54,11 +54,21 @@ export function isReadOnlyOriginal(project: PairProject | undefined, dbName: str
  * of its model and type; undefined when the user dismissed the pick.
  */
 export async function findCounterpart(view: ViewRow, dbName: string): Promise<ViewRow | 'none' | undefined> {
+    return pickCounterpart(view, dbName, await counterpartRows(view, dbName));
+}
+
+/** The rows a counterpart is chosen from: the reads only, so a checkpoint is open just for them. */
+export async function counterpartRows(view: ViewRow, dbName: string): Promise<CounterpartRows> {
     const [byXmlid, rows] = await Promise.all([
         view.xmlid ? findViewByXmlid(dbName, view.xmlid) : Promise.resolve(undefined),
         findViewsLike(dbName, view)
     ]);
-    const match = matchView(view, { byXmlid, rows });
+    return { byXmlid, rows };
+}
+
+/** The counterpart among those rows, asking the user when none is certainly it. */
+export async function pickCounterpart(view: ViewRow, dbName: string, found: CounterpartRows): Promise<ViewRow | 'none' | undefined> {
+    const match = matchView(view, found);
     if (match.kind === 'none') {
         return 'none';
     }
@@ -102,7 +112,8 @@ const realPartnerForDeps: PartnerForDeps = {
 export async function partnerFor(
     project: PairProject | undefined,
     dbId: string,
-    options: { ask: boolean; quiet?: boolean },
+    /** onStored: the user picked a partner and it was remembered (the trees show it, so refresh them). */
+    options: { ask: boolean; quiet?: boolean; onStored?: () => void },
     deps: PartnerForDeps = realPartnerForDeps
 ): Promise<ResolvedPartner | undefined> {
     const resolved = resolveStoredPartner(project as PartnerProject | undefined, dbId, upgradePair(project));
@@ -127,6 +138,7 @@ export async function partnerFor(
     }
     const stored: PartnerModel = { dbName: picked.choice.dbName, kind: picked.choice.kind };
     await storePartner(dbId, stored);
+    options.onStored?.();
     return resolveStoredPartner({ ...(project as PartnerProject), dbs: (project?.dbs ?? []).map(db => db.id === dbId ? { ...db, comparePartner: stored } : db) }, dbId, undefined);
 }
 

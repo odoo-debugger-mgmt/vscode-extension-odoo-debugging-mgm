@@ -111,6 +111,49 @@ suite('Reading a checkpoint', () => {
         assert.strictEqual(await withCheckpointOpen('cp', async () => 8, o), 8);
         assert.deepStrictEqual(calls, ['open cp', 'close cp', 'open cp', 'close cp']);
     });
+
+    const refused = () => new Error('psql --no-psqlrc -v ON_ERROR_STOP=1 -d cp failed (exit code 2): psql: error: connection to server on socket "/var/run/postgresql/.s.PGSQL.5432" failed: FATAL:  database "cp" is not currently accepting connections');
+
+    test('a read refused because another window closed it meanwhile opens it again and retries once', async () => {
+        const { o, calls } = opener();
+        let tries = 0;
+        const value = await withCheckpointOpen('cp', async () => {
+            tries++;
+            calls.push(`read ${tries}`);
+            if (tries === 1) {
+                throw refused();
+            }
+            return 9;
+        }, o);
+        assert.strictEqual(value, 9);
+        assert.deepStrictEqual(calls, ['open cp', 'read 1', 'close cp', 'open cp', 'read 2', 'close cp']);
+    });
+
+    test('the retry opens it again even when another read here still holds it, and only the last read closes', async () => {
+        const { o, calls } = opener();
+        const gate = deferred();
+        const started = deferred();
+        const a = withCheckpointOpen('cp', async () => { calls.push('a start'); started.resolve(); await gate.promise; calls.push('a end'); }, o);
+        await started.promise;
+        let tries = 0;
+        const b = await withCheckpointOpen('cp', async () => { tries++; calls.push(`b ${tries}`); if (tries === 1) { throw refused(); } return 2; }, o);
+        assert.strictEqual(b, 2);
+        assert.deepStrictEqual(calls, ['open cp', 'a start', 'b 1', 'open cp', 'b 2'], 'the retry re-opened it without closing it under a');
+        gate.resolve();
+        await a;
+        assert.deepStrictEqual(calls.slice(-2), ['a end', 'close cp']);
+    });
+
+    test('a read refused twice, or failing otherwise, is not retried again', async () => {
+        const { o, calls } = opener();
+        let tries = 0;
+        await assert.rejects(withCheckpointOpen('cp', async () => { tries++; throw refused(); }, o), /not currently accepting connections/);
+        assert.strictEqual(tries, 2);
+        tries = 0;
+        await assert.rejects(withCheckpointOpen('cp', async () => { tries++; throw new Error('syntax error'); }, o), /syntax error/);
+        assert.strictEqual(tries, 1);
+        assert.deepStrictEqual(calls.filter(c => c === 'close cp').length, 3, 'every opening is closed again');
+    });
 });
 
 suite('Sweeping open checkpoints', () => {

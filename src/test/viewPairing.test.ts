@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import { alsoOffSource, diffArguments, isReadOnlyOriginal, partnerFor, upgradePair } from '../views/viewPairing';
+import { alsoOffSource, diffArguments, isReadOnlyOriginal, partnerFor, pickCounterpart, upgradePair } from '../views/viewPairing';
+import type { ViewRow } from '../services/views/viewQueries';
 import { viewUri } from '../views/viewFileSystem';
 
 const upgrading = {
@@ -35,6 +36,16 @@ suite('Comparing across databases', () => {
         assert.strictEqual(leftUri, left.uri);
         assert.strictEqual(rightUri.toString(), 'odoo-view:/shop-18/41/view-41.xml');
         assert.strictEqual(title, 'partner.custom: before ↔ shop-18');
+    });
+});
+
+suite('Choosing the counterpart from rows already read', () => {
+    const view: ViewRow = { id: 41, name: 'partner.custom', model: 'res.partner', type: 'form', active: true, inheritId: 7, xmlid: 'acme.partner_custom', rootId: 7, isReport: false, writeDate: 0 };
+
+    test('a certain match and no match need no database and no question', async () => {
+        const there = { ...view, id: 52 };
+        assert.strictEqual(await pickCounterpart(view, 'before', { byXmlid: there, rows: [there] }), there);
+        assert.strictEqual(await pickCounterpart(view, 'before', { rows: [] }), 'none');
     });
 });
 

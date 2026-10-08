@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { runningByVersion, type RunningInstance } from '../services/runningState';
+import { versionStateParts } from '../versionsTreeProvider';
 
 interface MenuEntry { command: string; when?: string; group?: string }
 const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8'));
@@ -40,5 +41,15 @@ suite('Alongside menus', () => {
             assert.strictEqual(map.get('v2'), legacy);
         }
         assert.strictEqual(runningByVersion([alongside]).get('v1'), alongside);
+    });
+
+    test('a version row running only alongside names the run\'s port, not its own', () => {
+        const idle = () => 'provisioned';
+        const primary = { versionId: 'v1', dbName: 'a', port: 8017, origin: 'managed', kind: 'primary' } as RunningInstance;
+        const alongside = { versionId: 'v1', dbName: 'b', port: 8100, origin: 'managed', kind: 'alongside' } as RunningInstance;
+        assert.deepStrictEqual(versionStateParts('8017', alongside, idle), ['alongside on :8100']);
+        assert.deepStrictEqual(versionStateParts('8017', primary, idle), [':8017', 'running']);
+        assert.deepStrictEqual(versionStateParts('8017', undefined, idle), [':8017', 'provisioned']);
+        assert.deepStrictEqual(versionStateParts(undefined, { ...alongside, port: undefined }, idle), ['alongside']);
     });
 });

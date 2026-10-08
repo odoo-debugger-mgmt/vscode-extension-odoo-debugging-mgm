@@ -5,7 +5,7 @@ import { SHOW_ALSO_OFF_KEY, ViewItem, resolveViewDoctorTarget } from '../views/v
 import { VIEW_SCHEME, clearViewDiagnostics, parseViewUri, viewUri } from '../views/viewFileSystem';
 import { showBriefStatus, showError, showInfo, showModalWarning, showWarning } from '../services/notifications';
 import { SettingsStore } from '../settingsStore';
-import { diffArguments, findCounterpart, partnerFor, upgradePair, type PairProject } from '../views/viewPairing';
+import { counterpartRows, diffArguments, findCounterpart, partnerFor, pickCounterpart, upgradePair, type PairProject } from '../views/viewPairing';
 import { comparisonSides } from '../services/comparisonPartner';
 import { withCheckpointOpen } from '../services/checkpointReads';
 import { compareDocuments } from '../views/compareDocuments';
@@ -40,7 +40,9 @@ async function archDocument(dbName: string, view: ViewRow): Promise<vscode.TextD
 }
 
 export function registerViewDoctorCommands(deps: CommandDeps): void {
-    const { context, providers, viewService, viewNotes, viewDiagnostics, xpathDiagnostics, viewRender } = deps;
+    const { context, providers, viewService, viewNotes, viewDiagnostics, xpathDiagnostics, viewRender, refreshAll } = deps;
+    /** A partner picked here is remembered: the trees that show it refresh. */
+    const partnerStored = () => { void refreshAll({ reason: 'ui' }); };
 
     /** The view a command acts on (a row, an arch editor, or the active editor); the error is shown when it is gone. */
     const target = async (arg: unknown): Promise<ViewTarget | undefined> => {
@@ -102,13 +104,16 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
         }
         try {
             const project = (await SettingsStore.peekSelectedProject().catch(() => null))?.project as PairProject | undefined;
-            const partner = await partnerFor(project, item.dbName, { ask: true });
+            const partner = await partnerFor(project, item.dbName, { ask: true, onStored: partnerStored });
             if (!partner) {
                 return;
             }
             const checkpoint = partner.kind === 'checkpoint';
+            // A checkpoint is open only for the row reads: the pick, which waits
+            // on the user, runs after it closed; the chosen arch is a second read.
             const counterpart = checkpoint
-                ? await withCheckpointOpen(partner.dbName, () => findCounterpart(item.view, partner.dbName))
+                ? await pickCounterpart(item.view, partner.label,
+                    await withCheckpointOpen(partner.dbName, () => counterpartRows(item.view, partner.dbName)))
                 : await findCounterpart(item.view, partner.dbName);
             if (counterpart === 'none') {
                 void showInfo(`${partner.label} has no ${item.view.type} view of ${item.view.model || 'this model'} to compare with.`);
@@ -179,7 +184,7 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
             const db = project?.dbs?.find(entry => entry.id === item.dbName);
             const own: RenderTarget = { dbName: item.dbName, versionId: db?.versionId, viewId: item.view.id, title: item.dbName, kind };
             // Quiet: a project with nothing to pair with renders the view alone, without a message each time.
-            const partner = await partnerFor(project, item.dbName, { ask: true, quiet: true });
+            const partner = await partnerFor(project, item.dbName, { ask: true, quiet: true, onStored: partnerStored });
             if (!partner || partner.kind === 'checkpoint') {
                 await viewRender.show({
                     title: item.view.name,
@@ -194,7 +199,7 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
             if (counterpart === undefined) {
                 return;
             }
-            const { left, right } = comparisonSides(item.dbName, partner, pair);
+            const { left } = comparisonSides(item.dbName, partner, pair);
             const other: RenderTarget | undefined = counterpart === 'none' ? undefined
                 : { dbName: partner.dbName, versionId: partner.versionId, viewId: counterpart.id, title: partner.dbName, kind };
             const targets = (left === item.dbName ? [own, other] : [other, own]).filter((t): t is RenderTarget => !!t);
@@ -202,8 +207,9 @@ export function registerViewDoctorCommands(deps: CommandDeps): void {
                 title: item.view.name,
                 targets,
                 startCommand: 'dbSelector.runPairAlongside',
-                startArgs: [left, right],
-                startLabel: 'Run Both',
+                // Only the databases shown: a partner without the view is not started.
+                startArgs: targets.map(entry => entry.dbName),
+                startLabel: targets.length > 1 ? 'Run Both' : 'Run Alongside',
                 notice: counterpart === 'none' ? `${partner.dbName} has no matching view; showing ${item.dbName} only.` : undefined
             });
         } catch (error) {

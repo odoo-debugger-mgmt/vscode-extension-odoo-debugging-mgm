@@ -2,13 +2,14 @@
  * Reading a checkpoint. A checkpoint refuses connections so that it cannot
  * change (checkpoints spec §3.1); a comparison still has to read it. Each read
  * opens it, and the last of any reads running at once closes it again, in a
- * finally.
+ * finally. A read refused because another window closed it meanwhile opens it
+ * again and is retried, once.
  */
 import { quotePgIdentifier, runSql } from './postgres';
 import { SettingsStore } from '../settingsStore';
 import { checkpointsOf } from './checkpoints';
 import { sqlText } from './views/viewQueries';
-import { logger } from './logger';
+import { errorMessage, logger } from './logger';
 
 export interface CheckpointOpener {
     open(db: string): Promise<void>;
@@ -36,8 +37,31 @@ async function closeChained(db: string, opener: CheckpointOpener): Promise<void>
     }
 }
 
+/** psql's words when a database refuses new connections (datallowconn false). */
+const REFUSED = /is not currently accepting connections/;
+
 export async function withCheckpointOpen<T>(db: string, read: () => Promise<T>, opener: CheckpointOpener = realCheckpointOpener): Promise<T> {
+    try {
+        return await readWhileOpen(db, read, opener, false);
+    } catch (error) {
+        if (!REFUSED.test(errorMessage(error))) {
+            throw error;
+        }
+        // Another window's close landed between this open and the read's
+        // connection. This read's count is released already; open it again, once.
+        logger.debug(`Checkpoint ${db} was closed under a read; opening it again.`);
+        return readWhileOpen(db, read, opener, true);
+    }
+}
+
+/**
+ * One read under the shared opening. `reopen`: the retry of a refused read,
+ * which opens the checkpoint again even when it joins an opening already
+ * made - a read here that still holds it does not mean it is still open.
+ */
+async function readWhileOpen<T>(db: string, read: () => Promise<T>, opener: CheckpointOpener, reopen: boolean): Promise<T> {
     let entry = openings.get(db);
+    const joined = !!entry;
     if (!entry) {
         const ready = (closing.get(db) ?? Promise.resolve()).then(() => opener.open(db));
         entry = { count: 0, ready };
@@ -57,6 +81,10 @@ export async function withCheckpointOpen<T>(db: string, read: () => Promise<T>, 
         throw error;
     }
     try {
+        if (reopen && joined) {
+            // Held by this read's count, so no close of this window runs meanwhile.
+            await opener.open(db);
+        }
         return await read();
     } finally {
         entry.count--;

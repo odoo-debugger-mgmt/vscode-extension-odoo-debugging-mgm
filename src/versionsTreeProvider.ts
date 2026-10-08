@@ -31,6 +31,18 @@ function provisioningLabel(version: VersionModel): string {
         : 'not provisioned';
 }
 
+/**
+ * The row's port and state. A version running only alongside (runningByVersion
+ * keeps the primary run when there is one) shows the run's own port: nothing
+ * answers on the version's.
+ */
+export function versionStateParts(versionPort: unknown, running: RunningInstance | undefined, idle: () => string): string[] {
+    if (running?.kind === 'alongside') {
+        return [running.port ? `alongside on :${running.port}` : 'alongside'];
+    }
+    return [...(versionPort ? [`:${versionPort}`] : []), running ? 'running' : idle()];
+}
+
 export class VersionTreeItem extends vscode.TreeItem {
     constructor(
         public readonly version: VersionModel,
@@ -47,11 +59,7 @@ export class VersionTreeItem extends vscode.TreeItem {
         this.tooltip = VersionTreeItem.buildTooltip(version, running, workspaces);
         // The port is always visible: with several versions runnable at once,
         // knowing which localhost to open is the first thing you need.
-        const parts = [version.odooVersion];
-        if (version.settings.portNumber) {
-            parts.push(`:${version.settings.portNumber}`);
-        }
-        parts.push(running ? 'running' : provisioningLabel(version));
+        const parts = [version.odooVersion, ...versionStateParts(version.settings.portNumber, running, () => provisioningLabel(version))];
         if (upgradeSide) {
             parts.push(upgradeSide === 'from' ? 'upgrading from' : 'upgrading to');
         }
@@ -94,7 +102,10 @@ export class VersionTreeItem extends vscode.TreeItem {
         }
         const settings = version.settings ?? {};
         if (running) {
-            lines.push(`**Status:** running${running.dbName ? ` on \`${running.dbName}\`` : ''}`);
+            const where = running.kind === 'alongside'
+                ? `${running.dbName ? ` \`${running.dbName}\`` : ''} alongside${running.port ? ` on port ${running.port}` : ''}`
+                : (running.dbName ? ` on \`${running.dbName}\`` : '');
+            lines.push(`**Status:** running${where}`);
         }
         if (settings.portNumber) {
             lines.push(`**Port:** ${settings.portNumber} \u2014 http://localhost:${settings.portNumber}`);

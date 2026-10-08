@@ -17,6 +17,12 @@ async function currentProject(): Promise<PairProject | undefined> {
     return (await SettingsStore.getSelectedProject())?.project as PairProject | undefined;
 }
 
+/** Whether Upgrade mode pairs this database with the other side, whatever it stores. */
+function isUpgradeMember(project: PairProject | undefined, dbId: string): boolean {
+    const pair = upgradePair(project);
+    return !!pair && (pair.original.dbName === dbId || pair.upgraded.dbName === dbId);
+}
+
 export function registerPartnerCommands(deps: CommandDeps): void {
     const { context, refreshAll } = deps;
 
@@ -41,8 +47,7 @@ export function registerPartnerCommands(deps: CommandDeps): void {
             return;
         }
         await storePartner(db.id, { dbName: picked.choice.dbName, kind: picked.choice.kind });
-        const pair = upgradePair(project);
-        if (pair && (pair.original.dbName === db.id || pair.upgraded.dbName === db.id)) {
+        if (isUpgradeMember(project, db.id)) {
             void showInfo(`In Upgrade mode, ${db.id}'s partner is the other side of the upgrade.`);
         }
         await refreshAll({ reason: 'ui' });
@@ -54,7 +59,9 @@ export function registerPartnerCommands(deps: CommandDeps): void {
             return;
         }
         await storePartner(db.id, undefined);
-        void showInfo(`${db.id} no longer has a comparison partner.`);
+        void showInfo(isUpgradeMember(await currentProject(), db.id)
+            ? `${db.id} keeps the other side of the upgrade as its partner while Upgrade mode is on; the stored partner is cleared.`
+            : `${db.id} no longer has a comparison partner.`);
         await refreshAll({ reason: 'ui' });
     }));
 
@@ -63,7 +70,7 @@ export function registerPartnerCommands(deps: CommandDeps): void {
         if (!db) {
             return;
         }
-        const partner = await partnerFor(await currentProject(), db.id, { ask: true });
+        const partner = await partnerFor(await currentProject(), db.id, { ask: true, onStored: () => { void refreshAll({ reason: 'ui' }); } });
         if (!partner) {
             return;
         }
