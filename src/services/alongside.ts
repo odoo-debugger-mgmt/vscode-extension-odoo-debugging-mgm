@@ -3,6 +3,7 @@
  * the args that make it listen there. Pure; debugger.ts runs it. An alongside
  * run is never written to launch.json - F5 stays one entry per version.
  */
+import * as path from 'node:path';
 import { extraParamValue } from './odooDataDir';
 
 export const ALONGSIDE_FIRST_PORT = 8100;
@@ -143,4 +144,61 @@ export function checkoutConflicts(
         }
     }
     return conflicts;
+}
+
+export interface AlongsideRunCheckouts {
+    dbId: string;
+    entries: Array<{ repoName: string; path: string; branch?: string; isWorktree: boolean }>;
+}
+
+export interface HeldCheckout {
+    path: string;
+    /** The branch the switch wanted. */
+    branch: string;
+    repoName: string;
+    /** The branch the alongside run needs, which the checkout stays on. */
+    keptBranch: string;
+    dbId: string;
+}
+
+function samePath(a: string, b: string): boolean {
+    return path.resolve(a) === path.resolve(b);
+}
+
+/**
+ * The planned checkouts that would switch a branch under a running alongside
+ * run: the run uses that same single checkout (not a copy of its own) on
+ * another branch. Selecting a database never does that; every other checkout
+ * proceeds. Pure; the caller resolves each run's repositories.
+ */
+export function heldBackCheckouts(
+    planned: Array<{ path: string; branch: string }>,
+    runs: AlongsideRunCheckouts[]
+): HeldCheckout[] {
+    const held: HeldCheckout[] = [];
+    for (const checkout of planned) {
+        for (const run of runs) {
+            const entry = run.entries.find(candidate =>
+                !candidate.isWorktree && !!candidate.branch && candidate.branch !== checkout.branch
+                && samePath(candidate.path, checkout.path));
+            if (entry?.branch) {
+                held.push({ ...checkout, repoName: entry.repoName, keptBranch: entry.branch, dbId: run.dbId });
+                break;
+            }
+        }
+    }
+    return held;
+}
+
+function listed(items: string[]): string {
+    return items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/** The one warning a switch shows for what it held back. */
+export function describeHeldBack(held: HeldCheckout[]): string {
+    const repos = listed(held.map(entry => `"${entry.repoName}" on ${entry.keptBranch}`));
+    const dbs = [...new Set(held.map(entry => entry.dbId))];
+    const several = held.length > 1;
+    return `Kept ${repos}: ${listed(dbs.map(db => `"${db}"`))} ${dbs.length > 1 ? 'run' : 'runs'} alongside from `
+        + `${several ? 'those checkouts' : 'that checkout'}. Use one copy per branch to run both.`;
 }

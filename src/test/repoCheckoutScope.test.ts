@@ -15,7 +15,8 @@ import * as assert from 'assert';
 import {
     buildDatabaseEnvironmentTarget,
     resolveProjectRepoBranchAssignments,
-    resolveProjectRepoCheckouts
+    resolveProjectRepoCheckouts,
+    splitHeldBack
 } from '../services/environment';
 import { RepoModel } from '../models/repo';
 
@@ -86,5 +87,24 @@ suite('Which repositories a branch switch may touch', () => {
             resolveProjectRepoCheckouts(database, legacy).map(entry => entry.repoName),
             ['acme', 'other']
         );
+    });
+
+    test('a checkout an alongside run uses on another branch is held back from the switch', () => {
+        const planned = [
+            { repoName: 'acme', repoPath: '/src/acme', branch: '17.0-acme' },
+            { repoName: 'other', repoPath: '/src/other', branch: '17.0-other' }
+        ];
+        const { proceed, heldBack } = splitHeldBack(planned, [{
+            dbId: 'demo',
+            entries: [
+                { repoName: 'acme', path: '/src/acme', branch: '17.0-demo', isWorktree: false },
+                { repoName: 'other', path: '/wt/other@17.0-demo', branch: '17.0-demo', isWorktree: true }
+            ]
+        }]);
+        assert.deepStrictEqual(proceed.map(entry => entry.repoName), ['other']);
+        assert.deepStrictEqual(heldBack, [
+            { path: '/src/acme', branch: '17.0-acme', repoName: 'acme', keptBranch: '17.0-demo', dbId: 'demo' }
+        ]);
+        assert.deepStrictEqual(splitHeldBack(planned, []).proceed, planned);
     });
 });

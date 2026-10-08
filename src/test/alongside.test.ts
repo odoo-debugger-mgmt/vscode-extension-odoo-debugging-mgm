@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import {
-    alongsideArgs, alongsideName, checkoutConflicts, pickFreePort, realtimePortFlag, reservePort, reservedPorts, workersOf
+    alongsideArgs, alongsideName, checkoutConflicts, describeHeldBack, heldBackCheckouts, pickFreePort, realtimePortFlag, reservePort, reservedPorts, workersOf
 } from '../services/alongside';
 
 suite('Alongside helpers', () => {
@@ -91,5 +91,42 @@ suite('Alongside helpers', () => {
     test('an unreadable current branch is not reported as a conflict', () => {
         const resolved = [{ repo: { name: 'acme' }, path: '/r/acme', branch: 'x', mode: 'checkout', isWorktree: false }];
         assert.deepStrictEqual(checkoutConflicts(resolved, new Map([['/r/acme', null]])), []);
+    });
+
+    test('a checkout an alongside run uses on another branch is held back; the rest proceed', () => {
+        const runs = [{
+            dbId: 'demo',
+            entries: [
+                { repoName: 'shared', path: '/repos/shared', branch: '17.0-a', isWorktree: false },
+                { repoName: 'copied', path: '/wt/copied@17.0-a', branch: '17.0-a', isWorktree: true },
+                { repoName: 'same', path: '/repos/same', branch: '17.0-x', isWorktree: false },
+                { repoName: 'loose', path: '/repos/loose', isWorktree: false }
+            ]
+        }];
+        const held = heldBackCheckouts([
+            { path: '/repos/shared/', branch: '17.0-b' },
+            { path: '/repos/copied', branch: '17.0-b' },
+            { path: '/repos/same', branch: '17.0-x' },
+            { path: '/repos/loose', branch: '17.0-b' },
+            { path: '/repos/other', branch: '17.0-b' }
+        ], runs);
+        assert.deepStrictEqual(held, [
+            { path: '/repos/shared/', branch: '17.0-b', repoName: 'shared', keptBranch: '17.0-a', dbId: 'demo' }
+        ]);
+        assert.deepStrictEqual(heldBackCheckouts([{ path: '/repos/shared', branch: '17.0-b' }], []), []);
+    });
+
+    test('a held-back checkout is explained in one sentence naming the repo and the run', () => {
+        assert.strictEqual(
+            describeHeldBack([{ path: '/r/a', branch: 'b2', repoName: 'a', keptBranch: 'b1', dbId: 'demo' }]),
+            'Kept "a" on b1: "demo" runs alongside from that checkout. Use one copy per branch to run both.'
+        );
+        assert.strictEqual(
+            describeHeldBack([
+                { path: '/r/a', branch: 'b2', repoName: 'a', keptBranch: 'b1', dbId: 'demo' },
+                { path: '/r/c', branch: 'b2', repoName: 'c', keptBranch: 'b1', dbId: 'shop' }
+            ]),
+            'Kept "a" on b1 and "c" on b1: "demo" and "shop" run alongside from those checkouts. Use one copy per branch to run both.'
+        );
     });
 });

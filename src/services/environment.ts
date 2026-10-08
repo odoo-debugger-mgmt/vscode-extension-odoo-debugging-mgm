@@ -12,6 +12,11 @@ import { alignCoreRepos, checkoutRepoBranch } from './checkout';
 import { branchSatisfiesTarget } from './worktree';
 import { logger } from './logger';
 import { showInfo } from './notifications';
+import { SettingsStore } from '../settingsStore';
+import { runRecords } from './debugSessions';
+import { describeHeldBack, heldBackCheckouts, type AlongsideRunCheckouts, type HeldCheckout } from './alongside';
+import { resolveReposForDatabase } from './versionRepos';
+import { readSetupState } from './setupState';
 
 export type SwitchBehavior = 'auto' | 'ask' | 'never';
 
@@ -206,7 +211,60 @@ interface EnvironmentDiff {
      */
     coreRepoPipeline?: { branch: string; needsCheckout: boolean; missingEnvironment: boolean };
     repoCheckouts: ProjectRepoBranchAssignment[];
+    /** Checkouts left alone: an alongside run uses that checkout on another branch. */
+    heldBack: HeldCheckout[];
     descriptions: string[];
+}
+
+/**
+ * The repositories each alongside run in this window runs from, resolved the
+ * way Run Alongside resolved them. The version's primary run is not among
+ * them: F5 restarts it on whatever the switch checks out.
+ */
+async function liveAlongsideCheckouts(): Promise<AlongsideRunCheckouts[]> {
+    const alongside = runRecords().filter(record => record.kind === 'alongside' && !!record.dbId);
+    if (alongside.length === 0) {
+        return [];
+    }
+    const projects = await SettingsStore.getProjects();
+    const versionsService = VersionsService.getInstance();
+    const root = readSetupState().provisioningRoot;
+    const runs: AlongsideRunCheckouts[] = [];
+    for (const run of alongside) {
+        const project = projects.find(candidate => (candidate.dbs ?? []).some(db => db.id === run.dbId));
+        const db = project?.dbs.find(candidate => candidate.id === run.dbId);
+        if (!project || !db) {
+            continue;
+        }
+        try {
+            const entries = await resolveReposForDatabase(project, db, { version: versionsService.getVersion(run.versionId), root });
+            runs.push({
+                dbId: db.id,
+                entries: entries.map(entry => ({
+                    repoName: entry.repo.name, path: entry.path, branch: entry.branch, isWorktree: entry.isWorktree
+                }))
+            });
+        } catch (error) {
+            logger.debug(`[environment] could not resolve the repositories "${db.id}" runs alongside from:`, error);
+        }
+    }
+    return runs;
+}
+
+/**
+ * The planned checkouts that may run, and those held back because an
+ * alongside run uses that checkout on another branch (heldBackCheckouts).
+ */
+export function splitHeldBack(
+    repoCheckouts: ProjectRepoBranchAssignment[],
+    runs: AlongsideRunCheckouts[]
+): { proceed: ProjectRepoBranchAssignment[]; heldBack: HeldCheckout[] } {
+    const heldBack = heldBackCheckouts(
+        repoCheckouts.map(assignment => ({ path: assignment.repoPath, branch: assignment.branch })),
+        runs
+    );
+    const heldPaths = new Set(heldBack.map(entry => entry.path));
+    return { proceed: repoCheckouts.filter(assignment => !heldPaths.has(assignment.repoPath)), heldBack };
 }
 
 async function computeEnvironmentDiff(target: EnvironmentTarget): Promise<EnvironmentDiff> {
@@ -263,13 +321,18 @@ async function computeEnvironmentDiff(target: EnvironmentTarget): Promise<Enviro
         }
     }
 
+    // Never switch a branch under a server running alongside from that checkout.
+    const { proceed, heldBack } = repoCheckouts.length > 0
+        ? splitHeldBack(repoCheckouts, await liveAlongsideCheckouts())
+        : { proceed: repoCheckouts, heldBack: [] };
+
     const descriptions = describeSwitch({
         versionName: versionToActivate?.name,
         core: coreRepoPipeline,
-        repoBranchCount: repoCheckouts.length
+        repoBranchCount: proceed.length
     });
 
-    return { versionToActivate, settings, coreRepoPipeline, repoCheckouts, descriptions };
+    return { versionToActivate, settings, coreRepoPipeline, repoCheckouts: proceed, heldBack, descriptions };
 }
 
 async function applyRepoCheckouts(assignments: ProjectRepoBranchAssignment[]): Promise<Array<{ assignment: ProjectRepoBranchAssignment; ok: boolean; message: string }>> {
@@ -352,6 +415,7 @@ export async function alignEnvironment(target: EnvironmentTarget, options: Align
 
     const diff = await computeEnvironmentDiff(target);
     if (isEmptyDiff(diff)) {
+        warnHeldBack(diff.heldBack);
         return;
     }
 
@@ -373,6 +437,8 @@ export async function alignEnvironment(target: EnvironmentTarget, options: Align
                 const freshDiff = await computeEnvironmentDiff(target);
                 if (!isEmptyDiff(freshDiff)) {
                     await applyEnvironmentDiff(freshDiff, options.label);
+                } else {
+                    warnHeldBack(freshDiff.heldBack);
                 }
                 await vscode.commands.executeCommand('projectSelector.refresh');
             } catch (error: any) {
@@ -385,11 +451,26 @@ export async function alignEnvironment(target: EnvironmentTarget, options: Align
     await applyEnvironmentDiff(diff, options.label);
 }
 
+/** One warning for every checkout the switch left alone, offering a copy per branch. */
+function warnHeldBack(heldBack: HeldCheckout[]): void {
+    if (heldBack.length === 0) {
+        return;
+    }
+    const message = describeHeldBack(heldBack);
+    logger.info(`[environment] ${message}`);
+    void showWarning(message, 'Use One Copy Per Branch').then(choice => {
+        if (choice === 'Use One Copy Per Branch') {
+            void vscode.commands.executeCommand('odt.repo.toggleBranchMode', vscode.Uri.file(heldBack[0].path));
+        }
+    });
+}
+
 function isEmptyDiff(diff: EnvironmentDiff): boolean {
     return !diff.versionToActivate && !diff.coreRepoPipeline && diff.repoCheckouts.length === 0;
 }
 
 async function applyEnvironmentDiff(diff: EnvironmentDiff, label: string): Promise<void> {
+    warnHeldBack(diff.heldBack);
     const applied: string[] = [];
     const failures: string[] = [];
 
