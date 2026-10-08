@@ -79,6 +79,27 @@ function verdict(files: string[]): Counterpart {
     return files.length === 1 ? { kind: 'found', path: files[0] } : { kind: 'pick', candidates: files.slice(0, MAX_CANDIDATES) };
 }
 
+/**
+ * The module a file belongs to: the nearest folder with a `__manifest__.py`, walking up from the file to its
+ * root, so a module below a container folder (`addons/acme_sale`) is the module, not the container. Falls back
+ * to the first path segment when no manifest is found.
+ */
+export async function moduleOfRel(rootPath: string, rel: string, fsProbe: FsProbe): Promise<{ dir: string; name: string; inner: string }> {
+    const parts = rel.split('/');
+    for (let depth = parts.length - 1; depth >= 1; depth--) {
+        if (await fsProbe.exists(path.join(rootPath, ...parts.slice(0, depth), '__manifest__.py'))) {
+            return { dir: parts.slice(0, depth).join('/'), name: parts[depth - 1], inner: parts.slice(depth).join('/') };
+        }
+    }
+    const slash = rel.indexOf('/');
+    return slash < 0
+        ? { dir: rel, name: rel, inner: '' }
+        : { dir: rel.slice(0, slash), name: rel.slice(0, slash), inner: rel.slice(slash + 1) };
+}
+
+/** Files whose counterpart is never searched by name: every module has them, so a name match means nothing. */
+const MODULE_BOUND_FILES = new Set(['__manifest__.py', '__init__.py']);
+
 export async function resolveCounterpart(file: string, from: SideRoots, to: SideRoots, fsProbe: FsProbe): Promise<Counterpart> {
     const hit = rootOf(file, from);
     if (!hit) {
@@ -96,35 +117,29 @@ export async function resolveCounterpart(file: string, from: SideRoots, to: Side
         return { kind: 'none' };
     }
     const name = path.basename(file);
-    {
-        const slash = hit.rel.indexOf('/');
-        const module = slash < 0 ? hit.rel : hit.rel.slice(0, slash);
-        const inner = slash < 0 ? '' : hit.rel.slice(slash + 1);
-        if (sameRole) {
-            const folder = path.join(sameRole.path, module);
-            if (await fsProbe.isDir(folder)) {
-                const files = await collect(folder, name, fsProbe, MAX_CANDIDATES);
-                if (files.length > 0) {
-                    return verdict(files);
-                }
-            }
+    const module = await moduleOfRel(hit.root.path, hit.rel, fsProbe);
+    const ordered = [...(sameRole ? [sameRole] : []), ...addonsRoots(to).filter(root => root !== sameRole)];
+    for (const root of ordered) {
+        const sameRoot = root === sameRole;
+        // The same module path in the same root, else the module's name in the other roots.
+        const folder = path.join(root.path, sameRoot ? module.dir : module.name);
+        if (!(await fsProbe.isDir(folder))) {
+            continue;
         }
-        for (const root of addonsRoots(to)) {
-            if (root === sameRole) {
-                continue;
-            }
-            const folder = path.join(root.path, module);
-            if (!(await fsProbe.isDir(folder))) {
-                continue;
-            }
-            if (inner && await fsProbe.exists(path.join(folder, inner))) {
-                return { kind: 'found', path: path.join(folder, inner) };
-            }
-            const files = await collect(folder, name, fsProbe, MAX_CANDIDATES);
-            if (files.length > 0) {
-                return verdict(files);
-            }
+        if (!sameRoot && module.inner && await fsProbe.exists(path.join(folder, module.inner))) {
+            return { kind: 'found', path: path.join(folder, module.inner) };
         }
+        if (MODULE_BOUND_FILES.has(name)) {
+            continue;
+        }
+        // The same file name elsewhere in the module is a different folder: offer it, never open it unasked.
+        const files = await collect(folder, name, fsProbe, MAX_CANDIDATES);
+        if (files.length > 0) {
+            return { kind: 'pick', candidates: files };
+        }
+    }
+    if (MODULE_BOUND_FILES.has(name)) {
+        return { kind: 'none' };
     }
     const all: string[] = [];
     for (const root of addonsRoots(to)) {
@@ -139,17 +154,19 @@ export async function resolveCounterpart(file: string, from: SideRoots, to: Side
  */
 export async function counterpartModuleDir(file: string, from: SideRoots, to: SideRoots, fsProbe: FsProbe): Promise<string | undefined> {
     const hit = rootOf(file, from);
-    if (!hit || hit.root.role === 'odoo') {
+    if (!hit || hit.root.role === 'odoo' || !hit.rel.includes('/')) {
         return undefined;
     }
-    const module = hit.rel.split('/')[0];
-    if (!module || !hit.rel.includes('/')) {
-        return undefined;
-    }
+    const module = await moduleOfRel(hit.root.path, hit.rel, fsProbe);
     const sameRole = to.roots.find(root => root.role === hit.root.role);
-    const ordered = [...(sameRole ? [sameRole] : []), ...addonsRoots(to).filter(root => root !== sameRole)];
-    for (const root of ordered) {
-        const folder = path.join(root.path, module);
+    if (sameRole) {
+        const folder = path.join(sameRole.path, module.dir);
+        if (await fsProbe.isDir(folder)) {
+            return folder;
+        }
+    }
+    for (const root of addonsRoots(to).filter(r => r !== sameRole)) {
+        const folder = path.join(root.path, module.name);
         if (await fsProbe.isDir(folder)) {
             return folder;
         }

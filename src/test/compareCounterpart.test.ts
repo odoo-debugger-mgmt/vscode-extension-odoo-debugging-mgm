@@ -64,10 +64,38 @@ suite('Compare: counterpart files', () => {
         assert.deepStrictEqual(core, { kind: 'found', path: path.join(tmp, '18/odoo/odoo/models.py') });
     });
 
-    test('the same file name inside the counterpart module', async () => {
+    test('the same file name in another folder of the counterpart module is offered, not opened', async () => {
         await touch(path.join(tmp, '18/acme/acme_sale/data/sale.xml'));
         const r = await resolveCounterpart(path.join(tmp, '17/acme/acme_sale/views/sale.xml'), s17, s18, realFsProbe);
-        assert.deepStrictEqual(r, { kind: 'found', path: path.join(tmp, '18/acme/acme_sale/data/sale.xml') });
+        assert.deepStrictEqual(r, { kind: 'pick', candidates: [path.join(tmp, '18/acme/acme_sale/data/sale.xml')] });
+    });
+
+    test('a removed module gets no counterpart for its manifest or __init__, however many modules exist', async () => {
+        for (let i = 0; i < 60; i++) {
+            await touch(path.join(tmp, `18/enterprise/m${i}/__manifest__.py`));
+            await touch(path.join(tmp, `18/enterprise/m${i}/__init__.py`));
+            await touch(path.join(tmp, `18/enterprise/m${i}/models/__init__.py`));
+        }
+        await touch(path.join(tmp, '17/odoo/addons/account_audit_trail/__manifest__.py'));
+        await touch(path.join(tmp, '17/odoo/addons/account_audit_trail/models/__init__.py'));
+        for (const rel of ['__manifest__.py', '__init__.py', 'models/__init__.py']) {
+            assert.deepStrictEqual(await resolveCounterpart(path.join(tmp, '17/odoo/addons/account_audit_trail', rel), s17, s18, realFsProbe), { kind: 'none' }, rel);
+        }
+        assert.strictEqual(await counterpartModuleDir(path.join(tmp, '17/odoo/addons/account_audit_trail/__manifest__.py'), s17, s18, realFsProbe), undefined);
+    });
+
+    test('a module below a container folder is the module, not the container', async () => {
+        await touch(path.join(tmp, '17/acme/addons/acme_x/__manifest__.py'));
+        await touch(path.join(tmp, '17/acme/addons/acme_x/models/a.py'));
+        await touch(path.join(tmp, '18/acme/addons/acme_x/__manifest__.py'));
+        await touch(path.join(tmp, '18/acme/addons/acme_x/data/a.py'));
+        // a sibling module with the same file name must not be offered
+        await touch(path.join(tmp, '18/acme/addons/acme_y/__manifest__.py'));
+        await touch(path.join(tmp, '18/acme/addons/acme_y/models/a.py'));
+        const file = path.join(tmp, '17/acme/addons/acme_x/models/a.py');
+        assert.deepStrictEqual(await resolveCounterpart(file, s17, s18, realFsProbe),
+            { kind: 'pick', candidates: [path.join(tmp, '18/acme/addons/acme_x/data/a.py')] });
+        assert.strictEqual(await counterpartModuleDir(file, s17, s18, realFsProbe), path.join(tmp, '18/acme/addons/acme_x'));
     });
 
     test('a module moved to another root keeps its path inside', async () => {
