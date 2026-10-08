@@ -38,6 +38,8 @@ import { onBeforeDatabaseRelease } from './services/postgres';
 import { ProjectReposExplorerProvider } from './projectReposExplorer';
 import { logger, registerLogger } from './services/logger';
 import { logStaleReferences } from './services/reconcile';
+import { closeOpenCheckpoints } from './services/checkpointReads';
+import { COMPARE_SCHEME, compareDocuments } from './views/compareDocuments';
 import { invalidateRunningState } from './services/runningState';
 import { registerWrongCopyGuard } from './services/wrongCopyGuard';
 import { diagnoseVersion, migratable } from './services/versionMigration';
@@ -194,6 +196,10 @@ export async function activate(context: vscode.ExtensionContext) {
     void migrateLegacySwitchBehaviorSetting();
     // Passive check only: stale references are logged, never prompted about.
     void logStaleReferences();
+    // A host that died mid-read can leave a checkpoint open; close it again.
+    void closeOpenCheckpoints()
+        .then(closed => closed.length && logger.info(`Closed checkpoints left open: ${closed.join(', ')}`))
+        .catch(error => logger.debug('Could not check for open checkpoints:', error));
 
     // A TreeView handle so the view can say which shared store it shows.
     const projectTreeView = vscode.window.createTreeView('projectSelector', { treeDataProvider: providers.project });
@@ -251,6 +257,7 @@ export async function activate(context: vscode.ExtensionContext) {
         return isReadOnlyOriginal(result?.project as PairProject | undefined, dbName, allowEdit);
     });
     context.subscriptions.push(vscode.workspace.registerFileSystemProvider(VIEW_SCHEME, viewFiles, { isCaseSensitive: true }));
+    context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(COMPARE_SCHEME, compareDocuments));
     // Open arches re-read their permissions when the setting flips.
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
         if (event.affectsConfiguration('odooDebugger.views.allowEditOriginal')) {
