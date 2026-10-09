@@ -1894,7 +1894,7 @@
       {
         "view": "versionsManager",
         "when": "odoo-debugger.is_active && !odoo-debugger.is_configured",
-        "contents": "Odoo DevTools isn't set up yet. Point it at your Odoo repository and choose where environments are built — once per machine.\n[Set Up Odoo DevTools](command:odoo.setup)"
+        "contents": "Odoo DevTools isn't set up yet. Point it at your Odoo repository and choose where environments are built — once per machine.\n[Set Up Odoo DevTools](command:odoo.setup)\nOnly want to read Odoo's code? Download a shallow copy of one branch.\n[Download Odoo Sources…](command:odoo.downloadSources)"
       },
       {
         "view": "versionsManager",
@@ -2066,7 +2066,7 @@
         "odooDebugger.defaultVersion.maxCronThreads": {
           "type": "number",
           "default": 0,
-          "description": "Default maximum cron threads for new versions (0 = unlimited)"
+          "description": "Default number of cron threads for new versions, passed as --max-cron-threads (0 = none, so scheduled actions do not run)"
         },
         "odooDebugger.defaultVersion.extraParams": {
           "type": "string",
@@ -2148,7 +2148,7 @@
         "odooDebugger.debuggerNamePrefix": {
           "type": "string",
           "default": "odoo",
-          "markdownDescription": "Prefix for each version's generated launch configuration name: `<prefix>:<branch>`, for example `odoo:17.0`. The name, HTTP port and shell port are derived from the version's branch and cannot be edited per version."
+          "markdownDescription": "Prefix for each version's generated launch configuration name: `<prefix>:<branch>`, for example `odoo:17.0`. The name, HTTP port and shell port are filled in from the version's branch; click one in the Versions view to set it for that version."
         },
         "odooDebugger.sourceRepo.odoo": {
           "type": "string",
@@ -2277,12 +2277,12 @@
       {
         "id": "odooDevtools.gettingStarted",
         "title": "Get Started with Odoo DevTools",
-        "description": "Set up your Odoo development workbench: defaults, a version profile, a project with its database, and the debugger.",
+        "description": "Set up your Odoo development workbench: where Odoo lives, a version, a project with its database, and the debugger.",
         "steps": [
           {
             "id": "setUp",
             "title": "Set up Odoo DevTools",
-            "description": "Tell the extension where your Odoo repository lives and where to build environments.\n[Set Up](command:odoo.setup)",
+            "description": "Tell the extension where your Odoo repository lives and where to build environments.\n[Set Up](command:odoo.setup)\nOnly want to read Odoo's code? [Download Odoo Sources…](command:odoo.downloadSources)",
             "media": {
               "markdown": "media/walkthrough/set-up.md"
             },
@@ -2339,7 +2339,7 @@
           {
             "id": "exploreMore",
             "title": "Upgrade & testing modes, templates & shortcuts",
-            "description": "Database switching, upgrade and testing modes, DB templates, the status bar and keybindings.",
+            "description": "Database switching, checkpoints, running several databases, comparing and fixing views, upgrade and testing modes, DB templates, the status bar and keybindings.",
             "media": {
               "markdown": "media/walkthrough/explore-more.md"
             }

@@ -1,6 +1,6 @@
 # Odoo DevTools for VS Code
 
-All-in-one VS Code extension for Odoo development: projects, repositories, databases (create/restore/clone/templates), modules, version & branch switching, testing mode, and one-keystroke server/shell launch under the debugger.
+All-in-one VS Code extension for Odoo development: projects, repositories, databases (create/restore/clone/templates/checkpoints), modules, version & branch switching, testing and upgrade modes, several servers at once, comparing two databases and their code, fixing the views a database has turned off, and one-keystroke server/shell launch under the debugger.
 
 A **Get Started with Odoo DevTools** walkthrough is available from VS Code's Welcome page after installing.
 
@@ -23,7 +23,7 @@ The source repository is never run directly: every version gets its own worktree
    The extension stores its data in `.vscode/odoo-debugger-data.json`, so projects/versions/databases are **workspace-specific** — unless you [share them between workspaces](#sharing-data-between-workspaces). What you have *selected* — the project, each project's database, the active version and testing mode — is remembered per window, not in that file.
 
 2. Run **`Odoo DevTools: Set Up`** — once per machine, not per workspace.
-   It looks for Odoo checkouts you already have and shows what it found for confirmation, so this is usually one click. If there is nothing to find it offers to clone the repositories (community/enterprise/design-themes, any branch, optionally a **shallow copy**) and records where it put them.
+   It looks for Odoo checkouts you already have and shows what it found for confirmation, so this is usually one click. If there is nothing to find it offers to clone the repositories — Community and Enterprise, optionally Design Themes, into a folder you choose — and records where it put them. To only read Odoo's code, **Download Odoo Sources…** makes a shallow copy of one branch instead (see [Versions](#versions)).
 
 3. Where do the paths come from? **Provisioning sets them.** Creating a version builds its own worktree and virtualenv, so `odooPath`, `enterprisePath`, `designThemesPath` and `pythonPath` are filled in for you and tracked as extension-managed. You do not set them by hand — they stay editable in the Versions tree for the unusual case, but editing one points the version away from the environment that was built for it.
 
@@ -71,7 +71,7 @@ The status bar shows the active project, database and version — click any of t
 
 ## Views
 
-Activity Bar (**Odoo DevTools**): Projects, Repos, Databases, Modules, Testing, Upgrade, Versions.
+Activity Bar (**Odoo DevTools**): Projects, Repos, Databases, Modules, Testing, Upgrade, Views (collapsed at first), Versions.
 Explorer sidebar: **Project Repos** (project-scoped file tree).
 
 ### Projects
@@ -107,7 +107,7 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 - **Multi-select** (Ctrl/Shift-click) to set install/upgrade/clear on several modules at once.
 - **Configure Modules** (`Ctrl+Alt+O M`): a quick pick over all modules — Enter cycles install → upgrade → unmanaged, and per-item buttons set a state directly; stays open for several changes.
 - Right-click a module to **Reveal in Explorer** (VS Code file tree) or **Reveal in OS**.
-- Expand a module to see its manifest dependencies, and each dependency to see its own, as deep as you go (project module, core, or not found).
+- Expand a module to see its manifest dependencies, and each dependency to see its own, as deep as you go, each read when you open it. Each says where it was found: project module, core, or not found; one already required higher up the same branch is marked as a cycle and does not expand again.
 - Bulk actions: install all, update all, update installed, clear; browse the modules actually installed in the database.
 - **Create Module** scaffolds a new module via `odoo-bin scaffold` into a chosen repo.
 - `ps*-internal` directories appear as collapsible groups with an include/exclude toggle for the addons path.
@@ -158,7 +158,7 @@ Applying the plan:
 
 **While the mode is on:**
 
-- The Upgrade view shows both sides — version, database, port and each repository's branch — and **Start Both Servers** starts each side on its own database and port.
+- The Upgrade view shows both sides — version, database, port and each repository's branch — and **Start Both Servers** (a row of the view, or its title bar) starts each side on its own database and port. **Stop Both Servers** stops the two servers this window started, a side running alongside included.
 - **Across two workspaces**, each window runs its own side — the version it is bound to, else its active one. **Start This Side** starts only that side, so each window debugs the code it holds, and on a shared store **Open the Other Side** opens the workspace running the other version.
 - **Install N modules from …** is a toggle: off gives the target database back its own modules, on restores the staged set as you left it.
 - Selecting either database of the pair chooses whose modules the Modules view edits, without realigning the workspace. Databases outside the pair cannot be selected.
@@ -175,9 +175,9 @@ setup with the current databases preselected.
 
 Every database can have a **comparison partner**: another database of the project, or one of its own checkpoints. The first compare asks for it and remembers it; **Set Comparison Partner…** and **Clear Comparison Partner** on a database's right-click menu change it, and the database's tooltip names it. In Upgrade mode the partner is always the other side of the upgrade, so it is set for you.
 
-- **Compare with Partner** (the View Doctor) opens the same view in both databases in the diff editor: the partner on the left — the upgrade's original, or the checkpoint — and your database on the right, where saving fixes it. A checkpoint's side is a read-only snapshot of the stored arch.
-- **Render** shows the view in both databases side by side when the partner is a database. With no partner, it shows the database alone, and asks only when there are databases to pick; the answer is remembered. With a checkpoint as partner it shows the database alone, with a notice. A side with no server offers **Run Both** (**Run Alongside** when the partner has no matching view), which runs alongside the databases shown that are not running yet; the tab then waits for them on the ports they were started on. **Reload** also follows a database whose server has moved to another port.
-- **"Other inactive views" leaves out the views the partner has off too** when the partner is a copy of the database: a checkpoint, a clone made from it, or the upgrade's original. **Show/Hide Views Also Off in the Partner** toggles it. Clones made from now on are known as copies; older clones are not.
+- **Compare with Partner** (the View Doctor) opens the same view in both databases in the diff editor: the partner on the left (in Upgrade mode, always the original) and your database on the right, where saving fixes it. The upgrade's original is read-only (unless `odooDebugger.views.allowEditOriginal` is on), and a checkpoint's side is a read-only snapshot of the stored arch; another database's side can be saved too.
+- **Render** shows the view in both databases side by side when the partner is a database. With no partner, it shows the database alone, and asks only when there are databases to pick; the answer is remembered. With a checkpoint as partner it shows the database alone, with a notice. A side with no server offers **Run Both** (**Run Alongside** when the partner has no matching view), which runs alongside the databases shown that are not running yet; the tab then waits for them on the ports they were started on. In Upgrade mode it offers **Start Both Servers** instead, and a database rendered alone offers **Start Server**. **Reload** also follows a database whose server has moved to another port.
+- **"Other inactive views" leaves out the views the partner has off too** when the partner is a copy of the database: a checkpoint, a clone made from it or the database it was cloned from, or the upgrade's original. **Show/Hide Views Also Off in the Partner** toggles it. Clones made from now on are known as copies; older clones are not.
 - **Run Partner Alongside** runs the partner next to your database. A checkpoint cannot be run: restore it, or clone it.
 - **Compare with Partner** on any file — from the editor's "…" menu, its right-click menu, or the Explorer — opens the same file in the partner's code: the partner's version and its project repositories, on the branches its database uses. When the file was moved, it looks in the module, then for the module elsewhere, then offers files with the same name.
 - **Compare Module with Partner** (Modules view, or a module folder in the Explorer) lists the files that were added, removed or changed; pick one to see its diff.
@@ -190,7 +190,7 @@ The **Views** view lists the views the selected database has turned off — whil
 
 Click a view to open its arch as an XML file. Saving writes it to the database through an Odoo shell that runs the database's own version (started on first use, stopped after ten idle minutes). A view that was off is turned on when Odoo can build it; otherwise the arch is still saved and Odoo's reason shows as an error in the editor. Right-click a view to turn it on or off, copy its external id, or open its parent.
 
-**Compare with Partner** (on a view's row) opens the same view of the database's comparison partner next to it in the diff editor; the partner opens read-only, so fix the right side and save. See [Comparing two databases](#comparing-two-databases). The view is found by external id, then id, then name; when none is certain, you pick it.
+**Compare with Partner** (on a view's row, or an arch editor's title) opens the same view of the database's comparison partner next to it in the diff editor, the partner (in Upgrade mode, the original) on the left. Fix the right side and save; the upgrade's original and a checkpoint open read-only. See [Comparing two databases](#comparing-two-databases). The view is found by external id, then id, then name; when none is certain, you pick it.
 
 **Check XPaths** tells you whether a fix really works. Odoo turns a view on even when one of its locators matches nothing — it drops that patch and logs a line — so "the view is on" does not mean the patch applies. The check resolves every locator of the arch you have open (`<xpath expr>` and direct ones like `<field name="x" position="after">`) against the parent as Odoo builds it, without the view itself, and with the parent turned on if it is off: a locator that matches nothing or several nodes is a warning on its line, an invalid one an error, and a long one that works (Studio's `/form/sheet/...` paths) gets a faint hint. The light bulb swaps in a shorter locator that finds the same node. It runs after every save of an inheriting view (`odooDebugger.views.checkXpathsOnSave` turns that off), and on demand from a view's row or its editor's title. Other views inheriting the same parent are kept in, so a locator that only a later sibling breaks or fixes can be misjudged.
 
@@ -335,7 +335,7 @@ Because the entries are stable and unique, the Run and Debug dropdown works as a
 
 Generated project workspaces also include the active version's own `odoo`, `enterprise` and `design-themes` checkouts, so files you open belong to the version you are running and breakpoints bind to the right worktree.
 
-Server commands: **Start Server**, **Run Server Without Debugging**, **Restart Server**, **Stop Server**, **Open Odoo in Browser** (uses the active version's port and the selected database), and **Copy Odoo Command** — copies the exact `python odoo-bin …` command line the debugger runs (assembled from the selected project, active version and database) to the clipboard, ready to paste into a terminal. With `odooDebugger.server.openBrowserOnStart` enabled, the browser opens automatically once the server port accepts connections.
+Server commands: **Start Server**, **Run Server Without Debugging**, **Restart Server**, **Stop Server**, **Open Odoo in Browser** (opens the selected database on the port that serves it — its running server's, an alongside run included, else its version's), and **Copy Odoo Command** — copies the exact `python odoo-bin …` command line the debugger runs (assembled from the selected project, active version and database) to the clipboard, ready to paste into a terminal. With `odooDebugger.server.openBrowserOnStart` enabled, the browser opens automatically once the server port accepts connections.
 
 ## Editor Actions
 
@@ -344,6 +344,7 @@ Right-click inside a file that belongs to an Odoo module (toggle with `odooDebug
 - **Run Odoo Tests for Current File** (on `test_*.py`) — enables testing mode, targets the file and its module, and starts the server.
 - **Upgrade Current Module** — marks the module for `-u` and offers a server restart.
 - **Reveal Module in Modules View** — highlights the module in the tree, including inside `ps*-internal` groups.
+- **Compare with Partner** — the same file in the database's comparison partner, and **Compare This with Partner** (Python and XML files) — the class, method or XML record around the cursor. See [Comparing two databases](#comparing-two-databases).
 
 ## Post-Switch Hooks
 
@@ -372,7 +373,7 @@ Installing Python requirements no longer belongs here — provisioning owns that
 | `Ctrl+Alt+O X` | Stop Server |
 | `Ctrl+Alt+O N` | Run Server Without Debugging |
 | `Ctrl+Alt+O R` | Restart Server |
-| `Ctrl+Alt+O H` | Start Odoo Shell |
+| `Ctrl+Alt+O H` | Start Shell |
 | `Ctrl+Alt+O B` | Open Odoo in Browser |
 | **Switch** | |
 | `Ctrl+Alt+P` | Search Projects (quick switch) |
@@ -396,22 +397,36 @@ Installing Python requirements no longer belongs here — provisioning owns that
 
 The scheme: plain letters act, `Shift` variants create the matching thing (`D` switches databases, `Shift+D` creates one). `Shift+U` is the exception: it toggles upgrade mode, next to `U` for upgrading the current module. Forgot a chord? `Ctrl+Alt+O K` (or **Odoo DevTools: Keyboard Shortcuts** in the palette / the Projects view `…` menu) lists every shortcut — picking one runs its command.
 
-Every view also has search (`$(search)`) and sort (`$(sort-precedence)`) actions in its title bar. All palette commands live under the **Odoo DevTools** category.
+Projects, Repos, Databases, Modules, Versions and Project Repos have search (`$(search)`) and sort (`$(sort-precedence)`) actions in their title bar. All palette commands live under the **Odoo DevTools** category.
 
 ## Settings Reference
 
-- `odooDebugger.defaultVersion.*` — defaults applied to newly created versions (paths, params, post-switch hooks). Existing versions are edited from the Versions view. Note that `debuggerName`, `portNumber` and `shellPortNumber` are **not** among these: they are filled in from each version's branch, and edited per version.
+- `odooDebugger.defaultVersion.*` — defaults applied to newly created versions. Existing versions are edited from the Versions view, where **Set as Default** saves a version's value back here.
+  - `.odooPath`, `.enterprisePath`, `.designThemesPath`, `.pythonPath` — paths for a version created *Profile only*; provisioning fills them in for a built version.
+  - `.customAddonsPath` — the folder your project repositories are discovered in.
+  - `.dumpsFolder` — where From Dump looks for dumps.
+  - `.subModulesPaths` — extra addons paths, comma-separated.
+  - `.extraParams` — extra `odoo-bin` arguments, comma-separated.
+  - `.devMode` — the `--dev` value: `--dev=all` by default, `xml`, `reload`, `qweb`, or none.
+  - `.limitTimeReal`, `.limitTimeCpu`, `.maxCronThreads` — passed as `--limit-time-real`, `--limit-time-cpu` and `--max-cron-threads`. With `0` cron threads, the default, scheduled actions do not run.
+  - `.installApps`, `.upgradeApps` — extra modules appended to `-i` / `-u`, on top of the Modules view.
+  - `.postSwitchCommands` — the fallback [post-switch hooks](#post-switch-hooks).
+  - `.debuggerVersion` — a version label shown in the Versions view.
+
+  `debuggerName`, `portNumber` and `shellPortNumber` are **not** among these: they are filled in from each version's branch, and set per version.
 - `odooDebugger.debuggerNamePrefix` — prefix for generated launch configuration names (`<prefix>:<branch>`, default `odoo`).
 - `odooDebugger.sourceRepo.odoo` / `.enterprise` / `.designThemes` — the repositories per-version worktrees are cut from. Set once by **Set Up**, at user level.
-- `odooDebugger.provisioning.root` — directory holding per-version worktrees and virtualenvs. Empty means `~/odoo-dev`.
+- `odooDebugger.provisioning.root` — directory holding per-version worktrees, virtualenvs and per-branch copies of your repositories. Empty means `~/odoo-dev`.
 - `odooDebugger.provisioning.uvPath` — path to an existing `uv` binary. Empty means look on `PATH`; when uv is absent, provisioning falls back to the standard library `venv` and `pip`.
 - `odooDebugger.dataStore.path` — where the data lives. Empty means `.vscode/odoo-debugger-data.json`. A `.db` file is a shared store, honoured at user or workspace level; a `.json` file is honoured per workspace only. Set it with **Choose Data Store…** so the current data can come along; Open Project Workspace sets it so the workspace it opens keeps the same data.
 - `odooDebugger.databaseSwitchBehavior` — `auto` / `ask` / `never` (see above).
 - `odooDebugger.statusBar.enabled` — show the project/database/version status bar items.
 - `odooDebugger.server.openBrowserOnStart` — open the web client automatically after the server starts (default off).
-- `odooDebugger.editorActions.enabled` — show the Odoo actions in the editor right-click menu (default on).
-- `odooDebugger.ticketBaseUrl` — base URL used by Open Project Ticket.
-- `odooDebugger.search.*` — module/repository discovery tuning (max depth, max entries, exclude patterns) for large workspaces.
+- `odooDebugger.editorActions.enabled` — show the Odoo actions in the editor right-click menu, Compare with Partner and Compare This with Partner included (default on).
+- `odooDebugger.views.allowEditOriginal` — let the View Doctor save views of the upgrade's original database (default off, so it stays as it was before the upgrade).
+- `odooDebugger.views.checkXpathsOnSave` — check an inheriting view's locators after each save of its arch (default on).
+- `odooDebugger.ticketBaseUrl` — base URL used by Open Project Ticket (`<base>/odoo/all-tasks/<id>`).
+- `odooDebugger.search.maxDepth`, `.maxEntries`, `.excludePatterns.modules`, `.excludePatterns.repositories` — module/repository discovery tuning for large workspaces.
 
 Diagnostics are written to the **Odoo DevTools** output channel (View → Output).
 
@@ -421,6 +436,8 @@ Diagnostics are written to the **Odoo DevTools** output channel (View → Output
 - If database operations fail, ensure the PostgreSQL client tools are installed and in `PATH` (`psql`, `createdb`, `dropdb`).
 - If module discovery is slow in large workspaces, tune the `odooDebugger.search.*` exclude patterns and max depth.
 - If a repo shows **path missing** in Project Repos, use *Relocate Repository* to point it at the moved folder.
+- If **Render** shows Odoo's login page, the server reads its sessions from another data folder: it was started with another `--data-dir`, as another user, or in a container.
+- If **Clone**, **Create Checkpoint** or **Restore Checkpoint** asks to stop a server or end connections, that is because PostgreSQL cannot copy or rename a database while something is connected to it; a server this window started on it is restarted afterwards.
 - Check the **Odoo DevTools** output channel for logged errors before filing an issue.
 
 ## Support
