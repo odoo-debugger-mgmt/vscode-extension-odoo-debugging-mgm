@@ -110,6 +110,7 @@
       { "command": "odoo.compareModuleWithPartner", "title": "Compare Module with Partner", "category": "Odoo DevTools" },
       { "command": "odoo.compareThisWithPartner", "title": "Compare This with Partner", "category": "Odoo DevTools" },
       { "command": "dbSelector.compareRecord", "title": "Compare Record…", "category": "Odoo DevTools" },
+      { "command": "odoo.downloadSources", "title": "Download Odoo Sources…", "category": "Odoo DevTools" },
       { "command": "viewDoctor.openArch", "title": "Open Arch", "category": "Odoo DevTools", "icon": "$(go-to-file)" },
       { "command": "viewDoctor.openParent", "title": "Open Parent View", "category": "Odoo DevTools" },
       { "command": "viewDoctor.openRoot", "title": "Open Root View", "category": "Odoo DevTools" },
@@ -1187,6 +1188,11 @@
           "command": "odoo.manageVersions",
           "when": "view == versionsManager",
           "group": "1_version@2"
+        },
+        {
+          "command": "odoo.downloadSources",
+          "when": "view == versionsManager",
+          "group": "1_version@3"
         },
         {
           "command": "versionsManager.sort",

@@ -97,8 +97,8 @@ const projectWorkspace_1 = __webpack_require__(150);
 const workspaceBinding_1 = __webpack_require__(63);
 const workspaceRegistry_1 = __webpack_require__(65);
 const bindingCommand_1 = __webpack_require__(102);
-const goneElsewhere_1 = __webpack_require__(191);
-const storeSwitch_1 = __webpack_require__(192);
+const goneElsewhere_1 = __webpack_require__(193);
+const storeSwitch_1 = __webpack_require__(194);
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext() {
     try {
@@ -2629,6 +2629,7 @@ exports.logger = {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.CommandError = void 0;
+exports.makeLineForwarder = makeLineForwarder;
 exports.runCommand = runCommand;
 exports.tryRunCommand = tryRunCommand;
 const node_child_process_1 = __webpack_require__(14);
@@ -2651,12 +2652,21 @@ class CommandError extends Error {
     }
 }
 exports.CommandError = CommandError;
+/**
+ * Splits output into lines on `\n`, `\r\n` and a bare `\r`: git and pip redraw
+ * their progress with `\r`, and each redraw is a line of its own. A chunk
+ * ending in `\r` holds it back, in case the next chunk starts with `\n`.
+ */
 function makeLineForwarder(forward) {
     let buffer = '';
     return (chunk) => {
-        buffer += chunk;
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
+        let text = buffer + chunk;
+        const hold = text.endsWith('\r') ? '\r' : '';
+        if (hold) {
+            text = text.slice(0, -1);
+        }
+        const lines = text.split(/\r\n|\r|\n/);
+        buffer = (lines.pop() ?? '') + hold;
         for (const line of lines) {
             forward(line);
         }
@@ -29572,6 +29582,7 @@ const repoLocationCommand_1 = __webpack_require__(180);
 const bindingCommand_1 = __webpack_require__(102);
 const upgradeSideCommands_1 = __webpack_require__(181);
 const viewDoctorCommands_1 = __webpack_require__(182);
+const downloadSourcesCommand_1 = __webpack_require__(191);
 /** Registers every command the extension contributes. */
 function registerAllCommands(deps) {
     (0, viewCommands_1.registerViewCommands)(deps);
@@ -29596,6 +29607,7 @@ function registerAllCommands(deps) {
     (0, bindingCommand_1.registerBindingCommand)(deps);
     (0, upgradeSideCommands_1.registerUpgradeSideCommands)(deps);
     (0, viewDoctorCommands_1.registerViewDoctorCommands)(deps);
+    (0, downloadSourcesCommand_1.registerDownloadSourcesCommand)(deps);
 }
 
 
@@ -38256,6 +38268,384 @@ async function viewTarget(arg, readRows, activeUri = () => vscode.window.activeT
 
 /***/ }),
 /* 191 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.downloadOdooSources = downloadOdooSources;
+exports.registerDownloadSourcesCommand = registerDownloadSourcesCommand;
+/**
+ * `odoo.downloadSources`: a shallow copy of one Odoo branch in a folder of the
+ * user's choice, to read the code. It creates no version and changes no
+ * setting; Create Version keeps building its own worktrees.
+ */
+const os = __importStar(__webpack_require__(18));
+const path = __importStar(__webpack_require__(3));
+const vscode = __importStar(__webpack_require__(1));
+const notifications_1 = __webpack_require__(16);
+const setupState_1 = __webpack_require__(62);
+const logger_1 = __webpack_require__(12);
+const sourceDownload_1 = __webpack_require__(192);
+const registerCommand_1 = __webpack_require__(103);
+const LAST_FOLDER_KEY = 'odoo.downloadSources.lastFolder';
+const OTHER = 'Other branch…';
+async function pickBranch() {
+    const quickPick = vscode.window.createQuickPick();
+    quickPick.title = 'Download Odoo Sources: branch';
+    quickPick.placeholder = 'Listing the branches on github.com/odoo/odoo…';
+    quickPick.busy = true;
+    quickPick.ignoreFocusOut = true;
+    quickPick.items = [{ label: OTHER }];
+    const listing = new vscode.CancellationTokenSource();
+    (0, sourceDownload_1.listRemoteSeries)(undefined, listing.token).then(branches => {
+        quickPick.items = [...branches.map(label => ({ label })), { label: OTHER }];
+        quickPick.placeholder = 'The branch to download';
+    }, error => {
+        logger_1.logger.warn('[download] could not list the remote branches:', error);
+        quickPick.placeholder = 'Could not list the branches: pick "Other branch…" and type one';
+    }).finally(() => { quickPick.busy = false; });
+    const picked = await new Promise(resolve => {
+        quickPick.onDidAccept(() => resolve(quickPick.selectedItems[0]?.label));
+        quickPick.onDidHide(() => resolve(undefined));
+        quickPick.show();
+    });
+    listing.cancel();
+    quickPick.dispose();
+    if (picked !== OTHER) {
+        return picked;
+    }
+    const typed = await vscode.window.showInputBox({
+        title: 'Download Odoo Sources: branch',
+        prompt: 'A branch of odoo/odoo, e.g. 17.0, saas-17.4 or master',
+        ignoreFocusOut: true,
+        validateInput: value => (0, sourceDownload_1.isValidBranchName)(value.trim()) ? undefined : 'A branch name, e.g. 17.0'
+    });
+    return typed?.trim() || undefined;
+}
+async function pickRepos() {
+    const picks = await vscode.window.showQuickPick([
+        { label: sourceDownload_1.SOURCE_REPOS.odoo.label, repo: sourceDownload_1.SOURCE_REPOS.odoo, picked: true },
+        { label: sourceDownload_1.SOURCE_REPOS.enterprise.label, repo: sourceDownload_1.SOURCE_REPOS.enterprise, picked: false },
+        { label: sourceDownload_1.SOURCE_REPOS.designThemes.label, repo: sourceDownload_1.SOURCE_REPOS.designThemes, picked: false }
+    ], { title: 'Download Odoo Sources: repositories', canPickMany: true, ignoreFocusOut: true });
+    if (!picks || picks.length === 0) {
+        return undefined;
+    }
+    return picks.map(pick => pick.repo);
+}
+function defaultFolder(context) {
+    const remembered = context.globalState.get(LAST_FOLDER_KEY);
+    if (remembered) {
+        return remembered;
+    }
+    const sourceRepo = (0, setupState_1.readSetupState)().sourceRepo;
+    return sourceRepo ? path.dirname(sourceRepo) : os.homedir();
+}
+async function pickFolder(context) {
+    const provisioningRoot = (0, setupState_1.readSetupState)().provisioningRoot;
+    for (;;) {
+        const picked = await vscode.window.showOpenDialog({
+            canSelectFolders: true,
+            canSelectFiles: false,
+            canSelectMany: false,
+            defaultUri: vscode.Uri.file(defaultFolder(context)),
+            openLabel: 'Download Here',
+            title: 'Download Odoo Sources: the folder to put them in'
+        });
+        const folder = picked?.[0]?.fsPath;
+        if (!folder) {
+            return undefined;
+        }
+        // Versions are built there as odoo-<branch> worktrees; a copy of the same name would be taken for one.
+        if (provisioningRoot && (0, sourceDownload_1.isInside)(folder, provisioningRoot)) {
+            const again = await (0, notifications_1.showWarning)(`${provisioningRoot} is where versions are built. Pick another folder.`, 'Pick Another');
+            if (again !== 'Pick Another') {
+                return undefined;
+            }
+            continue;
+        }
+        return folder;
+    }
+}
+async function offerToOpen(folders) {
+    const list = folders.map(folder => path.basename(folder)).join(', ');
+    const choice = await (0, notifications_1.showInfo)(`Downloaded ${list} to ${path.dirname(folders[0])}.`, 'Open in New Window', 'Add to Workspace', 'Reveal');
+    if (choice === 'Open in New Window') {
+        await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(folders[0]), { forceNewWindow: true });
+    }
+    else if (choice === 'Add to Workspace') {
+        const start = vscode.workspace.workspaceFolders?.length ?? 0;
+        vscode.workspace.updateWorkspaceFolders(start, 0, ...folders.map(folder => ({ uri: vscode.Uri.file(folder) })));
+    }
+    else if (choice === 'Reveal') {
+        await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(folders[0]));
+    }
+}
+async function downloadOdooSources(context) {
+    const branch = await pickBranch();
+    if (!branch) {
+        return;
+    }
+    const repos = await pickRepos();
+    if (!repos) {
+        return;
+    }
+    const folder = await pickFolder(context);
+    if (!folder) {
+        return;
+    }
+    await context.globalState.update(LAST_FOLDER_KEY, folder);
+    const plan = await (0, sourceDownload_1.planDownload)(folder, repos, branch);
+    if (plan.skip.length > 0) {
+        void (0, notifications_1.showInfo)(`Skipped, already there: ${plan.skip.map(item => item.folder).join(', ')}.`);
+    }
+    if (plan.clone.length === 0) {
+        return;
+    }
+    const done = [];
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Downloading Odoo ${branch} (shallow)`,
+        cancellable: true
+    }, async (progress, token) => {
+        for (const item of plan.clone) {
+            const name = path.basename(item.folder);
+            progress.report({ message: `${name}…` });
+            try {
+                await (0, sourceDownload_1.cloneShallow)(item.repo.urls, branch, item.folder, {
+                    token,
+                    onLine: line => progress.report({ message: `${name}: ${line}` })
+                });
+                done.push(item.folder);
+            }
+            catch (error) {
+                if (token.isCancellationRequested) {
+                    void (0, notifications_1.showInfo)(`Download cancelled.${done.length ? ` Kept: ${done.map(f => path.basename(f)).join(', ')}.` : ''}`);
+                    return;
+                }
+                logger_1.logger.error(`[download] ${name} failed:`, error);
+                const hint = item.repo === sourceDownload_1.SOURCE_REPOS.enterprise
+                    ? ' Enterprise is private: it needs an SSH key or a GitHub login with access to odoo/enterprise.'
+                    : '';
+                void (0, notifications_1.showError)(`Could not download ${name}: ${(0, logger_1.errorMessage)(error)}.${hint}`);
+            }
+        }
+    });
+    if (done.length > 0) {
+        await offerToOpen(done);
+    }
+}
+function registerDownloadSourcesCommand(deps) {
+    deps.context.subscriptions.push((0, registerCommand_1.registerCommand)('odoo.downloadSources', () => downloadOdooSources(deps.context)));
+}
+
+
+/***/ }),
+/* 192 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.SOURCE_REPOS = void 0;
+exports.seriesFromLsRemote = seriesFromLsRemote;
+exports.folderNameFor = folderNameFor;
+exports.isValidBranchName = isValidBranchName;
+exports.isInside = isInside;
+exports.planDownload = planDownload;
+exports.listRemoteSeries = listRemoteSeries;
+exports.cloneShallow = cloneShallow;
+/**
+ * Download Odoo Sources: a plain shallow copy of one Odoo branch, to read the
+ * code. It is not a version and not a worktree source; nothing records it.
+ */
+const fs = __importStar(__webpack_require__(20));
+const path = __importStar(__webpack_require__(3));
+const process_1 = __webpack_require__(13);
+const logger_1 = __webpack_require__(12);
+const gitService_1 = __webpack_require__(11);
+exports.SOURCE_REPOS = {
+    odoo: { label: 'Community (odoo)', prefix: 'odoo', urls: ['https://github.com/odoo/odoo.git'] },
+    enterprise: {
+        label: 'Enterprise',
+        prefix: 'enterprise',
+        urls: ['git@github.com:odoo/enterprise.git', 'https://github.com/odoo/enterprise.git']
+    },
+    designThemes: { label: 'Design Themes', prefix: 'design-themes', urls: ['https://github.com/odoo/design-themes.git'] }
+};
+/** Series branches (`master`, `saas-17.4`, `17.0`) from `git ls-remote --heads`, newest first. */
+function seriesFromLsRemote(stdout) {
+    const names = stdout.split('\n')
+        .map(line => /\trefs\/heads\/(.+)$/.exec(line.trim())?.[1])
+        .filter((name) => !!name && (0, gitService_1.isOdooSeriesBranch)(name));
+    return (0, gitService_1.rankBranches)([...new Set(names)]);
+}
+function folderNameFor(repo, branch) {
+    return `${repo.prefix}-${branch.replace(/\//g, '-')}`;
+}
+/** A plain branch name: no option-like start, no spaces, none of git's forbidden sequences. */
+function isValidBranchName(name) {
+    return /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(name)
+        && !name.includes('..')
+        && !name.includes('//')
+        && !name.endsWith('/')
+        && !name.endsWith('.')
+        && !name.endsWith('.lock');
+}
+/** True when `folder` is `root` or below it. */
+function isInside(folder, root) {
+    const relative = path.relative(path.resolve(root), path.resolve(folder));
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+/** A folder that is missing or empty is cloned into; anything else is skipped. */
+async function planDownload(baseDir, repos, branch) {
+    const clone = [];
+    const skip = [];
+    for (const repo of repos) {
+        const folder = path.join(baseDir, folderNameFor(repo, branch));
+        (await isMissingOrEmptyDir(folder) ? clone : skip).push({ repo, folder });
+    }
+    return { clone, skip };
+}
+async function isMissingOrEmptyDir(folder) {
+    try {
+        const stat = await fs.stat(folder);
+        return stat.isDirectory() && (await fs.readdir(folder)).length === 0;
+    }
+    catch {
+        return true;
+    }
+}
+/** Lists the remote's series branches; throws when the remote cannot be reached. */
+async function listRemoteSeries(url = exports.SOURCE_REPOS.odoo.urls[0], token) {
+    const { stdout } = await (0, process_1.runCommand)('git', ['ls-remote', '--heads', url], {
+        token,
+        timeoutMs: 30000,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+    });
+    return seriesFromLsRemote(stdout);
+}
+/**
+ * Clones `branch` of the first URL that works into `dest`, shallow and single-branch.
+ * `dest` must be missing or empty. On failure or cancellation `dest` is removed:
+ * this function created it, so nothing of the user's is lost.
+ */
+async function cloneShallow(urls, branch, dest, options = {}) {
+    if (!isValidBranchName(branch)) {
+        throw new Error(`"${branch}" is not a branch name.`);
+    }
+    if (!(await isMissingOrEmptyDir(dest))) {
+        throw new Error(`${dest} already exists and is not empty.`);
+    }
+    // An empty folder is removed so that, from here on, `dest` is always ours to delete.
+    await fs.rm(dest, { recursive: true, force: true });
+    let lastError;
+    for (const url of urls) {
+        if (options.token?.isCancellationRequested) {
+            break;
+        }
+        let fatal;
+        try {
+            await (0, process_1.runCommand)('git', ['clone', '--progress', '--depth', '1', '--single-branch', '--branch', branch, '--', url, dest], {
+                cwd: path.dirname(dest),
+                token: options.token,
+                env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+                onStderrLine: line => {
+                    const trimmed = line.trim();
+                    if (/^(fatal|error):/i.test(trimmed)) {
+                        fatal = trimmed.replace(/^(fatal|error):\s*/i, '');
+                    }
+                    if (trimmed) {
+                        options.onLine?.(trimmed);
+                    }
+                }
+            });
+            if (!options.token?.isCancellationRequested) {
+                return;
+            }
+        }
+        catch (error) {
+            // git's own reason ("Remote branch 9.9 not found", "could not read Username") says more than the command line.
+            lastError = fatal ? new Error(fatal) : error;
+            logger_1.logger.warn(`[download] clone of ${url} (${branch}) failed:`, error);
+        }
+        await fs.rm(dest, { recursive: true, force: true });
+    }
+    await fs.rm(dest, { recursive: true, force: true });
+    if (options.token?.isCancellationRequested) {
+        throw new Error('Cancelled');
+    }
+    throw lastError instanceof Error ? lastError : new Error(`Could not clone ${branch}.`);
+}
+
+
+/***/ }),
+/* 193 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -38306,7 +38696,7 @@ function selectionFacts(project, version) {
 
 
 /***/ }),
-/* 192 */
+/* 194 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 

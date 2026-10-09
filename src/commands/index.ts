@@ -36,6 +36,7 @@ import { registerRepoLocationCommand } from './repoLocationCommand';
 import { registerBindingCommand } from './bindingCommand';
 import { registerUpgradeSideCommands } from './upgradeSideCommands';
 import { registerViewDoctorCommands } from './viewDoctorCommands';
+import { registerDownloadSourcesCommand } from './downloadSourcesCommand';
 
 export type RefreshReason = 'ui' | 'debugger' | 'all';
 
@@ -102,4 +103,5 @@ export function registerAllCommands(deps: CommandDeps): void {
     registerBindingCommand(deps);
     registerUpgradeSideCommands(deps);
     registerViewDoctorCommands(deps);
+    registerDownloadSourcesCommand(deps);
 }

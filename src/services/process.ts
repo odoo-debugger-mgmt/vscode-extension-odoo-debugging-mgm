@@ -44,12 +44,21 @@ export class CommandError extends Error {
     }
 }
 
-function makeLineForwarder(forward: (line: string) => void): (chunk: string) => void {
+/**
+ * Splits output into lines on `\n`, `\r\n` and a bare `\r`: git and pip redraw
+ * their progress with `\r`, and each redraw is a line of its own. A chunk
+ * ending in `\r` holds it back, in case the next chunk starts with `\n`.
+ */
+export function makeLineForwarder(forward: (line: string) => void): (chunk: string) => void {
     let buffer = '';
     return (chunk: string) => {
-        buffer += chunk;
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
+        let text = buffer + chunk;
+        const hold = text.endsWith('\r') ? '\r' : '';
+        if (hold) {
+            text = text.slice(0, -1);
+        }
+        const lines = text.split(/\r\n|\r|\n/);
+        buffer = (lines.pop() ?? '') + hold;
         for (const line of lines) {
             forward(line);
         }
