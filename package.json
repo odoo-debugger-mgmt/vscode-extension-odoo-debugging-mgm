@@ -3,7 +3,7 @@
   "displayName": "Odoo DevTools for VSCode",
   "description": "All-in-one VS Code extension for managing Odoo projects, databases, modules, and debugging.",
   "icon": "resources/extension-icon.png",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "publisher": "AhmadMansour",
   "contributors": [
     {
@@ -1581,6 +1581,7 @@
         { "command": "viewDoctor.openRoot", "when": "resourceScheme == odoo-view" },
         { "command": "viewDoctor.showInheriting", "when": "resourceScheme == odoo-view" },
         { "command": "viewDoctor.compare", "when": "resourceScheme == odoo-view" },
+        { "command": "odoo.compareFileWithPartner", "when": "resourceScheme != odoo-view" },
         { "command": "viewDoctor.render", "when": "resourceScheme == odoo-view" },
         { "command": "viewDoctor.checkXpaths", "when": "resourceScheme == odoo-view" },
         { "command": "viewDoctor.activate", "when": "false" },

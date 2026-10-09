@@ -8,7 +8,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [1.5.0] - 2026-10-09
 
-> **Beta.** The View Doctor, checkpoints, running several databases at once and comparing with a partner are new in this release. They have been checked on Linux against real Odoo 17.0 to 19.0 databases; Windows, Odoo 15.0/16.0 and remote windows have not been tried yet. Please report anything that surprises you.
+> **Beta.** The View Doctor, checkpoints, running several databases at once and comparing with a partner are new in this release. They have been checked on Linux against real Odoo databases, mostly 17.0, with code compares across the 17.0 and 18.0 sources; Windows, macOS, Odoo 15.0/16.0 and remote windows have not been tried yet. Please report anything that surprises you.
 
 ### Added
 
