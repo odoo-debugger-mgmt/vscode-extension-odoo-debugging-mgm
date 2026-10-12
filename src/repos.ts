@@ -60,7 +60,8 @@ export class RepoTreeProvider extends BaseTreeProvider<vscode.TreeItem> {
         return element;
     }
     async getChildren(_element?: any): Promise<vscode.TreeItem[] | undefined> {
-        const result = await SettingsStore.getSelectedProject();
+        // Silent: an empty list shows the view's welcome content.
+        const result = await SettingsStore.peekSelectedProject();
         if (!result) {
             return [];
         }

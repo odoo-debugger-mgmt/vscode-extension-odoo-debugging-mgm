@@ -199,7 +199,7 @@ export class ProjectReposExplorerProvider extends BaseTreeProvider<ExplorerNode>
         if (!element) {
             // Empty lists fall through to the view's welcome content, which
             // offers the select-project / select-repos actions.
-            const selection = await SettingsStore.getSelectedProject();
+            const selection = await SettingsStore.peekSelectedProject();
             if (!selection) {
                 return [];
             }

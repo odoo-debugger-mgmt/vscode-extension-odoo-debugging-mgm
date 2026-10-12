@@ -46,7 +46,8 @@ import { registerAllCommands, RefreshReason } from './commands';
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext(): Promise<void> {
     try {
-        const result = await SettingsStore.getSelectedProject();
+        // Silent: this runs on activation and every refresh, before anyone asked for anything.
+        const result = await SettingsStore.peekSelectedProject();
         updateTestingContext(!!result?.project?.testingConfig?.isEnabled);
     } catch (error) {
         // If there's an error, default to testing disabled
@@ -172,7 +173,7 @@ export async function activate(context: vscode.ExtensionContext) {
             refreshViews().catch(error => logger.warn('Refresh after a debug session change failed:', error));
         },
         getSelectedDbName: async () => {
-            const result = await SettingsStore.getSelectedProject();
+            const result = await SettingsStore.peekSelectedProject();
             const db = (result?.project.dbs as DatabaseModel[] | undefined)?.find(entry => entry.isSelected);
             return db?.id;
         }
