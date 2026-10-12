@@ -12,7 +12,7 @@ import { SortPreferences } from './sortPreferences';
 import { getDefaultSortOption } from './sortOptions';
 import { logger } from './services/logger';
 import { BaseTreeProvider } from './views/baseTreeProvider';
-import { isDerivedSetting } from './services/versionIdentity';
+import { isDerivedSetting, customKeys, type IdentityKey } from './services/versionIdentity';
 import { currentQueueSnapshot, queueLabel } from './services/provisionQueue';
 import { currentUpgradeConfig } from './upgrade';
 
@@ -112,7 +112,8 @@ export class VersionSettingTreeItem extends vscode.TreeItem {
     constructor(
         public readonly key: string,
         public readonly value: any,
-        public readonly versionId: string
+        public readonly versionId: string,
+        settings?: { customIdentity?: unknown }
     ) {
         const displayName = getSettingDisplayName(key);
         const displayValue = getSettingDisplayValue(key, value);
@@ -145,13 +146,15 @@ export class VersionSettingTreeItem extends vscode.TreeItem {
             this.iconPath = new vscode.ThemeIcon('gear');
         }
 
-        // Derived identity is shown but never editable: it is a function of
-        // the version's branch, and editing it would let two versions collide.
+        // Identity follows the branch until the user sets it by hand. Either
+        // way it is editable; a value set by hand can be reset to automatic.
         if (isDerivedSetting(key)) {
-            this.contextValue = 'versionSettingDerived';
-            this.description = 'derived from branch';
-            this.tooltip = `${displayName}: ${displayValue}\n\nDerived from the version's branch (${key}). Not editable.`;
-            return;
+            const custom = customKeys(settings).has(key as IdentityKey);
+            this.contextValue = custom ? 'versionSettingIdentityCustom' : 'versionSettingIdentity';
+            this.description = custom ? 'set by you' : 'automatic';
+            this.tooltip = custom
+                ? `${displayName}: ${displayValue}\n\nSet by you, so it is kept when the branch changes. Right-click to make it automatic again.`
+                : `${displayName}: ${displayValue}\n\nAutomatic: follows the version's branch, and stays clear of the other versions so they can run at once. Click to set it yourself.`;
         }
 
         this.command = {
@@ -204,7 +207,11 @@ export class VersionsTreeProvider extends BaseTreeProvider<VersionTreeItem | Ver
             const settingItems: VersionSettingTreeItem[] = [];
 
             Object.entries(settings).forEach(([key, value]) => {
-                settingItems.push(new VersionSettingTreeItem(key, value, element.version.id));
+                // Shown on the identity rows themselves ("set by you").
+                if (key === 'customIdentity') {
+                    return;
+                }
+                settingItems.push(new VersionSettingTreeItem(key, value, element.version.id, settings));
             });
 
             return Promise.resolve(settingItems);

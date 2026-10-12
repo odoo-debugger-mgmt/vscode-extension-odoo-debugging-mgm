@@ -25,6 +25,7 @@ const MUST_BE_HIDDEN = [
     'odoo.setAllSettingsToDefault',
     'odoo.setAllSettingsAsDefault',
     'odoo.setSettingToDefault',
+    'odoo.makeIdentityAutomatic',
     'odoo.setSettingAsDefault'
 ];
 

@@ -7,7 +7,8 @@ import {
     runningDebuggerNames,
     anySessionRunning,
     clearSessions,
-    resolveStopTarget
+    resolveStopTarget,
+    versionIdOfSession
 } from '../services/debugSessions';
 
 function fakeSession(name: string): vscode.DebugSession {
@@ -41,6 +42,15 @@ suite('Debug session registry', () => {
         assert.deepStrictEqual(runningDebuggerNames(), ['odoo:18.0']);
         // server_running must stay true while any version is up.
         assert.strictEqual(anySessionRunning(), true);
+    });
+
+    test('remembers the version a session started as, until it ends', () => {
+        const shared = fakeSession('Odoo');
+        trackSession(shared, 'v17');
+        assert.strictEqual(versionIdOfSession('Odoo'), 'v17');
+
+        untrackSession(shared);
+        assert.strictEqual(versionIdOfSession('Odoo'), undefined);
     });
 
     test('ignores sessions with no configuration name', () => {

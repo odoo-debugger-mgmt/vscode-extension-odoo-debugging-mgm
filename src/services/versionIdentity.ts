@@ -3,6 +3,10 @@
  * port and shell port - from its branch, so two versions can run at once
  * without overwriting each other's launch.json entry.
  *
+ * Each value is automatic until the user sets it by hand: it is then listed
+ * in `customIdentity` and kept as typed, even when another version uses it
+ * too. Automatic values still move out of the way of every other value.
+ *
  * The derivation rules are pure and unit-tested; only the live-socket probe
  * at the bottom does I/O, mirroring how pythonToolchain.ts keeps
  * `rankInterpreters` pure and `discoverInterpreters` impure.
@@ -30,11 +34,14 @@ export interface IdentityCandidate {
         debuggerName?: string;
         portNumber?: number;
         shellPortNumber?: number;
+        customIdentity?: IdentityKey[];
     };
 }
 
-/** Settings computed from the branch: visible in the tree, never editable. */
+/** Settings derived from the branch unless the user sets them by hand. */
 export const DERIVED_SETTING_KEYS = ['debuggerName', 'portNumber', 'shellPortNumber'] as const;
+
+export type IdentityKey = typeof DERIVED_SETTING_KEYS[number];
 
 export const SERVER_PORT_BASE = 8000;
 export const SHELL_PORT_BASE = 5000;
@@ -114,46 +121,136 @@ function timestamp(value: Date | string): number {
     return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 }
 
+/** The identity keys the user set by hand (stored data may hold anything). */
+export function customKeys(settings: { customIdentity?: unknown } | undefined): Set<IdentityKey> {
+    const listed = Array.isArray(settings?.customIdentity) ? settings.customIdentity : [];
+    return new Set(listed.filter((key): key is IdentityKey => isDerivedSetting(String(key))));
+}
+
+/** `identity` without the keys the user set by hand: what may be written over. */
+export function automaticPart(identity: VersionIdentity, custom: readonly IdentityKey[] | undefined): Partial<VersionIdentity> {
+    const kept = new Set(custom ?? []);
+    const part: Partial<VersionIdentity> = {};
+    for (const key of DERIVED_SETTING_KEYS) {
+        if (!kept.has(key)) {
+            (part as Record<IdentityKey, unknown>)[key] = identity[key];
+        }
+    }
+    return part;
+}
+
+function isSet(key: IdentityKey, value: unknown): boolean {
+    return key === 'debuggerName' ? typeof value === 'string' && value.length > 0 : typeof value === 'number' && value > 0;
+}
+
+function reserve(taken: IdentityTaken, key: IdentityKey, value: unknown): void {
+    if (key === 'debuggerName') {
+        taken.names.add(value as string);
+    } else {
+        taken.ports.add(value as number);
+    }
+}
+
+function isTaken(taken: IdentityTaken, key: IdentityKey, value: unknown): boolean {
+    return key === 'debuggerName' ? taken.names.has(value as string) : taken.ports.has(value as number);
+}
+
 /**
  * Existing versions are healed, not rewritten: a stored identity is kept
- * unless it collides with an older version's, or is missing entirely. Returns
- * a patch per version that needs changing, in creation order.
+ * unless it collides with an older version's, or is missing entirely. Values
+ * set by hand are never touched, and are reserved first, so an automatic
+ * value that lands on one moves instead. Returns, per version that needs
+ * changing and in creation order, only the keys to write.
  */
 export function healIdentities(
     candidates: IdentityCandidate[],
     prefix: string
-): Array<{ id: string; identity: VersionIdentity }> {
+): Array<{ id: string; identity: Partial<VersionIdentity> }> {
     const ordered = [...candidates].sort((a, b) => timestamp(a.createdAt) - timestamp(b.createdAt));
 
     const taken: IdentityTaken = { names: new Set(), ports: new Set() };
-    const patches: Array<{ id: string; identity: VersionIdentity }> = [];
+    for (const candidate of ordered) {
+        for (const key of customKeys(candidate.settings)) {
+            const value = candidate.settings?.[key];
+            if (isSet(key, value)) {
+                reserve(taken, key, value);
+            }
+        }
+    }
 
+    const patches: Array<{ id: string; identity: Partial<VersionIdentity> }> = [];
     for (const candidate of ordered) {
         const stored = candidate.settings ?? {};
-        const complete = !!stored.debuggerName
-            && typeof stored.portNumber === 'number'
-            && typeof stored.shellPortNumber === 'number';
-        const collides = complete && (
-            taken.names.has(stored.debuggerName!)
-            || taken.ports.has(stored.portNumber!)
-            || taken.ports.has(stored.shellPortNumber!)
-        );
+        const custom = customKeys(stored);
+        const automatic = DERIVED_SETTING_KEYS.filter(key => !custom.has(key) || !isSet(key, stored[key]));
+        const fine = automatic.every(key => isSet(key, stored[key]) && !isTaken(taken, key, stored[key]));
 
-        if (complete && !collides) {
-            taken.names.add(stored.debuggerName!);
-            taken.ports.add(stored.portNumber!);
-            taken.ports.add(stored.shellPortNumber!);
+        if (fine) {
+            automatic.forEach(key => reserve(taken, key, stored[key]));
             continue;
         }
 
-        const identity = deriveIdentity(candidate.odooVersion, prefix, taken);
-        taken.names.add(identity.debuggerName);
-        taken.ports.add(identity.portNumber);
-        taken.ports.add(identity.shellPortNumber);
+        const derived = deriveIdentity(candidate.odooVersion, prefix, taken);
+        const identity: Partial<VersionIdentity> = {};
+        for (const key of automatic) {
+            (identity as Record<IdentityKey, unknown>)[key] = derived[key];
+            reserve(taken, key, derived[key]);
+        }
         patches.push({ id: candidate.id, identity });
     }
 
     return patches;
+}
+
+/**
+ * The other versions `id` shares its debugger name or a port with. Sharing
+ * is allowed - those versions simply cannot run at the same time - so this
+ * feeds a warning, never a refusal.
+ */
+export function identityConflicts(
+    candidates: IdentityCandidate[],
+    id: string
+): Array<{ key: IdentityKey; value: string | number; otherIds: string[] }> {
+    const own = candidates.find(candidate => candidate.id === id)?.settings;
+    if (!own) {
+        return [];
+    }
+    const conflicts: Array<{ key: IdentityKey; value: string | number; otherIds: string[] }> = [];
+    for (const key of DERIVED_SETTING_KEYS) {
+        const value = own[key];
+        if (!isSet(key, value)) {
+            continue;
+        }
+        const otherIds = candidates
+            .filter(candidate => candidate.id !== id)
+            .filter(candidate => {
+                const other = candidate.settings ?? {};
+                return key === 'debuggerName'
+                    ? other.debuggerName === value
+                    : other.portNumber === value || other.shellPortNumber === value;
+            })
+            .map(candidate => candidate.id);
+        if (otherIds.length > 0) {
+            conflicts.push({ key, value: value as string | number, otherIds });
+        }
+    }
+    return conflicts;
+}
+
+/**
+ * The version a launch entry named `name` belongs to. Versions that share a
+ * name share one entry: it is written for, and its session belongs to, the
+ * active version when that is one of them, else the oldest.
+ */
+export function sessionOwner<T extends IdentityCandidate>(
+    candidates: T[],
+    name: string,
+    activeId: string | undefined
+): T | undefined {
+    const named = candidates
+        .filter(candidate => candidate.settings?.debuggerName === name)
+        .sort((a, b) => timestamp(a.createdAt) - timestamp(b.createdAt));
+    return named.find(candidate => candidate.id === activeId) ?? named[0];
 }
 
 /** The ports a new version for `branch` could land on, both ranges. */

@@ -58,6 +58,23 @@ export function registerDebugCommands(deps: CommandDeps): void {
             { label: `Odoo ${config.to?.series}`, versionId: config.to?.versionId }
         ];
 
+        // Names and ports can be set by hand and shared; two sides sharing
+        // one would stop, or fail to bind beside, each other.
+        const [fromVersion, toVersion] = [config.from?.versionId, config.to?.versionId]
+            .map(id => id ? VersionsService.getInstance().getVersion(id) : undefined);
+        if (fromVersion && toVersion) {
+            const shared = fromVersion.settings.debuggerName === toVersion.settings.debuggerName
+                ? `the debugger name "${fromVersion.settings.debuggerName}"`
+                : Number(fromVersion.settings.portNumber) === Number(toVersion.settings.portNumber)
+                    ? `port ${fromVersion.settings.portNumber}`
+                    : undefined;
+            if (shared) {
+                void showError(`Both sides of the upgrade use ${shared}, so they cannot run at the same time. `
+                    + 'Give one of them its own in the Versions view.');
+                return;
+            }
+        }
+
         const failures: string[] = [];
         for (const side of sides) {
             // A side whose version is still being built has no id yet, and

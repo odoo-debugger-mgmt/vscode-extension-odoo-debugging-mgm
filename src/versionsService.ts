@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { VersionModel, VersionSettings } from './models/version';
 import { SettingsStore } from './settingsStore';
-import { getDefaultVersionSettings, stripSettings, getDatabaseLabel } from './utils';
+import { getDefaultVersionSettings, stripSettings, getDatabaseLabel, getSettingDisplayName } from './utils';
 import { logger } from './services/logger';
 import { showError, showInfo, showWarning } from './services/notifications';
 import {
@@ -14,6 +14,10 @@ import {
     deriveIdentity,
     healIdentities,
     isDerivedSetting,
+    automaticPart,
+    customKeys,
+    identityConflicts,
+    type IdentityKey,
     candidatePortsFor,
     probeBusyPorts,
     VersionIdentity
@@ -303,13 +307,95 @@ export class VersionsService {
         if (!version) {
             return;
         }
+        // Values the user set by hand are theirs: a new branch keeps them.
         version.settings = {
             ...version.settings,
-            ...(await this.deriveFreshIdentity(version.odooVersion, version.id))
+            ...automaticPart(
+                await this.deriveFreshIdentity(version.odooVersion, version.id),
+                [...customKeys(version.settings)]
+            )
         };
         version.updatedAt = new Date();
         await this.saveVersions();
         vscode.commands.executeCommand('odoo.versionsChanged');
+    }
+
+    /**
+     * Sets one identity value by hand. It is kept from then on - by the
+     * healing, a branch change and Reset All - until reset to automatic.
+     * Returns the other versions that still use the same value (sharing is
+     * allowed, but those versions cannot run at the same time), and those
+     * whose automatic value moved out of its way.
+     */
+    public async setIdentityValue(
+        versionId: string,
+        key: IdentityKey,
+        value: string | number
+    ): Promise<{ conflicts: Array<{ key: IdentityKey; value: string | number; others: VersionModel[] }>; moved: VersionModel[] }> {
+        await this.initialize();
+        const version = this.versions.get(versionId);
+        if (!version) {
+            return { conflicts: [], moved: [] };
+        }
+        const custom = customKeys(version.settings);
+        custom.add(key);
+        version.settings = { ...version.settings, [key]: value, customIdentity: [...custom] };
+        version.updatedAt = new Date();
+        // An automatic value this one now lands on moves out of the way at
+        // once, so what is left to warn about is only what the user chose.
+        const moved = this.healStoredIdentities();
+        await this.saveVersions();
+        vscode.commands.executeCommand('odoo.versionsChanged');
+        return { conflicts: this.identityConflictsOf(versionId), moved };
+    }
+
+    /** Puts an identity value back under the branch's control. */
+    public async resetIdentityValue(versionId: string, key: IdentityKey): Promise<void> {
+        await this.initialize();
+        const version = this.versions.get(versionId);
+        if (!version) {
+            return;
+        }
+        const custom = customKeys(version.settings);
+        custom.delete(key);
+        const fresh = await this.deriveFreshIdentity(version.odooVersion, version.id);
+        version.settings = { ...version.settings, [key]: fresh[key], customIdentity: [...custom] };
+        version.updatedAt = new Date();
+        await this.saveVersions();
+        vscode.commands.executeCommand('odoo.versionsChanged');
+    }
+
+    /**
+     * Applies healIdentities to the versions in memory (the caller saves).
+     * Returns the versions whose automatic values moved.
+     */
+    private healStoredIdentities(): VersionModel[] {
+        const moved: VersionModel[] = [];
+        for (const patch of healIdentities(Array.from(this.versions.values()), this.getDebuggerNamePrefix())) {
+            const version = this.versions.get(patch.id);
+            if (!version) {
+                continue;
+            }
+            logger.info(
+                `[identity] ${version.name}: ` + Object.entries(patch.identity)
+                    .map(([key, value]) => `${key} ${String(version.settings[key as IdentityKey] || 'none')} -> ${String(value)}`)
+                    .join(', ')
+            );
+            version.settings = { ...version.settings, ...patch.identity };
+            moved.push(version);
+        }
+        return moved;
+    }
+
+    /** The other versions sharing this version's debugger name or a port. */
+    public identityConflictsOf(versionId: string): Array<{ key: IdentityKey; value: string | number; others: VersionModel[] }> {
+        return identityConflicts(Array.from(this.versions.values()), versionId).map(conflict => ({
+            key: conflict.key,
+            value: conflict.value,
+            others: conflict.otherIds
+                .map(id => this.versions.get(id))
+                .filter((other): other is VersionModel => !!other)
+        }));
     }
 
     /**
@@ -451,10 +537,12 @@ export class VersionsService {
             const clonedVersion = sourceVersion.clone(newName);
             this.versions.set(clonedVersion.id, clonedVersion);
             // A clone must not inherit the source's identity - that is exactly
-            // the collision this derivation exists to prevent.
+            // the collision this derivation exists to prevent - nor its values
+            // set by hand: a copy is made to run beside the original.
             clonedVersion.settings = {
                 ...clonedVersion.settings,
-                ...(await this.deriveFreshIdentity(clonedVersion.odooVersion, clonedVersion.id))
+                ...(await this.deriveFreshIdentity(clonedVersion.odooVersion, clonedVersion.id)),
+                customIdentity: []
             };
 
             await this.saveVersions();
@@ -534,17 +622,7 @@ export class VersionsService {
         // rewritten: a stored name/port survives unless it is missing or
         // collides with an older version's - the case where every version
         // inherited one global default and they overwrote each other.
-        const patches = healIdentities(Array.from(this.versions.values()), this.getDebuggerNamePrefix());
-        for (const patch of patches) {
-            const version = this.versions.get(patch.id);
-            if (!version) {
-                continue;
-            }
-            logger.info(
-                `[identity] ${version.name}: ${version.settings.debuggerName ?? 'none'} -> ` +
-                `${patch.identity.debuggerName} (ports ${patch.identity.portNumber}/${patch.identity.shellPortNumber})`
-            );
-            version.settings = { ...version.settings, ...patch.identity };
+        if (this.healStoredIdentities().length > 0) {
             needsRepair = true;
         }
 
@@ -704,8 +782,9 @@ export class VersionsService {
         }
 
         if (isDerivedSetting(settingKey)) {
-            void showInfo(`"${settingKey}" is derived from the version's branch and has no default to restore.`);
-            return false;
+            await this.resetIdentityValue(versionId, settingKey as IdentityKey);
+            void showInfo(`${getSettingDisplayName(settingKey)} of "${version.name}" follows the version's branch again.`);
+            return true;
         }
 
         try {
@@ -778,8 +857,8 @@ export class VersionsService {
             // Get all default settings from VS Code configuration
             const defaultSettings = getDefaultVersionSettings();
 
-            // Identity is derived from the branch; resetting to defaults must
-            // not clear it, or two versions collide again.
+            // Identity is derived from the branch, or set by hand; resetting
+            // to defaults must not clear it, or two versions collide again.
             version.updateSettings({
                 ...defaultSettings,
                 debuggerName: version.settings.debuggerName,

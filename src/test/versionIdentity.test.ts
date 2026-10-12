@@ -6,6 +6,9 @@ import {
     healIdentities,
     isDerivedSetting,
     candidatePortsFor,
+    identityConflicts,
+    sessionOwner,
+    automaticPart,
     IdentityCandidate
 } from '../services/versionIdentity';
 
@@ -15,7 +18,7 @@ function candidate(
     id: string,
     odooVersion: string,
     createdAt: string,
-    settings: Partial<{ debuggerName: string; portNumber: number; shellPortNumber: number }> = {}
+    settings: IdentityCandidate['settings'] = {}
 ): IdentityCandidate {
     return { id, odooVersion, createdAt, settings };
 }
@@ -129,5 +132,79 @@ suite('Version identity', () => {
         // debuggerVersion stays user-editable.
         assert.strictEqual(isDerivedSetting('debuggerVersion'), false);
         assert.strictEqual(isDerivedSetting('odooPath'), false);
+    });
+
+    test('keeps values set by hand even when they collide', () => {
+        // Two versions deliberately sharing one launch entry and one port.
+        const candidates = [
+            candidate('a', '17.0', '2026-01-01', {
+                debuggerName: 'Odoo', portNumber: 8069, shellPortNumber: 5017,
+                customIdentity: ['debuggerName', 'portNumber']
+            }),
+            candidate('b', '18.0', '2026-01-02', {
+                debuggerName: 'Odoo', portNumber: 8069, shellPortNumber: 5018,
+                customIdentity: ['debuggerName', 'portNumber']
+            })
+        ];
+        assert.deepStrictEqual(healIdentities(candidates, 'odoo'), []);
+    });
+
+    test('moves an automatic value off one set by hand, patching only automatic keys', () => {
+        // The older version holds 8018 automatically; a newer one claimed it by hand.
+        const candidates = [
+            candidate('auto', '18.0', '2026-01-01', { debuggerName: 'odoo:18.0', portNumber: 8018, shellPortNumber: 5018 }),
+            candidate('mine', '17.0', '2026-02-01', {
+                debuggerName: 'mine', portNumber: 8018, shellPortNumber: 5017,
+                customIdentity: ['debuggerName', 'portNumber']
+            })
+        ];
+        assert.deepStrictEqual(healIdentities(candidates, 'odoo'), [
+            { id: 'auto', identity: { debuggerName: 'odoo:18.0', portNumber: 8019, shellPortNumber: 5018 } }
+        ]);
+    });
+
+    test('never patches a key set by hand when the rest needs deriving', () => {
+        const patches = healIdentities([
+            candidate('half', '17.0', '2026-01-01', {
+                debuggerName: 'Odoo', portNumber: 0, shellPortNumber: 0, customIdentity: ['debuggerName']
+            })
+        ], 'odoo');
+        assert.deepStrictEqual(patches, [{ id: 'half', identity: { portNumber: 8017, shellPortNumber: 5017 } }]);
+    });
+
+    test('keeps only the automatic part of a derived identity', () => {
+        assert.deepStrictEqual(
+            automaticPart({ debuggerName: 'odoo:17.0', portNumber: 8017, shellPortNumber: 5017 }, ['portNumber']),
+            { debuggerName: 'odoo:17.0', shellPortNumber: 5017 }
+        );
+        assert.deepStrictEqual(
+            automaticPart({ debuggerName: 'odoo:17.0', portNumber: 8017, shellPortNumber: 5017 }, undefined),
+            { debuggerName: 'odoo:17.0', portNumber: 8017, shellPortNumber: 5017 }
+        );
+    });
+
+    test('names the other versions a version shares a name or port with', () => {
+        const candidates = [
+            candidate('a', '17.0', '2026-01-01', { debuggerName: 'Odoo', portNumber: 8069, shellPortNumber: 5017 }),
+            candidate('b', '18.0', '2026-01-02', { debuggerName: 'Odoo', portNumber: 8018, shellPortNumber: 8069 }),
+            candidate('c', '19.0', '2026-01-03', { debuggerName: 'odoo:19.0', portNumber: 8019, shellPortNumber: 5019 })
+        ];
+        assert.deepStrictEqual(identityConflicts(candidates, 'a'), [
+            { key: 'debuggerName', value: 'Odoo', otherIds: ['b'] },
+            { key: 'portNumber', value: 8069, otherIds: ['b'] }
+        ]);
+        assert.deepStrictEqual(identityConflicts(candidates, 'c'), []);
+    });
+
+    test('a shared launch entry belongs to the active version, else the oldest', () => {
+        const candidates = [
+            candidate('new', '18.0', '2026-02-01', { debuggerName: 'Odoo' }),
+            candidate('old', '17.0', '2026-01-01', { debuggerName: 'Odoo' }),
+            candidate('other', '19.0', '2026-01-01', { debuggerName: 'odoo:19.0' })
+        ];
+        assert.strictEqual(sessionOwner(candidates, 'Odoo', 'new')?.id, 'new');
+        assert.strictEqual(sessionOwner(candidates, 'Odoo', 'other')?.id, 'old');
+        assert.strictEqual(sessionOwner(candidates, 'Odoo', undefined)?.id, 'old');
+        assert.strictEqual(sessionOwner(candidates, 'nobody', 'new'), undefined);
     });
 });
