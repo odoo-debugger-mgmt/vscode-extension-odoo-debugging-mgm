@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { resolveDbForVersion, rememberDbForVersion, VersionScopedDb } from '../services/dbResolution';
+import { keepLeftDatabase, resolveDbForVersion, rememberDbForVersion, VersionScopedDb } from '../services/dbResolution';
 
 const DBS: VersionScopedDb[] = [
     { id: 'shop-17', versionId: 'v17' },
@@ -59,5 +59,45 @@ suite('Per-version database resolution', () => {
         // No active version: nothing to key the memory on.
         assert.deepStrictEqual(rememberDbForVersion({ v17: 'shop-17' }, undefined, 'x'), { v17: 'shop-17' });
         assert.deepStrictEqual(rememberDbForVersion(undefined, 'v17', 'shop-17'), { v17: 'shop-17' });
+    });
+});
+
+suite('The version the selection leaves keeps its database', () => {
+    type Data = { projects: Array<{ uid: string; name: string; dbs: VersionScopedDb[]; selectedDbByVersion?: Record<string, string> }> };
+    function moved(memory?: Record<string, string>, dbs: VersionScopedDb[] = [
+        { id: 'acme-db1', versionId: 'v17' },
+        { id: 'acme-db19', versionId: 'v19', isSelected: true }
+    ]): Data {
+        return { projects: [{ uid: 'p1', name: 'Acme', dbs, selectedDbByVersion: memory }] };
+    }
+    function was(dbId: string): Data {
+        return { projects: [{ uid: 'p1', name: 'Acme', dbs: [{ id: dbId, isSelected: true }] }] };
+    }
+
+    test('a selection never picked is remembered under its own version when it moves', () => {
+        // A 1.2 selection is in no memory, so picking a 19.0 database left
+        // 17.0 with none: its launch entry went.
+        const data = keepLeftDatabase(moved(), was('acme-db1'));
+        assert.deepStrictEqual(data.projects[0].selectedDbByVersion, { v17: 'acme-db1' });
+    });
+
+    test('what a version already remembers is not overwritten', () => {
+        const data = keepLeftDatabase(moved({ v17: 'acme-db2' }), was('acme-db1'));
+        assert.deepStrictEqual(data.projects[0].selectedDbByVersion, { v17: 'acme-db2' });
+    });
+
+    test('a selection that did not move changes nothing', () => {
+        const data = keepLeftDatabase(moved(), was('acme-db19'));
+        assert.strictEqual(data.projects[0].selectedDbByVersion, undefined);
+    });
+
+    test('a deleted or versionless database it leaves is ignored', () => {
+        assert.strictEqual(keepLeftDatabase(moved(), was('gone')).projects[0].selectedDbByVersion, undefined);
+        const legacy = moved(undefined, [{ id: 'old' }, { id: 'acme-db19', versionId: 'v19', isSelected: true }]);
+        assert.strictEqual(keepLeftDatabase(legacy, was('old')).projects[0].selectedDbByVersion, undefined);
+    });
+
+    test('nothing read before means nothing to keep', () => {
+        assert.strictEqual(keepLeftDatabase(moved(), undefined).projects[0].selectedDbByVersion, undefined);
     });
 });

@@ -11,6 +11,7 @@ import { modify, applyEdits, parse } from 'jsonc-parser';
 import * as fs from 'node:fs/promises';
 import path from 'path';
 import { logger } from './services/logger';
+import { keepLeftDatabase } from './services/dbResolution';
 
 interface CachedFileEntry {
     mtimeMs: number;
@@ -27,6 +28,7 @@ interface PendingWrite {
 }
 
 const WRITE_DEBOUNCE_MS = 25;
+const DATA_FILE = 'odoo-debugger-data.json';
 
 export class SettingsStore {
     private static readonly cache = new Map<string, CachedFileEntry>();
@@ -172,6 +174,11 @@ export class SettingsStore {
         }
 
         const payload = this.cloneData(data);
+        if (fileName === DATA_FILE) {
+            // The version the selection leaves keeps its database: against
+            // what was last queued or read, before this save replaces it.
+            keepLeftDatabase(payload, this.pendingWrites.get(fileName)?.data ?? this.cache.get(fileName)?.data);
+        }
 
         await new Promise<void>((resolve, reject) => {
             const existing = this.pendingWrites.get(fileName);
