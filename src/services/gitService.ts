@@ -223,6 +223,40 @@ export async function listSeriesBranches(repoPath: string): Promise<string[]> {
     return rankBranches(names.filter(isOdooSeriesBranch));
 }
 
+/**
+ * `git for-each-ref --format=%(refname)` output split into local branch names
+ * and remote ones (`origin/main`). Full ref names keep the two apart: a local
+ * branch may contain a slash itself. A remote's HEAD is left out.
+ */
+export function splitBranchRefs(stdout: string): { local: string[]; remote: string[] } {
+    const local: string[] = [];
+    const remote: string[] = [];
+    for (const raw of stdout.split('\n')) {
+        const ref = raw.trim();
+        if (ref.startsWith('refs/heads/')) {
+            local.push(ref.slice('refs/heads/'.length));
+        } else if (ref.startsWith('refs/remotes/') && !ref.endsWith('/HEAD')) {
+            remote.push(ref.slice('refs/remotes/'.length));
+        }
+    }
+    return { local, remote };
+}
+
+/** Local and remote branches of `repoPath`, told apart (see splitBranchRefs). */
+export async function listLocalAndRemoteBranches(repoPath: string): Promise<{ local: string[]; remote: string[] }> {
+    try {
+        const { stdout } = await runCommand(
+            'git',
+            ['for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/remotes'],
+            { cwd: resolveRepoPath(repoPath) }
+        );
+        return splitBranchRefs(stdout);
+    } catch (error) {
+        logger.warn(`Failed to list refs in ${repoPath}:`, error);
+        return { local: [], remote: [] };
+    }
+}
+
 /** Every branch, including PR branches on every remote. Can be very slow. */
 export async function listAllBranches(repoPath: string): Promise<string[]> {
     return rankBranches(await forEachRef(repoPath, ['refs/heads', 'refs/remotes']));

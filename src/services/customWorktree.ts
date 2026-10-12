@@ -10,7 +10,7 @@ import { showModalWarning, showWarning } from './notifications';
 import { getRepoBranch } from './branches';
 import { branchesHeldByWorktrees, ensureRealBranchWorktree, worktreeAlreadySatisfies } from './worktree';
 import { invalidateGitBranchCache } from './runtimeCache';
-import { listAllBranches } from './gitService';
+import { listLocalAndRemoteBranches } from './gitService';
 import { classifySourceConflict, describeSourceConflict, parsePorcelainStatus } from './sourceConflict';
 import type { ResolvedRepo } from './repoPaths';
 
@@ -24,32 +24,38 @@ async function dirtyFiles(repoPath: string): Promise<string[]> {
  * one another worktree holds (git refuses a second checkout of it), and not
  * one this run is about to give its own worktree. A remote-only branch is
  * offered by its short name, which `git switch` turns into a tracking branch.
+ * Local and remote branches come apart (`origin/main`): a local branch may
+ * have a slash in its name too.
  */
 export function branchesToMoveTo(
-    names: string[],
+    local: string[],
+    remote: string[],
     exclude: string,
     held: ReadonlySet<string>,
     reserved: ReadonlySet<string>
 ): string[] {
-    const local = new Set(names.filter(name => !name.includes('/')));
     const offered: string[] = [];
-    for (const name of names) {
+    const offer = (name: string) => {
+        if (name && name !== exclude && !held.has(name) && !reserved.has(name) && !offered.includes(name)) {
+            offered.push(name);
+        }
+    };
+    local.forEach(offer);
+    for (const name of remote) {
         const slash = name.indexOf('/');
-        const short = slash < 0 ? name : name.slice(slash + 1);
-        if (slash >= 0 && (short === 'HEAD' || !short || local.has(short))) {
-            continue;
+        const short = slash < 0 ? '' : name.slice(slash + 1);
+        if (short && short !== 'HEAD' && !local.includes(short)) {
+            offer(short);
         }
-        if (short === exclude || held.has(short) || reserved.has(short) || offered.includes(short)) {
-            continue;
-        }
-        offered.push(short);
     }
     return offered;
 }
 
 async function pickOtherBranch(sourcePath: string, exclude: string, reserved: ReadonlySet<string>): Promise<string | undefined> {
+    const { local, remote } = await listLocalAndRemoteBranches(sourcePath);
     const names = branchesToMoveTo(
-        await listAllBranches(sourcePath),
+        local,
+        remote,
         exclude,
         await branchesHeldByWorktrees(sourcePath),
         reserved

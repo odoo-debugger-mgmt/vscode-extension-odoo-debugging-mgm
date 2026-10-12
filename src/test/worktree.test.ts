@@ -1,5 +1,6 @@
 import * as assert from 'assert';
 import { branchesToMoveTo } from '../services/customWorktree';
+import { splitBranchRefs } from '../services/gitService';
 import { parseWorktreeList, findWorktreeForBranch, managedBranchName, branchSatisfiesTarget ,
     classifyBranchConflict,
     WorktreeEntry
@@ -111,26 +112,52 @@ suite('Branches a source checkout can move to', () => {
         // The test run: "main" was offered while acme@main had it checked out,
         // so choosing it could only fail.
         assert.deepStrictEqual(
-            branchesToMoveTo(['17.0-dev', 'main', 'staging'], '17.0-dev', new Set(['main']), none),
+            branchesToMoveTo(['17.0-dev', 'main', 'staging'], [], '17.0-dev', new Set(['main']), none),
             ['staging']
         );
     });
 
     test('nor one this run is about to give its own worktree', () => {
         assert.deepStrictEqual(
-            branchesToMoveTo(['17.0-dev', 'main', 'staging'], '17.0-dev', none, new Set(['17.0-dev', 'main'])),
+            branchesToMoveTo(['17.0-dev', 'main', 'staging'], [], '17.0-dev', none, new Set(['17.0-dev', 'main'])),
             ['staging']
         );
     });
 
     test('a remote branch is offered once, by its short name, and only when there is no local one', () => {
         assert.deepStrictEqual(
-            branchesToMoveTo(['17.0-dev', 'main', 'origin/HEAD', 'origin/main', 'origin/18.0'], '17.0-dev', none, none),
+            branchesToMoveTo(['17.0-dev', 'main'], ['origin/main', 'origin/18.0', 'dev/18.0'], '17.0-dev', none, none),
             ['main', '18.0']
         );
     });
 
+    test('a local branch with a slash in its name is offered as it is', () => {
+        // listAllBranches strips "origin/", so a name with a slash could not
+        // be told from a remote one: ahmn/feature was offered as "feature".
+        assert.deepStrictEqual(
+            branchesToMoveTo(['17.0-dev', 'ahmn/feature'], ['origin/ahmn/feature', 'origin/fix/x'], '17.0-dev', none, none),
+            ['ahmn/feature', 'fix/x']
+        );
+    });
+
     test('nothing left is an empty list, for the caller to explain', () => {
-        assert.deepStrictEqual(branchesToMoveTo(['17.0-dev', 'main'], '17.0-dev', new Set(['main']), none), []);
+        assert.deepStrictEqual(branchesToMoveTo(['17.0-dev', 'main'], [], '17.0-dev', new Set(['main']), none), []);
+    });
+});
+
+suite('Splitting refs into local and remote branches', () => {
+    test('local names keep their slashes; remote HEAD is dropped', () => {
+        const refs = [
+            'refs/heads/17.0-dev',
+            'refs/heads/ahmn/feature',
+            'refs/remotes/origin/HEAD',
+            'refs/remotes/origin/main',
+            'refs/remotes/origin/ahmn/feature',
+            ''
+        ].join('\n');
+        assert.deepStrictEqual(splitBranchRefs(refs), {
+            local: ['17.0-dev', 'ahmn/feature'],
+            remote: ['origin/main', 'origin/ahmn/feature']
+        });
     });
 });
