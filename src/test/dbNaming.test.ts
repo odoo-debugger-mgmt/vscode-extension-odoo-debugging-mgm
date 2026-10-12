@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { generateDatabaseIdentifiers } from '../services/dbNaming';
+import { generateDatabaseIdentifiers, newDatabaseNameProblem } from '../services/dbNaming';
 
 suite('Database naming', () => {
     test('generates slugified identifiers within length limits', () => {
@@ -52,5 +52,30 @@ suite('Database naming', () => {
         assert.ok(result.displayName.includes('Dump'));
         assert.ok(result.displayName.includes('2024'));
         assert.ok(result.displayName.includes('#'));
+    });
+});
+
+suite('Names a new database may take', () => {
+    const linked = new Set(['acme-db1']);
+    const inPostgres = new Set(['acme-db1', 'someone-elses']);
+
+    test('a name that exists in PostgreSQL is refused, linked to a project or not', () => {
+        // Clone and Create from Template used to drop it and copy over it.
+        assert.strictEqual(
+            newDatabaseNameProblem('someone-elses', linked, inPostgres),
+            'A database with this name already exists in PostgreSQL.'
+        );
+        assert.strictEqual(newDatabaseNameProblem('Someone-Elses', linked, inPostgres), 'A database with this name already exists in PostgreSQL.');
+        assert.strictEqual(newDatabaseNameProblem('acme-db1', linked, inPostgres), 'A database with this name is already linked to a project.');
+    });
+
+    test('a free, well-formed name is accepted', () => {
+        assert.strictEqual(newDatabaseNameProblem(' acme-db2 ', linked, inPostgres), undefined);
+    });
+
+    test('empty, malformed and reserved names are refused as before', () => {
+        assert.strictEqual(newDatabaseNameProblem('  ', linked, inPostgres), 'Database name cannot be empty.');
+        assert.match(newDatabaseNameProblem('-x', linked, inPostgres) ?? '', /letters, numbers/);
+        assert.match(newDatabaseNameProblem('template1', linked, inPostgres) ?? '', /reserved/);
     });
 });

@@ -16,7 +16,7 @@ import { getRepoBranch } from './services/branches';
 import { SettingsStore } from './settingsStore';
 import { VersionsService } from './versionsService';
 import { rememberDbForVersion } from './services/dbResolution';
-import { generateDatabaseIdentifiers, DatabaseKind } from './services/dbNaming';
+import { generateDatabaseIdentifiers, newDatabaseNameProblem, DatabaseKind } from './services/dbNaming';
 import { detectOdooSeries } from './services/database';
 import { readUpgradeConfig, refuseDuringUpgrade } from './upgrade';
 import {
@@ -488,7 +488,10 @@ const CREATION_METHOD_ITEMS: Record<CreationMethod, { label: string; description
     }
 };
 
-const NEW_DB_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/;
+/** Every database in PostgreSQL, lower-cased, linked to a project or not. */
+export async function postgresDatabaseNames(): Promise<Set<string>> {
+    return new Set((await listPostgresDatabases()).map(name => name.toLowerCase()));
+}
 
 async function pickExistingPostgresDatabase(canGoBack = false): Promise<StepResult<string>> {
     const linkedIdentifiers = await collectExistingDatabaseIdentifiers();
@@ -706,11 +709,14 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
                 dbName = existingDbName;
                 return 'next';
             }
+            // A new database never replaces one, linked here or not: the
+            // live list is read each time the step is shown.
+            const inPostgres = await postgresDatabaseNames();
             const suggestion = dbName || generateDatabaseIdentifiers({
                 projectName,
                 kind: creationMethod as DatabaseKind,
                 timestamp: creationTimestamp,
-                existingInternalNames: existingIdentifiers
+                existingInternalNames: new Set([...existingIdentifiers, ...inPostgres])
             }).internalName;
 
             const nameInput = await inputStep({
@@ -718,22 +724,7 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
                 prompt: 'Database name (used as the PostgreSQL identifier)',
                 value: suggestion,
                 canGoBack,
-                validateInput: value => {
-                    const trimmed = value.trim();
-                    if (!trimmed) {
-                        return 'Database name cannot be empty.';
-                    }
-                    if (!NEW_DB_NAME_PATTERN.test(trimmed)) {
-                        return 'Use letters, numbers, "-" or "_" only. The name must not start with "-".';
-                    }
-                    if (RESERVED_DATABASE_NAMES.has(trimmed.toLowerCase())) {
-                        return `"${trimmed}" is a reserved database name.`;
-                    }
-                    if (existingIdentifiers.has(trimmed.toLowerCase())) {
-                        return 'A database with this name is already linked to a project.';
-                    }
-                    return undefined;
-                }
+                validateInput: value => newDatabaseNameProblem(value, existingIdentifiers, inPostgres)
             });
             if (nameInput === undefined) {
                 return 'cancel';
@@ -761,7 +752,13 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
 
     const dbKind: DatabaseKind = creationMethod;
 
-    // Step 5: create/restore the PostgreSQL database.
+    // Step 5: create/restore the PostgreSQL database - never over an existing
+    // one. The name step refused it already; this covers a database made
+    // since, or a list PostgreSQL could not give.
+    if (creationMethod !== 'existing' && await databaseExists(dbName)) {
+        void showError(`A database named "${dbName}" already exists in PostgreSQL, so nothing was created.`);
+        return undefined;
+    }
     if (creationMethod === 'dump' && sqlDumpPath) {
         await setupDatabase(dbName, sqlDumpPath);
     } else if (creationMethod === 'template' && selectedTemplate) {
@@ -790,20 +787,18 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
     });
 }
 
-/** Clones `templateDbName` into `targetDbName`, replacing any existing DB. */
+/**
+ * Clones `templateDbName` into `targetDbName`. Never replaces a database:
+ * PostgreSQL refuses a name that exists, and the name prompts refuse it
+ * first.
+ */
 export async function cloneDatabaseFromTemplate(targetDbName: string, templateDbName: string): Promise<void> {
     await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: `Setting up database ${targetDbName}`,
         cancellable: false
     }, async (progress) => {
-        progress.report({ message: 'Checking database existence...', increment: 20 });
-        if (await databaseExists(targetDbName)) {
-            progress.report({ message: 'Dropping existing database...', increment: 20 });
-            await dropDatabase(targetDbName);
-        }
-
-        progress.report({ message: `Cloning from template "${templateDbName}"...`, increment: 50 });
+        progress.report({ message: `Cloning from template "${templateDbName}"...`, increment: 70 });
         await createDatabase(targetDbName, templateDbName);
 
         progress.report({ message: 'Complete!', increment: 30 });
@@ -1092,8 +1087,11 @@ export async function cloneDatabaseFlow(event: unknown): Promise<void> {
     const { data, project } = result;
 
     const existingIdentifiers = await collectExistingDatabaseIdentifiers();
+    // A clone never replaces a database, linked to a project or not.
+    const inPostgres = await postgresDatabaseNames();
+    const taken = (name: string) => existingIdentifiers.has(name.toLowerCase()) || inPostgres.has(name.toLowerCase());
     let suggestion = `${db.id}-copy`;
-    for (let i = 2; existingIdentifiers.has(suggestion.toLowerCase()); i++) {
+    for (let i = 2; taken(suggestion); i++) {
         suggestion = `${db.id}-copy${i}`;
     }
 
@@ -1101,22 +1099,7 @@ export async function cloneDatabaseFlow(event: unknown): Promise<void> {
         prompt: `Clone "${db.id}" into a new database`,
         value: suggestion,
         ignoreFocusOut: true,
-        validateInput: value => {
-            const trimmed = value.trim();
-            if (!trimmed) {
-                return 'Database name cannot be empty.';
-            }
-            if (!NEW_DB_NAME_PATTERN.test(trimmed)) {
-                return 'Use letters, numbers, "-" or "_" only. The name must not start with "-".';
-            }
-            if (RESERVED_DATABASE_NAMES.has(trimmed.toLowerCase())) {
-                return `"${trimmed}" is a reserved database name.`;
-            }
-            if (existingIdentifiers.has(trimmed.toLowerCase())) {
-                return 'A database with this name is already linked to a project.';
-            }
-            return null;
-        }
+        validateInput: value => newDatabaseNameProblem(value, existingIdentifiers, inPostgres) ?? null
     });
     if (nameInput === undefined) {
         return;

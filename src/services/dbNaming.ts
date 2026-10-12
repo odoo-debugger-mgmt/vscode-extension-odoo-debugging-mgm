@@ -122,3 +122,35 @@ export function generateDatabaseIdentifiers(options: DatabaseNamingOptions): Dat
         hash
     };
 }
+
+/** Letters, digits, "_" and "-", not starting with "-": safe as a PostgreSQL name and on a command line. */
+export const NEW_DB_NAME_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_-]*$/;
+
+/** Names PostgreSQL keeps for itself. */
+const RESERVED_NAMES = new Set(['postgres', 'template0', 'template1']);
+
+/**
+ * Why `value` cannot name a new database, or undefined when it can. `linked`
+ * and `inPostgres` are lower-cased. A name that exists in PostgreSQL is
+ * refused whether a project links it or not: creating a database never
+ * replaces one.
+ */
+export function newDatabaseNameProblem(value: string, linked: ReadonlySet<string>, inPostgres: ReadonlySet<string>): string | undefined {
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return 'Database name cannot be empty.';
+    }
+    if (!NEW_DB_NAME_PATTERN.test(trimmed)) {
+        return 'Use letters, numbers, "-" or "_" only. The name must not start with "-".';
+    }
+    if (RESERVED_NAMES.has(trimmed.toLowerCase())) {
+        return `"${trimmed}" is a reserved database name.`;
+    }
+    if (linked.has(trimmed.toLowerCase())) {
+        return 'A database with this name is already linked to a project.';
+    }
+    if (inPostgres.has(trimmed.toLowerCase())) {
+        return 'A database with this name already exists in PostgreSQL.';
+    }
+    return undefined;
+}
