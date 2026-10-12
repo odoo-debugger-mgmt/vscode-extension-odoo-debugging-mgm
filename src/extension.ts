@@ -42,6 +42,7 @@ import { showInfo } from './services/notifications';
 import { getDefaultVersionSettings, normalizePath, resolveOptionalPath } from './utils';
 import { StatusBarIndicators } from './views/statusBar';
 import { registerAllCommands, RefreshReason } from './commands';
+import { offerToReopenByPath } from './projectWorkspace';
 
 /** Syncs the testing context key with the selected project's testing state. */
 async function initializeTestingContext(): Promise<void> {
@@ -58,6 +59,7 @@ async function initializeTestingContext(): Promise<void> {
 
 export async function activate(context: vscode.ExtensionContext) {
     registerLogger(context);
+    offerToReopenByPath();
 
     const sortPreferences = new SortPreferences(context.workspaceState);
 

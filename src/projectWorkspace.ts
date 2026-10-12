@@ -129,7 +129,42 @@ export async function openProjectWorkspace(context: vscode.ExtensionContext): Pr
         return;
     }
     const forceNewWindow = choice === 'New window';
-    await vscode.commands.executeCommand('vscode.openFolder', workspaceFile, forceNewWindow);
+    await vscode.commands.executeCommand('vscode.openFolder', projectWorkspaceOpenUri(workspaceFile), forceNewWindow);
+}
+
+/**
+ * The URI to open a generated workspace file by: its path. The file is
+ * written through the extension's global-storage URI, and a window opened by
+ * that URI is a vscode-userdata workspace, which the Python debugger refuses
+ * to run in.
+ */
+export function projectWorkspaceOpenUri(workspaceFile: vscode.Uri): vscode.Uri {
+    return vscode.Uri.file(workspaceFile.fsPath);
+}
+
+/** Whether this window's workspace was opened by the global-storage URI. */
+export function openedByStorageUri(workspaceFile: vscode.Uri | undefined): boolean {
+    return workspaceFile?.scheme === 'vscode-userdata';
+}
+
+/**
+ * A project workspace opened by an earlier build - and reopened from the
+ * Recent list since - still carries its vscode-userdata URI. Says once, in
+ * that window, how to get the debugger working.
+ */
+export function offerToReopenByPath(): void {
+    const workspaceFile = vscode.workspace.workspaceFile;
+    if (!workspaceFile || !openedByStorageUri(workspaceFile)) {
+        return;
+    }
+    void showInfo(
+        'This workspace was opened in a way that keeps the Python debugger from running. Reopen it from its file to fix that.',
+        'Reopen It'
+    ).then(choice => {
+        if (choice === 'Reopen It') {
+            void vscode.commands.executeCommand('vscode.openFolder', projectWorkspaceOpenUri(workspaceFile), false);
+        }
+    });
 }
 
 export async function quickSwitchProjectWorkspace(context: vscode.ExtensionContext): Promise<void> {
