@@ -13,7 +13,10 @@ export interface VersionScopedDb {
 /**
  * Resolution order: the database remembered for this version, then the
  * selected database when it belongs to this version, then the selected
- * database regardless - which is the behaviour that existed before.
+ * database only when it belongs to no version at all (one from before
+ * databases had versions). A database of another version is never used:
+ * running 19.0 code against a 17.0 database is not a better default than
+ * asking for one.
  */
 export function resolveDbForVersion<T extends VersionScopedDb>(
     dbs: T[],
@@ -24,13 +27,17 @@ export function resolveDbForVersion<T extends VersionScopedDb>(
 
     if (versionId) {
         const rememberedId = selectedDbByVersion?.[versionId];
-        const remembered = rememberedId ? dbs.find(db => db.id === rememberedId) : undefined;
+        // A remembered database moved to another version since is no longer this one's.
+        const remembered = rememberedId
+            ? dbs.find(db => db.id === rememberedId && (!db.versionId || db.versionId === versionId))
+            : undefined;
         if (remembered) {
             return remembered;
         }
         if (selected?.versionId === versionId) {
             return selected;
         }
+        return selected && !selected.versionId ? selected : undefined;
     }
 
     return selected;

@@ -18,6 +18,8 @@ const EMPTY_LAUNCH_CONTENT = `{
 }
 `;
 
+const EDIT_OPTIONS = { formattingOptions: { tabSize: 4, insertSpaces: true } };
+
 export interface ManagedLaunchConfig {
     name: string;
     type: string;
@@ -28,6 +30,40 @@ export interface ManagedLaunchConfig {
     console: string;
     args: string[];
     [key: string]: unknown;
+}
+
+/**
+ * Removes the configurations named in `names` from
+ * `<workspacePath>/.vscode/launch.json`, leaving comments and every other
+ * configuration as they are. Returns the number removed; a file with none of
+ * them is not rewritten.
+ */
+export async function removeManagedLaunchConfigs(workspacePath: string, names: ReadonlySet<string>): Promise<number> {
+    const launchPath = path.join(workspacePath, '.vscode', 'launch.json');
+    let raw: string;
+    try {
+        raw = await fs.readFile(launchPath, 'utf8');
+    } catch {
+        return 0;
+    }
+    const parsed = parse(raw) as { configurations?: unknown } | undefined;
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.configurations)) {
+        return 0;
+    }
+
+    // Last first, so each removal leaves the earlier indexes valid.
+    const indexes = (parsed.configurations as Array<{ name?: unknown } | null>)
+        .map((conf, index) => (typeof conf?.name === 'string' && names.has(conf.name) ? index : -1))
+        .filter(index => index >= 0)
+        .reverse();
+    if (indexes.length === 0) {
+        return 0;
+    }
+    for (const index of indexes) {
+        raw = applyEdits(raw, modify(raw, ['configurations', index], undefined, EDIT_OPTIONS));
+    }
+    await fs.writeFile(launchPath, raw, 'utf8');
+    return indexes.length;
 }
 
 /**
@@ -55,10 +91,9 @@ export async function updateManagedLaunchConfig(workspacePath: string, managedCo
     const existing = existingIndex >= 0 ? configurations[existingIndex] : undefined;
     const merged = { ...existing, ...managedConfig };
 
-    const options = { formattingOptions: { tabSize: 4, insertSpaces: true } };
     const edits = existingIndex >= 0
-        ? modify(raw, ['configurations', existingIndex], merged, options)
-        : modify(raw, ['configurations', 0], merged, { ...options, isArrayInsertion: true });
+        ? modify(raw, ['configurations', existingIndex], merged, EDIT_OPTIONS)
+        : modify(raw, ['configurations', 0], merged, { ...EDIT_OPTIONS, isArrayInsertion: true });
 
     await fs.writeFile(launchPath, applyEdits(raw, edits), 'utf8');
     return merged as ManagedLaunchConfig;
