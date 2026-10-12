@@ -806,13 +806,16 @@ export async function cloneDatabaseFromTemplate(targetDbName: string, templateDb
 }
 
 /**
- * Creates (or drops, with `remove`) the PostgreSQL database, importing and
- * neutralizing a dump when one is provided.
+ * Creates the PostgreSQL database, importing and neutralizing a dump when one
+ * is provided. Only Restore - which the user confirmed as an overwrite -
+ * passes `replace`; creating never drops a database of the same name, and
+ * PostgreSQL refuses it instead. Returns whether it all worked; a failure has
+ * already been shown.
  */
-async function setupDatabase(dbName: string, dumpPath: string | undefined, remove: boolean = false): Promise<void> {
+async function setupDatabase(dbName: string, dumpPath: string | undefined, replace: boolean = false): Promise<boolean> {
     if (dumpPath && !(await pathExists(dumpPath))) {
         void showError(`Dump file not found at: ${dumpPath}`);
-        return;
+        return false;
     }
 
     let preparedDump: PreparedDump | undefined;
@@ -820,10 +823,11 @@ async function setupDatabase(dbName: string, dumpPath: string | undefined, remov
         preparedDump = dumpPath ? await prepareDumpForImport(dumpPath) : undefined;
     } catch (error) {
         void showError(`Unable to read dump file: ${errorMessage(error)}`);
-        return;
+        return false;
     }
 
-    const operation = remove ? 'Removing' : preparedDump ? 'Setting up' : 'Creating';
+    const operation = replace ? 'Restoring' : preparedDump ? 'Setting up' : 'Creating';
+    let ok = false;
 
     try {
         await vscode.window.withProgress({
@@ -832,16 +836,13 @@ async function setupDatabase(dbName: string, dumpPath: string | undefined, remov
             cancellable: false
         }, async (progress) => {
             try {
-                progress.report({ message: 'Checking database existence...', increment: 10 });
-                if (await databaseExists(dbName)) {
-                    progress.report({ message: 'Dropping existing database...', increment: 20 });
-                    logger.debug(`Dropping existing database: ${dbName}`);
-                    await dropDatabase(dbName);
-                }
-
-                if (remove) {
-                    progress.report({ message: 'Complete!', increment: 100 });
-                    return;
+                if (replace) {
+                    progress.report({ message: 'Checking database existence...', increment: 10 });
+                    if (await databaseExists(dbName)) {
+                        progress.report({ message: 'Dropping existing database...', increment: 20 });
+                        logger.debug(`Dropping existing database: ${dbName}`);
+                        await dropDatabase(dbName);
+                    }
                 }
 
                 progress.report({ message: 'Creating database...', increment: 40 });
@@ -886,6 +887,7 @@ async function setupDatabase(dbName: string, dumpPath: string | undefined, remov
 
                 progress.report({ message: 'Complete!', increment: 100 });
                 logger.debug(`Database "${dbName}" is ready.`);
+                ok = true;
             } catch (error) {
                 logger.error(`Database setup failed for ${dbName}:`, error);
                 void showError(`Failed to setup database: ${errorMessage(error)}`);
@@ -900,6 +902,25 @@ async function setupDatabase(dbName: string, dumpPath: string | undefined, remov
             }
         }
     }
+    return ok;
+}
+
+/**
+ * Drops `dbName` for Delete Database. A failure - a server still connected,
+ * most often - is thrown to the caller, which then changes nothing: the
+ * record stays, and no success is reported.
+ */
+async function dropDatabaseForDelete(dbName: string): Promise<void> {
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Removing database ${dbName}`,
+        cancellable: false
+    }, async () => {
+        if (await databaseExists(dbName)) {
+            logger.debug(`Dropping database: ${dbName}`);
+            await dropDatabase(dbName);
+        }
+    });
 }
 
 export async function restoreDb(event: unknown): Promise<void> {
@@ -924,8 +945,10 @@ export async function restoreDb(event: unknown): Promise<void> {
         return; // User cancelled
     }
 
-    await setupDatabase(database.id, database.sqlFilePath);
-    showAutoInfo(`Database "${databaseLabel}" restored successfully`, 3000);
+    // Restore is the one place a database is replaced: the user confirmed it.
+    if (await setupDatabase(database.id, database.sqlFilePath, true)) {
+        showAutoInfo(`Database "${databaseLabel}" restored successfully`, 3000);
+    }
 }
 
 export async function selectDatabase(event: unknown) {
@@ -1042,8 +1065,9 @@ export async function deleteDb(event: unknown) {
         return; // User cancelled
     }
 
-    // Delete the database from PostgreSQL
-    await setupDatabase(db.id, undefined, true);
+    // Delete the database from PostgreSQL. A failure propagates to the
+    // command, which shows it; the record is only removed once the drop worked.
+    await dropDatabaseForDelete(db.id);
 
     // Remove from project data
     project.dbs = project.dbs.filter((database: DatabaseModel) => database.id !== db.id);
