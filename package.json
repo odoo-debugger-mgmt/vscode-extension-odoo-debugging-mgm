@@ -1792,7 +1792,7 @@
         "odooDebugger.debuggerNamePrefix": {
           "type": "string",
           "default": "odoo",
-          "markdownDescription": "Prefix for each version's generated launch configuration name: `<prefix>:<branch>`, for example `odoo:17.0`. The name, HTTP port and shell port are derived from the version's branch and cannot be edited per version."
+          "markdownDescription": "Prefix for each version's generated launch configuration name: `<prefix>:<branch>`, for example `odoo:17.0`. The name, HTTP port and shell port are filled in from the version's branch; click one in the Versions view to set it for that version."
         },
         "odooDebugger.sourceRepo.odoo": {
           "type": "string",

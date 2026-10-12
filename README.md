@@ -66,7 +66,7 @@ Selecting a database aligns the active version, the core repo branches (odoo/ent
 - `ask`: one notification with **Switch** / **Keep Current**
 - `never`: selection only, no switching
 
-The status bar shows the active project, database and version — click any of them to switch.
+The status bar shows the active project, the database the active version launches, and the active version — click any of them to switch. When the active version has no database of its own selected, the database item reads *no 17.0 database* (say) and offers only that version's databases.
 
 ## Views
 
@@ -92,6 +92,7 @@ Explorer sidebar: **Project Repos** (project-scoped file tree).
 - Restored dumps are neutralized for development: crons and outgoing mail disabled, passwords reset (`admin`/`admin`), fresh database UUID, extended expiration, mailcatcher entry.
 - The Odoo version is **auto-detected** from the database contents and linked to the matching version profile.
 - Context actions: **rename display name**, copy name, clone, restore, **open in browser**, **open psql shell**, change linked version, configure per-repo branches, delete. Renaming only changes the label — the PostgreSQL database keeps its name.
+- **Creating or cloning never replaces a database.** The name prompt refuses any name PostgreSQL already has, whether a project links it or not. **Delete** that PostgreSQL refuses — a server still connected, typically — says why and leaves the database in the list.
 - **Templates** (`Manage Database Templates`): register or create template databases and clone from them in seconds; import/export template lists as JSON.
 - **Creating a database asks which branch each project repo should use** — before anything is created or restored, so cancelling costs nothing. *Use current branches* is one of the answers; it is no longer an assumption. Cloning a database inherits its source's mapping.
 - **Running databases are marked** in the list: `running :8017` for a server this extension started, `running (external)` for one started from a terminal or another window. Each version also remembers the database it last launched, so switching versions restores the right `-d`.
@@ -209,11 +210,13 @@ and telling you which.
 
 The extension maintains **one launch configuration per provisioned version** in `.vscode/launch.json`, each named after that version's `debuggerName` and carrying its own port and database. Versions sharing a debugger name share one entry, written for the active one. Only those entries are rewritten — your own configurations and comments are preserved. It assembles `--addons-path`, `-d`, `-i`/`-u` from your module selections, ports, time limits, dev mode and testing flags automatically.
 
-Because the entries are stable and unique, the Run and Debug dropdown works as a version switcher. **F5 follows whatever the dropdown has selected, while `Ctrl+Alt+O S` always follows the *active* version.** That divergence is deliberate: it is what lets you debug one version from the dropdown while launching another from the chord. **Stop Server** targets the active version's session, and asks only when several versions are running and none of them is the active one.
+A version's entry only ever uses a database of that version: with none chosen, it is left out of the file until you pick one, and Start Server asks for one.
+
+Because each version keeps its own stable entry, the Run and Debug dropdown works as a version switcher. **F5 follows whatever the dropdown has selected, while `Ctrl+Alt+O S` always follows the *active* version.** That divergence is deliberate: it is what lets you debug one version from the dropdown while launching another from the chord. **Stop Server** targets the active version's session, and asks only when several versions are running and none of them is the active one.
 
 Generated project workspaces also include the active version's own `odoo`, `enterprise` and `design-themes` checkouts, so files you open belong to the version you are running and breakpoints bind to the right worktree.
 
-Server commands: **Start Server**, **Run Server Without Debugging**, **Restart Server**, **Stop Server**, **Open Odoo in Browser** (uses the active version's port and the selected database), and **Copy Odoo Command** — copies the exact `python odoo-bin …` command line the debugger runs (assembled from the selected project, active version and database) to the clipboard, ready to paste into a terminal. With `odooDebugger.server.openBrowserOnStart` enabled, the browser opens automatically once the server port accepts connections.
+Server commands: **Start Server**, **Run Server Without Debugging**, **Restart Server**, **Stop Server**, **Open Odoo in Browser** (opens the selected database on the port serving it: its running server's, else its version's, else the active version's), and **Copy Odoo Command** — copies the exact `python odoo-bin …` command line the debugger runs (assembled from the selected project, active version and database) to the clipboard, ready to paste into a terminal. With `odooDebugger.server.openBrowserOnStart` enabled, the browser opens automatically once the server port accepts connections.
 
 ## Editor Actions
 

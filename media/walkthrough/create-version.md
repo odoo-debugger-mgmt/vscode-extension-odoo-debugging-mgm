@@ -4,4 +4,4 @@ A **version** is a complete environment for one Odoo branch (e.g. `17.0`, `saas-
 
 Creating one: pick the branch (listed from your Odoo repository), confirm the name, and the extension builds the environment under your environments folder, with live progress and cancellation. *Profile only* registers the version without building anything.
 
-The debugger name and ports are derived from the branch — `odoo:17.0` on ports 8017/5017 — so versions never collide and several can run at once. Activating a version checks nothing out: each version already owns its worktree. Expand a version in the **Versions** view to see or edit its settings.
+The debugger name and ports are filled in from the branch — `odoo:17.0` on ports 8017/5017 — so versions do not collide and several can run at once. Click one in the Versions view to set it yourself; **Make Automatic Again** hands it back. Activating a version checks nothing out: each version already owns its worktree. Expand a version in the **Versions** view to see or edit its settings.
