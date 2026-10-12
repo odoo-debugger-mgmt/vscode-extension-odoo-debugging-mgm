@@ -787,6 +787,15 @@ export async function getGitBranches(repoPath: string | undefined): Promise<stri
  * These settings can be configured via VS Code Settings UI or by searching for "odooDebugger.defaultVersion"
  * @returns SettingsModel with default values from configuration
  */
+/**
+ * Whether a version setting has an `odooDebugger.defaultVersion.*` setting to
+ * save it to. Per-version bookkeeping (managedPaths, customIdentity) and the
+ * identity have none, and VS Code refuses to write a setting it does not know.
+ */
+export function isDefaultableSetting(key: string): boolean {
+    return Object.prototype.hasOwnProperty.call(getDefaultVersionSettings(), key);
+}
+
 export function getDefaultVersionSettings(): any {
     const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
 

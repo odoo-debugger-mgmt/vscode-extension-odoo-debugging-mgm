@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { VersionModel, VersionSettings } from './models/version';
 import { SettingsStore } from './settingsStore';
-import { getDefaultVersionSettings, stripSettings, getDatabaseLabel, getSettingDisplayName } from './utils';
+import { getDefaultVersionSettings, stripSettings, getDatabaseLabel, getSettingDisplayName, isDefaultableSetting } from './utils';
 import { logger } from './services/logger';
 import { showError, showInfo, showWarning } from './services/notifications';
 import {
@@ -823,6 +823,12 @@ export class VersionsService {
             return false;
         }
 
+        // Handled, not failed: there is nothing to save it to.
+        if (!isDefaultableSetting(settingKey)) {
+            void showInfo(`${getSettingDisplayName(settingKey)} belongs to "${version.name}" and has no default to save.`);
+            return true;
+        }
+
         try {
             const currentValue = (version.settings as any)[settingKey];
             if (currentValue === undefined) {
@@ -892,10 +898,10 @@ export class VersionsService {
             const config = vscode.workspace.getConfiguration('odooDebugger.defaultVersion');
             const settings = version.settings;
 
-            // Update all settings in configuration
+            // Only settings that have a default: the identity and per-version
+            // bookkeeping have none, and writing one fails the whole command.
             for (const [key, value] of Object.entries(settings)) {
-                // No configuration keys exist for derived identity.
-                if (isDerivedSetting(key)) {
+                if (!isDefaultableSetting(key)) {
                     continue;
                 }
                 await config.update(key, value, vscode.ConfigurationTarget.Workspace);
