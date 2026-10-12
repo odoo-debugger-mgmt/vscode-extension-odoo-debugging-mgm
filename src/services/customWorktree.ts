@@ -143,7 +143,15 @@ async function freeBranch(
 export async function ensureCustomWorktrees(
     resolved: ResolvedRepo[],
     token?: vscode.CancellationToken,
-    options: { interactive?: boolean } = {}
+    options: {
+        interactive?: boolean;
+        /**
+         * Copies a later call in the same operation will make - the other side
+         * of an upgrade. Their branches are not offered to move the source
+         * onto, since the source would then hold what that call needs.
+         */
+        alsoNeeded?: ResolvedRepo[];
+    } = {}
 ): Promise<{ ready: ResolvedRepo[]; problems: string[]; needsResolution: string[] }> {
     const interactive = options.interactive ?? false;
     const ready: ResolvedRepo[] = [];
@@ -165,8 +173,9 @@ export async function ensureCustomWorktrees(
             // "using the source checkout" modal on every refresh.
             const satisfied = await worktreeAlreadySatisfies(sourcePath, entry.branch, entry.path);
 
-            // The branches this run gives other copies of the same repository.
-            const reserved = new Set(resolved
+            // The branches this run, or the one after it, gives other copies of
+            // the same repository.
+            const reserved = new Set([...resolved, ...(options.alsoNeeded ?? [])]
                 .filter(other => other.isWorktree && other.branch && other.repo.path === sourcePath)
                 .map(other => other.branch!));
             if (!satisfied && !(await freeBranch(sourcePath, entry.repo.name, entry.branch, interactive, reserved))) {
