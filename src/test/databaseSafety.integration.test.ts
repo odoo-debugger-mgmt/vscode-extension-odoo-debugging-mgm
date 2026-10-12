@@ -7,7 +7,7 @@ import * as assert from 'assert';
 import { spawn, ChildProcess } from 'node:child_process';
 import * as vscode from 'vscode';
 import { createDatabase, databaseExists, dropDatabaseIfExists, runSql } from '../services/postgres';
-import { cloneDatabaseFromTemplate, deleteDb, postgresDatabaseNames } from '../dbs';
+import { cloneDatabaseFromTemplate, deleteDb, postgresDatabaseNames, setupDatabase } from '../dbs';
 import { SettingsStore } from '../settingsStore';
 import { DatabaseModel } from '../models/db';
 
@@ -73,6 +73,15 @@ async function holdConnection(db: string): Promise<{ process: ChildProcess; rele
         await assert.rejects(cloneDatabaseFromTemplate(existing, source));
 
         assert.strictEqual(await databaseExists(existing), true);
+        assert.strictEqual(await runSql(existing, 'SELECT v FROM odt_t;'), 'mine');
+    });
+
+    test('creating a fresh database over an existing one creates nothing, and says so', async () => {
+        // Create Database records the database only when it was created: a
+        // name taken since the prompt must not be linked as the user's own.
+        const outcome = await setupDatabase(existing, undefined);
+
+        assert.deepStrictEqual(outcome, { created: false, ok: false });
         assert.strictEqual(await runSql(existing, 'SELECT v FROM odt_t;'), 'mine');
     });
 

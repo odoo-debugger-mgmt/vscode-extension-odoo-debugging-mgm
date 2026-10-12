@@ -759,12 +759,19 @@ export async function createDb(projectName: string, repos: RepoModel[], dumpFold
         void showError(`A database named "${dbName}" already exists in PostgreSQL, so nothing was created.`);
         return undefined;
     }
+    // Nothing is recorded unless the database was made: a name PostgreSQL
+    // refused may be someone else's. One made whose dump import then failed
+    // is recorded, as before - it is the user's, and the error was shown.
     if (creationMethod === 'dump' && sqlDumpPath) {
-        await setupDatabase(dbName, sqlDumpPath);
+        if (!(await setupDatabase(dbName, sqlDumpPath)).created) {
+            return undefined;
+        }
     } else if (creationMethod === 'template' && selectedTemplate) {
         await cloneDatabaseFromTemplate(dbName, selectedTemplate.templateDbName);
     } else if (creationMethod === 'fresh') {
-        await setupDatabase(dbName, undefined);
+        if (!(await setupDatabase(dbName, undefined)).created) {
+            return undefined;
+        }
     }
 
     // Step 6: the version is still inferred - it is a fact about the database
@@ -809,13 +816,18 @@ export async function cloneDatabaseFromTemplate(targetDbName: string, templateDb
  * Creates the PostgreSQL database, importing and neutralizing a dump when one
  * is provided. Only Restore - which the user confirmed as an overwrite -
  * passes `replace`; creating never drops a database of the same name, and
- * PostgreSQL refuses it instead. Returns whether it all worked; a failure has
- * already been shown.
+ * PostgreSQL refuses it instead. Says whether the database was created at
+ * all, and whether everything after worked too; a failure has already been
+ * shown.
  */
-async function setupDatabase(dbName: string, dumpPath: string | undefined, replace: boolean = false): Promise<boolean> {
+export async function setupDatabase(
+    dbName: string,
+    dumpPath: string | undefined,
+    replace: boolean = false
+): Promise<{ created: boolean; ok: boolean }> {
     if (dumpPath && !(await pathExists(dumpPath))) {
         void showError(`Dump file not found at: ${dumpPath}`);
-        return false;
+        return { created: false, ok: false };
     }
 
     let preparedDump: PreparedDump | undefined;
@@ -823,10 +835,11 @@ async function setupDatabase(dbName: string, dumpPath: string | undefined, repla
         preparedDump = dumpPath ? await prepareDumpForImport(dumpPath) : undefined;
     } catch (error) {
         void showError(`Unable to read dump file: ${errorMessage(error)}`);
-        return false;
+        return { created: false, ok: false };
     }
 
     const operation = replace ? 'Restoring' : preparedDump ? 'Setting up' : 'Creating';
+    let created = false;
     let ok = false;
 
     try {
@@ -848,6 +861,7 @@ async function setupDatabase(dbName: string, dumpPath: string | undefined, repla
                 progress.report({ message: 'Creating database...', increment: 40 });
                 logger.debug(`Creating database: ${dbName}`);
                 await createDatabase(dbName);
+                created = true;
 
                 if (preparedDump) {
                     progress.report({
@@ -902,7 +916,7 @@ async function setupDatabase(dbName: string, dumpPath: string | undefined, repla
             }
         }
     }
-    return ok;
+    return { created, ok };
 }
 
 /**
@@ -946,7 +960,7 @@ export async function restoreDb(event: unknown): Promise<void> {
     }
 
     // Restore is the one place a database is replaced: the user confirmed it.
-    if (await setupDatabase(database.id, database.sqlFilePath, true)) {
+    if ((await setupDatabase(database.id, database.sqlFilePath, true)).ok) {
         showAutoInfo(`Database "${databaseLabel}" restored successfully`, 3000);
     }
 }
