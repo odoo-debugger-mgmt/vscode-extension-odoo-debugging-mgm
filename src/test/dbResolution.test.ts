@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { keepLeftDatabase, resolveDbForVersion, rememberDbForVersion, VersionScopedDb } from '../services/dbResolution';
+import { keepLeftDatabase, resolveDbForVersion, rememberDbForVersion, statusBarDatabase, VersionScopedDb } from '../services/dbResolution';
 
 const DBS: VersionScopedDb[] = [
     { id: 'shop-17', versionId: 'v17' },
@@ -99,5 +99,26 @@ suite('The version the selection leaves keeps its database', () => {
 
     test('nothing read before means nothing to keep', () => {
         assert.strictEqual(keepLeftDatabase(moved(), undefined).projects[0].selectedDbByVersion, undefined);
+    });
+});
+
+suite('What the status bar shows for the active version', () => {
+    const dbs: VersionScopedDb[] = [
+        { id: 'acme-db1', versionId: 'v17', isSelected: true },
+        { id: 'acme-db19', versionId: 'v19' }
+    ];
+
+    test('the database the version launches', () => {
+        assert.deepStrictEqual(statusBarDatabase({ dbs }, 'v17'), { db: dbs[0] });
+    });
+
+    test('a version with none of its own says so, rather than naming another version\'s', () => {
+        // "acme-db1 · 19.0", while 19.0 would not launch acme-db1.
+        assert.deepStrictEqual(statusBarDatabase({ dbs }, 'v19'), { missingFor: 'v19' });
+    });
+
+    test('a project with no databases shows nothing', () => {
+        assert.strictEqual(statusBarDatabase({ dbs: [] }, 'v19'), undefined);
+        assert.strictEqual(statusBarDatabase(undefined, 'v19'), undefined);
     });
 });

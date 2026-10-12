@@ -43,6 +43,22 @@ export function resolveDbForVersion<T extends VersionScopedDb>(
     return selected;
 }
 
+/**
+ * What the status bar shows for the active version: the database it
+ * launches, or that it has none of its own while the project has databases.
+ * Nothing when the project has no databases at all.
+ */
+export function statusBarDatabase<T extends VersionScopedDb>(
+    project: { dbs?: T[]; selectedDbByVersion?: Record<string, string> } | undefined,
+    versionId: string | undefined
+): { db: T } | { missingFor: string } | undefined {
+    const db = project ? resolveDbForVersion(project.dbs ?? [], project.selectedDbByVersion, versionId) : undefined;
+    if (db) {
+        return { db };
+    }
+    return versionId && (project?.dbs?.length ?? 0) > 0 ? { missingFor: versionId } : undefined;
+}
+
 /** Records `dbId` against `versionId`, leaving other versions' memory intact. */
 export function rememberDbForVersion(
     existing: Record<string, string> | undefined,
