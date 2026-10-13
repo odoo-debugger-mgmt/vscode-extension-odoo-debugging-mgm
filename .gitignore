@@ -1,4 +1,31 @@
-out
-node_modules
-.vscode-test/
+# Dependencies
+node_modules/
+
+# Build output (dist/ is committed on purpose)
+out/
 *.vsix
+
+# VS Code extension test runs
+.vscode-test/
+
+# Editors and IDEs: settings are personal
+.vscode/
+.idea/
+*.swp
+*~
+
+# AI assistants' local state
+.claude/
+.superpowers/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs, coverage, secrets
+*.log
+npm-debug.log*
+coverage/
+.nyc_output/
+.env
+.env.*
